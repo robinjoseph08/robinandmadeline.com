@@ -1,0 +1,90 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * Wedding color palette. Exposed as Tailwind theme colors so they generate
+ * utilities such as `bg-primary`, `text-ink`, `bg-secondary`,
+ * `bg-complementary-1`, `bg-complementary-2`, and `bg-cream`.
+ *
+ * Names are deliberate: `cream`/`ink` avoid colliding with Tailwind's built-in
+ * `white`/`black` utilities while still mapping to our palette.
+ */
+@theme {
+  --color-cream: #f9f5e9;
+  --color-ink: #161822;
+  --color-primary: #ffdcdc;
+  --color-secondary: #adc8ff;
+  --color-complementary-1: #c0ffd4;
+  --color-complementary-2: #f25477;
+
+  --font-sans:
+    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+/*
+ * shadcn/ui semantic tokens wired to the wedding palette so shadcn components
+ * (e.g. Button) render in the wedding colors. `--primary`/`--secondary` reuse
+ * the palette so `bg-primary`/`bg-secondary` and shadcn components stay
+ * consistent; foreground tokens use ink for legibility on the soft surfaces.
+ */
+:root {
+  --radius: 0.625rem;
+
+  --background: #f9f5e9; /* cream */
+  --foreground: #161822; /* ink */
+  --card: #f9f5e9;
+  --card-foreground: #161822;
+  --popover: #f9f5e9;
+  --popover-foreground: #161822;
+  --primary: #ffdcdc; /* palette primary (soft pink) */
+  --primary-foreground: #161822; /* ink for contrast on soft pink */
+  --secondary: #adc8ff; /* palette secondary (blue) */
+  --secondary-foreground: #161822;
+  --muted: #ffdcdc;
+  --muted-foreground: #161822;
+  --accent: #c0ffd4; /* complementary 1 (green) */
+  --accent-foreground: #161822;
+  --destructive: #f25477; /* complementary 2 (deep pink) */
+  --border: #161822;
+  --input: #161822;
+  --ring: #f25477;
+}
+
+/*
+ * `inline` so these reference the runtime CSS variables above. We intentionally
+ * do NOT redefine --color-primary / --color-secondary here: those already come
+ * from the palette @theme block and equal --primary / --secondary, so the
+ * shadcn Button (bg-primary) and the bg-primary utility resolve identically.
+ */
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
