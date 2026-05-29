@@ -1,0 +1,117 @@
+[tools]
+go = "1.25.10"
+node = "24.16.0"
+"npm:pnpm" = "11.4.0"
+"github:air-verse/air" = "1.65.3"
+"github:golangci/golangci-lint" = "2.12.2"
+
+# === Build ===
+
+[tasks.build]
+description = "Build production API binary"
+run = "CGO_ENABLED=0 go build -o ./build/api/api ./cmd/api"
+
+[tasks."build:air"]
+description = "Build development API binary (used by air)"
+run = "go build -o ./build/api/api-air ./cmd/api"
+
+# === Dev Server ===
+
+[tasks.start]
+description = "Start development environment (API + web)"
+depends = ["start:air", "start:web"]
+
+[tasks."start:air"]
+description = "Start API with hot reload via Air"
+run = "air"
+
+[tasks."start:web"]
+description = "Start Vite dev server (waits for API)"
+run = "until nc -z localhost 8400 2>/dev/null; do sleep 0.5; done && pnpm start"
+
+[tasks."start:api"]
+description = "Start API directly (no hot reload)"
+run = "go run ./cmd/api"
+
+# === Linting ===
+
+[tasks.lint]
+description = "Run Go linting"
+# Per-worktree cache so concurrent worktrees don't trip golangci-lint's
+# "parallel golangci-lint is running" lock against each other.
+env = { GOLANGCI_LINT_CACHE = "{{config_root}}/tmp/golangci-lint-cache" }
+run = "golangci-lint run"
+
+[tasks."lint:js"]
+description = "Run all JS/TS linting"
+depends = ["lint:eslint", "lint:prettier", "lint:types"]
+
+[tasks."lint:eslint"]
+description = "Run ESLint"
+run = "pnpm lint:eslint"
+
+[tasks."lint:prettier"]
+description = "Run Prettier check"
+run = "pnpm lint:prettier"
+
+[tasks."lint:types"]
+description = "Run TypeScript type checking"
+run = "pnpm lint:types"
+
+# === Testing ===
+
+[tasks.test]
+description = "Run Go tests"
+env = { CI = "true" }
+run = "go test ./pkg/... ./cmd/..."
+
+[tasks."test:unit"]
+description = "Run JS unit tests"
+run = "pnpm test:unit"
+
+# === Check ===
+
+[tasks.check]
+description = "Run all validation checks"
+depends = ["lint", "lint:js", "test", "test:unit"]
+
+[tasks."check:quiet"]
+description = "Run all checks, suppress output on success; dump output and exit non-zero on failure"
+run = '''
+echo "Running checks..."
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+for step in lint lint:js test test:unit; do
+  echo 1 >"$tmpdir/$(echo "$step" | tr ':' '_').rc"
+  touch "$tmpdir/$(echo "$step" | tr ':' '_').out"
+  ( mise "$step" >"$tmpdir/$(echo "$step" | tr ':' '_').out" 2>&1; echo $? >"$tmpdir/$(echo "$step" | tr ':' '_').rc" ) &
+done
+wait
+failed=0
+for step in lint lint:js test test:unit; do
+  key=$(echo "$step" | tr ':' '_')
+  rc=$(cat "$tmpdir/$key.rc" 2>/dev/null || echo 1)
+  if [ "$rc" -eq 0 ]; then
+    printf '  \033[32mPASS\033[0m  %s\n' "$step"
+  else
+    printf '  \033[31mFAIL\033[0m  %s\n' "$step"
+    cat "$tmpdir/$key.out"
+    failed=1
+  fi
+done
+if [ "$failed" -eq 1 ]; then
+  printf '\n\033[31mcheck:quiet FAILED\033[0m\n'; exit 1
+else
+  printf '\n\033[32mcheck:quiet PASSED\033[0m\n'
+fi
+'''
+
+# === Setup ===
+
+[tasks.setup]
+description = "Install tools and dependencies"
+run = '''
+mise install
+pnpm install
+go mod download
+'''
