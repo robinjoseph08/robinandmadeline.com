@@ -47,9 +47,10 @@ type healthResponse struct {
 }
 
 // registerAdmin mounts the admin API surface behind the admin auth middleware.
-// For now it exposes only GET /api/admin/me, which the frontend uses to confirm
-// a stored token is still a valid admin token. Real admin endpoints land in
-// later issues; they belong under this protected group.
+// For now it exposes only GET /api/admin/me, a minimal endpoint that confirms a
+// stored token is still a valid admin token. It exists so the middleware is
+// actually mounted and exercised; real admin endpoints land in later issues and
+// belong under this same protected group.
 func registerAdmin(g *echo.Group, mw *auth.Middleware) {
 	admin := g.Group("/admin")
 	admin.Use(mw.RequireAdmin)
