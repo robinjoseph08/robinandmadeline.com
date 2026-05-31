@@ -50,7 +50,7 @@ A traditional ceremony that the Rehearsal Dinner doubles as, drawing a larger gr
 
 **Event RSVP**:
 A guest's response to a single event: pending, attending, or not_attending. The existence of an Event RSVP record is what marks a guest as invited to that event.
-_Avoid_: RSVP (the unqualified word; there is no single wedding-wide RSVP, attendance is always per-event)
+_Avoid_: RSVP (the unqualified word; there is no single wedding-wide RSVP; attendance is always per-event)
 
 **Info Token**:
 A random, opaque per-party token embedded in the pre-invitation info-collection URL.

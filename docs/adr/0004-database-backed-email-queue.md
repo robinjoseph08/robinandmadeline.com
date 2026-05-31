@@ -1,4 +1,4 @@
-# Database-backed email queue with at-least-once delivery
+# Database-backed email queue with at-least-once delivery and duplicate suppression
 
 Bulk emails (up to ~174 recipients) are sent through a database-backed queue rather than synchronously in the request handler or via an external queue service. Each `email_recipients` row moves `queued → sending → sent`, and on startup any stale `sending` rows are checked against the Mailgun API before retrying.
 
