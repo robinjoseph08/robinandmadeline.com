@@ -1,20 +1,31 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { NAV_LINKS } from "@/components/library/nav-links";
 import NavBar from "@/components/library/NavBar";
+import { AuthProvider } from "@/libraries/auth";
 
 function renderNav() {
   return render(
-    <MemoryRouter>
-      <NavBar />
-    </MemoryRouter>,
+    <AuthProvider>
+      <MemoryRouter>
+        <NavBar />
+      </MemoryRouter>
+    </AuthProvider>,
   );
 }
 
 describe("NavBar", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+  });
+
   it("renders every primary navigation link on desktop", () => {
     renderNav();
 
@@ -44,5 +55,23 @@ describe("NavBar", () => {
         within(menu).getByRole("link", { name: link.label }),
       ).toBeInTheDocument();
     }
+  });
+
+  it("hides the Admin link when there is no admin session", () => {
+    renderNav();
+
+    expect(
+      screen.queryByRole("link", { name: /admin/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows an Admin link to the admin area when an admin session exists", () => {
+    localStorage.setItem("admin_token", "a.jwt.token");
+
+    renderNav();
+
+    const adminLinks = screen.getAllByRole("link", { name: /admin/i });
+    expect(adminLinks.length).toBeGreaterThan(0);
+    expect(adminLinks[0]).toHaveAttribute("href", "/admin");
   });
 });

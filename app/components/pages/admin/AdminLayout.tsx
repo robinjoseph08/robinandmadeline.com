@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { ADMIN_NAV_LINKS } from "@/components/library/admin-nav-links";
 import { Button } from "@/components/ui/button";
@@ -46,14 +46,18 @@ export default function AdminLayout() {
           ))}
         </nav>
 
-        <Button
-          className="mt-auto"
-          onClick={handleLogout}
-          type="button"
-          variant="outline"
-        >
-          Sign out
-        </Button>
+        {/* Exit links grouped at the bottom: back to the public site, or out. */}
+        <div className="mt-auto flex flex-col gap-2">
+          <Link
+            className="rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-primary"
+            to="/"
+          >
+            Back to site
+          </Link>
+          <Button onClick={handleLogout} type="button" variant="outline">
+            Sign out
+          </Button>
+        </div>
       </aside>
 
       <main className="flex-1 px-6 py-8">
