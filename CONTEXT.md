@@ -1,29 +1,93 @@
-# Wedding Website — Domain Context
+# Wedding Website
 
-## Glossary
+The domain language for robinandmadeline.com — a custom wedding site that manages the guest list, two-phase guest interaction (info collection then RSVP), the event schedule, photo groups, and email communications.
 
-- **Party**: A group of guests who receive a single invitation and share an RSVP code. Has a `side` (Robin/Madeline), `relation` (family/friend), and `circle` (Immediate, Extended, College, Work, Childhood, Other). Examples: "Joseph ABQ", "Abernathy".
-- **Guest**: An individual person within a Party. Has `roles` (Sibling, Bridal Party, In-Law, UIUC, etc.), dietary restrictions, and individual contact info (email, phone). A guest can be a placeholder (stub for plus-ones or children to be filled in later).
-- **Primary Guest**: The main contact person for a Party. Receives communications and manages the party's info and RSVPs.
-- **Event**: A scheduled activity (Rehearsal Dinner/Madhuram Veppu, Ceremony, Reception, possibly Brunch). Can be public (visible to all site visitors) or private (visible only to invited guests after authentication).
-- **Event RSVP**: A per-guest, per-event response (pending, attending, not_attending). The existence of an RSVP row means the guest is invited to that event. Public events get RSVP rows for all guests.
-- **Info Token**: A random, opaque token per Party used for the pre-invitation info-collection flow. Guests don't see this as a "code" — it's embedded in a URL.
-- **RSVP Code**: A fun, personalized code per Party (e.g., "KALEL", "PEPPER") revealed on the printed invitation. Used to authenticate for the RSVP flow. Can be custom or auto-generated.
-- **Photo Group**: A named group of guests who need to be present for a specific set of photos at an event. Has a sort order indicating shooting sequence. Surfaced to guests on their personalized schedule so they know to stay nearby.
-- **Invitation Type**: Whether a Party receives a physical mailed invitation or a digital-only one. Affects whether address collection is needed.
+## Language
 
-## Key Domain Rules
+**Party**:
+A group of guests who receive a single invitation and share one mailing address and one RSVP code.
+_Avoid_: Household, group, family (a party isn't always a family)
 
-- A Party belongs to one side (Robin or Madeline) and has one relation type (family or friend). Circle and roles can be multiple.
-- Guests within the same Party share a mailing address (stored on the Party) and invitation type, but have individual email, phone, roles, dietary restrictions, and RSVP responses.
-- Public events are visible on the schedule without authentication. Private events are only visible to guests who are invited (have an RSVP row).
-- The info-collection phase happens before invitations go out. The RSVP phase happens after invitations are mailed. These use separate tokens/codes intentionally — the RSVP code is a surprise revealed on the printed invite.
-- When a new guest is added, RSVP rows are auto-created for all public events. When a new public event is created, RSVP rows are auto-created for all guests.
-- Photo groups are tied to events and shown inline on the personalized schedule, not as a separate section.
-- Overall attendance is derived — a guest is "coming" if they're attending at least one event.
+**Guest**:
+An individual person belonging to exactly one party.
+_Avoid_: Invitee, attendee (attendance isn't known until they RSVP)
 
-## Scale
+**Primary Guest**:
+The guest who is the main point of contact for their party.
+_Avoid_: Head of household, owner
 
-- ~174 guests, ~200 max venue capacity
-- 3 confirmed events (Rehearsal Dinner/Madhuram Veppu, Ceremony, Reception), 1 possible (Brunch)
-- 2 admins (Robin and Madeline)
+**Placeholder Guest**:
+A stub guest record (e.g. an unnamed plus-one or child) whose real details the party fills in during RSVP.
+_Avoid_: Plus-one (a placeholder may be a child, not a plus-one)
+
+**Side**:
+Whether a party is Robin's or Madeline's. A party-level attribute with exactly one value.
+_Avoid_: Kingdom (the spreadsheet's name — not used in the system)
+
+**Relation**:
+Whether a party is family or friends. A party-level attribute with exactly one value.
+_Avoid_: Phylum
+
+**Circle**:
+How the couple knows a party (Immediate, Extended, College, Work, Childhood, Other). A party-level attribute that can hold multiple values.
+_Avoid_: Class
+
+**Roles**:
+A guest's relationship tags (Sibling, In-Law, Bridal Party, Cousin, UIUC, etc.). A guest-level attribute that can hold multiple values.
+_Avoid_: Order, tags
+
+**Event**:
+A scheduled wedding activity (Rehearsal Dinner / Madhuram Veppu, Ceremony, Reception, possibly Brunch).
+
+**Public Event**:
+An event visible on the schedule to anyone, with no code required.
+
+**Private Event**:
+An event visible only to guests who are invited to it.
+
+**Madhuram Veppu**:
+A ceremony combined with the Rehearsal Dinner, attended by a larger group than a typical rehearsal dinner.
+
+**Event RSVP**:
+A guest's response to a single event — pending, attending, or not_attending. The existence of an Event RSVP record is what marks a guest as invited to that event.
+_Avoid_: RSVP (unqualified — there is no single wedding-wide RSVP; attendance is per-event)
+
+**Info Token**:
+A random, opaque per-party token embedded in the pre-invitation info-collection URL.
+_Avoid_: Code (guests never see this as a code)
+
+**RSVP Code**:
+A memorable, often personalized per-party code (e.g. KALEL, PEPPER) revealed on the printed invitation and used to authenticate the RSVP flow.
+_Avoid_: Password, info token
+
+**Invitation Type**:
+Whether a party receives a physical mailed invitation or a digital-only one.
+
+**Photo Group**:
+A named set of guests needed together for a specific photo at an event, with a shooting order.
+_Avoid_: Photo shoot, album (the photo gallery is unrelated)
+
+## Relationships
+
+- A **Party** has one or more **Guests**; exactly one is the **Primary Guest**.
+- A **Party** has one **Side**, one **Relation**, and one or more **Circles**.
+- A **Guest** has zero or more **Roles**.
+- A **Party** has one **Info Token** and one **RSVP Code**.
+- A **Guest** has one **Event RSVP** per **Event** they are invited to.
+- A **Photo Group** belongs to one **Event** and contains one or more **Guests**.
+- A **Guest** carries individual email, phone, dietary restrictions, and RSVP responses; the mailing **address** lives on the **Party**.
+- Overall attendance is derived — a **Guest** is "coming" if they are attending at least one **Event**.
+
+## Example dialogue
+
+> **Dev:** "When a guest enters their RSVP code, are they RSVPing to the wedding?"
+> **Couple:** "No — there's no single wedding RSVP. The code logs in their whole party, and then each guest has an Event RSVP for every event they're invited to."
+> **Dev:** "And the info-collection link uses that same code?"
+> **Couple:** "No. That's the info token — a different, random link we send out early. The RSVP code is a surprise on the printed invite, so it can't appear in the info-collection URL."
+
+## Flagged ambiguities
+
+- "RSVP" was used to mean both a single wedding-wide response and a per-event response — resolved: RSVP is always per-event (**Event RSVP**); there is no wedding-wide RSVP.
+- "Code" was ambiguous between the early info-collection link and the printed RSVP credential — resolved: these are two distinct per-party values, the **Info Token** and the **RSVP Code**.
+- Side / Relation / Circle / Roles were initially treated as guest attributes — resolved: Side, Relation, and Circle are party-level; Roles are guest-level.
+- "Address" was assumed to be per-guest — resolved: the mailing address is party-level (one envelope per party); only email and phone are per-guest.
