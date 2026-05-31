@@ -1,10 +1,10 @@
 # An Event RSVP row is the invitation
 
-We track per-event RSVPs in a single `event_rsvps` table where the existence of a row (with status `pending`) means a guest is invited to that event — there is no separate invitations table. Public events get rows for all guests; private events get rows only for invited parties.
+We track per-event RSVPs in a single `event_rsvps` table where the existence of a row (with status `pending`) means a guest is invited to that event. There is no separate invitations table. Public events get rows for all guests; private events get rows only for invited parties.
 
 ## Considered Options
 
-- **Separate `event_invitations` table** — rejected as an extra layer with no benefit at this scale; "invited" and "responded" are cleanly expressed by one row with a status.
+- **Separate `event_invitations` table**: rejected as an extra layer with no benefit at this scale; "invited" and "responded" are cleanly expressed by one row with a status.
 
 ## Consequences
 

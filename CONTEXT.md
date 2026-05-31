@@ -1,6 +1,6 @@
 # Wedding Website
 
-The domain language for robinandmadeline.com — a custom wedding site that manages the guest list, two-phase guest interaction (info collection then RSVP), the event schedule, photo groups, and email communications.
+The domain language for robinandmadeline.com: a custom wedding site that manages the guest list, two-phase guest interaction (info collection then RSVP), the event schedule, photo groups, and email communications.
 
 ## Language
 
@@ -22,7 +22,7 @@ _Avoid_: Plus-one (a placeholder may be a child, not a plus-one)
 
 **Side**:
 Whether a party is Robin's or Madeline's. A party-level attribute with exactly one value.
-_Avoid_: Kingdom (the spreadsheet's name — not used in the system)
+_Avoid_: Kingdom (the spreadsheet's name, not used in the system)
 
 **Relation**:
 Whether a party is family or friends. A party-level attribute with exactly one value.
@@ -46,11 +46,11 @@ An event visible on the schedule to anyone, with no code required.
 An event visible only to guests who are invited to it.
 
 **Madhuram Veppu**:
-A ceremony combined with the Rehearsal Dinner, attended by a larger group than a typical rehearsal dinner.
+A traditional ceremony that the Rehearsal Dinner doubles as, drawing a larger group than a typical rehearsal dinner.
 
 **Event RSVP**:
-A guest's response to a single event — pending, attending, or not_attending. The existence of an Event RSVP record is what marks a guest as invited to that event.
-_Avoid_: RSVP (unqualified — there is no single wedding-wide RSVP; attendance is per-event)
+A guest's response to a single event: pending, attending, or not_attending. The existence of an Event RSVP record is what marks a guest as invited to that event.
+_Avoid_: RSVP (the unqualified word; there is no single wedding-wide RSVP, attendance is always per-event)
 
 **Info Token**:
 A random, opaque per-party token embedded in the pre-invitation info-collection URL.
@@ -76,18 +76,18 @@ _Avoid_: Photo shoot, album (the photo gallery is unrelated)
 - A **Guest** has one **Event RSVP** per **Event** they are invited to.
 - A **Photo Group** belongs to one **Event** and contains one or more **Guests**.
 - A **Guest** carries individual email, phone, dietary restrictions, and RSVP responses; the mailing **address** lives on the **Party**.
-- Overall attendance is derived — a **Guest** is "coming" if they are attending at least one **Event**.
+- Overall attendance is derived: a **Guest** is "coming" if they are attending at least one **Event**.
 
 ## Example dialogue
 
 > **Dev:** "When a guest enters their RSVP code, are they RSVPing to the wedding?"
-> **Couple:** "No — there's no single wedding RSVP. The code logs in their whole party, and then each guest has an Event RSVP for every event they're invited to."
+> **Couple:** "No, there's no single wedding RSVP. The code logs in their whole party, and then each guest has an Event RSVP for every event they're invited to."
 > **Dev:** "And the info-collection link uses that same code?"
-> **Couple:** "No. That's the info token — a different, random link we send out early. The RSVP code is a surprise on the printed invite, so it can't appear in the info-collection URL."
+> **Couple:** "No. That's the info token, a different random link we send out early. The RSVP code is a surprise on the printed invite, so it can't appear in the info-collection URL."
 
 ## Flagged ambiguities
 
-- "RSVP" was used to mean both a single wedding-wide response and a per-event response — resolved: RSVP is always per-event (**Event RSVP**); there is no wedding-wide RSVP.
-- "Code" was ambiguous between the early info-collection link and the printed RSVP credential — resolved: these are two distinct per-party values, the **Info Token** and the **RSVP Code**.
-- Side / Relation / Circle / Roles were initially treated as guest attributes — resolved: Side, Relation, and Circle are party-level; Roles are guest-level.
-- "Address" was assumed to be per-guest — resolved: the mailing address is party-level (one envelope per party); only email and phone are per-guest.
+- "RSVP" was used to mean both a single wedding-wide response and a per-event response. Resolved: RSVP is always per-event (**Event RSVP**); there is no wedding-wide RSVP.
+- "Code" was ambiguous between the early info-collection link and the printed RSVP credential. Resolved: these are two distinct per-party values, the **Info Token** and the **RSVP Code**.
+- Side / Relation / Circle / Roles were initially treated as guest attributes. Resolved: Side, Relation, and Circle are party-level; Roles are guest-level.
+- "Address" was assumed to be per-guest. Resolved: the mailing address is party-level (one envelope per party); only email and phone are per-guest.
