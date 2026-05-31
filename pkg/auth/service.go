@@ -1,7 +1,7 @@
 // Package auth provides JWT-based authentication for the admin and (later)
 // guest roles. Tokens carry a role claim; guest tokens additionally carry the
-// party they authenticate. The admin credential is a single username plus a
-// bcrypt password hash, both sourced from configuration.
+// party they authenticate. The admin credential is a single username and
+// password, both sourced from configuration.
 package auth
 
 import (
@@ -11,7 +11,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // Role values carried in the JWT role claim.
@@ -37,38 +36,45 @@ type JWTClaims struct {
 }
 
 // Service issues and validates JWTs and authenticates the admin credential.
+//
+// Admin and guest tokens have separate lifetimes: admin sessions are short
+// because admin access is sensitive and cannot be revoked individually, while
+// guest sessions are long so guests stay logged in across the RSVP window.
 type Service struct {
-	jwtSecret         []byte
-	sessionDuration   time.Duration
-	adminUsername     string
-	adminPasswordHash string
+	jwtSecret            []byte
+	adminSessionDuration time.Duration
+	guestSessionDuration time.Duration
+	adminUsername        string
+	adminPassword        string
 }
 
-// NewService builds a Service from the JWT secret, token lifetime, and the
-// single admin credential (username plus bcrypt password hash).
-func NewService(jwtSecret string, sessionDuration time.Duration, adminUsername, adminPasswordHash string) *Service {
+// NewService builds a Service from the JWT secret, the per-role token lifetimes,
+// and the single admin credential (username and password).
+func NewService(jwtSecret string, adminSessionDuration, guestSessionDuration time.Duration, adminUsername, adminPassword string) *Service {
 	return &Service{
-		jwtSecret:         []byte(jwtSecret),
-		sessionDuration:   sessionDuration,
-		adminUsername:     adminUsername,
-		adminPasswordHash: adminPasswordHash,
+		jwtSecret:            []byte(jwtSecret),
+		adminSessionDuration: adminSessionDuration,
+		guestSessionDuration: guestSessionDuration,
+		adminUsername:        adminUsername,
+		adminPassword:        adminPassword,
 	}
 }
 
 // GenerateAdminToken issues a signed JWT carrying the admin role.
 func (s *Service) GenerateAdminToken() (string, error) {
-	return s.generateToken(RoleAdmin, "")
+	return s.generateToken(RoleAdmin, "", s.adminSessionDuration)
 }
 
 // GenerateGuestToken issues a signed JWT carrying the guest role and the party
 // it authenticates. The guest login flow that calls this lands in a later
 // issue; the method exists now so token plumbing is exercised generically.
 func (s *Service) GenerateGuestToken(partyID string) (string, error) {
-	return s.generateToken(RoleGuest, partyID)
+	return s.generateToken(RoleGuest, partyID, s.guestSessionDuration)
 }
 
-// generateToken mints and signs a JWT for the given role and (optional) party.
-func (s *Service) generateToken(role, partyID string) (string, error) {
+// generateToken mints and signs a JWT for the given role and (optional) party,
+// expiring after the supplied duration.
+func (s *Service) generateToken(role, partyID string, duration time.Duration) (string, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
 		return "", err
@@ -80,7 +86,7 @@ func (s *Service) generateToken(role, partyID string) (string, error) {
 		PartyID: partyID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        id.String(),
-			ExpiresAt: jwt.NewNumericDate(now.Add(s.sessionDuration)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(duration)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
 		},
@@ -116,13 +122,13 @@ func (s *Service) ValidateToken(tokenString string) (*JWTClaims, error) {
 }
 
 // AuthenticateAdmin checks a username and password against the configured admin
-// credential. It returns ErrInvalidCredentials on any mismatch. The username
-// comparison is constant-time, and the password is verified with bcrypt, which
-// is itself constant-time for a given hash.
+// credential. It returns ErrInvalidCredentials on any mismatch. Both fields are
+// compared in constant time, and both comparisons always run, so callers cannot
+// probe which field was incorrect via timing.
 func (s *Service) AuthenticateAdmin(username, password string) error {
 	usernameMatch := subtle.ConstantTimeCompare([]byte(username), []byte(s.adminUsername)) == 1
-	passwordErr := bcrypt.CompareHashAndPassword([]byte(s.adminPasswordHash), []byte(password))
-	if !usernameMatch || passwordErr != nil {
+	passwordMatch := subtle.ConstantTimeCompare([]byte(password), []byte(s.adminPassword)) == 1
+	if !usernameMatch || !passwordMatch {
 		return ErrInvalidCredentials
 	}
 	return nil

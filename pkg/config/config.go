@@ -10,8 +10,6 @@ import (
 	"os"
 	"strconv"
 	"time"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 // Config holds all application configuration.
@@ -25,17 +23,24 @@ type Config struct {
 	// AdminUsername is the admin account username.
 	AdminUsername string
 
-	// AdminPasswordHash is the bcrypt hash of the admin account password.
-	// In production it is supplied via ADMIN_PASSWORD_HASH; in local dev an
-	// unset value falls back to a hash of the dev-default password so login
-	// works out of the box.
-	AdminPasswordHash string
+	// AdminPassword is the admin account password, sourced from ADMIN_PASSWORD.
+	// It is stored in plaintext in the environment, which we already treat as a
+	// secret store; in local dev an unset value falls back to a dev default so
+	// login works out of the box.
+	AdminPassword string
 
 	// JWTSecret signs authentication tokens. Must be overridden in production.
 	JWTSecret string
 
-	// SessionDuration is how long an issued JWT stays valid.
-	SessionDuration time.Duration
+	// AdminSessionDuration is how long an issued admin JWT stays valid. Admin
+	// access is sensitive (it can edit all guest data and send email), and these
+	// tokens cannot be revoked individually, so this is kept short.
+	AdminSessionDuration time.Duration
+
+	// GuestSessionDuration is how long an issued guest JWT stays valid. Guests
+	// authenticate once with their RSVP code and should stay logged in across
+	// visits without re-entering it, so this is long-lived.
+	GuestSessionDuration time.Duration
 }
 
 // Default values used for local development when an env var is unset.
@@ -45,53 +50,43 @@ const (
 	defaultServerPort    = 8400
 	defaultAdminUsername = "admin"
 	// defaultAdminPassword and defaultJWTSecret are development-only conveniences.
-	// CHANGE THESE IN PRODUCTION by setting ADMIN_PASSWORD_HASH and JWT_SECRET.
-	defaultAdminPassword   = "changeme"
-	defaultJWTSecret       = "dev-secret-change-me-in-production"
-	defaultSessionDuration = 24 * time.Hour
+	// CHANGE THESE IN PRODUCTION by setting ADMIN_PASSWORD and JWT_SECRET.
+	defaultAdminPassword = "changeme"
+	defaultJWTSecret     = "dev-secret-change-me-in-production"
+	// Admin sessions are short for safety; guest sessions are long so guests
+	// stay logged in across the whole RSVP window without re-entering their code.
+	defaultAdminSessionDuration = 7 * 24 * time.Hour
+	defaultGuestSessionDuration = 365 * 24 * time.Hour
 )
 
 // New builds a Config from the environment, applying defaults for any unset
 // values. It returns an error only when a provided value is malformed (e.g. a
-// non-numeric PORT) or when the dev-default admin password cannot be hashed.
+// non-numeric PORT or an unparseable session duration).
 func New() (*Config, error) {
 	port, err := envInt("PORT", defaultServerPort)
 	if err != nil {
 		return nil, err
 	}
 
-	sessionDuration, err := envDuration("SESSION_DURATION", defaultSessionDuration)
+	adminSessionDuration, err := envDuration("ADMIN_SESSION_DURATION", defaultAdminSessionDuration)
 	if err != nil {
 		return nil, err
 	}
 
-	passwordHash, err := adminPasswordHash()
+	guestSessionDuration, err := envDuration("GUEST_SESSION_DURATION", defaultGuestSessionDuration)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Config{
-		DatabaseURL:       envStr("DATABASE_URL", defaultDatabaseURL),
-		ServerPort:        port,
-		AdminUsername:     envStr("ADMIN_USERNAME", defaultAdminUsername),
-		AdminPasswordHash: passwordHash,
-		JWTSecret:         envStr("JWT_SECRET", defaultJWTSecret),
-		SessionDuration:   sessionDuration,
+		DatabaseURL:          envStr("DATABASE_URL", defaultDatabaseURL),
+		ServerPort:           port,
+		AdminUsername:        envStr("ADMIN_USERNAME", defaultAdminUsername),
+		AdminPassword:        envStr("ADMIN_PASSWORD", defaultAdminPassword),
+		JWTSecret:            envStr("JWT_SECRET", defaultJWTSecret),
+		AdminSessionDuration: adminSessionDuration,
+		GuestSessionDuration: guestSessionDuration,
 	}, nil
-}
-
-// adminPasswordHash returns the configured bcrypt hash from ADMIN_PASSWORD_HASH,
-// or, when unset, a freshly computed hash of the dev-default password so local
-// development works without any environment setup.
-func adminPasswordHash() (string, error) {
-	if h := os.Getenv("ADMIN_PASSWORD_HASH"); h != "" {
-		return h, nil
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(defaultAdminPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return "", fmt.Errorf("hashing dev-default admin password: %w", err)
-	}
-	return string(hash), nil
 }
 
 // envStr returns the environment variable value or a fallback when unset/empty.

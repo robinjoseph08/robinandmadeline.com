@@ -13,20 +13,18 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // newTestConfig builds a Config with a known admin credential for wiring tests.
 func newTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	hash, err := bcrypt.GenerateFromPassword([]byte("correct-horse"), bcrypt.MinCost)
-	require.NoError(t, err)
 	return &config.Config{
-		ServerPort:        0,
-		AdminUsername:     "admin",
-		AdminPasswordHash: string(hash),
-		JWTSecret:         "test-secret",
-		SessionDuration:   time.Hour,
+		ServerPort:           0,
+		AdminUsername:        "admin",
+		AdminPassword:        "correct-horse",
+		JWTSecret:            "test-secret",
+		AdminSessionDuration: time.Hour,
+		GuestSessionDuration: time.Hour,
 	}
 }
 

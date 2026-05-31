@@ -96,14 +96,14 @@ func TestRequireAdmin_BlocksGuestRole(t *testing.T) {
 
 func TestRequireAdmin_BlocksExpiredToken(t *testing.T) {
 	t.Parallel()
-	// A service with a negative duration mints an already-expired admin token.
-	svc := auth.NewService(testSecret, -time.Hour, testUsername, "")
+	// A service with a negative admin duration mints an already-expired token.
+	svc := auth.NewService(testSecret, -time.Hour, time.Hour, testUsername, "")
 	token, err := svc.GenerateAdminToken()
 	require.NoError(t, err)
 
 	// Validate against a service with the same secret but positive duration so
 	// only the embedded expiry (in the past) drives rejection.
-	verifier := auth.NewService(testSecret, time.Hour, testUsername, "")
+	verifier := auth.NewService(testSecret, time.Hour, time.Hour, testUsername, "")
 	called, status := runRequireAdmin(t, verifier, "Bearer "+token)
 	assert.False(t, called)
 	assert.Equal(t, http.StatusUnauthorized, status)

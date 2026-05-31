@@ -13,16 +13,13 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // newAuthEcho builds an Echo instance with the auth routes registered against a
 // service holding a known admin credential.
 func newAuthEcho(t *testing.T) (*echo.Echo, *auth.Service) {
 	t.Helper()
-	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
-	require.NoError(t, err)
-	svc := auth.NewService(testSecret, time.Hour, testUsername, string(hash))
+	svc := auth.NewService(testSecret, time.Hour, time.Hour, testUsername, testPassword)
 
 	e := echo.New()
 	api := e.Group("/api")

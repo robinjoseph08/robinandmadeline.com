@@ -25,7 +25,7 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORS())
 
-	authService := auth.NewService(cfg.JWTSecret, cfg.SessionDuration, cfg.AdminUsername, cfg.AdminPasswordHash)
+	authService := auth.NewService(cfg.JWTSecret, cfg.AdminSessionDuration, cfg.GuestSessionDuration, cfg.AdminUsername, cfg.AdminPassword)
 	authMiddleware := auth.NewMiddleware(authService)
 
 	api := e.Group("/api")

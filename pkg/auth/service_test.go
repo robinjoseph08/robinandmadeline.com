@@ -8,7 +8,6 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -20,9 +19,7 @@ const (
 // newTestService builds a Service with a known admin credential for tests.
 func newTestService(t *testing.T) *auth.Service {
 	t.Helper()
-	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
-	require.NoError(t, err)
-	return auth.NewService(testSecret, time.Hour, testUsername, string(hash))
+	return auth.NewService(testSecret, time.Hour, time.Hour, testUsername, testPassword)
 }
 
 func TestGenerateAdminToken(t *testing.T) {
@@ -56,12 +53,34 @@ func TestGenerateGuestToken(t *testing.T) {
 	assert.NotEmpty(t, claims.ID)
 }
 
+func TestTokenExpiry_DiffersByRole(t *testing.T) {
+	t.Parallel()
+	// Admin and guest tokens are minted with separate lifetimes; each must use
+	// its own duration so the split actually takes effect.
+	const (
+		adminDuration = time.Hour
+		guestDuration = 100 * time.Hour
+	)
+	svc := auth.NewService(testSecret, adminDuration, guestDuration, testUsername, testPassword)
+
+	adminToken, err := svc.GenerateAdminToken()
+	require.NoError(t, err)
+	guestToken, err := svc.GenerateGuestToken("0190b8e0-0000-7000-8000-000000000001")
+	require.NoError(t, err)
+
+	adminClaims, err := svc.ValidateToken(adminToken)
+	require.NoError(t, err)
+	guestClaims, err := svc.ValidateToken(guestToken)
+	require.NoError(t, err)
+
+	assert.True(t, guestClaims.ExpiresAt.After(adminClaims.ExpiresAt.Time),
+		"guest token should expire later than admin token given a longer guest duration")
+}
+
 func TestValidateToken_RejectsExpired(t *testing.T) {
 	t.Parallel()
-	// A service with a negative duration mints already-expired tokens.
-	hash, err := bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.MinCost)
-	require.NoError(t, err)
-	svc := auth.NewService(testSecret, -time.Hour, testUsername, string(hash))
+	// A service with a negative admin duration mints already-expired tokens.
+	svc := auth.NewService(testSecret, -time.Hour, time.Hour, testUsername, testPassword)
 
 	token, err := svc.GenerateAdminToken()
 	require.NoError(t, err)
@@ -85,7 +104,7 @@ func TestValidateToken_RejectsWrongSignature(t *testing.T) {
 	require.NoError(t, err)
 
 	// A service with a different secret must reject the token.
-	other := auth.NewService("other-secret", time.Hour, testUsername, "")
+	other := auth.NewService("other-secret", time.Hour, time.Hour, testUsername, "")
 	_, err = other.ValidateToken(token)
 	assert.Error(t, err)
 }
