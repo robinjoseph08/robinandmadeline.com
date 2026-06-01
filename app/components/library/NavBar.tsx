@@ -3,6 +3,7 @@ import { useState } from "react";
 import { NavLink } from "react-router-dom";
 
 import { NAV_LINKS } from "@/components/library/nav-links";
+import { useAuth } from "@/libraries/auth-context";
 import { cn } from "@/libraries/utils";
 
 function linkClasses({ isActive }: { isActive: boolean }) {
@@ -18,6 +19,7 @@ function linkClasses({ isActive }: { isActive: boolean }) {
  */
 export default function NavBar() {
   const [open, setOpen] = useState(false);
+  const { isAuthenticated } = useAuth();
 
   return (
     <header className="border-b border-ink/10 bg-cream">
@@ -38,6 +40,12 @@ export default function NavBar() {
               {link.label}
             </NavLink>
           ))}
+          {/* Shown only while an admin session is active. */}
+          {isAuthenticated ? (
+            <NavLink className={linkClasses} to="/admin">
+              Admin
+            </NavLink>
+          ) : null}
         </div>
 
         {/* Mobile hamburger toggle */}
@@ -69,6 +77,16 @@ export default function NavBar() {
               {link.label}
             </NavLink>
           ))}
+          {/* Shown only while an admin session is active. */}
+          {isAuthenticated ? (
+            <NavLink
+              className={linkClasses}
+              onClick={() => setOpen(false)}
+              to="/admin"
+            >
+              Admin
+            </NavLink>
+          ) : null}
         </div>
       ) : null}
     </header>

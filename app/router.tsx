@@ -1,6 +1,14 @@
 import { createBrowserRouter } from "react-router-dom";
 
-import Admin from "@/components/pages/Admin";
+import AdminDashboard from "@/components/pages/admin/AdminDashboard";
+import AdminEmails from "@/components/pages/admin/AdminEmails";
+import AdminEvents from "@/components/pages/admin/AdminEvents";
+import AdminGuests from "@/components/pages/admin/AdminGuests";
+import AdminLayout from "@/components/pages/admin/AdminLayout";
+import AdminLogin from "@/components/pages/admin/AdminLogin";
+import AdminParties from "@/components/pages/admin/AdminParties";
+import AdminPhotoGroups from "@/components/pages/admin/AdminPhotoGroups";
+import RequireAdmin from "@/components/pages/admin/RequireAdmin";
 import Crossword from "@/components/pages/Crossword";
 import FAQ from "@/components/pages/FAQ";
 import Games from "@/components/pages/Games";
@@ -30,7 +38,27 @@ export const router = createBrowserRouter([
       { path: "rsvp/form", Component: RSVPForm },
       { path: "rsvp/confirmation", Component: RSVPConfirmation },
       { path: "i/:token", Component: InfoCollection },
-      { path: "admin", Component: Admin },
+    ],
+  },
+  // The admin login sits outside the guard so unauthenticated users can reach it.
+  { path: "/admin/login", Component: AdminLogin },
+  // Everything else under /admin is gated by RequireAdmin and wrapped in the
+  // admin shell, redirecting to /admin/login when there is no token.
+  {
+    path: "/admin",
+    Component: RequireAdmin,
+    children: [
+      {
+        Component: AdminLayout,
+        children: [
+          { index: true, Component: AdminDashboard },
+          { path: "parties", Component: AdminParties },
+          { path: "guests", Component: AdminGuests },
+          { path: "events", Component: AdminEvents },
+          { path: "photo-groups", Component: AdminPhotoGroups },
+          { path: "emails", Component: AdminEmails },
+        ],
+      },
     ],
   },
 ]);

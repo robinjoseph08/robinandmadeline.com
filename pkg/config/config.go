@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 // Config holds all application configuration.
@@ -22,11 +23,24 @@ type Config struct {
 	// AdminUsername is the admin account username.
 	AdminUsername string
 
-	// AdminPassword is the admin account password.
+	// AdminPassword is the admin account password, sourced from ADMIN_PASSWORD.
+	// It is stored in plaintext in the environment, which we already treat as a
+	// secret store; in local dev an unset value falls back to a dev default so
+	// login works out of the box.
 	AdminPassword string
 
 	// JWTSecret signs authentication tokens. Must be overridden in production.
 	JWTSecret string
+
+	// AdminSessionDuration is how long an issued admin JWT stays valid. Admin
+	// access is sensitive (it can edit all guest data and send email), and these
+	// tokens cannot be revoked individually, so this is kept short.
+	AdminSessionDuration time.Duration
+
+	// GuestSessionDuration is how long an issued guest JWT stays valid. Guests
+	// authenticate once with their RSVP code and should stay logged in across
+	// visits without re-entering it, so this is long-lived.
+	GuestSessionDuration time.Duration
 }
 
 // Default values used for local development when an env var is unset.
@@ -39,23 +53,39 @@ const (
 	// CHANGE THESE IN PRODUCTION by setting ADMIN_PASSWORD and JWT_SECRET.
 	defaultAdminPassword = "changeme"
 	defaultJWTSecret     = "dev-secret-change-me-in-production"
+	// Admin sessions are short for safety; guest sessions are long so guests
+	// stay logged in across the whole RSVP window without re-entering their code.
+	defaultAdminSessionDuration = 7 * 24 * time.Hour
+	defaultGuestSessionDuration = 365 * 24 * time.Hour
 )
 
 // New builds a Config from the environment, applying defaults for any unset
 // values. It returns an error only when a provided value is malformed (e.g. a
-// non-numeric PORT).
+// non-numeric PORT or an unparseable session duration).
 func New() (*Config, error) {
 	port, err := envInt("PORT", defaultServerPort)
 	if err != nil {
 		return nil, err
 	}
 
+	adminSessionDuration, err := envDuration("ADMIN_SESSION_DURATION", defaultAdminSessionDuration)
+	if err != nil {
+		return nil, err
+	}
+
+	guestSessionDuration, err := envDuration("GUEST_SESSION_DURATION", defaultGuestSessionDuration)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
-		DatabaseURL:   envStr("DATABASE_URL", defaultDatabaseURL),
-		ServerPort:    port,
-		AdminUsername: envStr("ADMIN_USERNAME", defaultAdminUsername),
-		AdminPassword: envStr("ADMIN_PASSWORD", defaultAdminPassword),
-		JWTSecret:     envStr("JWT_SECRET", defaultJWTSecret),
+		DatabaseURL:          envStr("DATABASE_URL", defaultDatabaseURL),
+		ServerPort:           port,
+		AdminUsername:        envStr("ADMIN_USERNAME", defaultAdminUsername),
+		AdminPassword:        envStr("ADMIN_PASSWORD", defaultAdminPassword),
+		JWTSecret:            envStr("JWT_SECRET", defaultJWTSecret),
+		AdminSessionDuration: adminSessionDuration,
+		GuestSessionDuration: guestSessionDuration,
 	}, nil
 }
 
@@ -79,4 +109,19 @@ func envInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("invalid %s: %q is not a valid integer: %w", key, v, err)
 	}
 	return n, nil
+}
+
+// envDuration returns the environment variable parsed as a Go duration (e.g.
+// "24h", "30m") or a fallback when unset/empty. A malformed value is a
+// configuration error.
+func envDuration(key string, fallback time.Duration) (time.Duration, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %q is not a valid duration: %w", key, v, err)
+	}
+	return d, nil
 }

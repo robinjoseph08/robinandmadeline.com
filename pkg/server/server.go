@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/uptrace/bun"
 )
@@ -24,8 +25,13 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORS())
 
+	authService := auth.NewService(cfg.JWTSecret, cfg.AdminSessionDuration, cfg.GuestSessionDuration, cfg.AdminUsername, cfg.AdminPassword)
+	authMiddleware := auth.NewMiddleware(authService)
+
 	api := e.Group("/api")
 	registerHealth(api, db)
+	auth.RegisterRoutes(api, authService)
+	registerAdmin(api, authMiddleware)
 
 	return &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.ServerPort),
@@ -38,6 +44,19 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 type healthResponse struct {
 	Status   string `json:"status"`
 	Database string `json:"database"`
+}
+
+// registerAdmin mounts the admin API surface behind the admin auth middleware.
+// For now it exposes only GET /api/admin/me, a minimal endpoint that confirms a
+// stored token is still a valid admin token. It exists so the middleware is
+// actually mounted and exercised; real admin endpoints land in later issues and
+// belong under this same protected group.
+func registerAdmin(g *echo.Group, mw *auth.Middleware) {
+	admin := g.Group("/admin")
+	admin.Use(mw.RequireAdmin)
+	admin.GET("/me", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{"role": auth.RoleAdmin})
+	})
 }
 
 // registerHealth mounts the liveness endpoint. It reports database
