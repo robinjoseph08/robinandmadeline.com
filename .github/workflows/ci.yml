@@ -25,6 +25,15 @@ jobs:
             ~/go/pkg/mod
           key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: go-${{ runner.os }}-
+      # golangci-lint's analysis cache. The `mise lint` task pins
+      # GOLANGCI_LINT_CACHE to tmp/golangci-lint-cache, which the go-build
+      # cache above does not cover. Its own key avoids colliding with the
+      # shared `go-` key (same-key saves after the first are skipped).
+      - uses: actions/cache@v5
+        with:
+          path: tmp/golangci-lint-cache
+          key: golangci-${{ runner.os }}-${{ hashFiles('.golangci.yml', 'go.sum') }}
+          restore-keys: golangci-${{ runner.os }}-
       - run: mise lint
 
   go-test:
