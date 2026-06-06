@@ -63,6 +63,17 @@ _Avoid_: Password, info token
 **Invitation Type**:
 Whether a party receives a physical mailed invitation or a digital-only one.
 
+**Info Collection**:
+The pre-invitation phase in which a party confirms its contact details and, for physical parties, its mailing address.
+_Avoid_: Onboarding, signup
+
+**Info Collection Requested**:
+A party whose info link has been sent, delegating info gathering to the guest.
+_Avoid_: Invited (reserved for events)
+
+**Info Collection Status**:
+Whether a party's info collection is complete or incomplete.
+
 **Photo Group**:
 A named set of guests needed together for a specific photo at an event, with a shooting order.
 _Avoid_: Photo shoot, album (the photo gallery is unrelated)
@@ -76,6 +87,8 @@ _Avoid_: Photo shoot, album (the photo gallery is unrelated)
 - A **Guest** has one **Event RSVP** per **Event** they are invited to.
 - A **Photo Group** belongs to one **Event** and contains one or more **Guests**.
 - A **Guest** carries individual email, phone, dietary restrictions, and RSVP responses; the mailing **address** lives on the **Party**.
+- A **Party** becomes **Info Collection Requested** once its info link is sent; requesting resets its **Info Collection Status** to incomplete.
+- A **Party**'s **Info Collection Status** can be complete only when all required fields are present; until collection is requested it is derived from whether those fields are present.
 - Overall attendance is derived: a **Guest** is "coming" if they are attending at least one **Event**.
 
 ## Example dialogue
@@ -91,3 +104,4 @@ _Avoid_: Photo shoot, album (the photo gallery is unrelated)
 - "Code" was ambiguous between the early info-collection link and the printed RSVP credential. Resolved: these are two distinct per-party values, the **Info Token** and the **RSVP Code**.
 - Side / Relation / Circle / Roles were initially treated as guest attributes. Resolved: Side, Relation, and Circle are party-level; Roles are guest-level.
 - "Address" was assumed to be per-guest. Resolved: the mailing address is party-level (one envelope per party); only email and phone are per-guest.
+- "Complete" was overloaded between "has all required fields" (a data condition) and **Info Collection Status** = complete (a tracked state). Resolved: all-fields-present is necessary for complete, but once a party is **Info Collection Requested** the guest must submit the form (or the couple must mark it complete): data presence alone no longer completes it.
