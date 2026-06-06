@@ -10,8 +10,16 @@
 //
 // The default DSN matches the docker-compose Postgres credentials but points at
 // a "_test" database; override the whole DSN with TEST_DATABASE_URL (used in
-// CI). Because truncation is not safe to run concurrently against shared tables,
-// tests using this harness must not call t.Parallel().
+// CI).
+//
+// Concurrency: every test in one package binary that touches the shared tables
+// must run serially (no t.Parallel), since truncation is not safe to run
+// concurrently against shared tables. Across package binaries, which `go test`
+// runs in parallel, a test must not make order-sensitive assertions against the
+// shared database unless it either only reads / runs idempotent statements or
+// uses its own dedicated database (as pkg/migrations does for its destructive
+// up/down round-trip). The migrator itself is idempotent, so a concurrent New
+// in another package cannot disturb an in-flight test.
 package databasetest
 
 import (
