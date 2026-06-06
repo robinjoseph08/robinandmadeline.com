@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/uptrace/bun"
 )
 
@@ -31,7 +32,7 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	api := e.Group("/api")
 	registerHealth(api, db)
 	auth.RegisterRoutes(api, authService)
-	registerAdmin(api, authMiddleware)
+	registerAdmin(api, authMiddleware, db)
 
 	return &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.ServerPort),
@@ -47,16 +48,23 @@ type healthResponse struct {
 }
 
 // registerAdmin mounts the admin API surface behind the admin auth middleware.
-// For now it exposes only GET /api/admin/me, a minimal endpoint that confirms a
-// stored token is still a valid admin token. It exists so the middleware is
-// actually mounted and exercised; real admin endpoints land in later issues and
-// belong under this same protected group.
-func registerAdmin(g *echo.Group, mw *auth.Middleware) {
+// Every route on the returned group requires a valid admin token. GET
+// /api/admin/me confirms a stored token is still valid; the parties/guests
+// endpoints register their own routes on this same protected group via
+// parties.RegisterRoutes.
+//
+// The db may be nil (e.g. in wiring tests that only exercise auth): the
+// parties service is still constructed, but its handlers are only reachable
+// with a valid token and will error at query time if the DB is unavailable,
+// which is the same failure mode as any other DB-backed endpoint.
+func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB) {
 	admin := g.Group("/admin")
 	admin.Use(mw.RequireAdmin)
 	admin.GET("/me", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"role": auth.RoleAdmin})
 	})
+
+	parties.RegisterRoutes(admin, parties.NewService(db))
 }
 
 // registerHealth mounts the liveness endpoint. It reports database
