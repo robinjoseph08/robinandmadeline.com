@@ -15,6 +15,7 @@ import (
 
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/migrations"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/server"
 )
 
@@ -46,6 +47,22 @@ func main() {
 		log.Info("database connected")
 	}
 	pingCancel()
+
+	// Bring the schema up to date before serving. Unlike the ping, a migration
+	// failure is fatal: serving against a stale or half-migrated schema would
+	// corrupt data or surface confusing errors, so we fail fast instead.
+	migrateCtx, migrateCancel := context.WithTimeout(ctx, 60*time.Second)
+	group, err := migrations.BringUpToDate(migrateCtx, db)
+	migrateCancel()
+	if err != nil {
+		log.Error("migrations error", "error", err)
+		os.Exit(1)
+	}
+	if group.ID == 0 {
+		log.Info("no new migrations to run")
+	} else {
+		log.Info("migrated to new group", "group_id", group.ID, "migrations", group.Migrations.String())
+	}
 
 	srv := server.New(cfg, db)
 

@@ -33,6 +33,20 @@ run = "until nc -z localhost 8400 2>/dev/null; do sleep 0.5; done && pnpm start"
 description = "Start API directly (no hot reload)"
 run = "go run ./cmd/api"
 
+# === Database ===
+
+[tasks."db:migrate"]
+description = "Apply pending database migrations"
+run = "go run ./cmd/migrations migrate"
+
+[tasks."db:rollback"]
+description = "Roll back the last applied migration group"
+run = "go run ./cmd/migrations rollback"
+
+[tasks."db:status"]
+description = "Show applied and pending database migrations"
+run = "go run ./cmd/migrations status"
+
 # === Linting ===
 
 [tasks.lint]
