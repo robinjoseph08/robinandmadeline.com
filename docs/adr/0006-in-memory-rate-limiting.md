@@ -1,8 +1,8 @@
 # In-memory rate limiting despite scale-to-zero
 
-Both login endpoints (`/api/auth/guest/login` and `/api/auth/admin/login`) are protected by a per-IP, short-window rate limiter held in process memory (Echo's `RateLimiterMemoryStore`), even though the app scales to zero and ADR 0004 deliberately pushes durable state into the database.
+Both login endpoints (`/api/auth/guest/login` and `/api/auth/admin/login`) are protected by a per-IP, short-window rate limiter held in process memory (Echo's `RateLimiterMemoryStore`). This runs against the grain of scale-to-zero (ADR 0001) and of the precedent set by the database-backed email queue (ADR 0004), which keeps shutdown-surviving state in Postgres.
 
-Short-window rate-limit state is ephemeral by nature, so the scale-to-zero tension does not actually bite: during an active brute-force the container stays warm under the attacker's continuous traffic, so the counters persist for the life of the attack; when the container scales to zero there is no traffic and therefore no attack, so losing the counters is harmless; and a cold start resets counters no more generously than the per-minute window already does. Durable storage would only matter for a long horizon (e.g. a daily lockout), which we deliberately avoid because it would punish guests who fumble their memorable RSVP code.
+Short-window rate-limit state is ephemeral by nature, so the scale-to-zero tension does not actually bite: during an active brute-force the container stays warm under the attacker's continuous traffic, so the counters persist for the life of the attack; when the container scales to zero there is no traffic and therefore no attack, so losing the counters is harmless; and a cold start resets counters no more generously than the short window already does. Durable storage would only matter for a long horizon (e.g. a daily lockout), which we deliberately avoid because it would punish guests who fumble their memorable RSVP code.
 
 ## Consequences
 
