@@ -35,8 +35,9 @@ func main() {
 	}
 }
 
-// run dispatches a subcommand. It is split out from main so the dispatch is
-// covered by a unit test (main itself calls os.Exit, which a test cannot).
+// run dispatches a subcommand. It is split out from main so the dispatch logic
+// returns an error rather than calling os.Exit, keeping main a thin shell that
+// only translates that error into an exit code.
 func run(ctx context.Context, cmd string, args []string) error {
 	cfg, err := config.New()
 	if err != nil {
