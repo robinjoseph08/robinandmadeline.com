@@ -127,6 +127,18 @@ func TestCreateGuestHandler_UnderMissingPartyIs404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+func TestListHandlers_EmptyReturnsJSONArrayNotNull(t *testing.T) {
+	e := newAPI(t)
+
+	// With no rows, both list endpoints must serialize as [] (a JSON array),
+	// never null, so clients can treat the two list endpoints uniformly.
+	for _, target := range []string{"/api/admin/parties", "/api/admin/guests"} {
+		rec := do(t, e, http.MethodGet, target, nil)
+		require.Equal(t, http.StatusOK, rec.Code, target)
+		assert.JSONEq(t, "[]", rec.Body.String(), target)
+	}
+}
+
 func TestGuestLifecycleHandlers(t *testing.T) {
 	e := newAPI(t)
 

@@ -41,6 +41,13 @@ func (h *handler) listGuests(c echo.Context) error {
 	if err != nil {
 		return httpError(err)
 	}
+	// Coerce a nil slice (no matching guests) to an empty one so the response is
+	// always a JSON array [], never null. This matches the parties list, whose
+	// response wrapper already produces [] when empty, so clients can treat both
+	// list endpoints uniformly.
+	if guests == nil {
+		guests = []*Guest{}
+	}
 	return c.JSON(http.StatusOK, guests)
 }
 
