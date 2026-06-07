@@ -68,7 +68,13 @@ describe("AdminLogin", () => {
   it("shows an error message and does not store a token on bad credentials", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
-        JSON.stringify({ message: "invalid username or password" }),
+        JSON.stringify({
+          error: {
+            code: "unauthorized",
+            message: "invalid username or password",
+            status_code: 401,
+          },
+        }),
         {
           status: 401,
           headers: { "Content-Type": "application/json" },
