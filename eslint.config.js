@@ -9,7 +9,13 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["build/*", "app/components/ui", "tmp", "coverage"],
+    ignores: [
+      "build/*",
+      "app/components/ui",
+      "app/types/generated",
+      "tmp",
+      "coverage",
+    ],
   },
   {
     files: ["app/**/*.{ts,tsx}"],

@@ -4,6 +4,7 @@ node = "24.16.0"
 "npm:pnpm" = "11.4.0"
 "github:air-verse/air" = "1.65.3"
 "github:golangci/golangci-lint" = "2.12.2"
+"github:gzuidhof/tygo" = "0.2.20"
 
 # === Build ===
 
@@ -52,6 +53,14 @@ run = "go run ./cmd/migrations rollback"
 description = "Show applied and pending database migrations"
 run = "go run ./cmd/migrations status"
 
+# === Type Generation ===
+
+[tasks.tygo]
+description = "Generate TypeScript types from Go structs"
+run = "tygo generate"
+sources = ["tygo.yaml", "pkg/models/*.go", "pkg/parties/types.go", "pkg/errcodes/errors.go"]
+outputs = ["app/types/generated/**/*.ts"]
+
 # === Linting ===
 
 [tasks.lint]
@@ -63,7 +72,8 @@ run = "golangci-lint run"
 
 [tasks."lint:js"]
 description = "Run all JS/TS linting"
-depends = ["lint:eslint", "lint:prettier", "lint:types"]
+# tygo first so lint:types has the generated types on disk (they are gitignored).
+depends = ["tygo", "lint:eslint", "lint:prettier", "lint:types"]
 
 [tasks."lint:eslint"]
 description = "Run ESLint"
@@ -75,6 +85,7 @@ run = "pnpm lint:prettier"
 
 [tasks."lint:types"]
 description = "Run TypeScript type checking"
+depends = ["tygo"]
 run = "pnpm lint:types"
 
 # === Testing ===
@@ -82,7 +93,7 @@ run = "pnpm lint:types"
 [tasks.test]
 description = "Run Go tests"
 env = { CI = "true" }
-run = "go test ./pkg/... ./cmd/..."
+run = "go test ./pkg/... ./cmd/... ./internal/..."
 
 [tasks."test:unit"]
 description = "Run JS unit tests"
@@ -96,6 +107,8 @@ depends = ["lint", "lint:js", "test", "test:unit"]
 
 [tasks."check:quiet"]
 description = "Run all checks, suppress output on success; dump output and exit non-zero on failure"
+# tygo up front so the parallel fan-out below has the generated types on disk.
+depends = ["tygo"]
 run = '''
 echo "Running checks..."
 tmpdir=$(mktemp -d)
