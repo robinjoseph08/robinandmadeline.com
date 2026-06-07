@@ -54,8 +54,11 @@ export const useParty = (
   > = {},
 ) => {
   return useQuery<PartyResponse, ApiError>({
-    enabled: options.enabled !== undefined ? options.enabled : Boolean(partyId),
     ...options,
+    // Default to "only fetch once we have an id", but let a caller override.
+    // Spread first so an explicit options.enabled wins and an omitted one falls
+    // back to this rather than clobbering it with undefined.
+    enabled: options.enabled ?? Boolean(partyId),
     queryKey: [QueryKey.RetrieveParty, partyId],
     queryFn: () => adminRequest(`/admin/parties/${partyId}`),
   });
