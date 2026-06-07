@@ -19,14 +19,19 @@ run = "go build -o ./build/api/api-air ./cmd/api"
 
 [tasks.start]
 description = "Start development environment (API + web)"
-depends = ["start:air", "start:web"]
+# db:migrate runs first (the servers depend on it) so local dev applies pending
+# migrations without baking auto-migration into the server process. Production
+# migrates via the Fly release_command instead.
+depends = ["db:migrate", "start:air", "start:web"]
 
 [tasks."start:air"]
 description = "Start API with hot reload via Air"
+depends = ["db:migrate"]
 run = "air"
 
 [tasks."start:web"]
 description = "Start Vite dev server (waits for API)"
+depends = ["db:migrate"]
 run = "until nc -z localhost 8400 2>/dev/null; do sleep 0.5; done && pnpm start"
 
 [tasks."start:api"]
