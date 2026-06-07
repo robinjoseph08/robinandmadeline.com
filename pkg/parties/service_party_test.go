@@ -3,6 +3,7 @@ package parties_test
 import (
 	"testing"
 
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
@@ -28,13 +29,13 @@ func TestCreateParty_DuplicateRSVPCodeConflicts(t *testing.T) {
 	svc, _ := newService(t)
 
 	in := digitalPartyInput()
-	in.RSVPCode = ptr("KALEL")
+	in.RSVPCode = pointerutil.String("KALEL")
 	_, err := svc.CreateParty(ctx(), in)
 	require.NoError(t, err)
 
 	// A second party with the same RSVP code must conflict.
 	in2 := digitalPartyInput()
-	in2.RSVPCode = ptr("KALEL")
+	in2.RSVPCode = pointerutil.String("KALEL")
 	_, err = svc.CreateParty(ctx(), in2)
 	assertErrCode(t, err, errcodes.CodeConflict)
 }
@@ -77,7 +78,7 @@ func TestUpdateParty_DoesNotTouchCollectionFlags(t *testing.T) {
 	// Mark a party complete (sets requested+confirmed) then edit a field. The
 	// edit must not reset the collection flags (ADR 0005).
 	p := createPartyT(t, svc, physicalPartyInput())
-	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat Jones", Email: ptr("pat@example.com"), IsPrimary: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat Jones", Email: pointerutil.String("pat@example.com"), IsPrimary: true})
 	line1, city, state, postal, country := fullAddress()
 	updatePartyAddress(t, svc, p.ID, line1, city, state, postal, country)
 
@@ -97,7 +98,7 @@ func TestUpdateParty_DuplicateRSVPCodeConflicts(t *testing.T) {
 	svc, _ := newService(t)
 
 	a := digitalPartyInput()
-	a.RSVPCode = ptr("PEPPER")
+	a.RSVPCode = pointerutil.String("PEPPER")
 	createPartyT(t, svc, a)
 
 	b := createPartyT(t, svc, digitalPartyInput())
@@ -109,7 +110,7 @@ func TestUpdateParty_DuplicateRSVPCodeConflicts(t *testing.T) {
 		Relation:       b.Relation,
 		Circle:         b.Circle,
 		InvitationType: b.InvitationType,
-		RSVPCode:       ptr("PEPPER"),
+		RSVPCode:       pointerutil.String("PEPPER"),
 	})
 	assertErrCode(t, err, errcodes.CodeConflict)
 }

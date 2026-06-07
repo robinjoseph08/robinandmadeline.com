@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
@@ -111,7 +112,7 @@ func TestDeletePrimaryGuest_LeavesPartyIncomplete(t *testing.T) {
 	// A complete digital party loses its only primary: status falls back to
 	// incomplete (no primary email) via derivation, and no primary remains.
 	p := createPartyT(t, svc, digitalPartyInput())
-	primary := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Primary", Email: ptr("p@example.com"), IsPrimary: true})
+	primary := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Primary", Email: pointerutil.String("p@example.com"), IsPrimary: true})
 
 	require.NoError(t, svc.DeleteGuest(ctx(), primary.ID))
 	assert.Equal(t, 0, countPrimaries(t, db, p.ID))

@@ -3,6 +3,7 @@ package parties_test
 import (
 	"testing"
 
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
@@ -15,7 +16,7 @@ import (
 func completePhysicalParty(t *testing.T, svc *parties.Service) *models.Party {
 	t.Helper()
 	p := createPartyT(t, svc, physicalPartyInput())
-	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat Jones", Email: ptr("pat@example.com"), IsPrimary: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat Jones", Email: pointerutil.String("pat@example.com"), IsPrimary: true})
 	line1, city, state, postal, country := fullAddress()
 	return updatePartyAddress(t, svc, p.ID, line1, city, state, postal, country)
 }
@@ -25,7 +26,7 @@ func TestMarkComplete_Rejected422WhenRequiredFieldsMissing(t *testing.T) {
 
 	// Physical party with a primary email but NO address: not markable.
 	p := createPartyT(t, svc, physicalPartyInput())
-	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat Jones", Email: ptr("pat@example.com"), IsPrimary: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat Jones", Email: pointerutil.String("pat@example.com"), IsPrimary: true})
 
 	_, err := svc.MarkComplete(ctx(), p.ID)
 	assertErrCode(t, err, errcodes.CodeValidationError)
@@ -91,7 +92,7 @@ func TestStatus_DerivedBeforeRequested(t *testing.T) {
 	// A never-requested digital party with a primary email reads complete by
 	// derivation alone, without any mark action.
 	p := createPartyT(t, svc, digitalPartyInput())
-	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Has Email", Email: ptr("has@example.com"), IsPrimary: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Has Email", Email: pointerutil.String("has@example.com"), IsPrimary: true})
 
 	reloaded, err := svc.GetParty(ctx(), p.ID)
 	require.NoError(t, err)
@@ -104,7 +105,7 @@ func TestSubmitInfoForm_GatedAndConfirms(t *testing.T) {
 
 	// Incomplete party: submission is rejected on the same gate as mark-complete.
 	p := createPartyT(t, svc, physicalPartyInput())
-	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat Jones", Email: ptr("pat@example.com"), IsPrimary: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat Jones", Email: pointerutil.String("pat@example.com"), IsPrimary: true})
 	_, err := svc.SubmitInfoForm(ctx(), p.ID)
 	assertErrCode(t, err, errcodes.CodeValidationError)
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/internal/databasetest"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
@@ -25,9 +26,6 @@ func newService(t *testing.T) (*parties.Service, *bun.DB) {
 
 // ctx returns a background context for service calls in tests.
 func ctx() context.Context { return context.Background() }
-
-// ptr is a tiny helper for taking the address of a literal (e.g. ptr("x")).
-func ptr[T any](v T) *T { return &v }
 
 // assertErrCode asserts that err resolves to an *errcodes.Error with the given
 // code, the replacement for the old sentinel ErrorIs checks.
@@ -74,7 +72,7 @@ func physicalPartyInput() parties.CreatePartyPayload {
 // fullAddress returns the five required address fields populated, for building a
 // complete physical party.
 func fullAddress() (line1, city, state, postal, country *string) {
-	return ptr("123 Main St"), ptr("Springfield"), ptr("IL"), ptr("62704"), ptr("USA")
+	return pointerutil.String("123 Main St"), pointerutil.String("Springfield"), pointerutil.String("IL"), pointerutil.String("62704"), pointerutil.String("USA")
 }
 
 // addGuestT adds a guest to a party via the service and fails on error.

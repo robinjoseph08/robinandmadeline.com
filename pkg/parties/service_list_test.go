@@ -3,6 +3,7 @@ package parties_test
 import (
 	"testing"
 
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/stretchr/testify/assert"
@@ -40,28 +41,28 @@ func TestListParties_FiltersBySideRelationCircleInvitation(t *testing.T) {
 	})
 
 	t.Run("side", func(t *testing.T) {
-		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{Side: ptr(models.SideRobin)})
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{Side: pointerutil.String(models.SideRobin)})
 		require.NoError(t, err)
 		ids := partyIDs(got)
 		assert.True(t, ids[a.ID])
 		assert.False(t, ids[b.ID])
 	})
 	t.Run("relation", func(t *testing.T) {
-		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{Relation: ptr(models.RelationFamily)})
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{Relation: pointerutil.String(models.RelationFamily)})
 		require.NoError(t, err)
 		ids := partyIDs(got)
 		assert.True(t, ids[b.ID])
 		assert.False(t, ids[a.ID])
 	})
 	t.Run("circle containment", func(t *testing.T) {
-		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{Circle: ptr("Work")})
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{Circle: pointerutil.String("Work")})
 		require.NoError(t, err)
 		ids := partyIDs(got)
 		assert.True(t, ids[a.ID], "circle filter should match an element of the array")
 		assert.False(t, ids[b.ID])
 	})
 	t.Run("invitation_type", func(t *testing.T) {
-		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{InvitationType: ptr(models.InvitationPhysical)})
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{InvitationType: pointerutil.String(models.InvitationPhysical)})
 		require.NoError(t, err)
 		ids := partyIDs(got)
 		assert.True(t, ids[b.ID])
@@ -77,7 +78,7 @@ func TestListParties_FilterByRequested(t *testing.T) {
 	require.NoError(t, err)
 	notRequested := createPartyT(t, svc, digitalPartyInput())
 
-	got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{InfoCollectionRequested: ptr(true)})
+	got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{InfoCollectionRequested: pointerutil.Bool(true)})
 	require.NoError(t, err)
 	ids := partyIDs(got)
 	assert.True(t, ids[requested.ID])
@@ -89,21 +90,21 @@ func TestListParties_FilterByStatus_ComputedInGo(t *testing.T) {
 
 	// complete: digital party with a primary email (derived complete).
 	complete := createPartyT(t, svc, digitalPartyInput())
-	addGuestT(t, svc, complete.ID, parties.CreateGuestPayload{FullName: "C", Email: ptr("c@example.com"), IsPrimary: true})
+	addGuestT(t, svc, complete.ID, parties.CreateGuestPayload{FullName: "C", Email: pointerutil.String("c@example.com"), IsPrimary: true})
 
 	// incomplete: digital party whose primary has no email.
 	incomplete := createPartyT(t, svc, digitalPartyInput())
 	addGuestT(t, svc, incomplete.ID, parties.CreateGuestPayload{FullName: "I", IsPrimary: true})
 
 	t.Run("complete", func(t *testing.T) {
-		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{InfoCollectionStatus: ptr(models.StatusComplete)})
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{InfoCollectionStatus: pointerutil.String(models.StatusComplete)})
 		require.NoError(t, err)
 		ids := partyIDs(got)
 		assert.True(t, ids[complete.ID])
 		assert.False(t, ids[incomplete.ID])
 	})
 	t.Run("incomplete", func(t *testing.T) {
-		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{InfoCollectionStatus: ptr(models.StatusIncomplete)})
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{InfoCollectionStatus: pointerutil.String(models.StatusIncomplete)})
 		require.NoError(t, err)
 		ids := partyIDs(got)
 		assert.True(t, ids[incomplete.ID])
@@ -147,49 +148,49 @@ func TestListGuests_FlatFilters(t *testing.T) {
 	})
 
 	t.Run("side (party-level)", func(t *testing.T) {
-		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Side: ptr(models.SideRobin)})
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Side: pointerutil.String(models.SideRobin)})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[ga.ID])
 		assert.False(t, ids[gb.ID])
 	})
 	t.Run("relation (party-level)", func(t *testing.T) {
-		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Relation: ptr(models.RelationFamily)})
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Relation: pointerutil.String(models.RelationFamily)})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[gb.ID])
 		assert.False(t, ids[ga.ID])
 	})
 	t.Run("circle (party-level)", func(t *testing.T) {
-		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Circle: ptr("College")})
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Circle: pointerutil.String("College")})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[ga.ID])
 		assert.False(t, ids[gb.ID])
 	})
 	t.Run("roles containment", func(t *testing.T) {
-		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Roles: ptr("Bridal Party")})
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Roles: pointerutil.String("Bridal Party")})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[ga.ID])
 		assert.False(t, ids[gb.ID])
 	})
 	t.Run("is_drinking", func(t *testing.T) {
-		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{IsDrinking: ptr(true)})
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{IsDrinking: pointerutil.Bool(true)})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[ga.ID])
 		assert.False(t, ids[gb.ID])
 	})
 	t.Run("is_child", func(t *testing.T) {
-		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{IsChild: ptr(true)})
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{IsChild: pointerutil.Bool(true)})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[gb.ID])
 		assert.False(t, ids[ga.ID])
 	})
 	t.Run("is_placeholder", func(t *testing.T) {
-		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{IsPlaceholder: ptr(true)})
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{IsPlaceholder: pointerutil.Bool(true)})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[gb.ID])
@@ -197,7 +198,7 @@ func TestListGuests_FlatFilters(t *testing.T) {
 	})
 	t.Run("combined party + guest predicates", func(t *testing.T) {
 		// madeline side AND is_child should match only the child in B.
-		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Side: ptr(models.SideMadeline), IsChild: ptr(true)})
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Side: pointerutil.String(models.SideMadeline), IsChild: pointerutil.Bool(true)})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[gb.ID])

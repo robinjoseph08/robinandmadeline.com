@@ -3,6 +3,7 @@ package models_test
 import (
 	"testing"
 
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/stretchr/testify/assert"
 )
@@ -18,15 +19,12 @@ func withPrimaryEmail(email *string) []*models.Guest {
 
 // fullAddress sets the five required address fields on a party.
 func fullAddress(p *models.Party) {
-	v := "x"
-	p.AddressLine1 = &v
-	p.City = &v
-	p.StateOrProvince = &v
-	p.PostalCode = &v
-	p.Country = &v
+	p.AddressLine1 = pointerutil.String("x")
+	p.City = pointerutil.String("x")
+	p.StateOrProvince = pointerutil.String("x")
+	p.PostalCode = pointerutil.String("x")
+	p.Country = pointerutil.String("x")
 }
-
-func ptr[T any](v T) *T { return &v }
 
 func TestPrimaryGuest(t *testing.T) {
 	t.Parallel()
@@ -52,9 +50,9 @@ func TestRequiredFieldsPresent_Digital(t *testing.T) {
 		want        bool
 	}{
 		{"no primary", nil, false, false},
-		{"email present", ptr("a@b.com"), false, true},
-		{"email present, address ignored", ptr("a@b.com"), true, true},
-		{"blank email", ptr("   "), true, false},
+		{"email present", pointerutil.String("a@b.com"), false, true},
+		{"email present, address ignored", pointerutil.String("a@b.com"), true, true},
+		{"blank email", pointerutil.String("   "), true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -82,9 +80,9 @@ func TestRequiredFieldsPresent_Physical(t *testing.T) {
 		want        bool
 	}{
 		{"neither", nil, false, false},
-		{"email only", ptr("a@b.com"), false, false},
+		{"email only", pointerutil.String("a@b.com"), false, false},
 		{"address only", nil, true, false},
-		{"both", ptr("a@b.com"), true, true},
+		{"both", pointerutil.String("a@b.com"), true, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -113,9 +111,9 @@ func TestInfoCollectionStatus_NotRequested_DerivedFromFields(t *testing.T) {
 		address   bool
 		want      string
 	}{
-		{"complete when all required present", false, ptr("a@b.com"), true, models.StatusComplete},
+		{"complete when all required present", false, pointerutil.String("a@b.com"), true, models.StatusComplete},
 		{"incomplete when email missing", false, nil, true, models.StatusIncomplete},
-		{"incomplete when address missing", false, ptr("a@b.com"), false, models.StatusIncomplete},
+		{"incomplete when address missing", false, pointerutil.String("a@b.com"), false, models.StatusIncomplete},
 		{"confirmed flag ignored when not requested", true, nil, false, models.StatusIncomplete},
 	}
 	for _, tt := range tests {
@@ -154,7 +152,7 @@ func TestInfoCollectionStatus_Requested_FollowsConfirmedFlag(t *testing.T) {
 				InvitationType:          models.InvitationPhysical,
 				InfoCollectionRequested: true,
 				InfoCollectionConfirmed: tt.confirmed,
-				Guests:                  withPrimaryEmail(ptr("a@b.com")),
+				Guests:                  withPrimaryEmail(pointerutil.String("a@b.com")),
 			}
 			fullAddress(p)
 			assert.Equal(t, tt.want, p.InfoCollectionStatus())
