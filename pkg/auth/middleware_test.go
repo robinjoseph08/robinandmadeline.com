@@ -2,6 +2,8 @@ package auth_test
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,6 +23,10 @@ func runRequireAdmin(t *testing.T, svc *auth.Service, authHeader string) (nextCa
 	t.Helper()
 
 	e := echo.New()
+	// Wire the shared errcodes handler so middleware errors (now errcodes
+	// errors, not *echo.HTTPError) render with their real status, matching the
+	// production server.
+	e.HTTPErrorHandler = errcodes.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil))).Handle
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/dashboard", http.NoBody)
 	if authHeader != "" {
 		req.Header.Set(echo.HeaderAuthorization, authHeader)
