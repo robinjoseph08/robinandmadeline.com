@@ -1,16 +1,20 @@
+import { Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 
 import {
   BoolFilterSelect,
   FilterSelect,
 } from "@/components/pages/admin/parties/FilterSelect";
+import { GuestFormDialog } from "@/components/pages/admin/parties/GuestFormDialog";
 import {
   CIRCLE_OPTIONS,
   RELATION_OPTIONS,
   SIDE_OPTIONS,
 } from "@/components/pages/admin/parties/options";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -20,16 +24,29 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useGuests } from "@/hooks/queries/guests";
+import {
+  useDeleteGuest,
+  useGuests,
+  useUpdateGuest,
+} from "@/hooks/queries/guests";
 import type { Circle, Relation, Side } from "@/types/generated/models";
-import type { ListGuestsQuery } from "@/types/generated/parties";
+import type {
+  CreateGuestPayload,
+  GuestListItem,
+  ListGuestsQuery,
+} from "@/types/generated/parties";
 
 /**
  * Admin flat guest list: every guest across all parties in a filterable table.
  * Filters cover the party-level attributes (side, relation, circle) and the
  * guest-level ones (roles contains, plus the drinking/child/placeholder flags).
  * Event- and RSVP-status filters are deferred to #6 (they need the event model).
- * Each guest links to its party's detail page, where it can be edited.
+ *
+ * A guest is a sub-entity of its party and has no detail page of its own, so the
+ * Party column links to the owning party by name, and each row is edited in
+ * place via the shared GuestFormDialog (seeded with the guest and its party_id,
+ * which the update mutation needs for cache invalidation and the single-primary
+ * swap) or deleted with a confirmation.
  */
 export default function AdminGuests() {
   const [filters, setFilters] = useState<ListGuestsQuery>({});
@@ -39,6 +56,14 @@ export default function AdminGuests() {
   const guestsQuery = useGuests(filters);
   const guests = guestsQuery.data?.items ?? [];
 
+  const updateGuest = useUpdateGuest();
+  const deleteGuest = useDeleteGuest();
+
+  const [editGuestOpen, setEditGuestOpen] = useState(false);
+  const [editingGuest, setEditingGuest] = useState<GuestListItem | undefined>(
+    undefined,
+  );
+
   const setFilter = <K extends keyof ListGuestsQuery>(
     key: K,
     value: ListGuestsQuery[K],
@@ -47,6 +72,43 @@ export default function AdminGuests() {
   const commitRoles = () => {
     const trimmed = rolesInput.trim();
     setFilter("roles", trimmed === "" ? undefined : trimmed);
+  };
+
+  const openEditGuest = (guest: GuestListItem) => {
+    setEditingGuest(guest);
+    setEditGuestOpen(true);
+  };
+
+  const handleGuestSubmit = async (payload: CreateGuestPayload) => {
+    if (!editingGuest) return;
+    try {
+      await updateGuest.mutateAsync({
+        guestId: editingGuest.id,
+        partyId: editingGuest.party_id,
+        payload,
+      });
+      toast.success("Guest updated");
+      setEditGuestOpen(false);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update guest",
+      );
+    }
+  };
+
+  const handleDeleteGuest = async (guest: GuestListItem) => {
+    if (!window.confirm(`Delete ${guest.full_name}?`)) return;
+    try {
+      await deleteGuest.mutateAsync({
+        guestId: guest.id,
+        partyId: guest.party_id,
+      });
+      toast.success("Guest deleted");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete guest",
+      );
+    }
   };
 
   return (
@@ -125,6 +187,7 @@ export default function AdminGuests() {
               <TableHead>Roles</TableHead>
               <TableHead>Flags</TableHead>
               <TableHead>Party</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -154,17 +217,46 @@ export default function AdminGuests() {
                 </TableCell>
                 <TableCell>
                   <Link
-                    className="text-sm hover:underline"
+                    className="text-sm font-medium hover:underline"
                     to={`/admin/parties/${guest.party_id}`}
                   >
-                    View party
+                    {guest.party_name}
                   </Link>
+                </TableCell>
+                <TableCell>
+                  <div className="flex justify-end gap-1">
+                    <Button
+                      aria-label={`Edit ${guest.full_name}`}
+                      onClick={() => openEditGuest(guest)}
+                      size="icon"
+                      variant="ghost"
+                    >
+                      <Pencil />
+                    </Button>
+                    <Button
+                      aria-label={`Delete ${guest.full_name}`}
+                      disabled={deleteGuest.isPending}
+                      onClick={() => handleDeleteGuest(guest)}
+                      size="icon"
+                      variant="ghost"
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       )}
+
+      <GuestFormDialog
+        guest={editingGuest}
+        isPending={updateGuest.isPending}
+        onOpenChange={setEditGuestOpen}
+        onSubmit={handleGuestSubmit}
+        open={editGuestOpen}
+      />
     </div>
   );
 }
