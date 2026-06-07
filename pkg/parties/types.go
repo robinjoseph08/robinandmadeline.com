@@ -114,10 +114,13 @@ type ListGuestsQuery struct {
 }
 
 // PartyResponse is the API representation of a party: the stored model plus the
-// derived info_collection_status. The embedded *models.Party already carries
-// snake_case JSON tags and is flattened into the TS interface via ",extends".
+// derived info_collection_status. The model is embedded by value (not as a
+// pointer) so tygo flattens it into a plain `extends models.Party`; a pointer
+// embed would generate `extends Partial<models.Party>`, making every model field
+// optional on the client and defeating the point of the generated types. The
+// embedded models.Party already carries the snake_case JSON tags.
 type PartyResponse struct {
-	*models.Party        `tstype:",extends"`
+	models.Party         `tstype:",extends"`
 	InfoCollectionStatus string `json:"info_collection_status" tstype:"models.InfoCollectionStatus"`
 }
 
@@ -128,9 +131,10 @@ type ListPartiesResponse struct {
 }
 
 // GuestResponse is the API representation of a guest. No reshape is needed, so
-// it is a thin embed of the stored model.
+// it is a thin embed of the stored model (by value, so tygo emits a plain
+// `extends models.Guest` rather than a Partial; see PartyResponse).
 type GuestResponse struct {
-	*models.Guest `tstype:",extends"`
+	models.Guest `tstype:",extends"`
 }
 
 // ListGuestsResponse is the uniform list envelope for guests.
@@ -140,12 +144,13 @@ type ListGuestsResponse struct {
 }
 
 // newPartyResponse wraps a loaded party (with guests) for the API, computing its
-// status. Guests must be loaded for the status to be accurate.
+// status. Guests must be loaded for the status to be accurate. The status is
+// computed before the model is copied into the response by value.
 func newPartyResponse(p *models.Party) PartyResponse {
-	return PartyResponse{Party: p, InfoCollectionStatus: p.InfoCollectionStatus()}
+	return PartyResponse{Party: *p, InfoCollectionStatus: p.InfoCollectionStatus()}
 }
 
 // newGuestResponse wraps a guest for the API.
 func newGuestResponse(g *models.Guest) GuestResponse {
-	return GuestResponse{Guest: g}
+	return GuestResponse{Guest: *g}
 }
