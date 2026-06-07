@@ -29,12 +29,18 @@ func TestCreateGuest_RequiresExistingParty(t *testing.T) {
 	assertErrCode(t, err, errcodes.CodeNotFound)
 }
 
-func TestCreateGuest_RejectsEmptyName(t *testing.T) {
+func TestCreateGuest_NilRolesPersistsAsEmptyArray(t *testing.T) {
 	svc, _ := newService(t)
 	p := createPartyT(t, svc, digitalPartyInput())
 
-	_, err := svc.CreateGuest(ctx(), p.ID, parties.CreateGuestPayload{FullName: "  "})
-	assertErrCode(t, err, errcodes.CodeValidationError)
+	// A direct service call with nil Roles must persist '{}', not NULL, via the
+	// model's BeforeAppendModel hook (the same backstop as Party.Circle).
+	g := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "No Roles"})
+
+	reloaded, err := svc.GetGuest(ctx(), g.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, reloaded.Roles, "nil roles should persist as an empty array, not null")
+	assert.Empty(t, reloaded.Roles)
 }
 
 func TestCreateGuest_SecondPrimaryDemotesFirst(t *testing.T) {

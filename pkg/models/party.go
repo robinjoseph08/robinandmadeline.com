@@ -5,11 +5,16 @@
 package models
 
 import (
+	"context"
 	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
 )
+
+// Party implements bun's BeforeAppendModel so the hook below fires on every
+// insert and update.
+var _ bun.BeforeAppendModelHook = (*Party)(nil)
 
 // Closed enum-like value sets stored as TEXT and guarded by CHECK constraints in
 // the schema. The //tygo:emit lines generate matching TypeScript unions.
@@ -82,6 +87,22 @@ type Party struct {
 	// Guests is populated only when explicitly loaded; the status methods require
 	// it. It is not a stored column; bun fills it via relation queries.
 	Guests []*Guest `bun:"rel:has-many,join:id=party_id" json:"guests,omitempty" tstype:"Guest[]"`
+}
+
+// BeforeAppendModel normalizes a nil Circle to an empty (non-nil) slice before
+// any insert or update so the NOT NULL circle text[] column always stores '{}'
+// rather than NULL. This is the single, code-path-independent enforcement point
+// for the slice invariant: the binder's `default:"[]"` covers the HTTP path, and
+// this hook covers direct service calls (e.g. tests, internal callers). bun
+// invokes it on INSERT and UPDATE queries.
+func (p *Party) BeforeAppendModel(_ context.Context, query bun.Query) error {
+	switch query.(type) {
+	case *bun.InsertQuery, *bun.UpdateQuery:
+		if p.Circle == nil {
+			p.Circle = []string{}
+		}
+	}
+	return nil
 }
 
 // PrimaryGuest returns the party's primary guest, or nil when none is loaded or

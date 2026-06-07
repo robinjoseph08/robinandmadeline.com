@@ -11,6 +11,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
@@ -24,6 +25,16 @@ import (
 func New(cfg *config.Config, db *bun.DB) *http.Server {
 	e := echo.New()
 	e.HideBanner = true
+
+	// Custom binder: a single c.Bind(&payload) binds, runs mold modifiers,
+	// applies creasty defaults, and validates from struct tags, returning errcodes
+	// failures. binder.New only fails if a static validator fails to register,
+	// which is a programming error, so a startup panic is the right failure mode.
+	b, err := binder.New()
+	if err != nil {
+		panic(err)
+	}
+	e.Binder = b
 
 	// Render every error through the shared envelope handler, matching how
 	// cmd/api builds its slog logger.

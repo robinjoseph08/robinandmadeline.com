@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+	"github.com/pkg/errors"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 )
@@ -12,13 +13,9 @@ import (
 // relation, circle, invitation_type, info_collection_status,
 // info_collection_requested. It returns the uniform {items, total} envelope.
 func (h *handler) listParties(c echo.Context) error {
-	q := ListPartiesQuery{
-		Side:                    queryStrPtr(c, "side"),
-		Relation:                queryStrPtr(c, "relation"),
-		Circle:                  queryStrPtr(c, "circle"),
-		InvitationType:          queryStrPtr(c, "invitation_type"),
-		InfoCollectionStatus:    queryStrPtr(c, "info_collection_status"),
-		InfoCollectionRequested: queryBoolPtr(c, "info_collection_requested"),
+	var q ListPartiesQuery
+	if err := c.Bind(&q); err != nil {
+		return errors.WithStack(err)
 	}
 
 	parties, total, err := h.service.ListParties(c.Request().Context(), q)
@@ -46,7 +43,7 @@ func (h *handler) getParty(c echo.Context) error {
 func (h *handler) createParty(c echo.Context) error {
 	var body CreatePartyPayload
 	if err := c.Bind(&body); err != nil {
-		return errcodes.BadRequest("invalid request body")
+		return errors.WithStack(err)
 	}
 
 	party, err := h.service.CreateParty(c.Request().Context(), body)
@@ -61,7 +58,7 @@ func (h *handler) createParty(c echo.Context) error {
 func (h *handler) updateParty(c echo.Context) error {
 	var body UpdatePartyPayload
 	if err := c.Bind(&body); err != nil {
-		return errcodes.BadRequest("invalid request body")
+		return errors.WithStack(err)
 	}
 
 	party, err := h.service.UpdateParty(c.Request().Context(), c.Param("id"), body)
@@ -96,12 +93,14 @@ func (h *handler) requestInfo(c echo.Context) error {
 func (h *handler) markInfo(c echo.Context) error {
 	var body MarkInfoPayload
 	if err := c.Bind(&body); err != nil {
-		return errcodes.BadRequest("invalid request body")
+		return errors.WithStack(err)
 	}
 
 	ctx := c.Request().Context()
 	id := c.Param("id")
 
+	// The binder already constrained status to complete|incomplete (a bad value is
+	// a 422), so only the two valid branches are reachable here.
 	var (
 		party *models.Party
 		err   error
@@ -112,7 +111,7 @@ func (h *handler) markInfo(c echo.Context) error {
 	case models.StatusIncomplete:
 		party, err = h.service.MarkIncomplete(ctx, id)
 	default:
-		return errcodes.BadRequest(`status must be "complete" or "incomplete"`)
+		return errcodes.ValidationError(`status must be "complete" or "incomplete"`)
 	}
 	if err != nil {
 		return err

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
@@ -17,13 +18,19 @@ import (
 )
 
 // newAPI wires the parties routes onto a bare Echo group with the shared error
-// handler (no auth middleware: these tests exercise the handlers and response
-// shapes, while auth enforcement is covered by the server package). It shares the
+// handler AND the custom binder (no auth middleware: these tests exercise the
+// handlers, validation pipeline, and response shapes, while auth enforcement is
+// covered by the server package). Wiring the real binder means requests flow
+// through the same bind -> mod -> default -> validate pipeline as production, so
+// invalid input is rejected here exactly as it would be live. It shares the
 // Postgres test DB.
 func newAPI(t *testing.T) *echo.Echo {
 	t.Helper()
 	svc, _ := newService(t)
 	e := echo.New()
+	b, err := binder.New()
+	require.NoError(t, err)
+	e.Binder = b
 	e.HTTPErrorHandler = errcodes.NewHandler(slogDiscard()).Handle
 	g := e.Group("/api/admin")
 	parties.RegisterRoutes(g, svc)
@@ -42,6 +49,17 @@ func do(t *testing.T, e *echo.Echo, method, target string, body any) *httptest.R
 		reader = bytes.NewReader(nil)
 	}
 	req := httptest.NewRequestWithContext(context.Background(), method, target, reader)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	return rec
+}
+
+// rawPost issues a POST with a verbatim JSON body string, for cases the typed
+// map helper cannot express (an unknown field, malformed JSON).
+func rawPost(t *testing.T, e *echo.Echo, target, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, target, bytes.NewReader([]byte(body)))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
@@ -78,6 +96,149 @@ func TestCreatePartyHandler_InvalidEnumIs422(t *testing.T) {
 	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 }
 
+// The following tests drive the custom binder end to end: each asserts that the
+// pipeline rejects bad input at the handler boundary with the right errcode,
+// proving validation is fully tag-driven (no service-level checks remain).
+
+func TestCreatePartyHandler_MissingRequiredNameIs422(t *testing.T) {
+	e := newAPI(t)
+	// name omitted: the required tag rejects it as a 422 validation_error.
+	rec := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"side": "robin", "relation": "friend", "invitation_type": "digital",
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
+func TestCreatePartyHandler_BlankNameAfterTrimIs422(t *testing.T) {
+	e := newAPI(t)
+	// A whitespace-only name is trimmed to "" by mod:"trim", then rejected by the
+	// required tag: present-but-blank is a 422, not a silent empty insert.
+	rec := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "   ", "side": "robin", "relation": "friend", "invitation_type": "digital",
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
+func TestCreatePartyHandler_EmptyRSVPCodeIs422(t *testing.T) {
+	e := newAPI(t)
+	// An explicit empty rsvp_code is invalid (min=1 after trim): "no code" must be
+	// sent as null, not "". This keeps blank codes out of the unique index.
+	rec := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "X", "side": "robin", "relation": "friend",
+		"invitation_type": "digital", "rsvp_code": "   ",
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
+func TestCreatePartyHandler_InvalidCircleValueIs422(t *testing.T) {
+	e := newAPI(t)
+	// circle is a closed set; an unknown element fails dive,oneof as a 422.
+	rec := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "X", "side": "robin", "relation": "friend",
+		"invitation_type": "digital", "circle": []string{"NotACircle"},
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
+func TestCreatePartyHandler_UnknownFieldIs422(t *testing.T) {
+	e := newAPI(t)
+	// An unrecognized JSON field is rejected as unknown_parameter (the binder
+	// decodes with DisallowUnknownFields).
+	rec := rawPost(t, e, "/api/admin/parties", `{"name":"X","side":"robin","relation":"friend","invitation_type":"digital","bogus":1}`)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeUnknownParameter), errorCode(t, rec))
+}
+
+func TestCreatePartyHandler_EmptyBodyIs400(t *testing.T) {
+	e := newAPI(t)
+	// A bodyless POST is rejected as empty_request_body (a 400) by the binder.
+	rec := do(t, e, http.MethodPost, "/api/admin/parties", nil)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, string(errcodes.CodeEmptyRequestBody), errorCode(t, rec))
+}
+
+func TestCreateGuestHandler_InvalidEmailIs422(t *testing.T) {
+	e := newAPI(t)
+	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
+	})
+	require.Equal(t, http.StatusCreated, create.Code)
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &party))
+
+	// A malformed email fails the email tag as a 422.
+	rec := do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
+		map[string]any{"full_name": "Pat", "email": "not-an-email"})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
+func TestListPartiesHandler_InvalidFilterValueIs422(t *testing.T) {
+	e := newAPI(t)
+	// Query filters are validated too: a bad side value is a 422 from the binder's
+	// query path (gorilla/schema decode + validator).
+	rec := do(t, e, http.MethodGet, "/api/admin/parties?side=nobody", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
+func TestListPartiesHandler_FilterByQueryParam(t *testing.T) {
+	e := newAPI(t)
+	// Create a robin party and a madeline party, then filter to robin via the
+	// query string, proving list filters now flow through c.Bind.
+	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "R", "side": "robin", "relation": "friend", "invitation_type": "digital",
+	}).Code)
+	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "M", "side": "madeline", "relation": "family", "invitation_type": "digital",
+	}).Code)
+
+	rec := do(t, e, http.MethodGet, "/api/admin/parties?side=robin", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 1, resp.Total)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, "R", resp.Items[0].Name)
+}
+
+func TestCreatePartyHandler_OmittedCirclePersistsAsEmptyArray(t *testing.T) {
+	e := newAPI(t)
+	// Omitting circle entirely must persist (and read back) as an empty array, not
+	// null: default:"[]" initializes it before validate, and the model hook is the
+	// backstop. The same applies to guest roles below.
+	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "NoCircle", "side": "robin", "relation": "friend", "invitation_type": "digital",
+	})
+	require.Equal(t, http.StatusCreated, create.Code)
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &party))
+
+	get := do(t, e, http.MethodGet, "/api/admin/parties/"+party.ID, nil)
+	require.Equal(t, http.StatusOK, get.Code)
+	// The raw JSON must contain "circle":[] (a present empty array), never null.
+	assert.Contains(t, get.Body.String(), `"circle":[]`)
+
+	// And a guest with no roles persists roles as [].
+	addRec := do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
+		map[string]any{"full_name": "No Roles"})
+	require.Equal(t, http.StatusCreated, addRec.Code)
+	assert.Contains(t, addRec.Body.String(), `"roles":[]`)
+}
+
 func TestCreatePartyHandler_DuplicateRSVPCodeIs409(t *testing.T) {
 	e := newAPI(t)
 	body := map[string]any{
@@ -112,7 +273,7 @@ func TestMarkInfoHandler_CompleteWithMissingFieldsIs422(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-func TestMarkInfoHandler_InvalidStatusIs400(t *testing.T) {
+func TestMarkInfoHandler_InvalidStatusIs422(t *testing.T) {
 	e := newAPI(t)
 	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
 		"name": "Z", "side": "robin", "relation": "friend", "invitation_type": "digital",
@@ -122,8 +283,11 @@ func TestMarkInfoHandler_InvalidStatusIs400(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &p))
 
+	// The binder constrains status to complete|incomplete, so a bad value is a
+	// 422 validation_error (not a 400) before the handler runs.
 	rec := do(t, e, http.MethodPost, "/api/admin/parties/"+p.ID+"/mark-info", map[string]any{"status": "bogus"})
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 }
 
 func TestCreateGuestHandler_UnderMissingPartyIs404(t *testing.T) {

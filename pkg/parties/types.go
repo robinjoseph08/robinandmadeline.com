@@ -11,106 +11,119 @@ import "github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 // it is left unset, when set it must be unique. Address fields are optional at
 // creation; whether they are required is a status concern, not a creation
 // precondition, so an under-filled party can be created and reads incomplete.
+//
+// Validation is tag-driven through the custom binder (pkg/binder): `mod` trims,
+// `default` fills, `validate` checks. rsvp_code uses min=1 deliberately: a
+// present-but-blank value is a 422, while "no code" must arrive as JSON null so
+// it persists as SQL NULL and the partial unique index keeps allowing many
+// code-less parties. circle defaults to [] so a nil slice stores '{}', not NULL.
 type CreatePartyPayload struct {
-	Name            string   `json:"name"`
-	Side            string   `json:"side" tstype:"models.Side"`
-	Relation        string   `json:"relation" tstype:"models.Relation"`
-	Circle          []string `json:"circle" tstype:"models.Circle[]"`
-	InvitationType  string   `json:"invitation_type" tstype:"models.InvitationType"`
-	AddressLine1    *string  `json:"address_line_1"`
-	AddressLine2    *string  `json:"address_line_2"`
-	City            *string  `json:"city"`
-	StateOrProvince *string  `json:"state_or_province"`
-	PostalCode      *string  `json:"postal_code"`
-	Country         *string  `json:"country"`
-	RSVPCode        *string  `json:"rsvp_code"`
+	Name            string   `json:"name" mod:"trim" validate:"required,max=200"`
+	Side            string   `json:"side" validate:"required,oneof=robin madeline" tstype:"models.Side"`
+	Relation        string   `json:"relation" validate:"required,oneof=family friend" tstype:"models.Relation"`
+	Circle          []string `json:"circle" mod:"dive,trim" validate:"omitempty,dive,oneof=Immediate Extended College Work Childhood Other" default:"[]" tstype:"models.Circle[]"`
+	InvitationType  string   `json:"invitation_type" validate:"required,oneof=physical digital" tstype:"models.InvitationType"`
+	AddressLine1    *string  `json:"address_line_1" mod:"trim" validate:"omitempty,max=200"`
+	AddressLine2    *string  `json:"address_line_2" mod:"trim" validate:"omitempty,max=200"`
+	City            *string  `json:"city" mod:"trim" validate:"omitempty,max=200"`
+	StateOrProvince *string  `json:"state_or_province" mod:"trim" validate:"omitempty,max=200"`
+	PostalCode      *string  `json:"postal_code" mod:"trim" validate:"omitempty,max=200"`
+	Country         *string  `json:"country" mod:"trim" validate:"omitempty,max=200"`
+	RSVPCode        *string  `json:"rsvp_code" mod:"trim" validate:"omitempty,min=1,max=64"`
 }
 
 // UpdatePartyPayload is the full desired state of a party's editable fields
 // (PUT-style). It excludes info_token (immutable) and the info_collection_*
 // flags: editing info fields must never change collection status (ADR 0005), so
-// those move only through the transition endpoints.
+// those move only through the transition endpoints. Validation mirrors
+// CreatePartyPayload and is tag-driven through the custom binder.
 type UpdatePartyPayload struct {
-	Name            string   `json:"name"`
-	Side            string   `json:"side" tstype:"models.Side"`
-	Relation        string   `json:"relation" tstype:"models.Relation"`
-	Circle          []string `json:"circle" tstype:"models.Circle[]"`
-	InvitationType  string   `json:"invitation_type" tstype:"models.InvitationType"`
-	AddressLine1    *string  `json:"address_line_1"`
-	AddressLine2    *string  `json:"address_line_2"`
-	City            *string  `json:"city"`
-	StateOrProvince *string  `json:"state_or_province"`
-	PostalCode      *string  `json:"postal_code"`
-	Country         *string  `json:"country"`
-	RSVPCode        *string  `json:"rsvp_code"`
+	Name            string   `json:"name" mod:"trim" validate:"required,max=200"`
+	Side            string   `json:"side" validate:"required,oneof=robin madeline" tstype:"models.Side"`
+	Relation        string   `json:"relation" validate:"required,oneof=family friend" tstype:"models.Relation"`
+	Circle          []string `json:"circle" mod:"dive,trim" validate:"omitempty,dive,oneof=Immediate Extended College Work Childhood Other" default:"[]" tstype:"models.Circle[]"`
+	InvitationType  string   `json:"invitation_type" validate:"required,oneof=physical digital" tstype:"models.InvitationType"`
+	AddressLine1    *string  `json:"address_line_1" mod:"trim" validate:"omitempty,max=200"`
+	AddressLine2    *string  `json:"address_line_2" mod:"trim" validate:"omitempty,max=200"`
+	City            *string  `json:"city" mod:"trim" validate:"omitempty,max=200"`
+	StateOrProvince *string  `json:"state_or_province" mod:"trim" validate:"omitempty,max=200"`
+	PostalCode      *string  `json:"postal_code" mod:"trim" validate:"omitempty,max=200"`
+	Country         *string  `json:"country" mod:"trim" validate:"omitempty,max=200"`
+	RSVPCode        *string  `json:"rsvp_code" mod:"trim" validate:"omitempty,min=1,max=64"`
 }
 
 // MarkInfoPayload is the body of mark-info, selecting the target status. status
-// must be StatusComplete or StatusIncomplete.
+// must be StatusComplete or StatusIncomplete; the binder enforces the enum.
 type MarkInfoPayload struct {
-	Status string `json:"status" tstype:"models.InfoCollectionStatus"`
+	Status string `json:"status" validate:"required,oneof=complete incomplete" tstype:"models.InfoCollectionStatus"`
 }
 
-// ListPartiesQuery is the set of party list filters. A nil pointer (or empty
-// value) means "do not filter on this field". Every filter except
-// InfoCollectionStatus is applied in SQL; status is computed in Go (it depends
-// on the derived rules) and filtered after the query.
+// ListPartiesQuery is the set of party list filters, bound from the query string
+// by the custom binder (gorilla/schema via the `query` tag). A nil pointer means
+// "do not filter on this field". Every filter except InfoCollectionStatus is
+// applied in SQL; status is computed in Go (it depends on the derived rules) and
+// filtered after the query. Enum filters are validated (omitempty so an absent
+// filter is fine); a bad value is a 422.
 type ListPartiesQuery struct {
-	Side                    *string `json:"side"`
-	Relation                *string `json:"relation"`
-	Circle                  *string `json:"circle"` // matches parties whose circle array contains this value
-	InvitationType          *string `json:"invitation_type"`
-	InfoCollectionRequested *bool   `json:"info_collection_requested"`
-	InfoCollectionStatus    *string `json:"info_collection_status" tstype:"models.InfoCollectionStatus"`
+	Side                    *string `query:"side" json:"side" validate:"omitempty,oneof=robin madeline"`
+	Relation                *string `query:"relation" json:"relation" validate:"omitempty,oneof=family friend"`
+	Circle                  *string `query:"circle" json:"circle"` // matches parties whose circle array contains this value
+	InvitationType          *string `query:"invitation_type" json:"invitation_type" validate:"omitempty,oneof=physical digital"`
+	InfoCollectionRequested *bool   `query:"info_collection_requested" json:"info_collection_requested"`
+	InfoCollectionStatus    *string `query:"info_collection_status" json:"info_collection_status" validate:"omitempty,oneof=complete incomplete" tstype:"models.InfoCollectionStatus"`
 }
 
 // CreateGuestPayload is the body to add a guest to a party. The party comes from
 // the route (create is nested under the party), so it is not a field here.
 // is_primary may be requested; when true the service demotes any existing
-// primary in the same transaction.
+// primary in the same transaction. Validation is tag-driven through the custom
+// binder. roles is open-ended (no closed union) so it only bounds element
+// length; it defaults to [] so a nil slice stores '{}', not NULL.
 type CreateGuestPayload struct {
-	FullName            string   `json:"full_name"`
-	Email               *string  `json:"email"`
-	Phone               *string  `json:"phone"`
-	Roles               []string `json:"roles"`
+	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
+	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
+	Phone               *string  `json:"phone" mod:"trim" validate:"omitempty,max=32"`
+	Roles               []string `json:"roles" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
 	IsPrimary           bool     `json:"is_primary"`
 	IsChild             bool     `json:"is_child"`
 	IsDrinking          bool     `json:"is_drinking"`
 	IsPlaceholder       bool     `json:"is_placeholder"`
-	DietaryRestrictions *string  `json:"dietary_restrictions"`
-	TableNumber         *int     `json:"table_number"`
-	SeatNumber          *int     `json:"seat_number"`
+	DietaryRestrictions *string  `json:"dietary_restrictions" mod:"trim" validate:"omitempty,max=1000"`
+	TableNumber         *int     `json:"table_number" validate:"omitempty,min=1"`
+	SeatNumber          *int     `json:"seat_number" validate:"omitempty,min=1"`
 }
 
 // UpdateGuestPayload is the full desired state of a guest's editable fields
 // (PUT-style). Setting IsPrimary=true promotes this guest and demotes the
-// party's previous primary transactionally.
+// party's previous primary transactionally. Validation mirrors
+// CreateGuestPayload and is tag-driven through the custom binder.
 type UpdateGuestPayload struct {
-	FullName            string   `json:"full_name"`
-	Email               *string  `json:"email"`
-	Phone               *string  `json:"phone"`
-	Roles               []string `json:"roles"`
+	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
+	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
+	Phone               *string  `json:"phone" mod:"trim" validate:"omitempty,max=32"`
+	Roles               []string `json:"roles" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
 	IsPrimary           bool     `json:"is_primary"`
 	IsChild             bool     `json:"is_child"`
 	IsDrinking          bool     `json:"is_drinking"`
 	IsPlaceholder       bool     `json:"is_placeholder"`
-	DietaryRestrictions *string  `json:"dietary_restrictions"`
-	TableNumber         *int     `json:"table_number"`
-	SeatNumber          *int     `json:"seat_number"`
+	DietaryRestrictions *string  `json:"dietary_restrictions" mod:"trim" validate:"omitempty,max=1000"`
+	TableNumber         *int     `json:"table_number" validate:"omitempty,min=1"`
+	SeatNumber          *int     `json:"seat_number" validate:"omitempty,min=1"`
 }
 
-// ListGuestsQuery is the set of flat guest-list filters. Side / Relation /
-// Circle are party-level attributes, so those clauses join through the guest's
-// party. Event- and RSVP-status filters are absent: they depend on the event
-// model (#6) which does not exist yet.
+// ListGuestsQuery is the set of flat guest-list filters, bound from the query
+// string by the custom binder (gorilla/schema via the `query` tag). Side /
+// Relation / Circle are party-level attributes, so those clauses join through
+// the guest's party. Event- and RSVP-status filters are absent: they depend on
+// the event model (#6) which does not exist yet.
 type ListGuestsQuery struct {
-	Side          *string `json:"side"`
-	Relation      *string `json:"relation"`
-	Circle        *string `json:"circle"`
-	Roles         *string `json:"roles"` // matches guests whose roles array contains this value
-	IsDrinking    *bool   `json:"is_drinking"`
-	IsChild       *bool   `json:"is_child"`
-	IsPlaceholder *bool   `json:"is_placeholder"`
+	Side          *string `query:"side" json:"side" validate:"omitempty,oneof=robin madeline"`
+	Relation      *string `query:"relation" json:"relation" validate:"omitempty,oneof=family friend"`
+	Circle        *string `query:"circle" json:"circle"`
+	Roles         *string `query:"roles" json:"roles"` // matches guests whose roles array contains this value
+	IsDrinking    *bool   `query:"is_drinking" json:"is_drinking"`
+	IsChild       *bool   `query:"is_child" json:"is_child"`
+	IsPlaceholder *bool   `query:"is_placeholder" json:"is_placeholder"`
 }
 
 // PartyResponse is the API representation of a party: the stored model plus the

@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
+	"github.com/pkg/errors"
 )
 
 // listGuests handles GET /api/admin/guests, the flat guest list with filters:
@@ -12,14 +12,9 @@ import (
 // and RSVP-status filters are out of scope (they depend on #6). It returns the
 // uniform {items, total} envelope.
 func (h *handler) listGuests(c echo.Context) error {
-	q := ListGuestsQuery{
-		Side:          queryStrPtr(c, "side"),
-		Relation:      queryStrPtr(c, "relation"),
-		Circle:        queryStrPtr(c, "circle"),
-		Roles:         queryStrPtr(c, "roles"),
-		IsDrinking:    queryBoolPtr(c, "is_drinking"),
-		IsChild:       queryBoolPtr(c, "is_child"),
-		IsPlaceholder: queryBoolPtr(c, "is_placeholder"),
+	var q ListGuestsQuery
+	if err := c.Bind(&q); err != nil {
+		return errors.WithStack(err)
 	}
 
 	guests, total, err := h.service.ListGuests(c.Request().Context(), q)
@@ -38,7 +33,7 @@ func (h *handler) listGuests(c echo.Context) error {
 func (h *handler) createGuest(c echo.Context) error {
 	var body CreateGuestPayload
 	if err := c.Bind(&body); err != nil {
-		return errcodes.BadRequest("invalid request body")
+		return errors.WithStack(err)
 	}
 
 	guest, err := h.service.CreateGuest(c.Request().Context(), c.Param("id"), body)
@@ -62,7 +57,7 @@ func (h *handler) getGuest(c echo.Context) error {
 func (h *handler) updateGuest(c echo.Context) error {
 	var body UpdateGuestPayload
 	if err := c.Bind(&body); err != nil {
-		return errcodes.BadRequest("invalid request body")
+		return errors.WithStack(err)
 	}
 
 	guest, err := h.service.UpdateGuest(c.Request().Context(), c.Param("id"), body)

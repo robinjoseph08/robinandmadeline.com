@@ -2,7 +2,6 @@ package parties
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -11,31 +10,27 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// CreateParty validates and inserts a party, generating a unique info token. A
-// supplied RSVP code that is already taken yields a 409.
+// CreateParty inserts a party, generating a unique info token. The payload is
+// already bound, trimmed, defaulted, and validated by the binder, so the fields
+// are assigned directly; circle arrives as a non-nil slice (defaulted to []) so
+// it stores '{}', not NULL. A supplied RSVP code that is already taken yields a
+// 409. An omitted optional field is nil and persists as SQL NULL.
 func (s *Service) CreateParty(ctx context.Context, in CreatePartyPayload) (*models.Party, error) {
-	if err := validatePartyEnums(in.Side, in.Relation, in.InvitationType); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(in.Name) == "" {
-		return nil, errcodes.ValidationError("name is required")
-	}
-
 	now := time.Now()
 	party := &models.Party{
 		ID:              newID(),
-		Name:            strings.TrimSpace(in.Name),
+		Name:            in.Name,
 		Side:            in.Side,
 		Relation:        in.Relation,
-		Circle:          normalizeStringSlice(in.Circle),
+		Circle:          in.Circle,
 		InvitationType:  in.InvitationType,
-		AddressLine1:    trimmedOrNil(in.AddressLine1),
-		AddressLine2:    trimmedOrNil(in.AddressLine2),
-		City:            trimmedOrNil(in.City),
-		StateOrProvince: trimmedOrNil(in.StateOrProvince),
-		PostalCode:      trimmedOrNil(in.PostalCode),
-		Country:         trimmedOrNil(in.Country),
-		RSVPCode:        trimmedOrNil(in.RSVPCode),
+		AddressLine1:    in.AddressLine1,
+		AddressLine2:    in.AddressLine2,
+		City:            in.City,
+		StateOrProvince: in.StateOrProvince,
+		PostalCode:      in.PostalCode,
+		Country:         in.Country,
+		RSVPCode:        in.RSVPCode,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -76,30 +71,26 @@ func (s *Service) GetParty(ctx context.Context, id string) (*models.Party, error
 // info_token or the info_collection_* flags (status transitions have their own
 // methods). A duplicate RSVP code yields a 409, a missing party a 404.
 func (s *Service) UpdateParty(ctx context.Context, id string, in UpdatePartyPayload) (*models.Party, error) {
-	if err := validatePartyEnums(in.Side, in.Relation, in.InvitationType); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(in.Name) == "" {
-		return nil, errcodes.ValidationError("name is required")
-	}
-
 	party, err := loadPartyWithGuests(ctx, s.db, id)
 	if err != nil {
 		return nil, err
 	}
 
-	party.Name = strings.TrimSpace(in.Name)
+	// The payload is already bound, trimmed, defaulted, and validated by the
+	// binder, so the fields are assigned directly. An omitted optional field is
+	// nil and persists as SQL NULL.
+	party.Name = in.Name
 	party.Side = in.Side
 	party.Relation = in.Relation
-	party.Circle = normalizeStringSlice(in.Circle)
+	party.Circle = in.Circle
 	party.InvitationType = in.InvitationType
-	party.AddressLine1 = trimmedOrNil(in.AddressLine1)
-	party.AddressLine2 = trimmedOrNil(in.AddressLine2)
-	party.City = trimmedOrNil(in.City)
-	party.StateOrProvince = trimmedOrNil(in.StateOrProvince)
-	party.PostalCode = trimmedOrNil(in.PostalCode)
-	party.Country = trimmedOrNil(in.Country)
-	party.RSVPCode = trimmedOrNil(in.RSVPCode)
+	party.AddressLine1 = in.AddressLine1
+	party.AddressLine2 = in.AddressLine2
+	party.City = in.City
+	party.StateOrProvince = in.StateOrProvince
+	party.PostalCode = in.PostalCode
+	party.Country = in.Country
+	party.RSVPCode = in.RSVPCode
 	party.UpdatedAt = time.Now()
 
 	// Update only the editable columns. info_token and the info_collection_*
@@ -145,16 +136,4 @@ func isRSVPCodeConflict(ctx context.Context, db bun.IDB, code *string) bool {
 		return false
 	}
 	return exists
-}
-
-// normalizeStringSlice guarantees a non-nil slice (so a text[] column stores an
-// empty array, never NULL) and trims blank entries. Order is preserved.
-func normalizeStringSlice(in []string) []string {
-	out := make([]string, 0, len(in))
-	for _, v := range in {
-		if t := strings.TrimSpace(v); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
 }

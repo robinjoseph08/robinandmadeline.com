@@ -13,6 +13,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,13 +21,17 @@ import (
 
 // newAuthEcho builds an Echo instance with the auth routes registered against a
 // service holding a known admin credential. It wires the shared errcodes error
-// handler so errcodes errors render with their proper status, matching the real
+// handler AND the custom binder so requests flow through the real
+// bind/validate pipeline (required-field checks included), matching the real
 // server.
 func newAuthEcho(t *testing.T) (*echo.Echo, *auth.Service) {
 	t.Helper()
 	svc := auth.NewService(testSecret, time.Hour, time.Hour, testUsername, testPassword)
 
 	e := echo.New()
+	b, err := binder.New()
+	require.NoError(t, err)
+	e.Binder = b
 	e.HTTPErrorHandler = errcodes.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil))).Handle
 	api := e.Group("/api")
 	auth.RegisterRoutes(api, svc)
@@ -83,4 +88,22 @@ func TestAdminLogin_Returns400ForMalformedBody(t *testing.T) {
 
 	rec := postLogin(t, e, `{not json`)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestAdminLogin_Returns422ForMissingPassword(t *testing.T) {
+	t.Parallel()
+	e, _ := newAuthEcho(t)
+
+	// password omitted: the binder's required tag rejects it as a 422 before the
+	// credential check, so a missing field never reaches the service.
+	rec := postLogin(t, e, `{"username":"admin"}`)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, string(errcodes.CodeValidationError), body.Error.Code)
 }

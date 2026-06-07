@@ -24,24 +24,6 @@ func TestCreateParty_GeneratesInfoToken(t *testing.T) {
 	assert.NotEqual(t, p.InfoToken, p2.InfoToken)
 }
 
-func TestCreateParty_RejectsInvalidEnums(t *testing.T) {
-	svc, _ := newService(t)
-
-	in := digitalPartyInput()
-	in.Side = "nobody"
-	_, err := svc.CreateParty(ctx(), in)
-	assertErrCode(t, err, errcodes.CodeValidationError)
-}
-
-func TestCreateParty_RejectsEmptyName(t *testing.T) {
-	svc, _ := newService(t)
-
-	in := digitalPartyInput()
-	in.Name = "   "
-	_, err := svc.CreateParty(ctx(), in)
-	assertErrCode(t, err, errcodes.CodeValidationError)
-}
-
 func TestCreateParty_DuplicateRSVPCodeConflicts(t *testing.T) {
 	svc, _ := newService(t)
 
@@ -65,14 +47,21 @@ func TestCreateParty_AllowsMultipleNullRSVPCodes(t *testing.T) {
 	createPartyT(t, svc, digitalPartyInput())
 }
 
-func TestCreateParty_NormalizesAddressBlanksToNull(t *testing.T) {
+func TestCreateParty_NilCirclePersistsAsEmptyArray(t *testing.T) {
 	svc, _ := newService(t)
 
-	in := physicalPartyInput()
-	in.AddressLine1 = ptr("   ") // whitespace should normalize to NULL
+	// A direct service call with a nil Circle (bypassing the binder's default:"[]")
+	// must still persist '{}', not NULL: the model's BeforeAppendModel hook is the
+	// code-path-independent backstop for the NOT NULL text[] column. Reload from
+	// the DB so the assertion reflects persisted state.
+	in := digitalPartyInput()
+	in.Circle = nil
 	p := createPartyT(t, svc, in)
 
-	assert.Nil(t, p.AddressLine1, "blank address should be stored as null")
+	reloaded, err := svc.GetParty(ctx(), p.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, reloaded.Circle, "nil circle should persist as an empty array, not null")
+	assert.Empty(t, reloaded.Circle)
 }
 
 func TestGetParty_NotFound(t *testing.T) {

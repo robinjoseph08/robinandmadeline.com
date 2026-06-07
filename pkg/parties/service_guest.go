@@ -3,7 +3,6 @@ package parties
 import (
 	"context"
 	"database/sql"
-	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -14,25 +13,24 @@ import (
 
 // CreateGuest adds a guest to an existing party (404 if the party is missing).
 // When IsPrimary is requested, the previous primary (if any) is demoted in the
-// same transaction so a party never has two primaries.
+// same transaction so a party never has two primaries. The payload is already
+// bound, trimmed, defaulted, and validated by the binder, so the fields are
+// assigned directly; roles arrives as a non-nil slice (defaulted to []) so it
+// stores '{}', not NULL.
 func (s *Service) CreateGuest(ctx context.Context, partyID string, in CreateGuestPayload) (*models.Guest, error) {
-	if strings.TrimSpace(in.FullName) == "" {
-		return nil, errcodes.ValidationError("full_name is required")
-	}
-
 	now := time.Now()
 	guest := &models.Guest{
 		ID:                  newID(),
 		PartyID:             partyID,
-		FullName:            strings.TrimSpace(in.FullName),
-		Email:               trimmedOrNil(in.Email),
-		Phone:               trimmedOrNil(in.Phone),
-		Roles:               normalizeStringSlice(in.Roles),
+		FullName:            in.FullName,
+		Email:               in.Email,
+		Phone:               in.Phone,
+		Roles:               in.Roles,
 		IsPrimary:           in.IsPrimary,
 		IsChild:             in.IsChild,
 		IsDrinking:          in.IsDrinking,
 		IsPlaceholder:       in.IsPlaceholder,
-		DietaryRestrictions: trimmedOrNil(in.DietaryRestrictions),
+		DietaryRestrictions: in.DietaryRestrictions,
 		TableNumber:         in.TableNumber,
 		SeatNumber:          in.SeatNumber,
 		CreatedAt:           now,
@@ -84,10 +82,6 @@ func (s *Service) GetGuest(ctx context.Context, id string) (*models.Guest, error
 // demotes the party's previous primary in the same transaction, preserving the
 // single-primary invariant.
 func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayload) (*models.Guest, error) {
-	if strings.TrimSpace(in.FullName) == "" {
-		return nil, errcodes.ValidationError("full_name is required")
-	}
-
 	guest := new(models.Guest)
 	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
 		// Load inside the tx so the party_id used for demotion is consistent.
@@ -106,15 +100,17 @@ func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayl
 			}
 		}
 
-		guest.FullName = strings.TrimSpace(in.FullName)
-		guest.Email = trimmedOrNil(in.Email)
-		guest.Phone = trimmedOrNil(in.Phone)
-		guest.Roles = normalizeStringSlice(in.Roles)
+		// The payload is already bound, trimmed, defaulted, and validated by the
+		// binder, so the fields are assigned directly.
+		guest.FullName = in.FullName
+		guest.Email = in.Email
+		guest.Phone = in.Phone
+		guest.Roles = in.Roles
 		guest.IsPrimary = in.IsPrimary
 		guest.IsChild = in.IsChild
 		guest.IsDrinking = in.IsDrinking
 		guest.IsPlaceholder = in.IsPlaceholder
-		guest.DietaryRestrictions = trimmedOrNil(in.DietaryRestrictions)
+		guest.DietaryRestrictions = in.DietaryRestrictions
 		guest.TableNumber = in.TableNumber
 		guest.SeatNumber = in.SeatNumber
 		guest.UpdatedAt = time.Now()

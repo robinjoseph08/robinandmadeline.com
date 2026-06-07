@@ -1,10 +1,15 @@
 package models
 
 import (
+	"context"
 	"time"
 
 	"github.com/uptrace/bun"
 )
+
+// Guest implements bun's BeforeAppendModel so the hook below fires on every
+// insert and update.
+var _ bun.BeforeAppendModelHook = (*Guest)(nil)
 
 // Guest is an individual person belonging to exactly one party.
 //
@@ -34,4 +39,19 @@ type Guest struct {
 
 	CreatedAt time.Time `bun:"created_at,nullzero" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero" json:"updated_at"`
+}
+
+// BeforeAppendModel normalizes a nil Roles to an empty (non-nil) slice before
+// any insert or update so the NOT NULL roles text[] column always stores '{}'
+// rather than NULL. Like Party.BeforeAppendModel, this is the single,
+// code-path-independent enforcement point for the slice invariant (the binder's
+// `default:"[]"` covers the HTTP path; this hook covers direct service calls).
+func (g *Guest) BeforeAppendModel(_ context.Context, query bun.Query) error {
+	switch query.(type) {
+	case *bun.InsertQuery, *bun.UpdateQuery:
+		if g.Roles == nil {
+			g.Roles = []string{}
+		}
+	}
+	return nil
 }
