@@ -92,6 +92,9 @@ jobs:
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
+      # Generate the (gitignored) TS types so lint:types can resolve them. tygo
+      # needs Go, which mise provides.
+      - run: mise tygo
       - run: mise lint:js
 
   js-test:
@@ -111,6 +114,8 @@ jobs:
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
+      # Generate the (gitignored) TS types so any test importing them resolves.
+      - run: mise tygo
       - run: mise test:unit
 
   build:
@@ -138,4 +143,7 @@ jobs:
           restore-keys: pnpm-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - run: mise build # Production Go API binary
+      # Generate the (gitignored) TS types before the frontend bundle, since
+      # `pnpm build` runs `tsc -b` which type-checks them.
+      - run: mise tygo
       - run: pnpm build # Frontend bundle (tsc -b && vite build)
