@@ -9,18 +9,22 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// newAPI wires the parties routes onto a bare Echo group (no auth middleware:
-// these tests exercise the handlers and status mapping, while auth enforcement
-// is covered by the server package). It shares the Postgres test DB.
+// newAPI wires the parties routes onto a bare Echo group with the shared error
+// handler (no auth middleware: these tests exercise the handlers and response
+// shapes, while auth enforcement is covered by the server package). It shares the
+// Postgres test DB.
 func newAPI(t *testing.T) *echo.Echo {
 	t.Helper()
 	svc, _ := newService(t)
 	e := echo.New()
+	e.HTTPErrorHandler = errcodes.NewHandler(slogDiscard()).Handle
 	g := e.Group("/api/admin")
 	parties.RegisterRoutes(g, svc)
 	return e
@@ -62,15 +66,16 @@ func TestCreatePartyHandler_ReturnsStatusAndToken(t *testing.T) {
 	assert.NotEmpty(t, resp.ID)
 	assert.NotEmpty(t, resp.InfoToken, "response should include the generated info token")
 	// No primary email yet, so a fresh digital party derives incomplete.
-	assert.Equal(t, parties.StatusIncomplete, resp.InfoCollectionStatus)
+	assert.Equal(t, models.StatusIncomplete, resp.InfoCollectionStatus)
 }
 
-func TestCreatePartyHandler_InvalidEnumIs400(t *testing.T) {
+func TestCreatePartyHandler_InvalidEnumIs422(t *testing.T) {
 	e := newAPI(t)
 	rec := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
 		"name": "X", "side": "nobody", "relation": "friend", "invitation_type": "digital",
 	})
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 }
 
 func TestCreatePartyHandler_DuplicateRSVPCodeIs409(t *testing.T) {
@@ -87,6 +92,7 @@ func TestGetPartyHandler_404(t *testing.T) {
 	e := newAPI(t)
 	rec := do(t, e, http.MethodGet, "/api/admin/parties/00000000-0000-0000-0000-000000000000", nil)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, string(errcodes.CodeNotFound), errorCode(t, rec))
 }
 
 func TestMarkInfoHandler_CompleteWithMissingFieldsIs422(t *testing.T) {
@@ -127,16 +133,49 @@ func TestCreateGuestHandler_UnderMissingPartyIs404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
-func TestListHandlers_EmptyReturnsJSONArrayNotNull(t *testing.T) {
+func TestListHandlers_EmptyReturnsItemsArrayNotNull(t *testing.T) {
 	e := newAPI(t)
 
-	// With no rows, both list endpoints must serialize as [] (a JSON array),
-	// never null, so clients can treat the two list endpoints uniformly.
+	// With no rows, both list endpoints must return the {items, total} envelope
+	// with items serialized as [] (a JSON array), never null, and total 0.
 	for _, target := range []string{"/api/admin/parties", "/api/admin/guests"} {
 		rec := do(t, e, http.MethodGet, target, nil)
 		require.Equal(t, http.StatusOK, rec.Code, target)
-		assert.JSONEq(t, "[]", rec.Body.String(), target)
+		assert.JSONEq(t, `{"items":[],"total":0}`, rec.Body.String(), target)
 	}
+}
+
+func TestListPartiesHandler_EnvelopeCarriesItemsAndTotal(t *testing.T) {
+	e := newAPI(t)
+
+	// Create a party with a primary guest so the list item carries its status.
+	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
+	})
+	require.Equal(t, http.StatusCreated, create.Code)
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &party))
+	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
+		map[string]any{"full_name": "Pat", "email": "pat@example.com", "is_primary": true}).Code)
+
+	rec := do(t, e, http.MethodGet, "/api/admin/parties", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Items []struct {
+			ID                   string `json:"id"`
+			InfoCollectionStatus string `json:"info_collection_status"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 1, resp.Total)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, party.ID, resp.Items[0].ID)
+	// Digital party with a primary email derives complete, and the list item
+	// carries info_collection_status.
+	assert.Equal(t, models.StatusComplete, resp.Items[0].InfoCollectionStatus)
 }
 
 func TestGuestLifecycleHandlers(t *testing.T) {
@@ -159,15 +198,19 @@ func TestGuestLifecycleHandlers(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(addRec.Body.Bytes(), &guest))
 
-	// Flat guest list returns the guest.
+	// Flat guest list returns the {items, total} envelope holding the guest.
 	listRec := do(t, e, http.MethodGet, "/api/admin/guests", nil)
 	require.Equal(t, http.StatusOK, listRec.Code)
-	var listed []struct {
-		ID string `json:"id"`
+	var listed struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+		Total int `json:"total"`
 	}
 	require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &listed))
-	require.Len(t, listed, 1)
-	assert.Equal(t, guest.ID, listed[0].ID)
+	require.Equal(t, 1, listed.Total)
+	require.Len(t, listed.Items, 1)
+	assert.Equal(t, guest.ID, listed.Items[0].ID)
 
 	// PATCH the guest.
 	patchRec := do(t, e, http.MethodPatch, "/api/admin/guests/"+guest.ID,
@@ -177,4 +220,16 @@ func TestGuestLifecycleHandlers(t *testing.T) {
 	// DELETE the guest.
 	delRec := do(t, e, http.MethodDelete, "/api/admin/guests/"+guest.ID, nil)
 	assert.Equal(t, http.StatusNoContent, delRec.Code)
+}
+
+// errorCode decodes the standard error envelope and returns its code.
+func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	return body.Error.Code
 }

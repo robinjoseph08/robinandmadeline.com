@@ -2,48 +2,23 @@ package parties
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/pkg/errors"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/uptrace/bun"
 )
 
-// PartyFilter is the set of party list filters. A nil pointer (or empty slice)
-// means "do not filter on this field". Most filters translate to SQL WHERE
-// clauses; InfoCollectionStatus is the exception (see ListParties).
-type PartyFilter struct {
-	Side                    *string
-	Relation                *string
-	Circle                  *string // matches parties whose circle array contains this value
-	InvitationType          *string
-	InfoCollectionRequested *bool
-	InfoCollectionStatus    *string // "complete" / "incomplete"; filtered in Go
-}
-
-// GuestFilter is the set of flat guest-list filters. Side / Relation / Circle
-// are party-level attributes, so those clauses join through the guest's party.
-// Event- and RSVP-status filters are intentionally absent: they depend on the
-// event model (#6) which does not exist yet.
-type GuestFilter struct {
-	Side          *string
-	Relation      *string
-	Circle        *string
-	Roles         *string // matches guests whose roles array contains this value
-	IsDrinking    *bool
-	IsChild       *bool
-	IsPlaceholder *bool
-}
-
-// ListParties returns parties matching the filter, each with its guests loaded
-// and ordered by creation time.
+// ListParties returns parties matching the filter (each with guests loaded,
+// ordered by creation time) and the total count.
 //
 // Every filter except InfoCollectionStatus is applied in SQL. Status cannot be
 // expressed cleanly in SQL because it depends on the derived rules over the
-// joined primary guest's email plus invitation_type and the two flags, so it is
-// computed in Go via StatusOf and filtered here. At wedding scale (hundreds of
-// parties) loading the candidate set and filtering one predicate in Go is
-// comfortably fine.
-func (s *Service) ListParties(ctx context.Context, f PartyFilter) ([]*Party, error) {
-	var parties []*Party
+// primary guest's email plus invitation_type and the two flags, so it is
+// computed in Go via the model and filtered here; the total then reflects the
+// filtered set. At wedding scale (hundreds of parties) loading the candidate set
+// and filtering one predicate in Go is comfortably fine.
+func (s *Service) ListParties(ctx context.Context, f ListPartiesQuery) ([]*models.Party, int, error) {
+	var parties []*models.Party
 	q := s.db.NewSelect().Model(&parties).Relation("Guests").Order("p.created_at ASC")
 
 	if f.Side != nil {
@@ -63,31 +38,39 @@ func (s *Service) ListParties(ctx context.Context, f PartyFilter) ([]*Party, err
 		q = q.Where("? = ANY(p.circle)", *f.Circle)
 	}
 
-	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("list parties: %w", err)
-	}
-
+	// With no status filter the SQL count is the total. With one, we filter the
+	// derived status in Go and recount, so the extra COUNT is only worth running
+	// in the no-status-filter branch.
 	if f.InfoCollectionStatus == nil {
-		return parties, nil
+		total, err := q.ScanAndCount(ctx)
+		if err != nil {
+			return nil, 0, errors.Wrap(err, "list parties")
+		}
+		return parties, total, nil
 	}
 
-	// Filter the one SQL-unfriendly predicate (status) in Go, reusing the same
-	// pure rules the API responses use so the filter and the displayed status
-	// can never disagree.
+	if err := q.Scan(ctx); err != nil {
+		return nil, 0, errors.Wrap(err, "list parties")
+	}
+
+	// Filter status in Go via the same model method the responses use, so the
+	// filter and the displayed status can never disagree; the total is the
+	// filtered count.
 	filtered := parties[:0]
 	for _, p := range parties {
-		if StatusOf(p) == *f.InfoCollectionStatus {
+		if p.InfoCollectionStatus() == *f.InfoCollectionStatus {
 			filtered = append(filtered, p)
 		}
 	}
-	return filtered, nil
+	return filtered, len(filtered), nil
 }
 
-// ListGuests returns guests matching the flat filter, ordered by creation time.
-// Party-level filters (side/relation/circle) are applied via a correlated
-// EXISTS against the guest's party, keeping the result a flat guest list.
-func (s *Service) ListGuests(ctx context.Context, f GuestFilter) ([]*Guest, error) {
-	var guests []*Guest
+// ListGuests returns guests matching the flat filter (ordered by creation time)
+// and the total count. Party-level filters (side/relation/circle) are applied
+// via a correlated EXISTS against the guest's party, keeping the result a flat
+// guest list.
+func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.Guest, int, error) {
+	var guests []*models.Guest
 	q := s.db.NewSelect().Model(&guests).Order("g.created_at ASC")
 
 	if f.IsDrinking != nil {
@@ -109,17 +92,18 @@ func (s *Service) ListGuests(ctx context.Context, f GuestFilter) ([]*Guest, erro
 		q = q.Where("EXISTS (?)", partyScopeSubquery(s.db, f))
 	}
 
-	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("list guests: %w", err)
+	total, err := q.ScanAndCount(ctx)
+	if err != nil {
+		return nil, 0, errors.Wrap(err, "list guests")
 	}
-	return guests, nil
+	return guests, total, nil
 }
 
-// partyScopeSubquery builds the correlated subquery used by ListGuests to filter
-// on the guest's party attributes. It selects 1 from parties where the party is
-// the guest's party and matches the supplied party-level predicates.
-func partyScopeSubquery(db *bun.DB, f GuestFilter) *bun.SelectQuery {
-	sub := db.NewSelect().Model((*Party)(nil)).Column("id").Where("p.id = g.party_id")
+// partyScopeSubquery builds the correlated subquery ListGuests uses to filter on
+// the guest's party attributes: select 1 from parties where the party is the
+// guest's party and matches the supplied party-level predicates.
+func partyScopeSubquery(db *bun.DB, f ListGuestsQuery) *bun.SelectQuery {
+	sub := db.NewSelect().Model((*models.Party)(nil)).Column("id").Where("p.id = g.party_id")
 	if f.Side != nil {
 		sub = sub.Where("p.side = ?", *f.Side)
 	}

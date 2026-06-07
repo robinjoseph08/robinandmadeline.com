@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/robinjoseph08/robinandmadeline.com/pkg/database/databasetest"
+	"github.com/robinjoseph08/robinandmadeline.com/internal/databasetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

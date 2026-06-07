@@ -3,6 +3,8 @@ package parties_test
 import (
 	"testing"
 
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,8 +30,7 @@ func TestCreateParty_RejectsInvalidEnums(t *testing.T) {
 	in := digitalPartyInput()
 	in.Side = "nobody"
 	_, err := svc.CreateParty(ctx(), in)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, parties.ErrValidation)
+	assertErrCode(t, err, errcodes.CodeValidationError)
 }
 
 func TestCreateParty_RejectsEmptyName(t *testing.T) {
@@ -38,8 +39,7 @@ func TestCreateParty_RejectsEmptyName(t *testing.T) {
 	in := digitalPartyInput()
 	in.Name = "   "
 	_, err := svc.CreateParty(ctx(), in)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, parties.ErrValidation)
+	assertErrCode(t, err, errcodes.CodeValidationError)
 }
 
 func TestCreateParty_DuplicateRSVPCodeConflicts(t *testing.T) {
@@ -54,8 +54,7 @@ func TestCreateParty_DuplicateRSVPCodeConflicts(t *testing.T) {
 	in2 := digitalPartyInput()
 	in2.RSVPCode = ptr("KALEL")
 	_, err = svc.CreateParty(ctx(), in2)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, parties.ErrConflict)
+	assertErrCode(t, err, errcodes.CodeConflict)
 }
 
 func TestCreateParty_AllowsMultipleNullRSVPCodes(t *testing.T) {
@@ -80,7 +79,7 @@ func TestGetParty_NotFound(t *testing.T) {
 	svc, _ := newService(t)
 
 	_, err := svc.GetParty(ctx(), "00000000-0000-0000-0000-000000000000")
-	assert.ErrorIs(t, err, parties.ErrNotFound)
+	assertErrCode(t, err, errcodes.CodeNotFound)
 }
 
 func TestUpdateParty_DoesNotTouchCollectionFlags(t *testing.T) {
@@ -89,7 +88,7 @@ func TestUpdateParty_DoesNotTouchCollectionFlags(t *testing.T) {
 	// Mark a party complete (sets requested+confirmed) then edit a field. The
 	// edit must not reset the collection flags (ADR 0005).
 	p := createPartyT(t, svc, physicalPartyInput())
-	addGuestT(t, svc, p.ID, parties.CreateGuestInput{FullName: "Pat Jones", Email: ptr("pat@example.com"), IsPrimary: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat Jones", Email: ptr("pat@example.com"), IsPrimary: true})
 	line1, city, state, postal, country := fullAddress()
 	updatePartyAddress(t, svc, p.ID, line1, city, state, postal, country)
 
@@ -115,7 +114,7 @@ func TestUpdateParty_DuplicateRSVPCodeConflicts(t *testing.T) {
 	b := createPartyT(t, svc, digitalPartyInput())
 
 	// Updating b to reuse a's code must conflict.
-	_, err := svc.UpdateParty(ctx(), b.ID, parties.UpdatePartyInput{
+	_, err := svc.UpdateParty(ctx(), b.ID, parties.UpdatePartyPayload{
 		Name:           b.Name,
 		Side:           b.Side,
 		Relation:       b.Relation,
@@ -123,40 +122,39 @@ func TestUpdateParty_DuplicateRSVPCodeConflicts(t *testing.T) {
 		InvitationType: b.InvitationType,
 		RSVPCode:       ptr("PEPPER"),
 	})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, parties.ErrConflict)
+	assertErrCode(t, err, errcodes.CodeConflict)
 }
 
 func TestUpdateParty_NotFound(t *testing.T) {
 	svc, _ := newService(t)
 
-	_, err := svc.UpdateParty(ctx(), "00000000-0000-0000-0000-000000000000", parties.UpdatePartyInput{
+	_, err := svc.UpdateParty(ctx(), "00000000-0000-0000-0000-000000000000", parties.UpdatePartyPayload{
 		Name:           "x",
-		Side:           parties.SideRobin,
-		Relation:       parties.RelationFriend,
-		InvitationType: parties.InvitationDigital,
+		Side:           models.SideRobin,
+		Relation:       models.RelationFriend,
+		InvitationType: models.InvitationDigital,
 	})
-	assert.ErrorIs(t, err, parties.ErrNotFound)
+	assertErrCode(t, err, errcodes.CodeNotFound)
 }
 
 func TestDeleteParty_CascadesGuests(t *testing.T) {
 	svc, _ := newService(t)
 
 	p := createPartyT(t, svc, digitalPartyInput())
-	g := addGuestT(t, svc, p.ID, parties.CreateGuestInput{FullName: "Solo Guest", IsPrimary: true})
+	g := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Solo Guest", IsPrimary: true})
 
 	require.NoError(t, svc.DeleteParty(ctx(), p.ID))
 
 	// The party is gone.
 	_, err := svc.GetParty(ctx(), p.ID)
-	require.ErrorIs(t, err, parties.ErrNotFound)
+	assertErrCode(t, err, errcodes.CodeNotFound)
 	// And its guest was removed by the FK cascade.
 	_, err = svc.GetGuest(ctx(), g.ID)
-	require.ErrorIs(t, err, parties.ErrNotFound)
+	assertErrCode(t, err, errcodes.CodeNotFound)
 }
 
 func TestDeleteParty_NotFound(t *testing.T) {
 	svc, _ := newService(t)
 	err := svc.DeleteParty(ctx(), "00000000-0000-0000-0000-000000000000")
-	assert.ErrorIs(t, err, parties.ErrNotFound)
+	assertErrCode(t, err, errcodes.CodeNotFound)
 }

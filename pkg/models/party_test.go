@@ -1,0 +1,163 @@
+package models_test
+
+import (
+	"testing"
+
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
+	"github.com/stretchr/testify/assert"
+)
+
+// These tests pin down the info-collection status state machine (ADR 0005) on
+// the Party model, independent of any database. They construct parties in memory
+// (with their primary guest and address) to exercise every branch.
+
+// withPrimaryEmail returns a primary guest with the given email (nil for none).
+func withPrimaryEmail(email *string) []*models.Guest {
+	return []*models.Guest{{IsPrimary: true, Email: email}}
+}
+
+// fullAddress sets the five required address fields on a party.
+func fullAddress(p *models.Party) {
+	v := "x"
+	p.AddressLine1 = &v
+	p.City = &v
+	p.StateOrProvince = &v
+	p.PostalCode = &v
+	p.Country = &v
+}
+
+func ptr[T any](v T) *T { return &v }
+
+func TestPrimaryGuest(t *testing.T) {
+	t.Parallel()
+
+	primary := &models.Guest{IsPrimary: true}
+	p := &models.Party{Guests: []*models.Guest{{}, primary, {}}}
+	assert.Same(t, primary, p.PrimaryGuest())
+
+	// No primary loaded or assigned reads nil.
+	assert.Nil(t, (&models.Party{Guests: []*models.Guest{{}}}).PrimaryGuest())
+	assert.Nil(t, (&models.Party{}).PrimaryGuest())
+}
+
+func TestRequiredFieldsPresent_Digital(t *testing.T) {
+	t.Parallel()
+
+	// A digital party needs only the primary guest's email; address is
+	// irrelevant, so it does not affect the outcome.
+	tests := []struct {
+		name        string
+		email       *string
+		withAddress bool
+		want        bool
+	}{
+		{"no primary", nil, false, false},
+		{"email present", ptr("a@b.com"), false, true},
+		{"email present, address ignored", ptr("a@b.com"), true, true},
+		{"blank email", ptr("   "), true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := &models.Party{InvitationType: models.InvitationDigital}
+			if tt.email != nil {
+				p.Guests = withPrimaryEmail(tt.email)
+			}
+			if tt.withAddress {
+				fullAddress(p)
+			}
+			assert.Equal(t, tt.want, p.RequiredFieldsPresent())
+		})
+	}
+}
+
+func TestRequiredFieldsPresent_Physical(t *testing.T) {
+	t.Parallel()
+
+	// A physical party needs both the primary email AND a full mailing address.
+	tests := []struct {
+		name        string
+		email       *string
+		withAddress bool
+		want        bool
+	}{
+		{"neither", nil, false, false},
+		{"email only", ptr("a@b.com"), false, false},
+		{"address only", nil, true, false},
+		{"both", ptr("a@b.com"), true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := &models.Party{InvitationType: models.InvitationPhysical}
+			if tt.email != nil {
+				p.Guests = withPrimaryEmail(tt.email)
+			}
+			if tt.withAddress {
+				fullAddress(p)
+			}
+			assert.Equal(t, tt.want, p.RequiredFieldsPresent())
+		})
+	}
+}
+
+func TestInfoCollectionStatus_NotRequested_DerivedFromFields(t *testing.T) {
+	t.Parallel()
+
+	// requested=false: status is derived purely from field presence, regardless
+	// of the confirmed flag (a stale confirmed must not leak through).
+	tests := []struct {
+		name      string
+		confirmed bool
+		email     *string
+		address   bool
+		want      string
+	}{
+		{"complete when all required present", false, ptr("a@b.com"), true, models.StatusComplete},
+		{"incomplete when email missing", false, nil, true, models.StatusIncomplete},
+		{"incomplete when address missing", false, ptr("a@b.com"), false, models.StatusIncomplete},
+		{"confirmed flag ignored when not requested", true, nil, false, models.StatusIncomplete},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := &models.Party{InvitationType: models.InvitationPhysical, InfoCollectionConfirmed: tt.confirmed}
+			if tt.email != nil {
+				p.Guests = withPrimaryEmail(tt.email)
+			}
+			if tt.address {
+				fullAddress(p)
+			}
+			assert.Equal(t, tt.want, p.InfoCollectionStatus())
+		})
+	}
+}
+
+func TestInfoCollectionStatus_Requested_FollowsConfirmedFlag(t *testing.T) {
+	t.Parallel()
+
+	// requested=true: status is affirmed, so it follows confirmed and ignores
+	// whether the fields happen to be present (the guest must submit / admin must
+	// mark).
+	tests := []struct {
+		name      string
+		confirmed bool
+		want      string
+	}{
+		{"incomplete while waiting even if fields present", false, models.StatusIncomplete},
+		{"complete once confirmed", true, models.StatusComplete},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := &models.Party{
+				InvitationType:          models.InvitationPhysical,
+				InfoCollectionRequested: true,
+				InfoCollectionConfirmed: tt.confirmed,
+				Guests:                  withPrimaryEmail(ptr("a@b.com")),
+			}
+			fullAddress(p)
+			assert.Equal(t, tt.want, p.InfoCollectionStatus())
+		})
+	}
+}

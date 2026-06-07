@@ -2,18 +2,28 @@ package parties_test
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"testing"
 
-	"github.com/robinjoseph08/robinandmadeline.com/pkg/database/databasetest"
+	"github.com/robinjoseph08/robinandmadeline.com/internal/databasetest"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 )
 
+// slogDiscard returns a logger that drops output, so the error handler's 5xx
+// logging does not clutter test output.
+func slogDiscard() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
 // newService returns a parties.Service backed by the shared Postgres test
-// database, truncating parties (and via cascade, guests) before the test runs
-// so each test starts clean. Tests using it must not call t.Parallel() because
-// they share one database and rely on truncation for isolation.
+// database, truncating parties (and via cascade, guests) before the test runs so
+// each test starts clean. Tests using it must not call t.Parallel() because they
+// share one database and rely on truncation for isolation.
 func newService(t *testing.T) (*parties.Service, *bun.DB) {
 	t.Helper()
 	db := databasetest.New(t)
@@ -27,9 +37,18 @@ func ctx() context.Context { return context.Background() }
 // ptr is a tiny helper for taking the address of a literal (e.g. ptr("x")).
 func ptr[T any](v T) *T { return &v }
 
-// createPartyT creates a party via the service and fails the test on error. It
-// returns the created party so callers can use its ID.
-func createPartyT(t *testing.T, svc *parties.Service, in parties.CreatePartyInput) *parties.Party {
+// assertErrCode asserts that err resolves to an *errcodes.Error with the given
+// code, the replacement for the old sentinel ErrorIs checks.
+func assertErrCode(t *testing.T, err error, code errcodes.Code) {
+	t.Helper()
+	require.Error(t, err)
+	var e *errcodes.Error
+	require.ErrorAs(t, err, &e)
+	require.Equal(t, string(code), e.Code)
+}
+
+// createPartyT creates a party via the service and fails the test on error.
+func createPartyT(t *testing.T, svc *parties.Service, in parties.CreatePartyPayload) *models.Party {
 	t.Helper()
 	p, err := svc.CreateParty(ctx(), in)
 	require.NoError(t, err)
@@ -38,36 +57,36 @@ func createPartyT(t *testing.T, svc *parties.Service, in parties.CreatePartyInpu
 
 // digitalPartyInput is a minimal valid input for a digital party (no address
 // required). Callers override fields as needed.
-func digitalPartyInput() parties.CreatePartyInput {
-	return parties.CreatePartyInput{
+func digitalPartyInput() parties.CreatePartyPayload {
+	return parties.CreatePartyPayload{
 		Name:           "The Smiths",
-		Side:           parties.SideRobin,
-		Relation:       parties.RelationFriend,
+		Side:           models.SideRobin,
+		Relation:       models.RelationFriend,
 		Circle:         []string{"College"},
-		InvitationType: parties.InvitationDigital,
+		InvitationType: models.InvitationDigital,
 	}
 }
 
-// physicalPartyInput is a minimal valid input for a physical party. Note its
-// address is intentionally absent so completion tests can add it explicitly.
-func physicalPartyInput() parties.CreatePartyInput {
-	return parties.CreatePartyInput{
+// physicalPartyInput is a minimal valid input for a physical party. Its address
+// is intentionally absent so completion tests can add it explicitly.
+func physicalPartyInput() parties.CreatePartyPayload {
+	return parties.CreatePartyPayload{
 		Name:           "The Joneses",
-		Side:           parties.SideMadeline,
-		Relation:       parties.RelationFamily,
+		Side:           models.SideMadeline,
+		Relation:       models.RelationFamily,
 		Circle:         []string{"Immediate"},
-		InvitationType: parties.InvitationPhysical,
+		InvitationType: models.InvitationPhysical,
 	}
 }
 
-// fullAddress returns the five required address fields populated, for building
-// a complete physical party.
+// fullAddress returns the five required address fields populated, for building a
+// complete physical party.
 func fullAddress() (line1, city, state, postal, country *string) {
 	return ptr("123 Main St"), ptr("Springfield"), ptr("IL"), ptr("62704"), ptr("USA")
 }
 
 // addGuestT adds a guest to a party via the service and fails on error.
-func addGuestT(t *testing.T, svc *parties.Service, partyID string, in parties.CreateGuestInput) *parties.Guest {
+func addGuestT(t *testing.T, svc *parties.Service, partyID string, in parties.CreateGuestPayload) *models.Guest {
 	t.Helper()
 	g, err := svc.CreateGuest(ctx(), partyID, in)
 	require.NoError(t, err)
@@ -76,11 +95,11 @@ func addGuestT(t *testing.T, svc *parties.Service, partyID string, in parties.Cr
 
 // updatePartyName updates only the party's name (preserving the other required
 // fields by reloading first) and returns the updated party.
-func updatePartyName(t *testing.T, svc *parties.Service, partyID, name string) *parties.Party {
+func updatePartyName(t *testing.T, svc *parties.Service, partyID, name string) *models.Party {
 	t.Helper()
 	p, err := svc.GetParty(ctx(), partyID)
 	require.NoError(t, err)
-	updated, err := svc.UpdateParty(ctx(), partyID, parties.UpdatePartyInput{
+	updated, err := svc.UpdateParty(ctx(), partyID, parties.UpdatePartyPayload{
 		Name:            name,
 		Side:            p.Side,
 		Relation:        p.Relation,
@@ -99,13 +118,12 @@ func updatePartyName(t *testing.T, svc *parties.Service, partyID, name string) *
 }
 
 // updatePartyAddress sets the party's mailing address (preserving its other
-// fields) and returns the updated party. Used to make a physical party
-// complete.
-func updatePartyAddress(t *testing.T, svc *parties.Service, partyID string, line1, city, state, postal, country *string) *parties.Party {
+// fields) and returns the updated party. Used to make a physical party complete.
+func updatePartyAddress(t *testing.T, svc *parties.Service, partyID string, line1, city, state, postal, country *string) *models.Party {
 	t.Helper()
 	p, err := svc.GetParty(ctx(), partyID)
 	require.NoError(t, err)
-	updated, err := svc.UpdateParty(ctx(), partyID, parties.UpdatePartyInput{
+	updated, err := svc.UpdateParty(ctx(), partyID, parties.UpdatePartyPayload{
 		Name:            p.Name,
 		Side:            p.Side,
 		Relation:        p.Relation,
