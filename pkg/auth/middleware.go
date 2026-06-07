@@ -35,7 +35,7 @@ func (m *Middleware) RequireAdmin(next echo.HandlerFunc) echo.HandlerFunc {
 			return err
 		}
 		if claims.Role != RoleAdmin {
-			return errcodes.Unauthorized("admin access required")
+			return errcodes.Unauthorized("Admin access is required.")
 		}
 		c.Set(ContextKeyClaims, claims)
 		return next(c)
@@ -47,12 +47,12 @@ func (m *Middleware) RequireAdmin(next echo.HandlerFunc) echo.HandlerFunc {
 func (m *Middleware) authenticate(c echo.Context) (*JWTClaims, error) {
 	token, err := tokenFromHeader(c.Request().Header.Get(echo.HeaderAuthorization))
 	if err != nil {
-		return nil, errcodes.Unauthorized("authentication required")
+		return nil, errcodes.Unauthorized("Authentication is required.")
 	}
 
 	claims, err := m.service.ValidateToken(token)
 	if err != nil {
-		return nil, errcodes.Unauthorized("invalid or expired token")
+		return nil, errcodes.Unauthorized("Invalid or expired token.")
 	}
 	return claims, nil
 }

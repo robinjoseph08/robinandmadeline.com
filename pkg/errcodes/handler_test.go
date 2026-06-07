@@ -54,7 +54,7 @@ func TestHandle_ErrcodesErrorRendersEnvelope(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	code, msg, status := decodeEnvelope(t, rec)
 	assert.Equal(t, string(errcodes.CodeNotFound), code)
-	assert.Equal(t, "party not found", msg)
+	assert.Equal(t, "Party not found.", msg)
 	assert.Equal(t, http.StatusNotFound, status)
 }
 

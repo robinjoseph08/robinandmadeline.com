@@ -17,7 +17,7 @@ import (
 // errInfoIncomplete is the 422 returned by the gated transitions when a party is
 // missing fields required to be complete.
 func errInfoIncomplete() error {
-	return errcodes.ValidationError("required fields are missing; cannot mark complete")
+	return errcodes.ValidationError("Required fields are missing, so the party cannot be marked complete.")
 }
 
 // RequestInfo marks the info link as sent (requested=true, confirmed=false),

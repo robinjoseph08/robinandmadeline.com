@@ -9,7 +9,19 @@ package errcodes
 import (
 	"fmt"
 	"net/http"
+	"strings"
 )
+
+// capitalize returns s with its first letter upper-cased, leaving the rest
+// untouched. It lets NotFound callers keep passing a lowercase resource name
+// (e.g. "party") while the rendered message reads as a sentence ("Party not
+// found.").
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
 
 // Code is a stable, machine-readable error code. The //tygo:emit line generates
 // a matching TypeScript union so clients can switch on codes type-safely.
@@ -40,9 +52,11 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 
-// NotFound returns a 404 naming the missing resource.
+// NotFound returns a 404 naming the missing resource. The resource is
+// capitalized so callers can pass a lowercase name (e.g. "party") and still get
+// a sentence-case message ("Party not found.").
 func NotFound(resource string) error {
-	return &Error{http.StatusNotFound, resource + " not found", string(CodeNotFound)}
+	return &Error{http.StatusNotFound, capitalize(resource) + " not found.", string(CodeNotFound)}
 }
 
 // BadRequest returns a 400 with the given message.
@@ -59,7 +73,7 @@ func ValidationError(msg string) error {
 // recognize. The binder returns it when a JSON body or query string carries an
 // unknown key.
 func UnknownParameter(field string) error {
-	return &Error{http.StatusUnprocessableEntity, fmt.Sprintf("%q is not a recognized parameter", field), string(CodeUnknownParameter)}
+	return &Error{http.StatusUnprocessableEntity, fmt.Sprintf("%q is not a recognized parameter.", field), string(CodeUnknownParameter)}
 }
 
 // ValidationTypeError returns a 422 for a request field whose value is of the
@@ -72,19 +86,19 @@ func ValidationTypeError(msg string) error {
 // MalformedPayload returns a 400 for a request body that could not be parsed
 // (e.g. invalid JSON) and does not fall under a more specific binder error.
 func MalformedPayload() error {
-	return &Error{http.StatusBadRequest, "the request body is malformed", string(CodeMalformedPayload)}
+	return &Error{http.StatusBadRequest, "The request body is malformed.", string(CodeMalformedPayload)}
 }
 
 // EmptyRequestBody returns a 400 for a body-expecting request that arrived with
 // no body.
 func EmptyRequestBody() error {
-	return &Error{http.StatusBadRequest, "the request body is empty", string(CodeEmptyRequestBody)}
+	return &Error{http.StatusBadRequest, "The request body is empty.", string(CodeEmptyRequestBody)}
 }
 
 // UnsupportedMediaType returns a 415 for a request whose Content-Type the binder
 // does not support (only application/json bodies are accepted).
 func UnsupportedMediaType() error {
-	return &Error{http.StatusUnsupportedMediaType, "the request content type is not supported", string(CodeUnsupportedMediaType)}
+	return &Error{http.StatusUnsupportedMediaType, "The request content type is not supported.", string(CodeUnsupportedMediaType)}
 }
 
 // Conflict returns a 409 with the given message.

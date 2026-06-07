@@ -38,7 +38,7 @@ func (h *handler) adminLogin(c echo.Context) error {
 
 	if err := h.service.AuthenticateAdmin(req.Username, req.Password); err != nil {
 		if stderrors.Is(err, ErrInvalidCredentials) {
-			return errcodes.Unauthorized("invalid username or password")
+			return errcodes.Unauthorized("Invalid username or password.")
 		}
 		return err
 	}
