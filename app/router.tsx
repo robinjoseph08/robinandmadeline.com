@@ -7,6 +7,7 @@ import AdminGuests from "@/components/pages/admin/AdminGuests";
 import AdminLayout from "@/components/pages/admin/AdminLayout";
 import AdminLogin from "@/components/pages/admin/AdminLogin";
 import AdminParties from "@/components/pages/admin/AdminParties";
+import AdminPartyDetail from "@/components/pages/admin/AdminPartyDetail";
 import AdminPhotoGroups from "@/components/pages/admin/AdminPhotoGroups";
 import RequireAdmin from "@/components/pages/admin/RequireAdmin";
 import Crossword from "@/components/pages/Crossword";
@@ -53,6 +54,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, Component: AdminDashboard },
           { path: "parties", Component: AdminParties },
+          { path: "parties/:id", Component: AdminPartyDetail },
           { path: "guests", Component: AdminGuests },
           { path: "events", Component: AdminEvents },
           { path: "photo-groups", Component: AdminPhotoGroups },

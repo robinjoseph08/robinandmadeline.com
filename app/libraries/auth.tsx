@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 
+import { TOKEN_STORAGE_KEY } from "@/libraries/admin-api";
 import { apiRequest } from "@/libraries/api";
 import { AuthContext, type AuthContextValue } from "@/libraries/auth-context";
 
@@ -13,10 +14,10 @@ import { AuthContext, type AuthContextValue } from "@/libraries/auth-context";
  * the server rejecting expired tokens on each request.
  *
  * The context and useAuth hook live in auth-context.ts so this module exports
- * only a component (a React Fast Refresh requirement).
+ * only a component (a React Fast Refresh requirement). The localStorage key is
+ * shared with the admin API helper (admin-api.ts), the single reader of the
+ * persisted token for authenticated requests.
  */
-
-const TOKEN_STORAGE_KEY = "admin_token";
 
 interface LoginResponse {
   token: string;
