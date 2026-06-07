@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 )
 
 // handler holds the dependencies for the auth HTTP handlers.
@@ -28,12 +29,12 @@ type loginResponse struct {
 func (h *handler) adminLogin(c echo.Context) error {
 	var req adminLoginRequest
 	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+		return errcodes.BadRequest("invalid request body")
 	}
 
 	if err := h.service.AuthenticateAdmin(req.Username, req.Password); err != nil {
 		if errors.Is(err, ErrInvalidCredentials) {
-			return echo.NewHTTPError(http.StatusUnauthorized, "invalid username or password")
+			return errcodes.Unauthorized("invalid username or password")
 		}
 		return err
 	}

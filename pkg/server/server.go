@@ -3,13 +3,16 @@ package server
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/uptrace/bun"
 )
@@ -21,6 +24,11 @@ import (
 func New(cfg *config.Config, db *bun.DB) *http.Server {
 	e := echo.New()
 	e.HideBanner = true
+
+	// Render every error through the shared envelope handler, matching how
+	// cmd/api builds its slog logger.
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	e.HTTPErrorHandler = errcodes.NewHandler(logger).Handle
 
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())

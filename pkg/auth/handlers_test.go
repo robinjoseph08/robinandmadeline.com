@@ -3,6 +3,8 @@ package auth_test
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,17 +13,21 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // newAuthEcho builds an Echo instance with the auth routes registered against a
-// service holding a known admin credential.
+// service holding a known admin credential. It wires the shared errcodes error
+// handler so errcodes errors render with their proper status, matching the real
+// server.
 func newAuthEcho(t *testing.T) (*echo.Echo, *auth.Service) {
 	t.Helper()
 	svc := auth.NewService(testSecret, time.Hour, time.Hour, testUsername, testPassword)
 
 	e := echo.New()
+	e.HTTPErrorHandler = errcodes.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil))).Handle
 	api := e.Group("/api")
 	auth.RegisterRoutes(api, svc)
 	return e, svc
