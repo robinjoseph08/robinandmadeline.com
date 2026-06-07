@@ -27,10 +27,20 @@ The Go backend is Echo + Bun on Postgres. These conventions keep the API typed e
 
 - Return a `pkg/errcodes` constructor (`NotFound`, `BadRequest`, `ValidationError`, `Conflict`, `Unauthorized`, `Forbidden`, `Internal`, plus the binder's `UnknownParameter`, `ValidationTypeError`, `MalformedPayload`, `EmptyRequestBody`, `UnsupportedMediaType`). Never `echo.NewHTTPError`.
 - Wrap infrastructure errors with `github.com/pkg/errors` (`errors.Wrap` / `errors.WithStack`) so a stack reaches the logs.
-- The single `e.HTTPErrorHandler` renders the `{ "error": { code, message, status_code } }` envelope and logs only 5xx (with the request method, path, and stack). Do not log expected 4xx, and never put an internal error's text in a 500 response body.
+- The single `e.HTTPErrorHandler` (`errcodes.NewHandler().Handle`) renders the `{ "error": { code, message, status_code } }` envelope and logs only 5xx, through the request-scoped logger (the request method/path/route ride on it, and `.Err(err)` attaches the stack). Do not log expected 4xx, and never put an internal error's text in a 500 response body. Client-disconnect and `context.Canceled` errors are dropped via `golib/errutils.IsIgnorableErr`.
 - A Postgres unique violation becomes a 409 through `errcodes.ConflictOnUnique`.
 
 ## Migrations
 
 - Register Go migrations in `pkg/migrations`. Apply them with `mise db:migrate` (the CLI is `cmd/migrations`).
 - The server does not migrate at startup. Production migrates via the Fly release_command (ADR 0007); local dev migrates through `mise start`.
+
+## Logging and runtime
+
+These adopt `github.com/robinjoseph08/golib`, mirroring the shisho reference repo, in place of stdlib slog and our hand-rolled equivalents.
+
+- Logging is `golib/logger` (zerolog under the hood). Construct a base logger with `logger.New()` (it reads `LOG_LEVEL`/`LOG_FORMAT` from the environment); emit with `.Info`/`.Warn`/`.Error`/`.Debug`/`.Fatal`, chaining `.Err(err)` for the error and stack and `.Data(logger.Data{...})` for structured fields.
+- Inside a request, use the request-scoped logger, not a fresh `logger.New()`: `logger.FromEchoContext(c)` (or `logger.FromContext(ctx)`) returns the logger that `logger.Middleware()` injected, already tagged with a request ID and the request method/path/route. Outside a request (or where no `echo.Context` is in scope), `logger.FromContext` falls back to a default `logger.New()`.
+- The server wires middleware in this order: `logger.Middleware()` (request-scoped logger + request logging), `recovery.Middleware()` (funnels panics into the error handler as 500s), then echo's `middleware.CORS()`. The first two are golib's; CORS stays echo's.
+- Graceful shutdown uses `golib/signals.Setup()`, which returns a channel closed on the first SIGINT/SIGTERM and `os.Exit(1)`s on the second.
+- Build optional-field and test-fixture pointers with `golib/pointerutil` (`String`/`Int`/`Bool`/`Float64`/`Time`, plus `Equal`/`EqualSlices`) rather than a local `ptr` helper or inline `&v`. Note `pointerutil.EmptyString` maps `""` to nil, so it is not used for fields like `rsvp_code`/address that rely on explicit JSON null plus validation.
