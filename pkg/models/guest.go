@@ -39,6 +39,13 @@ type Guest struct {
 
 	CreatedAt time.Time `bun:"created_at,nullzero" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero" json:"updated_at"`
+
+	// Party is populated only when explicitly loaded (e.g. the flat guest list
+	// joins it for the party name). It is an ORM relation over the existing
+	// party_id FK, not a stored column, so it needs no migration; bun fills it via
+	// relation queries. It is omitted from JSON: responses surface the party name
+	// through the GuestListItem response type, not a nested party.
+	Party *Party `bun:"rel:belongs-to,join:party_id=id" json:"-" tstype:"-"`
 }
 
 // BeforeAppendModel normalizes a nil Roles to an empty (non-nil) slice before

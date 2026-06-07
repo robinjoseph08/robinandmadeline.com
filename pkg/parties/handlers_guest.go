@@ -21,9 +21,9 @@ func (h *handler) listGuests(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	items := make([]GuestResponse, 0, len(guests))
+	items := make([]GuestListItem, 0, len(guests))
 	for _, g := range guests {
-		items = append(items, newGuestResponse(g))
+		items = append(items, newGuestListItem(g))
 	}
 	return c.JSON(http.StatusOK, ListGuestsResponse{Items: items, Total: total})
 }

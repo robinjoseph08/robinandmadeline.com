@@ -205,3 +205,35 @@ func TestListGuests_FlatFilters(t *testing.T) {
 		assert.False(t, ids[ga.ID])
 	})
 }
+
+// TestListGuests_LoadsOwningParty proves the flat guest list eager-loads each
+// guest's owning party so the response can surface the party name (a guest has
+// no detail page; it is edited in its party's context).
+func TestListGuests_LoadsOwningParty(t *testing.T) {
+	svc, _ := newService(t)
+
+	a := createPartyT(t, svc, parties.CreatePartyPayload{
+		Name: "The Smiths", Side: models.SideRobin, Relation: models.RelationFriend,
+		Circle: []string{"College"}, InvitationType: models.InvitationDigital,
+	})
+	b := createPartyT(t, svc, parties.CreatePartyPayload{
+		Name: "The Joneses", Side: models.SideMadeline, Relation: models.RelationFamily,
+		Circle: []string{"Immediate"}, InvitationType: models.InvitationDigital,
+	})
+	addGuestT(t, svc, a.ID, parties.CreateGuestPayload{FullName: "Smith Guest", IsPrimary: true})
+	addGuestT(t, svc, b.ID, parties.CreateGuestPayload{FullName: "Jones Guest", IsPrimary: true})
+
+	got, total, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{})
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	require.Len(t, got, 2)
+
+	// Each guest's Party relation is populated with the right party name.
+	names := map[string]string{}
+	for _, g := range got {
+		require.NotNil(t, g.Party, "ListGuests should eager-load the owning party")
+		names[g.PartyID] = g.Party.Name
+	}
+	assert.Equal(t, "The Smiths", names[a.ID])
+	assert.Equal(t, "The Joneses", names[b.ID])
+}

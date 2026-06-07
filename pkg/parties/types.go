@@ -143,16 +143,30 @@ type ListPartiesResponse struct {
 	Total int             `json:"total"`
 }
 
-// GuestResponse is the API representation of a guest. No reshape is needed, so
-// it is a thin embed of the stored model (by value, so tygo emits a plain
-// `extends models.Guest` rather than a Partial; see PartyResponse).
+// GuestResponse is the API representation of a single guest, used by the
+// party-scoped create/update endpoints. No reshape is needed, so it is a thin
+// embed of the stored model (by value, so tygo emits a plain `extends
+// models.Guest` rather than a Partial; see PartyResponse).
 type GuestResponse struct {
 	models.Guest `tstype:",extends"`
 }
 
-// ListGuestsResponse is the uniform list envelope for guests.
+// GuestListItem is the API representation of a guest in the flat guest list. A
+// guest is a sub-entity of its party and has no detail page of its own, so the
+// list carries the owning party's name (alongside the model's party_id) to let
+// the UI link each guest back to its party and edit it in place. It embeds the
+// guest model by value (a plain `extends models.Guest`; see PartyResponse) and
+// adds only the derived party_name.
+type GuestListItem struct {
+	models.Guest `tstype:",extends"`
+	PartyName    string `json:"party_name"`
+}
+
+// ListGuestsResponse is the uniform list envelope for the flat guest list. Items
+// are GuestListItem (guest plus party_name), not GuestResponse, because the flat
+// list needs the party context the party-scoped endpoints already have.
 type ListGuestsResponse struct {
-	Items []GuestResponse `json:"items"`
+	Items []GuestListItem `json:"items"`
 	Total int             `json:"total"`
 }
 
@@ -166,4 +180,15 @@ func newPartyResponse(p *models.Party) PartyResponse {
 // newGuestResponse wraps a guest for the API.
 func newGuestResponse(g *models.Guest) GuestResponse {
 	return GuestResponse{Guest: *g}
+}
+
+// newGuestListItem wraps a guest for the flat guest list, carrying the owning
+// party's name. The guest's Party relation must be loaded; a guest with no
+// loaded party falls back to an empty name rather than panicking.
+func newGuestListItem(g *models.Guest) GuestListItem {
+	item := GuestListItem{Guest: *g}
+	if g.Party != nil {
+		item.PartyName = g.Party.Name
+	}
+	return item
 }
