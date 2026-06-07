@@ -40,20 +40,17 @@ var unknownFieldsRE = regexp.MustCompile(`^json: unknown field "(.*)"$`)
 // defaults, and validator to validate them.
 type Binder struct {
 	queryDecoder *schema.Decoder
-	formDecoder  *schema.Decoder
 	conform      *mold.Transformer
 	validate     *validator.Validate
 }
 
 // New initializes a new Binder instance with the appropriate validation
-// functions registered. The query/form decoders read `query`/`form` aliases,
-// validator error fields use the json name, and the date/url custom validators
-// are registered.
+// functions registered. The query decoder reads `query` aliases, validator
+// error fields use the json name, and the date/url custom validators are
+// registered.
 func New() (*Binder, error) {
 	queryDecoder := schema.NewDecoder()
 	queryDecoder.SetAliasTag("query")
-	formDecoder := schema.NewDecoder()
-	formDecoder.SetAliasTag("form")
 	conform := modifiers.New()
 	validate := validator.New()
 	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
@@ -70,7 +67,7 @@ func New() (*Binder, error) {
 		return nil, errors.WithStack(err)
 	}
 
-	return &Binder{queryDecoder, formDecoder, conform, validate}, nil
+	return &Binder{queryDecoder, conform, validate}, nil
 }
 
 // Bind binds, modifies, defaults, and validates payloads against the given
