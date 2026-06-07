@@ -31,7 +31,7 @@ func newAPI(t *testing.T) *echo.Echo {
 	b, err := binder.New()
 	require.NoError(t, err)
 	e.Binder = b
-	e.HTTPErrorHandler = errcodes.NewHandler(slogDiscard()).Handle
+	e.HTTPErrorHandler = errcodes.NewHandler().Handle
 	g := e.Group("/api/admin")
 	parties.RegisterRoutes(g, svc)
 	return e

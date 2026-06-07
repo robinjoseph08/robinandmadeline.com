@@ -3,8 +3,6 @@ package auth_test
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,7 +30,7 @@ func newAuthEcho(t *testing.T) (*echo.Echo, *auth.Service) {
 	b, err := binder.New()
 	require.NoError(t, err)
 	e.Binder = b
-	e.HTTPErrorHandler = errcodes.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil))).Handle
+	e.HTTPErrorHandler = errcodes.NewHandler().Handle
 	api := e.Group("/api")
 	auth.RegisterRoutes(api, svc)
 	return e, svc

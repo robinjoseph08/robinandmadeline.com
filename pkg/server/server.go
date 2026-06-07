@@ -3,13 +3,13 @@ package server
 
 import (
 	"fmt"
-	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/robinjoseph08/golib/echo/v4/middleware/logger"
+	"github.com/robinjoseph08/golib/echo/v4/middleware/recovery"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
@@ -36,13 +36,17 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	}
 	e.Binder = b
 
-	// Render every error through the shared envelope handler, matching how
-	// cmd/api builds its slog logger.
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	e.HTTPErrorHandler = errcodes.NewHandler(logger).Handle
+	// Render every error through the shared envelope handler. It logs 5xx
+	// responses via the request-scoped golib logger installed by
+	// logger.Middleware, so it needs no logger of its own.
+	e.HTTPErrorHandler = errcodes.NewHandler().Handle
 
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
+	// golib's logger.Middleware injects a request-scoped logger (with a request
+	// ID) into the request context and logs request metadata; recovery.Middleware
+	// funnels panics into the error handler as 500s. CORS stays echo's. Order
+	// mirrors the shisho reference: logger, recovery, CORS.
+	e.Use(logger.Middleware())
+	e.Use(recovery.Middleware())
 	e.Use(middleware.CORS())
 
 	authService := auth.NewService(cfg.JWTSecret, cfg.AdminSessionDuration, cfg.GuestSessionDuration, cfg.AdminUsername, cfg.AdminPassword)

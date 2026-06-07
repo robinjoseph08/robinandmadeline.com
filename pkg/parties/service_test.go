@@ -2,8 +2,6 @@ package parties_test
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"testing"
 
 	"github.com/robinjoseph08/robinandmadeline.com/internal/databasetest"
@@ -13,12 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 )
-
-// slogDiscard returns a logger that drops output, so the error handler's 5xx
-// logging does not clutter test output.
-func slogDiscard() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
 
 // newService returns a parties.Service backed by the shared Postgres test
 // database, truncating parties (and via cascade, guests) before the test runs so

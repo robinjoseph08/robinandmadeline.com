@@ -1,13 +1,14 @@
 package errcodes_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"log/slog"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -17,18 +18,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// handle runs the error handler against err and returns the response recorder
-// plus whatever the logger emitted.
-func handle(t *testing.T, err error) (*httptest.ResponseRecorder, string) {
+// handle runs the error handler against err and returns the response recorder.
+// The handler logs 5xx responses through the request-scoped golib logger, which
+// falls back to a default logger (writing to stderr) when the logging
+// middleware did not run, as here. We assert on the response envelope and status
+// mapping rather than scraping that log output.
+func handle(t *testing.T, err error) *httptest.ResponseRecorder {
 	t.Helper()
-	var logBuf bytes.Buffer
-	h := errcodes.NewHandler(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	h := errcodes.NewHandler()
 
 	e := echo.New()
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/widgets", nil)
 	rec := httptest.NewRecorder()
 	h.Handle(err, e.NewContext(req, rec))
-	return rec, logBuf.String()
+	return rec
 }
 
 // decodeEnvelope reads the standard error envelope from a recorder.
@@ -46,19 +49,18 @@ func decodeEnvelope(t *testing.T, rec *httptest.ResponseRecorder) (code, message
 }
 
 func TestHandle_ErrcodesErrorRendersEnvelope(t *testing.T) {
-	rec, logged := handle(t, errcodes.NotFound("party"))
+	rec := handle(t, errcodes.NotFound("party"))
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	code, msg, status := decodeEnvelope(t, rec)
 	assert.Equal(t, string(errcodes.CodeNotFound), code)
 	assert.Equal(t, "party not found", msg)
 	assert.Equal(t, http.StatusNotFound, status)
-	assert.Empty(t, logged, "4xx must not be logged")
 }
 
 func TestHandle_WrappedErrcodesErrorIsResolved(t *testing.T) {
 	// A pkg/errors-wrapped errcodes error must still resolve via errors.As.
-	rec, _ := handle(t, errors.Wrap(errcodes.Conflict("dupe code"), "create party"))
+	rec := handle(t, errors.Wrap(errcodes.Conflict("dupe code"), "create party"))
 
 	assert.Equal(t, http.StatusConflict, rec.Code)
 	code, msg, _ := decodeEnvelope(t, rec)
@@ -67,7 +69,7 @@ func TestHandle_WrappedErrcodesErrorIsResolved(t *testing.T) {
 }
 
 func TestHandle_EchoHTTPErrorMappedToSnakeCode(t *testing.T) {
-	rec, _ := handle(t, echo.NewHTTPError(http.StatusMethodNotAllowed, "Method Not Allowed"))
+	rec := handle(t, echo.NewHTTPError(http.StatusMethodNotAllowed, "Method Not Allowed"))
 
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 	code, msg, _ := decodeEnvelope(t, rec)
@@ -76,7 +78,7 @@ func TestHandle_EchoHTTPErrorMappedToSnakeCode(t *testing.T) {
 }
 
 func TestHandle_GenericErrorIs500AndDoesNotLeak(t *testing.T) {
-	rec, logged := handle(t, errors.New("pq: secret connection string failed"))
+	rec := handle(t, errors.New("pq: secret connection string failed"))
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	code, msg, _ := decodeEnvelope(t, rec)
@@ -84,19 +86,23 @@ func TestHandle_GenericErrorIs500AndDoesNotLeak(t *testing.T) {
 	assert.Equal(t, "Internal Server Error", msg)
 	assert.NotContains(t, rec.Body.String(), "secret connection string",
 		"a 500 must never leak the internal error text to the client")
-	// 5xx is logged, with the request path and the underlying detail.
-	assert.Contains(t, logged, "/api/widgets")
-	assert.Contains(t, logged, "secret connection string")
 }
 
 func TestHandle_IgnorableErrorsAreSilent(t *testing.T) {
-	for _, err := range []error{
-		errors.New("write tcp 1.2.3.4:80->5.6.7.8:9: write: broken pipe"),
-		errors.New("read tcp: connection reset by peer"),
+	// golib's errutils.IsIgnorableErr classifies client-disconnect errors, and
+	// the handler also early-returns on context.Canceled. None should produce a
+	// response body.
+	for name, err := range map[string]error{
+		"broken pipe":      &os.SyscallError{Syscall: "write", Err: syscall.EPIPE},
+		"connection reset": &os.SyscallError{Syscall: "read", Err: syscall.ECONNRESET},
+		"eof":              io.EOF,
+		"context canceled": context.Canceled,
 	} {
-		rec, logged := handle(t, err)
-		// Nothing written, nothing logged.
-		assert.Empty(t, strings.TrimSpace(rec.Body.String()))
-		assert.Empty(t, logged)
+		t.Run(name, func(t *testing.T) {
+			rec := handle(t, err)
+			// Nothing written: the handler returned before rendering.
+			assert.Empty(t, strings.TrimSpace(rec.Body.String()))
+			assert.Equal(t, http.StatusOK, rec.Code, "no status should be written")
+		})
 	}
 }

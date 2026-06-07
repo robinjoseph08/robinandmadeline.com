@@ -3,13 +3,13 @@ package binder
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"reflect"
 	"strings"
 	timepkg "time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/gorilla/schema"
+	"github.com/robinjoseph08/golib/logger"
 )
 
 // Validation tag names the formatter renders friendly messages for. They mirror
@@ -131,14 +131,16 @@ func formatValidationError(err validator.FieldError) string {
 	default:
 		// A tag without a dedicated message above falls back to a generic message.
 		// The debug log surfaces the unhandled tag so a friendlier message can be
-		// added when a new validator is introduced.
-		slog.Debug("unformatted validation tag",
-			"tag", err.Tag(),
-			"actual_tag", err.ActualTag(),
-			"field", field,
-			"param", err.Param(),
-			"kind", err.Kind().String(),
-		)
+		// added when a new validator is introduced. This formatter runs without an
+		// echo.Context, so it uses a base golib logger rather than the
+		// request-scoped one.
+		logger.New().Data(logger.Data{
+			"tag":        err.Tag(),
+			"actual_tag": err.ActualTag(),
+			"field":      field,
+			"param":      err.Param(),
+			"kind":       err.Kind().String(),
+		}).Debug("unformatted validation tag")
 		return fmt.Sprintf("%q is invalid", field)
 	}
 }

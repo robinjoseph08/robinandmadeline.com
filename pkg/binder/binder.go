@@ -13,7 +13,6 @@ package binder
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -27,6 +26,7 @@ import (
 	"github.com/gorilla/schema"
 	"github.com/labstack/echo/v4"
 	"github.com/pkg/errors"
+	"github.com/robinjoseph08/golib/echo/v4/middleware/logger"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 )
 
@@ -110,7 +110,7 @@ func (b *Binder) Bind(i interface{}, c echo.Context) error {
 					return errcodes.ValidationTypeError(formatUnmarshalTypeError(typeErr))
 				}
 
-				slog.Debug("unknown json decode error", "error", err)
+				logger.FromEchoContext(c).Err(err).Debug("unknown json decode error")
 
 				return errcodes.MalformedPayload()
 			}

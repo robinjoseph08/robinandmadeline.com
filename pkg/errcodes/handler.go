@@ -2,14 +2,13 @@ package errcodes
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/iancoleman/strcase"
 	"github.com/labstack/echo/v4"
+	"github.com/pkg/errors"
+	"github.com/robinjoseph08/golib/echo/v4/middleware/logger"
+	"github.com/robinjoseph08/golib/errutils"
 )
 
 // errorBody is the client-facing error envelope: {"error": {...}}.
@@ -25,38 +24,43 @@ type errorDetail struct {
 
 // Handler is the Echo error handler. Build it with NewHandler and register it as
 // e.HTTPErrorHandler.
-type Handler struct {
-	logger *slog.Logger
-}
+type Handler struct{}
 
-// NewHandler returns a Handler that logs server errors with the given logger.
-func NewHandler(logger *slog.Logger) *Handler {
-	return &Handler{logger: logger}
+// NewHandler returns a Handler. 5xx responses are logged through the
+// request-scoped golib logger (golib/logger.Middleware), so the handler holds
+// no logger of its own.
+func NewHandler() *Handler {
+	return &Handler{}
 }
 
 // Handle resolves any error to the standard envelope and writes it. It logs only
-// 5xx responses (with the request method/path and a %+v stack so pkg/errors
-// stacks surface), and silently ignores client-disconnect errors.
+// 5xx responses through the request-scoped logger (which attaches a %+v stack
+// for pkg/errors errors), and silently ignores client-disconnect and
+// context-cancellation errors.
 func (h *Handler) Handle(err error, c echo.Context) {
-	if errors.Is(err, context.Canceled) || isBrokenPipe(err) {
+	// Silently ignore client-disconnect errors (broken pipe, connection reset,
+	// EOF, network timeouts) that golib classifies as ignorable.
+	if errutils.IsIgnorableErr(err) {
+		return
+	}
+
+	// Silently ignore context cancellation, which is expected when a client
+	// disconnects before the request completes.
+	if errors.Is(err, context.Canceled) {
 		return
 	}
 
 	httpCode, code, msg := resolve(err)
 
+	// Internal server errors: log the underlying error (with its stack) through
+	// the request-scoped logger. The raw detail stays in the log and never
+	// reaches the client.
 	if httpCode >= http.StatusInternalServerError {
-		req := c.Request()
-		// %+v renders the pkg/errors stack when present; the raw error detail
-		// stays in the log and never reaches the client.
-		h.logger.Error("server error",
-			"method", req.Method,
-			"path", req.URL.Path,
-			"error", fmt.Sprintf("%+v", err),
-		)
+		logger.FromEchoContext(c).Err(err).Error("server error")
 	}
 
 	if writeErr := c.JSON(httpCode, errorBody{errorDetail{code, msg, httpCode}}); writeErr != nil {
-		h.logger.Error("error handler failed to write response", "error", writeErr)
+		logger.FromEchoContext(c).Err(errors.WithStack(writeErr)).Error("error handler failed to write response")
 	}
 }
 
@@ -79,14 +83,4 @@ func resolve(err error) (int, string, string) {
 	}
 
 	return http.StatusInternalServerError, string(CodeInternal), "Internal Server Error"
-}
-
-// isBrokenPipe reports whether err looks like a client-disconnect write error
-// (broken pipe / connection reset), which is expected and not worth logging.
-func isBrokenPipe(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "broken pipe") || strings.Contains(msg, "connection reset by peer")
 }

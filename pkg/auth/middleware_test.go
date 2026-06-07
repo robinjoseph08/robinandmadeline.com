@@ -2,8 +2,6 @@ package auth_test
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,7 +24,7 @@ func runRequireAdmin(t *testing.T, svc *auth.Service, authHeader string) (nextCa
 	// Wire the shared errcodes handler so middleware errors (now errcodes
 	// errors, not *echo.HTTPError) render with their real status, matching the
 	// production server.
-	e.HTTPErrorHandler = errcodes.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil))).Handle
+	e.HTTPErrorHandler = errcodes.NewHandler().Handle
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/dashboard", http.NoBody)
 	if authHeader != "" {
 		req.Header.Set(echo.HeaderAuthorization, authHeader)

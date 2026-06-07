@@ -18,20 +18,22 @@ import (
 	"os"
 	"strings"
 
+	"github.com/robinjoseph08/golib/logger"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/migrations"
 )
 
 func main() {
+	log := logger.New()
+
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
 	}
 
 	if err := run(context.Background(), os.Args[1], os.Args[2:]); err != nil {
-		fmt.Fprintf(os.Stderr, "migrations: %v\n", err)
-		os.Exit(1)
+		log.Err(err).Fatal("migrations error")
 	}
 }
 
