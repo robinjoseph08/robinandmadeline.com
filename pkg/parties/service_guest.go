@@ -149,8 +149,22 @@ func (s *Service) PatchGuest(ctx context.Context, id string, in PatchGuestPayloa
 			}
 			return errors.Wrap(err, "load guest")
 		}
+		originalPartyID := guest.PartyID
 
-		cols := make([]string, 0, 11)
+		cols := make([]string, 0, 12)
+		if in.PartyID != nil && *in.PartyID != guest.PartyID {
+			// Moving the guest to another party: confirm the target exists so we
+			// return a clear error rather than a raw FK violation.
+			exists, err := tx.NewSelect().Model((*models.Party)(nil)).Where("id = ?", *in.PartyID).Exists(ctx)
+			if err != nil {
+				return errors.Wrap(err, "check target party exists")
+			}
+			if !exists {
+				return errcodes.ValidationError("That party does not exist.")
+			}
+			guest.PartyID = *in.PartyID
+			cols = append(cols, "party_id")
+		}
 		if in.FullName != nil {
 			guest.FullName = *in.FullName
 			cols = append(cols, "full_name")
@@ -201,10 +215,12 @@ func (s *Service) PatchGuest(ctx context.Context, id string, in PatchGuestPayloa
 			return nil
 		}
 
-		// Demote the previous primary (excluding this guest) before promoting this
-		// one, so at most one primary remains. Only a request to become primary
-		// triggers the demotion.
-		if in.IsPrimary != nil && *in.IsPrimary {
+		// Keep the single-primary invariant in the guest's final party. Demote any
+		// other primary there (excluding this guest) when the guest will be primary
+		// and either it is being promoted now or it is a primary guest moving into a
+		// new party (which would otherwise collide on the partial unique index).
+		movedParty := guest.PartyID != originalPartyID
+		if guest.IsPrimary && ((in.IsPrimary != nil && *in.IsPrimary) || movedParty) {
 			if err := demoteCurrentPrimary(ctx, tx, guest.PartyID, guest.ID); err != nil {
 				return err
 			}

@@ -155,8 +155,11 @@ type UpdateGuestPayload struct {
 // min=1 so blanking the name cell is a 422, and email uses emailblank so a
 // provided blank clears it (the service stores NULL) while a present value is
 // still format-checked. tags is a plain slice: nil leaves it unchanged, a
-// present array (including []) replaces it.
+// present array (including []) replaces it. party_id moves the guest to another
+// party (the flat guest list edits it inline); the service checks the target
+// party exists and keeps the single-primary invariant in the destination.
 type PatchGuestPayload struct {
+	PartyID             *string  `json:"party_id,omitempty" validate:"omitempty,uuid"`
 	FullName            *string  `json:"full_name,omitempty" mod:"trim" validate:"omitempty,min=1,max=200"`
 	Email               *string  `json:"email,omitempty" mod:"trim" validate:"omitempty,emailblank,max=320"`
 	Phone               *string  `json:"phone,omitempty" mod:"trim" validate:"omitempty,max=32"`

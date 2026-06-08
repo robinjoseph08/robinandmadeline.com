@@ -172,3 +172,52 @@ func TestPatchGuest_NotFound(t *testing.T) {
 	})
 	assertErrCode(t, err, errcodes.CodeNotFound)
 }
+
+func TestPatchGuest_MovesToAnotherParty(t *testing.T) {
+	svc, _ := newService(t)
+	a := createPartyT(t, svc, digitalPartyInput())
+	b := createPartyT(t, svc, digitalPartyInput())
+	g := addGuestT(t, svc, a.ID, parties.CreateGuestPayload{FullName: "Mover"})
+
+	updated, err := svc.PatchGuest(ctx(), g.ID, parties.PatchGuestPayload{PartyID: pointerutil.String(b.ID)})
+	require.NoError(t, err)
+	assert.Equal(t, b.ID, updated.PartyID, "guest should belong to the new party")
+
+	reloaded, err := svc.GetGuest(ctx(), g.ID)
+	require.NoError(t, err)
+	assert.Equal(t, b.ID, reloaded.PartyID)
+}
+
+func TestPatchGuest_MovingPrimaryDemotesDestinationPrimary(t *testing.T) {
+	svc, db := newService(t)
+	a := createPartyT(t, svc, digitalPartyInput())
+	b := createPartyT(t, svc, digitalPartyInput())
+	mover := addGuestT(t, svc, a.ID, parties.CreateGuestPayload{FullName: "A Primary", IsPrimary: true})
+	bPrimary := addGuestT(t, svc, b.ID, parties.CreateGuestPayload{FullName: "B Primary", IsPrimary: true})
+
+	// Moving the primary guest from A into B must demote B's existing primary, so
+	// B keeps exactly one primary (the moved guest) rather than tripping the
+	// one-primary-per-party index.
+	_, err := svc.PatchGuest(ctx(), mover.ID, parties.PatchGuestPayload{PartyID: pointerutil.String(b.ID)})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, countPrimaries(t, db, b.ID))
+	reBPrimary, err := svc.GetGuest(ctx(), bPrimary.ID)
+	require.NoError(t, err)
+	assert.False(t, reBPrimary.IsPrimary, "destination's previous primary should have been demoted")
+	reMover, err := svc.GetGuest(ctx(), mover.ID)
+	require.NoError(t, err)
+	assert.True(t, reMover.IsPrimary)
+	assert.Equal(t, b.ID, reMover.PartyID)
+}
+
+func TestPatchGuest_MoveToNonexistentPartyIsValidationError(t *testing.T) {
+	svc, _ := newService(t)
+	p := createPartyT(t, svc, digitalPartyInput())
+	g := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Stay"})
+
+	_, err := svc.PatchGuest(ctx(), g.ID, parties.PatchGuestPayload{
+		PartyID: pointerutil.String("00000000-0000-0000-0000-000000000000"),
+	})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+}
