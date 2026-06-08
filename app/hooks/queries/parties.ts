@@ -12,6 +12,7 @@ import type {
   ListPartiesResponse,
   MarkInfoPayload,
   PartyResponse,
+  PatchPartyPayload,
   UpdatePartyPayload,
 } from "@/types/generated/parties";
 
@@ -87,6 +88,33 @@ export const useUpdateParty = () => {
     mutationFn: ({ partyId, payload }) =>
       adminRequest(`/admin/parties/${partyId}`, {
         method: "PUT",
+        body: payload,
+      }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: [QueryKey.RetrieveParty, variables.partyId],
+      });
+      queryClient.invalidateQueries({ queryKey: [QueryKey.ListParties] });
+      queryClient.invalidateQueries({ queryKey: [QueryKey.ListGuests] });
+    },
+  });
+};
+
+// usePatchParty is the partial update behind the spreadsheet grid: it sends only
+// the fields the user changed (one cell, usually), via PATCH. The full-state
+// useUpdateParty (PUT) still backs the edit dialog. Both invalidate the same
+// keys, since a field edit can change the derived status shown in the lists.
+export const usePatchParty = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    PartyResponse,
+    ApiError,
+    { partyId: string; payload: PatchPartyPayload }
+  >({
+    mutationFn: ({ partyId, payload }) =>
+      adminRequest(`/admin/parties/${partyId}`, {
+        method: "PATCH",
         body: payload,
       }),
     onSuccess: (_data, variables) => {

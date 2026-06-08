@@ -80,10 +80,10 @@ beforeEach(() => {
 });
 
 describe("AdminPartyDetail single-primary guest editing", () => {
-  it("reflects the primary swap after promoting another guest", async () => {
-    // The party starts with Alice as primary, Bob not. Promoting Bob through the
-    // PATCH causes the API to demote Alice transactionally; the test models that
-    // by flipping which guest the subsequent party GET returns as primary.
+  it("reflects the primary swap after checking another guest's primary cell", async () => {
+    // The party starts with Alice as primary, Bob not. Checking Bob's primary
+    // cell PATCHes is_primary; the API demotes Alice transactionally, which the
+    // test models by flipping which guest the subsequent party GET returns.
     let bobIsPrimary = false;
 
     adminRequest.mockImplementation(
@@ -113,36 +113,149 @@ describe("AdminPartyDetail single-primary guest editing", () => {
     const user = userEvent.setup();
     renderDetail();
 
-    // Wait for the table, then confirm exactly one primary badge (Alice).
-    await screen.findByText("Alice");
-    expect(screen.getAllByText("Primary")).toHaveLength(1);
-    const aliceRow = screen.getByText("Alice").closest("tr")!;
-    expect(within(aliceRow).getByText("Primary")).toBeInTheDocument();
+    // Each guest's primary state is an inline checkbox. Initially only Alice's
+    // is checked.
+    const aliceRow = (await screen.findByDisplayValue("Alice")).closest("tr")!;
+    const bobRow = screen.getByDisplayValue("Bob").closest("tr")!;
+    expect(
+      within(aliceRow).getByRole("checkbox", { name: "Primary" }),
+    ).toBeChecked();
+    expect(
+      within(bobRow).getByRole("checkbox", { name: "Primary" }),
+    ).not.toBeChecked();
 
-    // Open Bob's edit dialog and promote him to primary.
-    const bobRow = screen.getByText("Bob").closest("tr")!;
-    await user.click(within(bobRow).getByRole("button", { name: /edit bob/i }));
-
-    const dialog = await screen.findByRole("dialog");
-    await user.click(
-      within(dialog).getByRole("checkbox", { name: /primary guest/i }),
-    );
-    await user.click(within(dialog).getByRole("button", { name: /save/i }));
+    // Promote Bob by checking his primary cell.
+    await user.click(within(bobRow).getByRole("checkbox", { name: "Primary" }));
 
     // After the refetch, exactly one primary remains and it is now Bob.
     await waitFor(() => {
-      const bobRowAfter = screen.getByText("Bob").closest("tr")!;
-      expect(within(bobRowAfter).getByText("Primary")).toBeInTheDocument();
+      const aliceAfter = screen.getByDisplayValue("Alice").closest("tr")!;
+      expect(
+        within(aliceAfter).getByRole("checkbox", { name: "Primary" }),
+      ).not.toBeChecked();
     });
-    expect(screen.getAllByText("Primary")).toHaveLength(1);
+    const bobAfter = screen.getByDisplayValue("Bob").closest("tr")!;
+    expect(
+      within(bobAfter).getByRole("checkbox", { name: "Primary" }),
+    ).toBeChecked();
 
     // The promotion went through the guest PATCH with is_primary true.
-    expect(adminRequest).toHaveBeenCalledWith(
-      "/admin/guests/bob",
-      expect.objectContaining({
-        method: "PATCH",
-        body: expect.objectContaining({ is_primary: true }),
-      }),
+    expect(adminRequest).toHaveBeenCalledWith("/admin/guests/bob", {
+      method: "PATCH",
+      body: { is_primary: true },
+    });
+  });
+});
+
+describe("AdminPartyDetail add guest", () => {
+  it("creates a placeholder guest from the trailing add row", async () => {
+    adminRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        const method = options?.method ?? "GET";
+        if (path === "/admin/parties/p1" && method === "GET") {
+          return Promise.resolve(makeParty([ALICE_PRIMARY]));
+        }
+        // The create POST (and any refetch) resolve to a guest.
+        return Promise.resolve(makeGuest({ id: "new", is_placeholder: true }));
+      },
     );
+
+    const user = userEvent.setup();
+    renderDetail();
+
+    // Fill the add row's name, mark it a placeholder, and submit with Add.
+    const addName = await screen.findByRole("textbox", {
+      name: "New guest name",
+    });
+    await user.type(addName, "Plus One");
+    await user.click(
+      screen.getByRole("checkbox", { name: "New guest placeholder" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith(
+        "/admin/parties/p1/guests",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.objectContaining({
+            full_name: "Plus One",
+            is_placeholder: true,
+          }),
+        }),
+      );
+    });
+  });
+
+  it("carries the checked primary flag on every successive add-row create", async () => {
+    // Regression: after a create resets the draft, the add-row cells re-seed from
+    // the (now empty) draft. Re-checking primary for the next guest must still
+    // commit it, rather than being dropped as a phantom no-op against a stale
+    // de-dup baseline. Both creates here should carry is_primary true.
+    const created: Guest[] = [];
+    adminRequest.mockImplementation(
+      (
+        path: string,
+        options?: {
+          method?: string;
+          body?: { full_name: string; is_primary: boolean };
+        },
+      ) => {
+        const method = options?.method ?? "GET";
+        if (path === "/admin/parties/p1" && method === "GET") {
+          return Promise.resolve(makeParty(created));
+        }
+        if (path === "/admin/parties/p1/guests" && method === "POST") {
+          const body = options?.body;
+          if (body?.is_primary) created.forEach((g) => (g.is_primary = false));
+          created.push(
+            makeGuest({
+              id: `g${created.length + 1}`,
+              full_name: body?.full_name ?? "",
+              is_primary: body?.is_primary ?? false,
+            }),
+          );
+          return Promise.resolve(created[created.length - 1]);
+        }
+        return Promise.resolve(undefined);
+      },
+    );
+
+    const user = userEvent.setup();
+    renderDetail();
+
+    const addOne = async (name: string) => {
+      await user.type(
+        await screen.findByRole("textbox", { name: "New guest name" }),
+        name,
+      );
+      await user.click(
+        screen.getByRole("checkbox", { name: "New guest primary" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Add" }));
+    };
+
+    await addOne("First Primary");
+    await waitFor(() =>
+      expect(screen.getByDisplayValue("First Primary")).toBeInTheDocument(),
+    );
+    await addOne("Second Primary");
+    await waitFor(() =>
+      expect(screen.getByDisplayValue("Second Primary")).toBeInTheDocument(),
+    );
+
+    // Both POSTs must have carried is_primary true.
+    const creates = adminRequest.mock.calls.filter(
+      (call) => call[0] === "/admin/parties/p1/guests",
+    );
+    expect(creates).toHaveLength(2);
+    expect(creates[0][1].body).toMatchObject({
+      full_name: "First Primary",
+      is_primary: true,
+    });
+    expect(creates[1][1].body).toMatchObject({
+      full_name: "Second Primary",
+      is_primary: true,
+    });
   });
 });

@@ -12,6 +12,7 @@ import type {
   GuestResponse,
   ListGuestsQuery,
   ListGuestsResponse,
+  PatchGuestPayload,
   UpdateGuestPayload,
 } from "@/types/generated/parties";
 
@@ -75,6 +76,9 @@ export const useCreateGuest = () => {
   });
 };
 
+// useUpdateGuest is the full-state update behind the edit dialog: PUT replaces
+// every editable field (so omitted fields reset). The spreadsheet grid uses
+// usePatchGuest instead, which sends only the changed field.
 export const useUpdateGuest = () => {
   const queryClient = useQueryClient();
 
@@ -82,6 +86,28 @@ export const useUpdateGuest = () => {
     GuestResponse,
     ApiError,
     { guestId: string; partyId: string; payload: UpdateGuestPayload }
+  >({
+    mutationFn: ({ guestId, payload }) =>
+      adminRequest(`/admin/guests/${guestId}`, {
+        method: "PUT",
+        body: payload,
+      }),
+    onSuccess: (_data, variables) => {
+      invalidateForGuestWrite(queryClient, variables.partyId);
+    },
+  });
+};
+
+// usePatchGuest is the partial update behind the spreadsheet grid: it sends only
+// the fields the user changed (one cell, usually), via PATCH. partyId is carried
+// only to scope cache invalidation; it is not part of the request.
+export const usePatchGuest = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    GuestResponse,
+    ApiError,
+    { guestId: string; partyId: string; payload: PatchGuestPayload }
   >({
     mutationFn: ({ guestId, payload }) =>
       adminRequest(`/admin/guests/${guestId}`, {

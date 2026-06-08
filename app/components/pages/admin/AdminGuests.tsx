@@ -1,8 +1,8 @@
-import { Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
+import { GuestsGrid } from "@/components/pages/admin/grid/GuestsGrid";
 import {
   BoolFilterSelect,
   FilterSelect,
@@ -13,22 +13,8 @@ import {
   RELATION_OPTIONS,
   SIDE_OPTIONS,
 } from "@/components/pages/admin/parties/options";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  useDeleteGuest,
-  useGuests,
-  useUpdateGuest,
-} from "@/hooks/queries/guests";
+import { useGuests, useUpdateGuest } from "@/hooks/queries/guests";
 import type { Circle, Relation, Side } from "@/types/generated/models";
 import type {
   CreateGuestPayload,
@@ -37,32 +23,26 @@ import type {
 } from "@/types/generated/parties";
 
 /**
- * Admin flat guest list: every guest across all parties in a filterable table.
- * Filters cover the party-level attributes (side, relation, circle) and the
- * guest-level ones (roles contains, plus the drinking/child/placeholder flags).
- * Event- and RSVP-status filters are deferred to #6 (they need the event model).
- *
- * A guest is a sub-entity of its party and has no detail page of its own, so the
- * Party column links to the owning party by name, and each row is edited in
- * place via the shared GuestFormDialog (seeded with the guest and its party_id,
- * which the update mutation needs for cache invalidation and the single-primary
- * swap) or deleted with a confirmation.
+ * Admin flat guest list: every guest across all parties, edited like a
+ * spreadsheet (each cell saves via PATCH on blur/Enter). Filters cover the
+ * party-level attributes (side, relation, circle) and the guest-level ones (roles
+ * contains, plus the flags). The Party column links each guest to its owning
+ * party; the full edit dialog survives for dietary restrictions and table/seat.
+ * There is no add row here (a guest needs a party, so guests are added from a
+ * party's detail page).
  */
 export default function AdminGuests() {
   const [filters, setFilters] = useState<ListGuestsQuery>({});
   // Local text state for the roles "contains" filter, committed to the query.
   const [rolesInput, setRolesInput] = useState("");
+  const [editGuest, setEditGuest] = useState<GuestListItem | undefined>(
+    undefined,
+  );
+  const [editOpen, setEditOpen] = useState(false);
 
   const guestsQuery = useGuests(filters);
   const guests = guestsQuery.data?.items ?? [];
-
   const updateGuest = useUpdateGuest();
-  const deleteGuest = useDeleteGuest();
-
-  const [editGuestOpen, setEditGuestOpen] = useState(false);
-  const [editingGuest, setEditingGuest] = useState<GuestListItem | undefined>(
-    undefined,
-  );
 
   const setFilter = <K extends keyof ListGuestsQuery>(
     key: K,
@@ -74,39 +54,24 @@ export default function AdminGuests() {
     setFilter("roles", trimmed === "" ? undefined : trimmed);
   };
 
-  const openEditGuest = (guest: GuestListItem) => {
-    setEditingGuest(guest);
-    setEditGuestOpen(true);
+  const openEdit = (guest: GuestListItem) => {
+    setEditGuest(guest);
+    setEditOpen(true);
   };
 
-  const handleGuestSubmit = async (payload: CreateGuestPayload) => {
-    if (!editingGuest) return;
+  const handleEditSubmit = async (payload: CreateGuestPayload) => {
+    if (!editGuest) return;
     try {
       await updateGuest.mutateAsync({
-        guestId: editingGuest.id,
-        partyId: editingGuest.party_id,
+        guestId: editGuest.id,
+        partyId: editGuest.party_id,
         payload,
       });
       toast.success("Guest updated");
-      setEditGuestOpen(false);
+      setEditOpen(false);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to update guest",
-      );
-    }
-  };
-
-  const handleDeleteGuest = async (guest: GuestListItem) => {
-    if (!window.confirm(`Delete ${guest.full_name}?`)) return;
-    try {
-      await deleteGuest.mutateAsync({
-        guestId: guest.id,
-        partyId: guest.party_id,
-      });
-      toast.success("Guest deleted");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete guest",
       );
     }
   };
@@ -122,7 +87,11 @@ export default function AdminGuests() {
         </p>
       </div>
 
-      <div className="flex flex-wrap items-end gap-4">
+      <div
+        aria-label="Filters"
+        className="flex flex-wrap items-end gap-4"
+        role="group"
+      >
         <FilterSelect<Side>
           label="Side"
           onChange={(v) => setFilter("side", v)}
@@ -178,84 +147,29 @@ export default function AdminGuests() {
       ) : guests.length === 0 ? (
         <p className="text-muted-foreground">No guests match these filters.</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Phone</TableHead>
-              <TableHead>Roles</TableHead>
-              <TableHead>Flags</TableHead>
-              <TableHead>Party</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {guests.map((guest) => (
-              <TableRow key={guest.id}>
-                <TableCell className="font-medium">{guest.full_name}</TableCell>
-                <TableCell>{guest.email ?? "--"}</TableCell>
-                <TableCell>{guest.phone ?? "--"}</TableCell>
-                <TableCell>
-                  {guest.roles.length > 0 ? guest.roles.join(", ") : "--"}
-                </TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap gap-1">
-                    {guest.is_primary ? (
-                      <Badge variant="default">Primary</Badge>
-                    ) : null}
-                    {guest.is_child ? (
-                      <Badge variant="secondary">Child</Badge>
-                    ) : null}
-                    {guest.is_drinking ? (
-                      <Badge variant="secondary">Drinking</Badge>
-                    ) : null}
-                    {guest.is_placeholder ? (
-                      <Badge variant="outline">Placeholder</Badge>
-                    ) : null}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <Link
-                    className="text-sm font-medium hover:underline"
-                    to={`/admin/parties/${guest.party_id}`}
-                  >
-                    {guest.party_name}
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      aria-label={`Edit ${guest.full_name}`}
-                      onClick={() => openEditGuest(guest)}
-                      size="icon"
-                      variant="ghost"
-                    >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      aria-label={`Delete ${guest.full_name}`}
-                      disabled={deleteGuest.isPending}
-                      onClick={() => handleDeleteGuest(guest)}
-                      size="icon"
-                      variant="ghost"
-                    >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div className="rounded-md border border-ink/10">
+          <GuestsGrid<GuestListItem>
+            guests={guests}
+            onEditGuest={openEdit}
+            partyIdFor={(guest) => guest.party_id}
+            renderParty={(guest) => (
+              <Link
+                className="text-sm font-medium hover:underline"
+                to={`/admin/parties/${guest.party_id}`}
+              >
+                {guest.party_name}
+              </Link>
+            )}
+          />
+        </div>
       )}
 
       <GuestFormDialog
-        guest={editingGuest}
+        guest={editGuest}
         isPending={updateGuest.isPending}
-        onOpenChange={setEditGuestOpen}
-        onSubmit={handleGuestSubmit}
-        open={editGuestOpen}
+        onOpenChange={setEditOpen}
+        onSubmit={handleEditSubmit}
+        open={editOpen}
       />
     </div>
   );

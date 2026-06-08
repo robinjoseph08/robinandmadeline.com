@@ -63,7 +63,7 @@ beforeEach(() => {
 });
 
 describe("AdminParties filters", () => {
-  it("narrows the table to the side filter the admin selects", async () => {
+  it("narrows the grid to the side filter the admin selects", async () => {
     // Route the list response off the side filter so selecting "Madeline"
     // returns only her party. The first call (no filter) returns both.
     adminRequest.mockImplementation(
@@ -85,19 +85,26 @@ describe("AdminParties filters", () => {
     const user = userEvent.setup();
     renderParties();
 
-    // Initially both parties show.
-    expect(await screen.findByText("Robin's Party")).toBeInTheDocument();
-    expect(screen.getByText("Madeline's Party")).toBeInTheDocument();
+    // Each party name is an editable cell, so rows are identified by the input's
+    // value. Initially both parties show.
+    expect(
+      await screen.findByDisplayValue("Robin's Party"),
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Madeline's Party")).toBeInTheDocument();
 
-    // Select Side = Madeline.
-    await user.click(screen.getByRole("combobox", { name: /side/i }));
+    // Select Side = Madeline from the filter bar (scoped so it is not confused
+    // with the per-row Side cells, which share the "Side" label).
+    const filters = screen.getByRole("group", { name: "Filters" });
+    await user.click(within(filters).getByRole("combobox", { name: "Side" }));
     await user.click(await screen.findByRole("option", { name: "Madeline" }));
 
     // The list refetches with the side filter and narrows to Madeline's party.
     await waitFor(() => {
-      expect(screen.queryByText("Robin's Party")).not.toBeInTheDocument();
+      expect(
+        screen.queryByDisplayValue("Robin's Party"),
+      ).not.toBeInTheDocument();
     });
-    expect(screen.getByText("Madeline's Party")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Madeline's Party")).toBeInTheDocument();
 
     // The last list request carried the side filter.
     const listCalls = adminRequest.mock.calls.filter(
@@ -105,6 +112,65 @@ describe("AdminParties filters", () => {
     );
     const lastListCall = listCalls[listCalls.length - 1];
     expect(lastListCall?.[1]?.query).toMatchObject({ side: "madeline" });
+  });
+});
+
+describe("AdminParties inline editing", () => {
+  it("saves a single cell via PATCH when it loses focus", async () => {
+    adminRequest.mockImplementation((path: string) => {
+      if (path === "/admin/parties") {
+        return Promise.resolve({ items: [ROBIN_PARTY], total: 1 });
+      }
+      return Promise.resolve(makeParty({ id: "p-robin" }));
+    });
+
+    const user = userEvent.setup();
+    renderParties();
+
+    const nameCell = await screen.findByDisplayValue("Robin's Party");
+    await user.clear(nameCell);
+    await user.type(nameCell, "The Robins");
+    await user.tab(); // blur commits the cell
+
+    // Leaving the cell PATCHes just the edited field for that party.
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/parties/p-robin", {
+        method: "PATCH",
+        body: { name: "The Robins" },
+      });
+    });
+  });
+
+  it("adds a party from the trailing row when the name is entered", async () => {
+    adminRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        const method = options?.method ?? "GET";
+        if (path === "/admin/parties" && method === "GET") {
+          return Promise.resolve({ items: [], total: 0 });
+        }
+        // The create POST (and any refetch) resolve to a value.
+        return Promise.resolve(makeParty({ id: "new", name: "Newcomers" }));
+      },
+    );
+
+    const user = userEvent.setup();
+    renderParties();
+
+    // The add row is always present; typing a name and pressing Enter creates it.
+    const addName = await screen.findByRole("textbox", {
+      name: "New party name",
+    });
+    await user.type(addName, "Newcomers{Enter}");
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith(
+        "/admin/parties",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.objectContaining({ name: "Newcomers" }),
+        }),
+      );
+    });
   });
 });
 
@@ -130,7 +196,9 @@ describe("AdminParties copy info link", () => {
 
     renderParties();
 
-    const row = (await screen.findByText("Robin's Party")).closest("tr")!;
+    const row = (await screen.findByDisplayValue("Robin's Party")).closest(
+      "tr",
+    )!;
     await user.click(within(row).getByRole("button", { name: /info link/i }));
 
     // Copying the info link POSTs to request-info for that party (per the spec),

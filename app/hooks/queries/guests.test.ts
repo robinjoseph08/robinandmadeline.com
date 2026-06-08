@@ -3,10 +3,13 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
 
+import { adminRequest } from "@/libraries/admin-api";
+
 import {
   QueryKey,
   useCreateGuest,
   useDeleteGuest,
+  usePatchGuest,
   useUpdateGuest,
 } from "./guests";
 import { QueryKey as PartiesQueryKey } from "./parties";
@@ -84,8 +87,9 @@ describe("useCreateGuest", () => {
 });
 
 describe("useUpdateGuest", () => {
-  it("invalidates the guest list, parent party detail, and parties list", async () => {
+  it("PUTs the full state and invalidates the guest list, party detail, and parties list", async () => {
     const client = newClient();
+    vi.mocked(adminRequest).mockClear();
     const { result } = renderHook(() => useUpdateGuest(), {
       wrapper: makeWrapper(client),
     });
@@ -104,6 +108,37 @@ describe("useUpdateGuest", () => {
         },
       }),
     );
+
+    // The dialog "full edit" replaces every field, so it uses PUT.
+    expect(adminRequest).toHaveBeenCalledWith(
+      "/admin/guests/g1",
+      expect.objectContaining({ method: "PUT" }),
+    );
+  });
+});
+
+describe("usePatchGuest", () => {
+  it("PATCHes only the changed field and invalidates the same caches", async () => {
+    const client = newClient();
+    vi.mocked(adminRequest).mockClear();
+    const { result } = renderHook(() => usePatchGuest(), {
+      wrapper: makeWrapper(client),
+    });
+
+    await expectGuestWriteInvalidations(client, () =>
+      result.current.mutateAsync({
+        guestId: "g1",
+        partyId: "p1",
+        payload: { is_primary: true },
+      }),
+    );
+
+    // A single-cell save sends just that field via PATCH (partyId is only for
+    // cache scoping, never part of the request body).
+    expect(adminRequest).toHaveBeenCalledWith("/admin/guests/g1", {
+      method: "PATCH",
+      body: { is_primary: true },
+    });
   });
 });
 

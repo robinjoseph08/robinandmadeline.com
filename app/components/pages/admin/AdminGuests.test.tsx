@@ -92,7 +92,7 @@ describe("AdminGuests flat list", () => {
     expect(await screen.findByText("Party detail page")).toBeInTheDocument();
   });
 
-  it("edits a guest in place, patching it with its party context", async () => {
+  it("edits a guest cell in place, patching it with its party context", async () => {
     adminRequest.mockImplementation(
       (path: string, options?: { method?: string }) => {
         const method = options?.method ?? "GET";
@@ -116,28 +116,46 @@ describe("AdminGuests flat list", () => {
     const user = userEvent.setup();
     renderGuests();
 
-    // Open Alice's edit dialog from her row and rename her.
-    const aliceRow = (await screen.findByText("Alice")).closest("tr")!;
-    await user.click(
-      within(aliceRow).getByRole("button", { name: /edit alice/i }),
+    // Rename Alice directly in her name cell, then blur to commit.
+    const nameCell = await screen.findByDisplayValue("Alice");
+    await user.clear(nameCell);
+    await user.type(nameCell, "Alice Cooper");
+    await user.tab();
+
+    // The edit went through the guest PATCH for the right guest, carrying just
+    // the new name (a single-field partial update).
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/guests/alice", {
+        method: "PATCH",
+        body: { full_name: "Alice Cooper" },
+      });
+    });
+  });
+
+  it("toggles a flag inline, patching only that field", async () => {
+    adminRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        const method = options?.method ?? "GET";
+        if (path === "/admin/guests" && method === "GET") {
+          return Promise.resolve(
+            listOf([makeGuestItem({ id: "alice", full_name: "Alice" })]),
+          );
+        }
+        return Promise.resolve(makeGuestItem({ id: "alice" }));
+      },
     );
 
-    const dialog = await screen.findByRole("dialog");
-    const nameInput = within(dialog).getByLabelText(/full name/i);
-    await user.clear(nameInput);
-    await user.type(nameInput, "Alice Cooper");
-    await user.click(within(dialog).getByRole("button", { name: /save/i }));
+    const user = userEvent.setup();
+    renderGuests();
 
-    // The edit went through the guest PATCH for the right guest, carrying the
-    // new name and the row's party_id context.
+    const row = (await screen.findByDisplayValue("Alice")).closest("tr")!;
+    await user.click(within(row).getByRole("checkbox", { name: "Drinking" }));
+
     await waitFor(() => {
-      expect(adminRequest).toHaveBeenCalledWith(
-        "/admin/guests/alice",
-        expect.objectContaining({
-          method: "PATCH",
-          body: expect.objectContaining({ full_name: "Alice Cooper" }),
-        }),
-      );
+      expect(adminRequest).toHaveBeenCalledWith("/admin/guests/alice", {
+        method: "PATCH",
+        body: { is_drinking: true },
+      });
     });
   });
 });
