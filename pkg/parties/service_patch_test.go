@@ -105,15 +105,15 @@ func TestPatchGuest_UpdatesOnlyProvidedField(t *testing.T) {
 	svc, _ := newService(t)
 	p := createPartyT(t, svc, digitalPartyInput())
 
-	// A guest carrying contact details, roles, and a flag. Patching only the name
-	// must leave email, phone, roles, and is_child exactly as they were: unlike the
+	// A guest carrying contact details, tags, and a flag. Patching only the name
+	// must leave email, phone, tags, and is_child exactly as they were: unlike the
 	// full-state PUT, a partial update never silently resets the fields it was not
 	// given (the reason the grid uses PATCH).
 	g := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{
 		FullName: "Pat",
 		Email:    pointerutil.String("pat@example.com"),
 		Phone:    pointerutil.String("555-1234"),
-		Roles:    []string{"Bridesmaid"},
+		Tags:     []string{"Bridesmaid"},
 		IsChild:  true,
 	})
 
@@ -127,7 +127,7 @@ func TestPatchGuest_UpdatesOnlyProvidedField(t *testing.T) {
 	assert.Equal(t, "pat@example.com", *updated.Email, "email must be untouched")
 	require.NotNil(t, updated.Phone)
 	assert.Equal(t, "555-1234", *updated.Phone, "phone must be untouched")
-	assert.Equal(t, []string{"Bridesmaid"}, updated.Roles, "roles must be untouched")
+	assert.Equal(t, []string{"Bridesmaid"}, updated.Tags, "tags must be untouched")
 	assert.True(t, updated.IsChild, "is_child must be untouched")
 }
 

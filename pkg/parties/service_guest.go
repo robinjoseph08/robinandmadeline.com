@@ -16,7 +16,7 @@ import (
 // When IsPrimary is requested, the previous primary (if any) is demoted in the
 // same transaction so a party never has two primaries. The payload is already
 // bound, trimmed, defaulted, and validated by the binder, so the fields are
-// assigned directly; roles arrives as a non-nil slice (defaulted to []) so it
+// assigned directly; tags arrives as a non-nil slice (defaulted to []) so it
 // stores '{}', not NULL.
 func (s *Service) CreateGuest(ctx context.Context, partyID string, in CreateGuestPayload) (*models.Guest, error) {
 	now := time.Now()
@@ -26,7 +26,7 @@ func (s *Service) CreateGuest(ctx context.Context, partyID string, in CreateGues
 		FullName:            in.FullName,
 		Email:               in.Email,
 		Phone:               in.Phone,
-		Roles:               in.Roles,
+		Tags:                in.Tags,
 		IsPrimary:           in.IsPrimary,
 		IsChild:             in.IsChild,
 		IsDrinking:          in.IsDrinking,
@@ -106,7 +106,7 @@ func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayl
 		guest.FullName = in.FullName
 		guest.Email = in.Email
 		guest.Phone = in.Phone
-		guest.Roles = in.Roles
+		guest.Tags = in.Tags
 		guest.IsPrimary = in.IsPrimary
 		guest.IsChild = in.IsChild
 		guest.IsDrinking = in.IsDrinking
@@ -117,7 +117,7 @@ func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayl
 		guest.UpdatedAt = time.Now()
 
 		_, err := tx.NewUpdate().Model(guest).
-			Column("full_name", "email", "phone", "roles", "is_primary",
+			Column("full_name", "email", "phone", "tags", "is_primary",
 				"is_child", "is_drinking", "is_placeholder", "dietary_restrictions",
 				"table_number", "seat_number", "updated_at").
 			WherePK().Exec(ctx)
@@ -133,7 +133,7 @@ func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayl
 }
 
 // PatchGuest applies a partial update to a guest: only the provided fields (a
-// non-nil pointer, or a non-nil roles slice) are written, each as a single
+// non-nil pointer, or a non-nil tags slice) are written, each as a single
 // column, so a spreadsheet cell edit saves just that field. Promoting it to
 // primary (is_primary=true) demotes the party's previous primary in the same
 // transaction, preserving the single-primary invariant. A provided nullable text
@@ -163,9 +163,9 @@ func (s *Service) PatchGuest(ctx context.Context, id string, in PatchGuestPayloa
 			guest.Phone = pointerutil.EmptyString(*in.Phone)
 			cols = append(cols, "phone")
 		}
-		if in.Roles != nil {
-			guest.Roles = in.Roles
-			cols = append(cols, "roles")
+		if in.Tags != nil {
+			guest.Tags = in.Tags
+			cols = append(cols, "tags")
 		}
 		if in.IsPrimary != nil {
 			guest.IsPrimary = *in.IsPrimary

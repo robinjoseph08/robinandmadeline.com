@@ -217,7 +217,7 @@ func TestCreatePartyHandler_OmittedCirclePersistsAsEmptyArray(t *testing.T) {
 	e := newAPI(t)
 	// Omitting circle entirely must persist (and read back) as an empty array, not
 	// null: default:"[]" initializes it before validate, and the model hook is the
-	// backstop. The same applies to guest roles below.
+	// backstop. The same applies to guest tags below.
 	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
 		"name": "NoCircle", "side": "robin", "relation": "friend", "invitation_type": "digital",
 	})
@@ -232,11 +232,11 @@ func TestCreatePartyHandler_OmittedCirclePersistsAsEmptyArray(t *testing.T) {
 	// The raw JSON must contain "circle":[] (a present empty array), never null.
 	assert.Contains(t, get.Body.String(), `"circle":[]`)
 
-	// And a guest with no roles persists roles as [].
+	// And a guest with no tags persists tags as [].
 	addRec := do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
-		map[string]any{"full_name": "No Roles"})
+		map[string]any{"full_name": "No Tags"})
 	require.Equal(t, http.StatusCreated, addRec.Code)
-	assert.Contains(t, addRec.Body.String(), `"roles":[]`)
+	assert.Contains(t, addRec.Body.String(), `"tags":[]`)
 }
 
 func TestCreatePartyHandler_DuplicateRSVPCodeIs409(t *testing.T) {

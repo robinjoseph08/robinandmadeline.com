@@ -84,8 +84,8 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 	if f.IsPlaceholder != nil {
 		q = q.Where("g.is_placeholder = ?", *f.IsPlaceholder)
 	}
-	if f.Roles != nil {
-		q = q.Where("? = ANY(g.roles)", *f.Roles)
+	if f.Tags != nil {
+		q = q.Where("? = ANY(g.tags)", *f.Tags)
 	}
 
 	// Party-level attributes filter the guest list by constraining the owning

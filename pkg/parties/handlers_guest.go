@@ -8,7 +8,7 @@ import (
 )
 
 // listGuests handles GET /api/admin/guests, the flat guest list with filters:
-// side, relation, circle, roles, is_drinking, is_child, is_placeholder. Event
+// side, relation, circle, tags, is_drinking, is_child, is_placeholder. Event
 // and RSVP-status filters are out of scope (they depend on #6). It returns the
 // uniform {items, total} envelope.
 func (h *handler) listGuests(c echo.Context) error {

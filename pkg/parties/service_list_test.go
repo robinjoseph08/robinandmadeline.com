@@ -138,9 +138,9 @@ func TestListGuests_FlatFilters(t *testing.T) {
 		Circle: []string{"Immediate"}, InvitationType: models.InvitationDigital,
 	})
 
-	// Guest in A: bridal party role, drinking adult.
+	// Guest in A: bridal party tag, drinking adult.
 	ga := addGuestT(t, svc, a.ID, parties.CreateGuestPayload{
-		FullName: "Adult A", Roles: []string{"Bridal Party", "UIUC"}, IsDrinking: true, IsPrimary: true,
+		FullName: "Adult A", Tags: []string{"Bridal Party", "UIUC"}, IsDrinking: true, IsPrimary: true,
 	})
 	// Guest in B: a child placeholder, not drinking.
 	gb := addGuestT(t, svc, b.ID, parties.CreateGuestPayload{
@@ -168,8 +168,8 @@ func TestListGuests_FlatFilters(t *testing.T) {
 		assert.True(t, ids[ga.ID])
 		assert.False(t, ids[gb.ID])
 	})
-	t.Run("roles containment", func(t *testing.T) {
-		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Roles: pointerutil.String("Bridal Party")})
+	t.Run("tags containment", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Tags: pointerutil.String("Bridal Party")})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[ga.ID])

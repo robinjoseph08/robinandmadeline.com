@@ -110,13 +110,13 @@ type ListPartiesQuery struct {
 // the route (create is nested under the party), so it is not a field here.
 // is_primary may be requested; when true the service demotes any existing
 // primary in the same transaction. Validation is tag-driven through the custom
-// binder. roles is open-ended (no closed union) so it only bounds element
+// binder. tags is open-ended (no closed union) so it only bounds element
 // length; it defaults to [] so a nil slice stores '{}', not NULL.
 type CreateGuestPayload struct {
 	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
 	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
 	Phone               *string  `json:"phone" mod:"trim" validate:"omitempty,max=32"`
-	Roles               []string `json:"roles" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
+	Tags                []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
 	IsPrimary           bool     `json:"is_primary"`
 	IsChild             bool     `json:"is_child"`
 	IsDrinking          bool     `json:"is_drinking"`
@@ -134,7 +134,7 @@ type UpdateGuestPayload struct {
 	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
 	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
 	Phone               *string  `json:"phone" mod:"trim" validate:"omitempty,max=32"`
-	Roles               []string `json:"roles" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
+	Tags                []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
 	IsPrimary           bool     `json:"is_primary"`
 	IsChild             bool     `json:"is_child"`
 	IsDrinking          bool     `json:"is_drinking"`
@@ -154,13 +154,13 @@ type UpdateGuestPayload struct {
 // Validation is uniformly omitempty: an absent field is skipped, full_name keeps
 // min=1 so blanking the name cell is a 422, and email uses emailblank so a
 // provided blank clears it (the service stores NULL) while a present value is
-// still format-checked. roles is a plain slice: nil leaves it unchanged, a
+// still format-checked. tags is a plain slice: nil leaves it unchanged, a
 // present array (including []) replaces it.
 type PatchGuestPayload struct {
 	FullName            *string  `json:"full_name,omitempty" mod:"trim" validate:"omitempty,min=1,max=200"`
 	Email               *string  `json:"email,omitempty" mod:"trim" validate:"omitempty,emailblank,max=320"`
 	Phone               *string  `json:"phone,omitempty" mod:"trim" validate:"omitempty,max=32"`
-	Roles               []string `json:"roles,omitempty" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100"`
+	Tags                []string `json:"tags,omitempty" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100"`
 	IsPrimary           *bool    `json:"is_primary,omitempty"`
 	IsChild             *bool    `json:"is_child,omitempty"`
 	IsDrinking          *bool    `json:"is_drinking,omitempty"`
@@ -179,7 +179,7 @@ type ListGuestsQuery struct {
 	Side          *string `query:"side" json:"side" validate:"omitempty,oneof=robin madeline"`
 	Relation      *string `query:"relation" json:"relation" validate:"omitempty,oneof=family friend"`
 	Circle        *string `query:"circle" json:"circle"`
-	Roles         *string `query:"roles" json:"roles"` // matches guests whose roles array contains this value
+	Tags          *string `query:"tags" json:"tags"` // matches guests whose tags array contains this value
 	IsDrinking    *bool   `query:"is_drinking" json:"is_drinking"`
 	IsChild       *bool   `query:"is_child" json:"is_child"`
 	IsPlaceholder *bool   `query:"is_placeholder" json:"is_placeholder"`
