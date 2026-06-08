@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/uptrace/bun"
@@ -122,6 +123,99 @@ func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayl
 			WherePK().Exec(ctx)
 		if err != nil {
 			return errors.Wrap(err, "update guest")
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return guest, nil
+}
+
+// PatchGuest applies a partial update to a guest: only the provided fields (a
+// non-nil pointer, or a non-nil roles slice) are written, each as a single
+// column, so a spreadsheet cell edit saves just that field. Promoting it to
+// primary (is_primary=true) demotes the party's previous primary in the same
+// transaction, preserving the single-primary invariant. A provided nullable text
+// field is stored as SQL NULL when blank. A missing guest returns a 404. With no
+// fields provided it is a no-op returning the current guest.
+func (s *Service) PatchGuest(ctx context.Context, id string, in PatchGuestPayload) (*models.Guest, error) {
+	guest := new(models.Guest)
+	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		// Load inside the tx so the party_id used for demotion is consistent.
+		if err := tx.NewSelect().Model(guest).Where("g.id = ?", id).Scan(ctx); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errcodes.NotFound("guest")
+			}
+			return errors.Wrap(err, "load guest")
+		}
+
+		cols := make([]string, 0, 11)
+		if in.FullName != nil {
+			guest.FullName = *in.FullName
+			cols = append(cols, "full_name")
+		}
+		if in.Email != nil {
+			guest.Email = pointerutil.EmptyString(*in.Email)
+			cols = append(cols, "email")
+		}
+		if in.Phone != nil {
+			guest.Phone = pointerutil.EmptyString(*in.Phone)
+			cols = append(cols, "phone")
+		}
+		if in.Roles != nil {
+			guest.Roles = in.Roles
+			cols = append(cols, "roles")
+		}
+		if in.IsPrimary != nil {
+			guest.IsPrimary = *in.IsPrimary
+			cols = append(cols, "is_primary")
+		}
+		if in.IsChild != nil {
+			guest.IsChild = *in.IsChild
+			cols = append(cols, "is_child")
+		}
+		if in.IsDrinking != nil {
+			guest.IsDrinking = *in.IsDrinking
+			cols = append(cols, "is_drinking")
+		}
+		if in.IsPlaceholder != nil {
+			guest.IsPlaceholder = *in.IsPlaceholder
+			cols = append(cols, "is_placeholder")
+		}
+		if in.DietaryRestrictions != nil {
+			guest.DietaryRestrictions = pointerutil.EmptyString(*in.DietaryRestrictions)
+			cols = append(cols, "dietary_restrictions")
+		}
+		if in.TableNumber != nil {
+			guest.TableNumber = in.TableNumber
+			cols = append(cols, "table_number")
+		}
+		if in.SeatNumber != nil {
+			guest.SeatNumber = in.SeatNumber
+			cols = append(cols, "seat_number")
+		}
+
+		// Nothing to change: leave the loaded guest as-is.
+		if len(cols) == 0 {
+			return nil
+		}
+
+		// Demote the previous primary (excluding this guest) before promoting this
+		// one, so at most one primary remains. Only a request to become primary
+		// triggers the demotion.
+		if in.IsPrimary != nil && *in.IsPrimary {
+			if err := demoteCurrentPrimary(ctx, tx, guest.PartyID, guest.ID); err != nil {
+				return err
+			}
+		}
+
+		guest.UpdatedAt = time.Now()
+		cols = append(cols, "updated_at")
+
+		_, err := tx.NewUpdate().Model(guest).Column(cols...).WherePK().Exec(ctx)
+		if err != nil {
+			return errors.Wrap(err, "patch guest")
 		}
 		return nil
 	})

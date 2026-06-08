@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/uptrace/bun"
@@ -102,6 +103,89 @@ func (s *Service) UpdateParty(ctx context.Context, id string, in UpdatePartyPayl
 		WherePK().Exec(ctx)
 	if err != nil {
 		return nil, errcodes.ConflictOnUnique(errors.Wrap(err, "update party"),
+			"A party with that RSVP code already exists.")
+	}
+	return party, nil
+}
+
+// PatchParty applies a partial update: only the fields present in the payload
+// (a non-nil pointer, or a non-nil circle slice) are written, each as a single
+// column, so a spreadsheet cell edit saves just that field. Like UpdateParty it
+// excludes info_token and the info_collection_* flags (ADR 0005), so editing a
+// field never changes collection status. A provided nullable text field is
+// stored as SQL NULL when blank (pointerutil.EmptyString), which keeps a cleared
+// rsvp_code out of the partial unique index. A duplicate RSVP code yields a 409,
+// a missing party a 404. With no fields provided it is a no-op returning the
+// current party.
+func (s *Service) PatchParty(ctx context.Context, id string, in PatchPartyPayload) (*models.Party, error) {
+	party, err := loadPartyWithGuests(ctx, s.db, id)
+	if err != nil {
+		return nil, err
+	}
+
+	cols := make([]string, 0, 12)
+	if in.Name != nil {
+		party.Name = *in.Name
+		cols = append(cols, "name")
+	}
+	if in.Side != nil {
+		party.Side = *in.Side
+		cols = append(cols, "side")
+	}
+	if in.Relation != nil {
+		party.Relation = *in.Relation
+		cols = append(cols, "relation")
+	}
+	if in.Circle != nil {
+		party.Circle = in.Circle
+		cols = append(cols, "circle")
+	}
+	if in.InvitationType != nil {
+		party.InvitationType = *in.InvitationType
+		cols = append(cols, "invitation_type")
+	}
+	if in.AddressLine1 != nil {
+		party.AddressLine1 = pointerutil.EmptyString(*in.AddressLine1)
+		cols = append(cols, "address_line_1")
+	}
+	if in.AddressLine2 != nil {
+		party.AddressLine2 = pointerutil.EmptyString(*in.AddressLine2)
+		cols = append(cols, "address_line_2")
+	}
+	if in.City != nil {
+		party.City = pointerutil.EmptyString(*in.City)
+		cols = append(cols, "city")
+	}
+	if in.StateOrProvince != nil {
+		party.StateOrProvince = pointerutil.EmptyString(*in.StateOrProvince)
+		cols = append(cols, "state_or_province")
+	}
+	if in.PostalCode != nil {
+		party.PostalCode = pointerutil.EmptyString(*in.PostalCode)
+		cols = append(cols, "postal_code")
+	}
+	if in.Country != nil {
+		party.Country = pointerutil.EmptyString(*in.Country)
+		cols = append(cols, "country")
+	}
+	if in.RSVPCode != nil {
+		party.RSVPCode = pointerutil.EmptyString(*in.RSVPCode)
+		cols = append(cols, "rsvp_code")
+	}
+
+	// Nothing to change: return the loaded party without a write.
+	if len(cols) == 0 {
+		return party, nil
+	}
+
+	party.UpdatedAt = time.Now()
+	cols = append(cols, "updated_at")
+
+	// Update only the provided columns. info_token and the info_collection_* flags
+	// are never in the set, so a field edit can never alter collection status.
+	_, err = s.db.NewUpdate().Model(party).Column(cols...).WherePK().Exec(ctx)
+	if err != nil {
+		return nil, errcodes.ConflictOnUnique(errors.Wrap(err, "patch party"),
 			"A party with that RSVP code already exists.")
 	}
 	return party, nil

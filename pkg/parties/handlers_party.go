@@ -68,6 +68,23 @@ func (h *handler) updateParty(c echo.Context) error {
 	return c.JSON(http.StatusOK, newPartyResponse(party))
 }
 
+// patchParty handles PATCH /api/admin/parties/:id, a partial update: only the
+// fields present in the body change (the spreadsheet's single-cell save), so an
+// absent field is left as-is. Like updateParty it never alters the info token or
+// collection status.
+func (h *handler) patchParty(c echo.Context) error {
+	var body PatchPartyPayload
+	if err := c.Bind(&body); err != nil {
+		return errors.WithStack(err)
+	}
+
+	party, err := h.service.PatchParty(c.Request().Context(), c.Param("id"), body)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, newPartyResponse(party))
+}
+
 // deleteParty handles DELETE /api/admin/parties/:id, returning 204 on success.
 func (h *handler) deleteParty(c echo.Context) error {
 	if err := h.service.DeleteParty(c.Request().Context(), c.Param("id")); err != nil {

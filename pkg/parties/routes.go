@@ -12,7 +12,8 @@ import "github.com/labstack/echo/v4"
 //	  GET    /parties                       list (filterable)
 //	  POST   /parties                       create (auto-generates info token)
 //	  GET    /parties/:id                   get one
-//	  PUT    /parties/:id                   update editable fields
+//	  PUT    /parties/:id                   full update of editable fields
+//	  PATCH  /parties/:id                   partial update (single-cell save)
 //	  DELETE /parties/:id                   delete (cascades to guests)
 //	  POST   /parties/:id/request-info      mark info link sent
 //	  POST   /parties/:id/mark-info         mark complete|incomplete
@@ -21,12 +22,15 @@ import "github.com/labstack/echo/v4"
 //	Guests (flat collection once they exist; addressed by their own id):
 //	  GET    /guests                        flat list (filterable)
 //	  GET    /guests/:id                    get one
-//	  PATCH  /guests/:id                    update editable fields
+//	  PUT    /guests/:id                    full update of editable fields
+//	  PATCH  /guests/:id                    partial update (single-cell save)
 //	  DELETE /guests/:id                    delete
 //
-// Guest creation is nested under the party (the party is required and part of
-// the resource's identity), while reads/updates/deletes address the guest
-// directly by id, which keeps those handlers party-agnostic.
+// PUT is the full-state update behind the "edit" dialog; PATCH is the partial
+// update behind the spreadsheet grid, where saving a cell writes only that one
+// field. Guest creation is nested under the party (the party is required and
+// part of the resource's identity), while reads/updates/deletes address the
+// guest directly by id, which keeps those handlers party-agnostic.
 func RegisterRoutes(admin *echo.Group, service *Service) {
 	h := &handler{service: service}
 
@@ -35,6 +39,7 @@ func RegisterRoutes(admin *echo.Group, service *Service) {
 	parties.POST("", h.createParty)
 	parties.GET("/:id", h.getParty)
 	parties.PUT("/:id", h.updateParty)
+	parties.PATCH("/:id", h.patchParty)
 	parties.DELETE("/:id", h.deleteParty)
 	parties.POST("/:id/request-info", h.requestInfo)
 	parties.POST("/:id/mark-info", h.markInfo)
@@ -43,6 +48,7 @@ func RegisterRoutes(admin *echo.Group, service *Service) {
 	guests := admin.Group("/guests")
 	guests.GET("", h.listGuests)
 	guests.GET("/:id", h.getGuest)
-	guests.PATCH("/:id", h.updateGuest)
+	guests.PUT("/:id", h.updateGuest)
+	guests.PATCH("/:id", h.patchGuest)
 	guests.DELETE("/:id", h.deleteGuest)
 }

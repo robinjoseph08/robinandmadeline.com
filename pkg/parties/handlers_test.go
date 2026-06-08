@@ -392,6 +392,148 @@ func TestGuestLifecycleHandlers(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, delRec.Code)
 }
 
+func TestPatchPartyHandler_TouchesOnlySentField(t *testing.T) {
+	e := newAPI(t)
+
+	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
+	})
+	require.Equal(t, http.StatusCreated, create.Code)
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &party))
+
+	// PATCH only invitation_type; everything else must be left as-is.
+	patch := do(t, e, http.MethodPatch, "/api/admin/parties/"+party.ID, map[string]any{
+		"invitation_type": "physical",
+	})
+	require.Equal(t, http.StatusOK, patch.Code)
+
+	get := do(t, e, http.MethodGet, "/api/admin/parties/"+party.ID, nil)
+	require.Equal(t, http.StatusOK, get.Code)
+	var got struct {
+		Name           string `json:"name"`
+		Side           string `json:"side"`
+		InvitationType string `json:"invitation_type"`
+	}
+	require.NoError(t, json.Unmarshal(get.Body.Bytes(), &got))
+	assert.Equal(t, "Fam", got.Name, "name must be unchanged")
+	assert.Equal(t, "robin", got.Side, "side must be unchanged")
+	assert.Equal(t, "physical", got.InvitationType, "only invitation_type should change")
+}
+
+func TestPatchPartyHandler_BlankNameIs422(t *testing.T) {
+	e := newAPI(t)
+	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "Keep", "side": "robin", "relation": "friend", "invitation_type": "digital",
+	})
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &party))
+
+	// A present-but-blank name is a 422: min=1 fires because a non-nil pointer is
+	// "present" even when it points at the empty string. A whitespace-only name is
+	// trimmed first, then rejected the same way.
+	for _, name := range []string{"", "   "} {
+		rec := do(t, e, http.MethodPatch, "/api/admin/parties/"+party.ID, map[string]any{"name": name})
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "name=%q", name)
+		assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec), "name=%q", name)
+	}
+}
+
+func TestPatchGuestHandler_PartialUpdateAndEmailClear(t *testing.T) {
+	e := newAPI(t)
+	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
+	})
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &party))
+	add := do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
+		map[string]any{"full_name": "Pat", "email": "pat@example.com", "is_child": false})
+	require.Equal(t, http.StatusCreated, add.Code)
+	var guest struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(add.Body.Bytes(), &guest))
+
+	// PATCH only is_child: email must survive (the partial does not clobber it).
+	flag := do(t, e, http.MethodPatch, "/api/admin/guests/"+guest.ID, map[string]any{"is_child": true})
+	require.Equal(t, http.StatusOK, flag.Code)
+	var afterFlag struct {
+		Email   *string `json:"email"`
+		IsChild bool    `json:"is_child"`
+	}
+	require.NoError(t, json.Unmarshal(flag.Body.Bytes(), &afterFlag))
+	assert.True(t, afterFlag.IsChild)
+	require.NotNil(t, afterFlag.Email, "email must survive a flag-only patch")
+	assert.Equal(t, "pat@example.com", *afterFlag.Email)
+
+	// A blank email clears it (emailblank permits blank; the service stores null).
+	clearRec := do(t, e, http.MethodPatch, "/api/admin/guests/"+guest.ID, map[string]any{"email": ""})
+	require.Equal(t, http.StatusOK, clearRec.Code)
+	var afterClear struct {
+		Email *string `json:"email"`
+	}
+	require.NoError(t, json.Unmarshal(clearRec.Body.Bytes(), &afterClear))
+	assert.Nil(t, afterClear.Email, "a blank email patch clears to null")
+}
+
+func TestPatchGuestHandler_InvalidEmailIs422(t *testing.T) {
+	e := newAPI(t)
+	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
+	})
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &party))
+	add := do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests", map[string]any{"full_name": "Pat"})
+	var guest struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(add.Body.Bytes(), &guest))
+
+	// A present, non-blank, malformed email still fails format validation.
+	rec := do(t, e, http.MethodPatch, "/api/admin/guests/"+guest.ID, map[string]any{"email": "not-an-email"})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
+func TestUpdateGuestHandler_PutReplacesFullState(t *testing.T) {
+	e := newAPI(t)
+	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
+	})
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &party))
+	add := do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
+		map[string]any{"full_name": "Pat", "email": "pat@example.com", "is_child": true})
+	var guest struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(add.Body.Bytes(), &guest))
+
+	// PUT is the full-state dialog update: fields omitted from the body are reset
+	// (is_child back to false, email cleared), unlike PATCH.
+	put := do(t, e, http.MethodPut, "/api/admin/guests/"+guest.ID, map[string]any{"full_name": "Patricia"})
+	require.Equal(t, http.StatusOK, put.Code)
+	var got struct {
+		FullName string  `json:"full_name"`
+		Email    *string `json:"email"`
+		IsChild  bool    `json:"is_child"`
+	}
+	require.NoError(t, json.Unmarshal(put.Body.Bytes(), &got))
+	assert.Equal(t, "Patricia", got.FullName)
+	assert.Nil(t, got.Email, "PUT resets an omitted optional field to null")
+	assert.False(t, got.IsChild, "PUT resets an omitted flag to false")
+}
+
 // errorCode decodes the standard error envelope and returns its code.
 func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()

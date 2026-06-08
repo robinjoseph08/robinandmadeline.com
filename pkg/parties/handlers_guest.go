@@ -52,8 +52,9 @@ func (h *handler) getGuest(c echo.Context) error {
 	return c.JSON(http.StatusOK, newGuestResponse(guest))
 }
 
-// updateGuest handles PATCH /api/admin/guests/:id. Promoting to primary demotes
-// the party's previous primary transactionally.
+// updateGuest handles PUT /api/admin/guests/:id, the full-state update behind
+// the edit dialog. Promoting to primary demotes the party's previous primary
+// transactionally.
 func (h *handler) updateGuest(c echo.Context) error {
 	var body UpdateGuestPayload
 	if err := c.Bind(&body); err != nil {
@@ -61,6 +62,22 @@ func (h *handler) updateGuest(c echo.Context) error {
 	}
 
 	guest, err := h.service.UpdateGuest(c.Request().Context(), c.Param("id"), body)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, newGuestResponse(guest))
+}
+
+// patchGuest handles PATCH /api/admin/guests/:id, a partial update: only the
+// fields present in the body change (the spreadsheet's single-cell save).
+// Promoting to primary demotes the party's previous primary transactionally.
+func (h *handler) patchGuest(c echo.Context) error {
+	var body PatchGuestPayload
+	if err := c.Bind(&body); err != nil {
+		return errors.WithStack(err)
+	}
+
+	guest, err := h.service.PatchGuest(c.Request().Context(), c.Param("id"), body)
 	if err != nil {
 		return err
 	}
