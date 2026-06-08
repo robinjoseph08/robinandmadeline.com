@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type {
   GuestListItem,
   ListGuestsResponse,
@@ -26,7 +27,7 @@ function makeGuestItem(overrides: Partial<GuestListItem>): GuestListItem {
     party_id: "p1",
     party_name: "The Party",
     full_name: "Guest",
-    roles: [],
+    tags: [],
     is_primary: false,
     is_child: false,
     is_drinking: false,
@@ -48,17 +49,19 @@ function renderGuests() {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/admin/guests"]}>
-        <Routes>
-          <Route element={<AdminGuests />} path="/admin/guests" />
-          <Route
-            element={<div>Party detail page</div>}
-            path="/admin/parties/:id"
-          />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <TooltipProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/admin/guests"]}>
+          <Routes>
+            <Route element={<AdminGuests />} path="/admin/guests" />
+            <Route
+              element={<div>Party detail page</div>}
+              path="/admin/parties/:id"
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </TooltipProvider>,
   );
 }
 
@@ -155,6 +158,45 @@ describe("AdminGuests flat list", () => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/guests/alice", {
         method: "PATCH",
         body: { is_drinking: true },
+      });
+    });
+  });
+
+  it("creates and applies a new tag via the tags cell", async () => {
+    adminRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        const method = options?.method ?? "GET";
+        if (path === "/admin/guests" && method === "GET") {
+          return Promise.resolve(
+            listOf([
+              makeGuestItem({ id: "alice", full_name: "Alice", tags: [] }),
+            ]),
+          );
+        }
+        return Promise.resolve(makeGuestItem({ id: "alice" }));
+      },
+    );
+
+    const user = userEvent.setup();
+    renderGuests();
+
+    // Open Alice's tags cell, type a brand-new tag, and create it.
+    const row = (await screen.findByDisplayValue("Alice")).closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: "Tags" }));
+    await user.type(
+      screen.getByPlaceholderText("Search or add..."),
+      "Bridal Party",
+    );
+    await user.click(
+      await screen.findByRole("option", { name: /Create "Bridal Party"/ }),
+    );
+
+    // Closing the popover commits the new tag set as a single PATCH.
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/guests/alice", {
+        method: "PATCH",
+        body: { tags: ["Bridal Party"] },
       });
     });
   });

@@ -1,11 +1,12 @@
-import { Pencil, Plus, Trash2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Pencil, Plus, Trash2, X } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
+  TableCell,
   TableHead,
   TableHeader,
   TableRow,
@@ -23,16 +24,23 @@ import type {
 
 import {
   GridBoolCell,
+  GridChipsCell,
   GridReadOnlyCell,
-  GridRolesCell,
   GridTextCell,
 } from "./cells";
+import { InfoHint, TooltipIconButton } from "./grid-buttons";
 
-// renderParty and addPartyId are mutually exclusive in practice: the flat guest
-// list passes renderParty (and no add row, since a guest needs a party), while a
-// party's detail page passes addPartyId (and no party column, the party is
-// implicit). Keeping them apart matters because the add row has no party cell, so
-// it would be one column short if a party column were also rendered.
+// Tooltip copy for the guest flag columns, surfaced via an info icon in each
+// header so the meaning of each flag is discoverable.
+const FLAG_HINTS = {
+  primary:
+    "The party's main contact (one per party). Their email is required to mark the party's info complete.",
+  child: "Guest is a child, for meal and seating planning.",
+  drinking: "Guest drinks alcohol, for bar and beverage counts.",
+  placeholder:
+    "A stand-in for an unnamed guest or an unconfirmed plus-one (e.g. a +1 whose name you do not have yet).",
+};
+
 interface GuestsGridProps<TGuest extends Guest> {
   guests: TGuest[];
   /** Party id used to scope each guest write's cache invalidation. */
@@ -41,7 +49,7 @@ interface GuestsGridProps<TGuest extends Guest> {
   onEditGuest: (guest: TGuest) => void;
   /** Renders the trailing party cell (the flat list links each guest's party). */
   renderParty?: (guest: TGuest) => ReactNode;
-  /** When set, shows an add row that creates a guest in this party. */
+  /** When set, the "Add guest" button creates a guest in this party. */
   addPartyId?: string;
 }
 
@@ -49,7 +57,7 @@ interface GuestDraft {
   fullName: string;
   email: string;
   phone: string;
-  roles: string[];
+  tags: string[];
   isPrimary: boolean;
   isChild: boolean;
   isDrinking: boolean;
@@ -60,21 +68,28 @@ const EMPTY_DRAFT: GuestDraft = {
   fullName: "",
   email: "",
   phone: "",
-  roles: [],
+  tags: [],
   isPrimary: false,
   isChild: false,
   isDrinking: false,
   isPlaceholder: false,
 };
 
+// renderParty and addPartyId are mutually exclusive in practice: the flat guest
+// list passes renderParty (and no add row, since a guest needs a party), while a
+// party's detail page passes addPartyId (and no party column, the party is
+// implicit). Keeping them apart matters because the add row has no party cell, so
+// it would be one column short if a party column were also rendered.
+
 /**
  * The guest list as an editable spreadsheet, shared by the flat guest list and a
  * party's detail page. Each cell saves itself via PATCH on blur/Enter; the four
- * flags are inline checkboxes, roles is a comma-separated cell, and promoting a
- * guest to primary demotes the party's previous primary (enforced by the API).
- * The flat list passes renderParty to link each guest back to its party; the
- * detail page passes addPartyId to show a trailing row that adds a guest. Dietary
- * restrictions and table/seat numbers stay behind the edit dialog (onEditGuest).
+ * flags are inline checkboxes (with info tooltips in their headers), tags is a
+ * searchable, creatable, colored-chip multi-select, and promoting a guest to
+ * primary demotes the party's previous primary (enforced by the API). The flat
+ * list passes renderParty to link each guest back to its party; the detail page
+ * passes addPartyId to enable the "Add guest" row. Dietary restrictions and
+ * table/seat numbers stay behind the edit dialog (onEditGuest).
  */
 export function GuestsGrid<TGuest extends Guest>({
   guests,
@@ -87,7 +102,24 @@ export function GuestsGrid<TGuest extends Guest>({
   const createGuest = useCreateGuest();
   const deleteGuest = useDeleteGuest();
 
+  const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<GuestDraft>(EMPTY_DRAFT);
+
+  // Existing tags across the loaded guests, to suggest in every tag cell.
+  const tagSuggestions = useMemo(() => {
+    const seen = new Set<string>();
+    const all: string[] = [];
+    for (const guest of guests) {
+      for (const tag of guest.tags) {
+        const key = tag.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          all.push(tag);
+        }
+      }
+    }
+    return all.sort((a, b) => a.localeCompare(b));
+  }, [guests]);
 
   // Save one field. Resolves to void on success; toasts and re-throws on failure
   // so the cell rolls back to the value the server still holds.
@@ -109,14 +141,15 @@ export function GuestsGrid<TGuest extends Guest>({
     value: GuestDraft[K],
   ) => setDraft((prev) => ({ ...prev, [key]: value }));
 
+  const canCreate = draft.fullName.trim() !== "";
+
   const handleCreate = async () => {
-    const fullName = draft.fullName.trim();
-    if (!fullName || !addPartyId) return;
+    if (!canCreate || !addPartyId) return;
     const payload: CreateGuestPayload = {
-      full_name: fullName,
+      full_name: draft.fullName.trim(),
       email: draft.email.trim() || undefined,
       phone: draft.phone.trim() || undefined,
-      roles: draft.roles,
+      tags: draft.tags,
       is_primary: draft.isPrimary,
       is_child: draft.isChild,
       is_drinking: draft.isDrinking,
@@ -124,13 +157,18 @@ export function GuestsGrid<TGuest extends Guest>({
     };
     try {
       await createGuest.mutateAsync({ partyId: addPartyId, payload });
-      toast.success(`Added ${fullName}`);
-      setDraft(EMPTY_DRAFT);
+      toast.success(`Added ${payload.full_name}`);
+      setDraft(EMPTY_DRAFT); // keep the add row open for rapid entry
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to add guest",
       );
     }
+  };
+
+  const cancelAdd = () => {
+    setAdding(false);
+    setDraft(EMPTY_DRAFT);
   };
 
   const handleDelete = async (guest: TGuest) => {
@@ -152,16 +190,24 @@ export function GuestsGrid<TGuest extends Guest>({
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="w-20 text-center">Primary</TableHead>
+          <TableHead className="w-24 text-center">
+            <HeaderWithHint hint={FLAG_HINTS.primary} label="Primary" />
+          </TableHead>
           <TableHead className="min-w-40">Name</TableHead>
           <TableHead className="min-w-48">Email</TableHead>
           <TableHead className="w-36">Phone</TableHead>
-          <TableHead className="min-w-40">Roles</TableHead>
-          <TableHead className="w-16 text-center">Child</TableHead>
-          <TableHead className="w-20 text-center">Drinking</TableHead>
-          <TableHead className="w-24 text-center">Placeholder</TableHead>
+          <TableHead className="min-w-40">Tags</TableHead>
+          <TableHead className="w-20 text-center">
+            <HeaderWithHint hint={FLAG_HINTS.child} label="Child" />
+          </TableHead>
+          <TableHead className="w-24 text-center">
+            <HeaderWithHint hint={FLAG_HINTS.drinking} label="Drinking" />
+          </TableHead>
+          <TableHead className="w-28 text-center">
+            <HeaderWithHint hint={FLAG_HINTS.placeholder} label="Placeholder" />
+          </TableHead>
           {renderParty ? <TableHead className="w-40">Party</TableHead> : null}
-          <TableHead className="w-24 text-right">Actions</TableHead>
+          <TableHead className="w-20 text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -200,13 +246,14 @@ export function GuestsGrid<TGuest extends Guest>({
                 placeholder="None"
                 value={guest.phone ?? ""}
               />
-              <GridRolesCell
-                ariaLabel="Roles"
+              <GridChipsCell
+                ariaLabel="Tags"
+                creatable
                 onCommit={(value) =>
-                  patchField(guest.id, partyId, { roles: value })
+                  patchField(guest.id, partyId, { tags: value })
                 }
-                placeholder="None"
-                value={guest.roles}
+                options={tagSuggestions}
+                value={guest.tags}
               />
               <GridBoolCell
                 ariaLabel="Child"
@@ -234,30 +281,26 @@ export function GuestsGrid<TGuest extends Guest>({
               ) : null}
               <GridReadOnlyCell className="text-right">
                 <div className="flex justify-end gap-1">
-                  <Button
-                    aria-label={`Edit ${guest.full_name}`}
+                  <TooltipIconButton
+                    label={`Edit ${guest.full_name}`}
                     onClick={() => onEditGuest(guest)}
-                    size="icon"
-                    variant="ghost"
                   >
                     <Pencil />
-                  </Button>
-                  <Button
-                    aria-label={`Delete ${guest.full_name}`}
+                  </TooltipIconButton>
+                  <TooltipIconButton
                     disabled={deleteGuest.isPending}
+                    label={`Delete ${guest.full_name}`}
                     onClick={() => handleDelete(guest)}
-                    size="icon"
-                    variant="ghost"
                   >
                     <Trash2 />
-                  </Button>
+                  </TooltipIconButton>
                 </div>
               </GridReadOnlyCell>
             </TableRow>
           );
         })}
 
-        {addPartyId ? (
+        {addPartyId && adding ? (
           <TableRow className="bg-muted/30">
             <GridBoolCell
               ariaLabel="New guest primary"
@@ -266,10 +309,11 @@ export function GuestsGrid<TGuest extends Guest>({
             />
             <GridTextCell
               ariaLabel="New guest name"
+              autoFocus
               commitOnChange
               onCommit={(value) => setDraftField("fullName", value)}
               onEnter={handleCreate}
-              placeholder="Add a guest..."
+              placeholder="Guest name..."
               value={draft.fullName}
             />
             <GridTextCell
@@ -289,13 +333,13 @@ export function GuestsGrid<TGuest extends Guest>({
               placeholder="Optional"
               value={draft.phone}
             />
-            <GridRolesCell
-              ariaLabel="New guest roles"
-              commitOnChange
-              onCommit={(value) => setDraftField("roles", value)}
-              onEnter={handleCreate}
+            <GridChipsCell
+              ariaLabel="New guest tags"
+              creatable
+              onCommit={(value) => setDraftField("tags", value)}
+              options={tagSuggestions}
               placeholder="Optional"
-              value={draft.roles}
+              value={draft.tags}
             />
             <GridBoolCell
               ariaLabel="New guest child"
@@ -313,18 +357,45 @@ export function GuestsGrid<TGuest extends Guest>({
               value={draft.isPlaceholder}
             />
             <GridReadOnlyCell className="text-right">
-              <Button
-                disabled={createGuest.isPending || draft.fullName.trim() === ""}
-                onClick={handleCreate}
-                size="sm"
-              >
-                <Plus />
-                Add
-              </Button>
+              <div className="flex justify-end gap-1">
+                <TooltipIconButton label="Cancel" onClick={cancelAdd}>
+                  <X />
+                </TooltipIconButton>
+                <Button
+                  disabled={!canCreate || createGuest.isPending}
+                  onClick={handleCreate}
+                  size="sm"
+                >
+                  <Plus />
+                  Add
+                </Button>
+              </div>
             </GridReadOnlyCell>
+          </TableRow>
+        ) : addPartyId ? (
+          <TableRow>
+            <TableCell className="p-0" colSpan={9}>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                onClick={() => setAdding(true)}
+                type="button"
+              >
+                <Plus className="size-4" />
+                Add guest
+              </button>
+            </TableCell>
           </TableRow>
         ) : null}
       </TableBody>
     </Table>
+  );
+}
+
+function HeaderWithHint({ label, hint }: { label: string; hint: string }) {
+  return (
+    <span className="inline-flex items-center justify-center gap-1">
+      {label}
+      <InfoHint text={hint} />
+    </span>
   );
 }

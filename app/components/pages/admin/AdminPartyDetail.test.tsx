@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { Guest } from "@/types/generated/models";
 import type { GuestResponse, PartyResponse } from "@/types/generated/parties";
 
@@ -23,7 +24,7 @@ function makeGuest(overrides: Partial<Guest>): Guest {
     id: "g1",
     party_id: "p1",
     full_name: "Guest",
-    roles: [],
+    tags: [],
     is_primary: false,
     is_child: false,
     is_drinking: false,
@@ -57,13 +58,15 @@ function renderDetail() {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/admin/parties/p1"]}>
-        <Routes>
-          <Route element={<AdminPartyDetail />} path="/admin/parties/:id" />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <TooltipProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/admin/parties/p1"]}>
+          <Routes>
+            <Route element={<AdminPartyDetail />} path="/admin/parties/:id" />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </TooltipProvider>,
   );
 }
 
@@ -163,10 +166,9 @@ describe("AdminPartyDetail add guest", () => {
     const user = userEvent.setup();
     renderDetail();
 
-    // Fill the add row's name, mark it a placeholder, and submit with Add.
-    const addName = await screen.findByRole("textbox", {
-      name: "New guest name",
-    });
+    // Open the add row, fill the name, mark it a placeholder, submit with Add.
+    await user.click(await screen.findByRole("button", { name: "Add guest" }));
+    const addName = screen.getByRole("textbox", { name: "New guest name" });
     await user.type(addName, "Plus One");
     await user.click(
       screen.getByRole("checkbox", { name: "New guest placeholder" }),
@@ -224,9 +226,12 @@ describe("AdminPartyDetail add guest", () => {
     const user = userEvent.setup();
     renderDetail();
 
+    // Open the add row once; it stays open across creates for rapid entry.
+    await user.click(await screen.findByRole("button", { name: "Add guest" }));
+
     const addOne = async (name: string) => {
       await user.type(
-        await screen.findByRole("textbox", { name: "New guest name" }),
+        screen.getByRole("textbox", { name: "New guest name" }),
         name,
       );
       await user.click(

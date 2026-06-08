@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { PartyResponse } from "@/types/generated/parties";
 
 import AdminParties from "./AdminParties";
@@ -43,11 +44,13 @@ function renderParties() {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <AdminParties />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <TooltipProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <AdminParties />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </TooltipProvider>,
   );
 }
 
@@ -61,6 +64,16 @@ const MADELINE_PARTY = makeParty({
 beforeEach(() => {
   adminRequest.mockReset();
 });
+
+// Opens a combobox by its accessible name and selects the named option.
+async function pickOption(
+  user: ReturnType<typeof userEvent.setup>,
+  triggerName: string,
+  optionName: string,
+) {
+  await user.click(screen.getByRole("combobox", { name: triggerName }));
+  await user.click(await screen.findByRole("option", { name: optionName }));
+}
 
 describe("AdminParties filters", () => {
   it("narrows the grid to the side filter the admin selects", async () => {
@@ -141,7 +154,7 @@ describe("AdminParties inline editing", () => {
     });
   });
 
-  it("adds a party from the trailing row when the name is entered", async () => {
+  it("adds a party from the add row once the required fields are set", async () => {
     adminRequest.mockImplementation(
       (path: string, options?: { method?: string }) => {
         const method = options?.method ?? "GET";
@@ -156,21 +169,52 @@ describe("AdminParties inline editing", () => {
     const user = userEvent.setup();
     renderParties();
 
-    // The add row is always present; typing a name and pressing Enter creates it.
-    const addName = await screen.findByRole("textbox", {
-      name: "New party name",
-    });
-    await user.type(addName, "Newcomers{Enter}");
+    // The add row is opened on demand, and creation is gated until name, side,
+    // relation, and invitation (the required fields) are all set.
+    await user.click(await screen.findByRole("button", { name: "Add party" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "New party name" }),
+      "Newcomers",
+    );
+    await pickOption(user, "New party side", "Robin");
+    await pickOption(user, "New party relation", "Family");
+    await pickOption(user, "New party invitation", "Digital");
+    await user.click(screen.getByRole("button", { name: "Add" }));
 
     await waitFor(() => {
       expect(adminRequest).toHaveBeenCalledWith(
         "/admin/parties",
         expect.objectContaining({
           method: "POST",
-          body: expect.objectContaining({ name: "Newcomers" }),
+          body: expect.objectContaining({
+            name: "Newcomers",
+            side: "robin",
+            relation: "family",
+            invitation_type: "digital",
+          }),
         }),
       );
     });
+  });
+
+  it("opens and dismisses the add row", async () => {
+    adminRequest.mockResolvedValue({ items: [], total: 0 });
+    const user = userEvent.setup();
+    renderParties();
+
+    await user.click(await screen.findByRole("button", { name: "Add party" }));
+    expect(
+      screen.getByRole("textbox", { name: "New party name" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.queryByRole("textbox", { name: "New party name" }),
+    ).not.toBeInTheDocument();
+    // The add button returns once the row is dismissed.
+    expect(
+      screen.getByRole("button", { name: "Add party" }),
+    ).toBeInTheDocument();
   });
 });
 

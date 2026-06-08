@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { PartyResponse } from "@/types/generated/parties";
 
 import { PartiesGrid } from "./PartiesGrid";
@@ -41,11 +42,13 @@ function renderGrid(parties: PartyResponse[]) {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <PartiesGrid onEditParty={() => {}} parties={parties} />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <TooltipProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <PartiesGrid onEditParty={() => {}} parties={parties} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </TooltipProvider>,
   );
 }
 

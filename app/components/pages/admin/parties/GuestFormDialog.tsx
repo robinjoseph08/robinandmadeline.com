@@ -32,7 +32,7 @@ interface FormState {
   fullName: string;
   email: string;
   phone: string;
-  roles: string;
+  tags: string;
   dietaryRestrictions: string;
   tableNumber: string;
   seatNumber: string;
@@ -46,7 +46,7 @@ const EMPTY_FORM: FormState = {
   fullName: "",
   email: "",
   phone: "",
-  roles: "",
+  tags: "",
   dietaryRestrictions: "",
   tableNumber: "",
   seatNumber: "",
@@ -61,7 +61,7 @@ function formFromGuest(guest: Guest): FormState {
     fullName: guest.full_name,
     email: guest.email ?? "",
     phone: guest.phone ?? "",
-    roles: guest.roles.join(", "),
+    tags: guest.tags.join(", "),
     dietaryRestrictions: guest.dietary_restrictions ?? "",
     tableNumber: guest.table_number?.toString() ?? "",
     seatNumber: guest.seat_number?.toString() ?? "",
@@ -86,13 +86,13 @@ function optionalInt(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-// Splits the comma-separated roles field into trimmed, non-empty tags. roles is
-// open-ended (no closed union), so it is just a list of strings.
-function parseRoles(value: string): string[] {
+// Splits the comma-separated tags field into trimmed, non-empty tags. tags is
+// open-ended, so it is just a list of strings.
+function parseTags(value: string): string[] {
   return value
     .split(",")
-    .map((role) => role.trim())
-    .filter((role) => role.length > 0);
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
 }
 
 /**
@@ -130,7 +130,7 @@ export function GuestFormDialog({
       full_name: form.fullName.trim(),
       email: optional(form.email),
       phone: optional(form.phone),
-      roles: parseRoles(form.roles),
+      tags: parseTags(form.tags),
       dietary_restrictions: optional(form.dietaryRestrictions),
       table_number: optionalInt(form.tableNumber),
       seat_number: optionalInt(form.seatNumber),
@@ -195,12 +195,12 @@ export function GuestFormDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="guest-roles">Roles</Label>
+            <Label htmlFor="guest-tags">Tags</Label>
             <Input
-              id="guest-roles"
-              onChange={(e) => update("roles", e.target.value)}
-              placeholder="Comma-separated, e.g. Bridesmaid, Usher"
-              value={form.roles}
+              id="guest-tags"
+              onChange={(e) => update("tags", e.target.value)}
+              placeholder="Comma-separated, e.g. Bridal Party, College"
+              value={form.tags}
             />
           </div>
 

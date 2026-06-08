@@ -25,7 +25,7 @@ import type {
 /**
  * Admin flat guest list: every guest across all parties, edited like a
  * spreadsheet (each cell saves via PATCH on blur/Enter). Filters cover the
- * party-level attributes (side, relation, circle) and the guest-level ones (roles
+ * party-level attributes (side, relation, circle) and the guest-level ones (tag
  * contains, plus the flags). The Party column links each guest to its owning
  * party; the full edit dialog survives for dietary restrictions and table/seat.
  * There is no add row here (a guest needs a party, so guests are added from a
@@ -33,8 +33,8 @@ import type {
  */
 export default function AdminGuests() {
   const [filters, setFilters] = useState<ListGuestsQuery>({});
-  // Local text state for the roles "contains" filter, committed to the query.
-  const [rolesInput, setRolesInput] = useState("");
+  // Local text state for the "tag contains" filter, committed to the query.
+  const [tagsInput, setTagsInput] = useState("");
   const [editGuest, setEditGuest] = useState<GuestListItem | undefined>(
     undefined,
   );
@@ -49,9 +49,9 @@ export default function AdminGuests() {
     value: ListGuestsQuery[K],
   ) => setFilters((prev) => ({ ...prev, [key]: value }));
 
-  const commitRoles = () => {
-    const trimmed = rolesInput.trim();
-    setFilter("roles", trimmed === "" ? undefined : trimmed);
+  const commitTags = () => {
+    const trimmed = tagsInput.trim();
+    setFilter("tags", trimmed === "" ? undefined : trimmed);
   };
 
   const openEdit = (guest: GuestListItem) => {
@@ -126,16 +126,16 @@ export default function AdminGuests() {
           value={filters.is_placeholder}
         />
         <label className="flex flex-col gap-1 text-sm">
-          <span className="font-medium">Role contains</span>
+          <span className="font-medium">Tag contains</span>
           <Input
             className="w-40"
-            onBlur={commitRoles}
-            onChange={(e) => setRolesInput(e.target.value)}
+            onBlur={commitTags}
+            onChange={(e) => setTagsInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") commitRoles();
+              if (e.key === "Enter") commitTags();
             }}
-            placeholder="e.g. Bridesmaid"
-            value={rolesInput}
+            placeholder="e.g. Bridal Party"
+            value={tagsInput}
           />
         </label>
       </div>

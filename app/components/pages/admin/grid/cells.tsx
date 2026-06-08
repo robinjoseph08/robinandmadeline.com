@@ -5,37 +5,39 @@
  * grid-nav counts columns correctly) holding a borderless control that looks
  * like a spreadsheet cell and shows an inset focus ring. Cells carry their own
  * optimistic local state via useCommittableValue, so a keystroke or toggle shows
- * instantly and the value re-seeds when the server value changes after a refetch.
+ * instantly and the value re-seeds when the server value changes after a refetch,
+ * rolling back if the write fails.
  *
- * Two commit modes share one set of components:
- *   - data rows (default): a text cell commits on blur or Enter (one PATCH per
- *     edited cell); selects, checkboxes, and the multi-select commit on change or
- *     on close.
+ * Two commit modes share the text cells:
+ *   - data rows (default): commit on blur or Enter (one PATCH per edited cell).
  *   - the add row (commitOnChange / onEnter): every change updates the draft
  *     immediately and Enter submits the new row, so creation never needs a blur.
+ * The combobox, checkbox, and chips cells commit on change or on popover close.
  */
 
-import { ChevronDown } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, Plus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import type { Option } from "@/components/pages/admin/parties/options";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { TableCell } from "@/components/ui/table";
 import { cn } from "@/libraries/utils";
 
+import { chipColorClass } from "./chips";
 import { focusCellBelow } from "./grid-nav";
 
 // Shared borderless look: fill the cell, drop the control's own border/shadow/
@@ -49,10 +51,9 @@ function arraysEqual<T>(a: readonly T[], b: readonly T[]): boolean {
 
 /**
  * Holds a cell's optimistic local value, re-seeding it whenever the server value
- * changes (a refetch after a save, or another tab's edit), and de-duplicating
- * commits so an Enter (explicit commit) followed by the resulting blur does not
- * fire two writes. commit() writes only when the value actually changed since the
- * last commit; commitValue() is the immediate path the add row uses.
+ * changes (a refetch after a save, or another tab), and de-duplicating commits so
+ * an Enter (explicit commit) followed by the resulting blur does not fire two
+ * writes. A failed write rolls the value back to the last known-good one.
  */
 function useCommittableValue<T>(
   serverValue: T,
@@ -116,6 +117,7 @@ interface GridTextCellProps {
   commitOnChange?: boolean;
   /** Overrides Enter: the add row passes its create handler here. */
   onEnter?: () => void;
+  autoFocus?: boolean;
   className?: string;
 }
 
@@ -128,6 +130,7 @@ export function GridTextCell({
   type = "text",
   commitOnChange = false,
   onEnter,
+  autoFocus,
   className,
 }: GridTextCellProps) {
   const cell = useCommittableValue(value, onCommit);
@@ -136,6 +139,9 @@ export function GridTextCell({
     <TableCell className="p-0">
       <Input
         aria-label={ariaLabel}
+        // The add row is opened by an explicit user action, so focusing its first
+        // field is expected (not a surprise focus steal on page load).
+        autoFocus={autoFocus}
         className={cn(GRID_CONTROL_CLASS, className)}
         onBlur={commitOnChange ? undefined : cell.commit}
         onChange={(e) =>
@@ -168,106 +174,42 @@ export function GridTextCell({
   );
 }
 
-// roles is open-ended, so the cell edits a comma-separated list (like the dialog)
-// and commits the parsed, trimmed, non-empty tags.
-function parseRoles(text: string): string[] {
-  return text
-    .split(",")
-    .map((role) => role.trim())
-    .filter((role) => role.length > 0);
-}
-
-interface GridRolesCellProps {
-  value: string[];
-  onCommit: (roles: string[]) => void | Promise<void>;
+interface GridComboboxCellProps {
+  value?: string;
+  options: ComboboxOption[];
+  onCommit: (value: string) => void | Promise<void>;
   ariaLabel: string;
   placeholder?: string;
-  commitOnChange?: boolean;
-  onEnter?: () => void;
 }
 
-/** A comma-separated text cell that commits the parsed open-ended roles list. */
-export function GridRolesCell({
-  value,
-  onCommit,
-  ariaLabel,
-  placeholder,
-  commitOnChange = false,
-  onEnter,
-}: GridRolesCellProps) {
-  // Drive the cell as text (the joined roles); commit parses back to an array.
-  const cell = useCommittableValue(value.join(", "), (text) =>
-    onCommit(parseRoles(text)),
-  );
-
-  return (
-    <TableCell className="p-0">
-      <Input
-        aria-label={ariaLabel}
-        className={GRID_CONTROL_CLASS}
-        onBlur={commitOnChange ? undefined : cell.commit}
-        onChange={(e) =>
-          commitOnChange
-            ? cell.commitValue(e.target.value)
-            : cell.setValue(e.target.value)
-        }
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            if (onEnter) {
-              onEnter();
-            } else {
-              cell.commit();
-              focusCellBelow(e.currentTarget);
-            }
-          } else if (e.key === "Escape") {
-            // Cancel the edit and keep the cell focused (like a spreadsheet).
-            // Not blurring here is deliberate: a blur would fire a commit with
-            // the not-yet-re-rendered value and undo the revert.
-            cell.revert();
-            e.currentTarget.select();
-          }
-        }}
-        placeholder={placeholder}
-        value={cell.value}
-      />
-    </TableCell>
-  );
-}
-
-interface GridEnumCellProps<T extends string> {
-  value: T;
-  options: Option<T>[];
-  onCommit: (value: T) => void | Promise<void>;
-  ariaLabel: string;
-}
-
-/** An enum cell backed by the shared Select; commits the chosen value immediately. */
-export function GridEnumCell<T extends string>({
+/**
+ * An enum cell backed by the searchable Combobox: type to filter the options and
+ * pick one. The value may be unset (the add row starts blank), and picking
+ * commits immediately.
+ */
+export function GridComboboxCell({
   value,
   options,
   onCommit,
   ariaLabel,
-}: GridEnumCellProps<T>) {
-  const cell = useCommittableValue<T>(value, onCommit);
+  placeholder = "Select...",
+}: GridComboboxCellProps) {
+  const cell = useCommittableValue<string | undefined>(value, (next) =>
+    next === undefined ? undefined : onCommit(next),
+  );
 
   return (
     <TableCell className="p-0">
-      <Select
-        onValueChange={(next) => cell.commitValue(next as T)}
+      <Combobox
+        ariaLabel={ariaLabel}
+        onChange={(next) => {
+          if (next !== undefined) cell.commitValue(next);
+        }}
+        options={options}
+        placeholder={placeholder}
+        triggerClassName="rounded-none"
         value={cell.value}
-      >
-        <SelectTrigger aria-label={ariaLabel} className={GRID_CONTROL_CLASS}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      />
     </TableCell>
   );
 }
@@ -305,81 +247,154 @@ export function GridBoolCell({
   );
 }
 
-interface GridMultiSelectCellProps<T extends string> {
-  value: T[];
-  options: Option<T>[];
-  onCommit: (value: T[]) => void | Promise<void>;
+interface GridChipsCellProps {
+  value: string[];
+  onCommit: (value: string[]) => void | Promise<void>;
   ariaLabel: string;
+  /** Known options to suggest. For a closed set (circle) these are the only ones. */
+  options: string[];
+  /** Allow creating a new value from the search query (tags). */
+  creatable?: boolean;
   placeholder?: string;
 }
 
 /**
- * A multi-select cell (the party circle): a trigger summarizing the selected
- * options that opens a checkbox list. Edits batch into one commit when the popover
- * closes, so toggling three circles is a single PATCH.
+ * A multi-select cell rendering its selection as colored chips. The popover is a
+ * searchable list of toggleable options; with `creatable` (tags) a "Create" item
+ * adds whatever you typed. Edits batch into one commit when the popover closes,
+ * so toggling three values is a single PATCH.
  */
-export function GridMultiSelectCell<T extends string>({
+export function GridChipsCell({
   value,
-  options,
   onCommit,
   ariaLabel,
+  options,
+  creatable = false,
   placeholder = "None",
-}: GridMultiSelectCellProps<T>) {
-  const cell = useCommittableValue<T[]>(value, onCommit, arraysEqual);
+}: GridChipsCellProps) {
+  const cell = useCommittableValue<string[]>(value, onCommit, arraysEqual);
+  const [query, setQuery] = useState("");
 
-  const toggle = (option: T, checked: boolean) =>
+  const toggle = (item: string) =>
     cell.setValue(
-      checked
-        ? [...cell.value, option]
-        : cell.value.filter((item) => item !== option),
+      cell.value.includes(item)
+        ? cell.value.filter((existing) => existing !== item)
+        : [...cell.value, item],
     );
 
-  const summary =
-    cell.value.length > 0
-      ? options
-          .filter((option) => cell.value.includes(option.value))
-          .map((option) => option.label)
-          .join(", ")
-      : placeholder;
+  // Suggestions: the known options plus any already-selected values not among
+  // them (so existing tags always appear), de-duplicated case-insensitively.
+  const allOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const option of [...options, ...cell.value]) {
+      const key = option.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(option);
+      }
+    }
+    return merged;
+  }, [options, cell.value]);
+
+  const trimmed = query.trim();
+  const filtered = allOptions.filter((option) =>
+    option.toLowerCase().includes(trimmed.toLowerCase()),
+  );
+  const canCreate =
+    creatable &&
+    trimmed !== "" &&
+    !allOptions.some(
+      (option) => option.toLowerCase() === trimmed.toLowerCase(),
+    );
 
   return (
     <TableCell className="p-0">
       <Popover
         onOpenChange={(open) => {
           // Commit the batch of toggles when the popover closes.
-          if (!open) cell.commit();
+          if (!open) {
+            cell.commit();
+            setQuery("");
+          }
         }}
       >
         <PopoverTrigger asChild>
           <button
             aria-label={ariaLabel}
-            className={cn(
-              "flex h-9 w-full cursor-pointer items-center justify-between gap-1 whitespace-nowrap bg-transparent px-3 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-              cell.value.length === 0 && "text-ink/40",
-            )}
+            className="flex h-9 w-full items-center gap-1 overflow-hidden px-3 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
             type="button"
           >
-            <span className="truncate">{summary}</span>
-            <ChevronDown className="size-4 shrink-0 opacity-50" />
+            {cell.value.length === 0 ? (
+              <span className="text-sm text-ink/40">{placeholder}</span>
+            ) : (
+              <span className="flex flex-nowrap items-center gap-1 overflow-hidden">
+                {cell.value.map((item) => (
+                  <span
+                    className={cn(
+                      "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium",
+                      chipColorClass(item),
+                    )}
+                    key={item}
+                  >
+                    {item}
+                  </span>
+                ))}
+              </span>
+            )}
           </button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-56 p-2">
-          <div className="space-y-0.5">
-            {options.map((option) => (
-              <label
-                className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-accent"
-                key={option.value}
-              >
-                <Checkbox
-                  checked={cell.value.includes(option.value)}
-                  onCheckedChange={(checked) =>
-                    toggle(option.value, checked === true)
-                  }
-                />
-                {option.label}
-              </label>
-            ))}
-          </div>
+        <PopoverContent align="start" className="w-60 p-0">
+          <Command shouldFilter={false}>
+            <CommandInput
+              onValueChange={setQuery}
+              placeholder={creatable ? "Search or add..." : "Search..."}
+              value={query}
+            />
+            <CommandList>
+              {filtered.length === 0 && !canCreate ? (
+                <CommandEmpty>No match.</CommandEmpty>
+              ) : null}
+              <CommandGroup>
+                {filtered.map((option) => (
+                  <CommandItem
+                    key={option}
+                    onSelect={() => toggle(option)}
+                    value={option}
+                  >
+                    <Check
+                      className={cn(
+                        "size-4 shrink-0",
+                        cell.value.includes(option)
+                          ? "opacity-100"
+                          : "opacity-0",
+                      )}
+                    />
+                    <span
+                      className={cn(
+                        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+                        chipColorClass(option),
+                      )}
+                    >
+                      {option}
+                    </span>
+                  </CommandItem>
+                ))}
+                {canCreate ? (
+                  <CommandItem
+                    onSelect={() => {
+                      toggle(trimmed);
+                      setQuery("");
+                    }}
+                    value={`__create__${trimmed}`}
+                  >
+                    <Plus className="size-4 shrink-0" />
+                    Create &quot;{trimmed}&quot;
+                  </CommandItem>
+                ) : null}
+              </CommandGroup>
+            </CommandList>
+          </Command>
         </PopoverContent>
       </Popover>
     </TableCell>

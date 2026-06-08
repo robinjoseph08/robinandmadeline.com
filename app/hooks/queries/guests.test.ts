@@ -75,7 +75,7 @@ describe("useCreateGuest", () => {
         partyId: "p1",
         payload: {
           full_name: "Jane",
-          roles: [],
+          tags: [],
           is_primary: true,
           is_child: false,
           is_drinking: false,
@@ -100,7 +100,7 @@ describe("useUpdateGuest", () => {
         partyId: "p1",
         payload: {
           full_name: "Jane Doe",
-          roles: [],
+          tags: [],
           is_primary: true,
           is_child: false,
           is_drinking: false,

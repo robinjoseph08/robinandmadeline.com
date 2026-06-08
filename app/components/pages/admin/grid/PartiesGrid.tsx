@@ -1,4 +1,4 @@
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Link2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
+  TableCell,
   TableHead,
   TableHeader,
   TableRow,
@@ -26,14 +27,11 @@ import {
   useRequestInfo,
 } from "@/hooks/queries/parties";
 import { infoLinkForToken } from "@/libraries/clipboard";
-import {
-  InvitationPhysical,
-  RelationFamily,
-  SideRobin,
-  type Circle,
-  type InvitationType,
-  type Relation,
-  type Side,
+import type {
+  Circle,
+  InvitationType,
+  Relation,
+  Side,
 } from "@/types/generated/models";
 import type {
   CreatePartyPayload,
@@ -42,11 +40,14 @@ import type {
 } from "@/types/generated/parties";
 
 import {
-  GridEnumCell,
-  GridMultiSelectCell,
+  GridChipsCell,
+  GridComboboxCell,
   GridReadOnlyCell,
   GridTextCell,
 } from "./cells";
+import { TooltipIconButton } from "./grid-buttons";
+
+const CIRCLE_VALUES = CIRCLE_OPTIONS.map((option) => option.value);
 
 interface PartiesGridProps {
   parties: PartyResponse[];
@@ -56,29 +57,28 @@ interface PartiesGridProps {
 
 interface PartyDraft {
   name: string;
-  side: Side;
-  relation: Relation;
-  invitationType: InvitationType;
+  side?: Side;
+  relation?: Relation;
+  invitationType?: InvitationType;
   circle: Circle[];
   rsvpCode: string;
 }
 
 const EMPTY_DRAFT: PartyDraft = {
   name: "",
-  side: SideRobin,
-  relation: RelationFamily,
-  invitationType: InvitationPhysical,
   circle: [],
   rsvpCode: "",
 };
 
 /**
  * The parties list as an editable spreadsheet: each cell saves itself via PATCH
- * the moment you leave it (Tab to the next column, Enter down to the next row),
- * and the trailing row creates a new party as soon as you fill its name and press
- * Enter. The mailing address and other long-tail fields stay behind the edit
- * dialog (onEditParty); the derived status and guest count are read-only, and the
- * copy actions behave as before (copying the info link also requests info).
+ * the moment you leave it (Tab to the next column, Enter down to the next row).
+ * The add row is opened on demand with the "Add party" button and dismissed with
+ * its cancel button; its enum cells start blank and creation is blocked until the
+ * required fields (name, side, relation, invitation) are set. The mailing address
+ * and other long-tail fields stay behind the edit dialog (onEditParty); the
+ * derived status and guest count are read-only, and copying the info link also
+ * requests info.
  */
 export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
   const patchParty = usePatchParty();
@@ -86,6 +86,7 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
   const deleteParty = useDeleteParty();
   const requestInfo = useRequestInfo();
 
+  const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<PartyDraft>(EMPTY_DRAFT);
 
   // Save one field. Resolves to void on success; toasts and re-throws on failure
@@ -107,26 +108,36 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
     value: PartyDraft[K],
   ) => setDraft((prev) => ({ ...prev, [key]: value }));
 
+  const canCreate =
+    draft.name.trim() !== "" &&
+    Boolean(draft.side) &&
+    Boolean(draft.relation) &&
+    Boolean(draft.invitationType);
+
   const handleCreate = async () => {
-    const name = draft.name.trim();
-    if (!name) return;
+    if (!canCreate) return;
     const payload: CreatePartyPayload = {
-      name,
-      side: draft.side,
-      relation: draft.relation,
+      name: draft.name.trim(),
+      side: draft.side as Side,
+      relation: draft.relation as Relation,
       circle: draft.circle,
-      invitation_type: draft.invitationType,
+      invitation_type: draft.invitationType as InvitationType,
       rsvp_code: draft.rsvpCode.trim() || undefined,
     };
     try {
       await createParty.mutateAsync(payload);
-      toast.success(`Created "${name}"`);
-      setDraft(EMPTY_DRAFT);
+      toast.success(`Created "${payload.name}"`);
+      setDraft(EMPTY_DRAFT); // keep the add row open for rapid entry
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to create party",
       );
     }
+  };
+
+  const cancelAdd = () => {
+    setAdding(false);
+    setDraft(EMPTY_DRAFT);
   };
 
   const handleDelete = async (party: PartyResponse) => {
@@ -155,7 +166,7 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
           <TableHead className="w-32">RSVP code</TableHead>
           <TableHead className="w-20">Guests</TableHead>
           <TableHead className="w-40">Info status</TableHead>
-          <TableHead className="w-40 text-right">Actions</TableHead>
+          <TableHead className="w-32 text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -166,30 +177,38 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
               onCommit={(value) => patchField(party.id, { name: value })}
               value={party.name}
             />
-            <GridEnumCell<Side>
+            <GridComboboxCell
               ariaLabel="Side"
-              onCommit={(value) => patchField(party.id, { side: value })}
+              onCommit={(value) =>
+                patchField(party.id, { side: value as Side })
+              }
               options={SIDE_OPTIONS}
               value={party.side}
             />
-            <GridEnumCell<Relation>
+            <GridComboboxCell
               ariaLabel="Relation"
-              onCommit={(value) => patchField(party.id, { relation: value })}
+              onCommit={(value) =>
+                patchField(party.id, { relation: value as Relation })
+              }
               options={RELATION_OPTIONS}
               value={party.relation}
             />
-            <GridEnumCell<InvitationType>
+            <GridComboboxCell
               ariaLabel="Invitation"
               onCommit={(value) =>
-                patchField(party.id, { invitation_type: value })
+                patchField(party.id, {
+                  invitation_type: value as InvitationType,
+                })
               }
               options={INVITATION_TYPE_OPTIONS}
               value={party.invitation_type}
             />
-            <GridMultiSelectCell<Circle>
+            <GridChipsCell
               ariaLabel="Circle"
-              onCommit={(value) => patchField(party.id, { circle: value })}
-              options={CIRCLE_OPTIONS}
+              onCommit={(value) =>
+                patchField(party.id, { circle: value as Circle[] })
+              }
+              options={CIRCLE_VALUES}
               value={party.circle}
             />
             <GridTextCell
@@ -215,7 +234,9 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
             <GridReadOnlyCell className="text-right">
               <div className="flex justify-end gap-1">
                 <CopyButton
-                  label="Info link"
+                  icon={<Link2 />}
+                  iconOnly
+                  label="Copy info link (marks requested)"
                   onCopy={async () => {
                     await requestInfo.mutateAsync({ partyId: party.id });
                   }}
@@ -224,88 +245,110 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
                 />
                 {party.rsvp_code ? (
                   <CopyButton
-                    label="RSVP"
+                    iconOnly
+                    label="Copy RSVP code"
                     successMessage="RSVP code copied"
                     value={party.rsvp_code}
                   />
                 ) : null}
-                <Button
-                  aria-label={`Edit ${party.name}`}
+                <TooltipIconButton
+                  label={`Edit ${party.name}`}
                   onClick={() => onEditParty(party)}
-                  size="icon"
-                  variant="ghost"
                 >
                   <Pencil />
-                </Button>
-                <Button
-                  aria-label={`Delete ${party.name}`}
+                </TooltipIconButton>
+                <TooltipIconButton
                   disabled={deleteParty.isPending}
+                  label={`Delete ${party.name}`}
                   onClick={() => handleDelete(party)}
-                  size="icon"
-                  variant="ghost"
                 >
                   <Trash2 />
-                </Button>
+                </TooltipIconButton>
               </div>
             </GridReadOnlyCell>
           </TableRow>
         ))}
 
-        {/* The add row: fill the name and press Enter (or click Add) to create. */}
-        <TableRow className="bg-muted/30">
-          <GridTextCell
-            ariaLabel="New party name"
-            commitOnChange
-            onCommit={(value) => setDraftField("name", value)}
-            onEnter={handleCreate}
-            placeholder="Add a party..."
-            value={draft.name}
-          />
-          <GridEnumCell<Side>
-            ariaLabel="New party side"
-            onCommit={(value) => setDraftField("side", value)}
-            options={SIDE_OPTIONS}
-            value={draft.side}
-          />
-          <GridEnumCell<Relation>
-            ariaLabel="New party relation"
-            onCommit={(value) => setDraftField("relation", value)}
-            options={RELATION_OPTIONS}
-            value={draft.relation}
-          />
-          <GridEnumCell<InvitationType>
-            ariaLabel="New party invitation"
-            onCommit={(value) => setDraftField("invitationType", value)}
-            options={INVITATION_TYPE_OPTIONS}
-            value={draft.invitationType}
-          />
-          <GridMultiSelectCell<Circle>
-            ariaLabel="New party circle"
-            onCommit={(value) => setDraftField("circle", value)}
-            options={CIRCLE_OPTIONS}
-            value={draft.circle}
-          />
-          <GridTextCell
-            ariaLabel="New party RSVP code"
-            commitOnChange
-            onCommit={(value) => setDraftField("rsvpCode", value)}
-            onEnter={handleCreate}
-            placeholder="Optional"
-            value={draft.rsvpCode}
-          />
-          <GridReadOnlyCell />
-          <GridReadOnlyCell />
-          <GridReadOnlyCell className="text-right">
-            <Button
-              disabled={createParty.isPending || draft.name.trim() === ""}
-              onClick={handleCreate}
-              size="sm"
-            >
-              <Plus />
-              Add
-            </Button>
-          </GridReadOnlyCell>
-        </TableRow>
+        {adding ? (
+          <TableRow className="bg-muted/30">
+            <GridTextCell
+              ariaLabel="New party name"
+              autoFocus
+              commitOnChange
+              onCommit={(value) => setDraftField("name", value)}
+              onEnter={handleCreate}
+              placeholder="Party name..."
+              value={draft.name}
+            />
+            <GridComboboxCell
+              ariaLabel="New party side"
+              onCommit={(value) => setDraftField("side", value as Side)}
+              options={SIDE_OPTIONS}
+              placeholder="Side..."
+              value={draft.side}
+            />
+            <GridComboboxCell
+              ariaLabel="New party relation"
+              onCommit={(value) => setDraftField("relation", value as Relation)}
+              options={RELATION_OPTIONS}
+              placeholder="Relation..."
+              value={draft.relation}
+            />
+            <GridComboboxCell
+              ariaLabel="New party invitation"
+              onCommit={(value) =>
+                setDraftField("invitationType", value as InvitationType)
+              }
+              options={INVITATION_TYPE_OPTIONS}
+              placeholder="Invitation..."
+              value={draft.invitationType}
+            />
+            <GridChipsCell
+              ariaLabel="New party circle"
+              onCommit={(value) => setDraftField("circle", value as Circle[])}
+              options={CIRCLE_VALUES}
+              value={draft.circle}
+            />
+            <GridTextCell
+              ariaLabel="New party RSVP code"
+              commitOnChange
+              onCommit={(value) => setDraftField("rsvpCode", value)}
+              onEnter={handleCreate}
+              placeholder="Optional"
+              value={draft.rsvpCode}
+            />
+            <GridReadOnlyCell />
+            <GridReadOnlyCell />
+            <GridReadOnlyCell className="text-right">
+              <div className="flex justify-end gap-1">
+                <TooltipIconButton label="Cancel" onClick={cancelAdd}>
+                  <X />
+                </TooltipIconButton>
+                <Button
+                  disabled={!canCreate || createParty.isPending}
+                  onClick={handleCreate}
+                  size="sm"
+                >
+                  <Plus />
+                  Add
+                </Button>
+              </div>
+            </GridReadOnlyCell>
+          </TableRow>
+        ) : (
+          <TableRow>
+            <TableCell className="p-0" colSpan={9}>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                onClick={() => setAdding(true)}
+                type="button"
+              >
+                <Plus className="size-4" />
+                Add party
+              </button>
+            </TableCell>
+          </TableRow>
+        )}
       </TableBody>
     </Table>
   );
