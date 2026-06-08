@@ -3,8 +3,9 @@ name: CI
 on:
   push:
     branches: [master]
+  # Run on every pull request whatever its base branch, so stacked PRs (not
+  # only those targeting master) are checked.
   pull_request:
-    branches: [master]
 
 # Cancel superseded runs on a PR branch; let master runs finish.
 concurrency:
