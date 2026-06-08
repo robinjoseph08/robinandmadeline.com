@@ -124,8 +124,17 @@ export default function AdminParties() {
       ) : partiesQuery.isError ? (
         <p className="text-destructive">{partiesQuery.error.message}</p>
       ) : (
-        <div className="rounded-md border border-ink/10">
-          <PartiesGrid onEditParty={openEdit} parties={parties} />
+        // The grid always renders so its add row stays available; a hint above it
+        // explains an empty result rather than leaving a lone, muted add row.
+        <div className="space-y-2">
+          {parties.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No parties match these filters. Add one in the row below.
+            </p>
+          ) : null}
+          <div className="rounded-md border border-ink/10">
+            <PartiesGrid onEditParty={openEdit} parties={parties} />
+          </div>
         </div>
       )}
 

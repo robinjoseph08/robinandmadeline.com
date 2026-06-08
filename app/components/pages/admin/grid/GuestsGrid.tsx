@@ -28,6 +28,11 @@ import {
   GridTextCell,
 } from "./cells";
 
+// renderParty and addPartyId are mutually exclusive in practice: the flat guest
+// list passes renderParty (and no add row, since a guest needs a party), while a
+// party's detail page passes addPartyId (and no party column, the party is
+// implicit). Keeping them apart matters because the add row has no party cell, so
+// it would be one column short if a party column were also rendered.
 interface GuestsGridProps<TGuest extends Guest> {
   guests: TGuest[];
   /** Party id used to scope each guest write's cache invalidation. */
