@@ -1,6 +1,7 @@
 package binder
 
 import (
+	"net/mail"
 	"net/url"
 	"regexp"
 
@@ -32,4 +33,23 @@ func urlValidator(fl validator.FieldLevel) bool {
 	}
 	u, err := url.Parse(value)
 	return err == nil && u.Scheme != "" && u.Host != ""
+}
+
+// emailBlankValidator accepts a valid email address or the empty string. Like
+// the date/url validators it permits blank so a value can be cleared: a partial
+// update (PATCH) sends a present-but-blank field to erase an optional email,
+// which the service then stores as SQL NULL. A present, non-blank value is still
+// format-checked. Use `omitempty,emailblank` so an absent (nil pointer) field is
+// skipped while a present blank one clears; add `required` to forbid blank.
+//
+// The check is net/mail.ParseAddress with the parsed address required to equal
+// the input and carry no display name, so "a@b.com" passes while "Name <a@b>"
+// and "garbage" do not.
+func emailBlankValidator(fl validator.FieldLevel) bool {
+	value := fl.Field().String()
+	if value == "" {
+		return true
+	}
+	addr, err := mail.ParseAddress(value)
+	return err == nil && addr.Name == "" && addr.Address == value
 }

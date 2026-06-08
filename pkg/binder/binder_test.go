@@ -224,7 +224,8 @@ func TestBind_DiveRequiredForSliceModTraversal(t *testing.T) {
 	})
 }
 
-// TestValidators covers the date and url custom validators directly.
+// TestValidators covers the date, url, and emailblank custom validators
+// directly.
 func TestValidators(t *testing.T) {
 	t.Parallel()
 	b, err := New()
@@ -233,6 +234,7 @@ func TestValidators(t *testing.T) {
 	type payload struct {
 		When string `json:"when" validate:"omitempty,date"`
 		Site string `json:"site" validate:"omitempty,url"`
+		Mail string `json:"mail" validate:"omitempty,emailblank"`
 	}
 
 	cases := []struct {
@@ -245,6 +247,10 @@ func TestValidators(t *testing.T) {
 		{"bad date", `{"when":"06/07/2026"}`, false},
 		{"valid url", `{"site":"https://example.com"}`, true},
 		{"bad url", `{"site":"not a url"}`, false},
+		{"valid email", `{"mail":"pat@example.com"}`, true},
+		{"empty email allowed", `{"mail":""}`, true},
+		{"bad email", `{"mail":"not-an-email"}`, false},
+		{"email with display name rejected", `{"mail":"Pat <pat@example.com>"}`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
