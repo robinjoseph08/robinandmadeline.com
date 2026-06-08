@@ -53,7 +53,7 @@ func (s *Service) CreateParty(ctx context.Context, in CreatePartyPayload) (*mode
 			// Distinguish an RSVP-code conflict (caller's fault, do not retry) from
 			// an info-token collision (retry with a new token).
 			if in.RSVPCode != nil && isRSVPCodeConflict(ctx, s.db, party.RSVPCode) {
-				return nil, errcodes.Conflict("a party with that RSVP code already exists")
+				return nil, errcodes.Conflict("A party with that RSVP code already exists.")
 			}
 			continue
 		}
@@ -102,7 +102,7 @@ func (s *Service) UpdateParty(ctx context.Context, id string, in UpdatePartyPayl
 		WherePK().Exec(ctx)
 	if err != nil {
 		return nil, errcodes.ConflictOnUnique(errors.Wrap(err, "update party"),
-			"a party with that RSVP code already exists")
+			"A party with that RSVP code already exists.")
 	}
 	return party, nil
 }

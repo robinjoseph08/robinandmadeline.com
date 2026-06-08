@@ -63,7 +63,7 @@ func TestNew(t *testing.T) {
 		p := params{}
 		err := b.Bind(&p, c)
 		assert.Equal(t, string(errcodes.CodeValidationTypeError), codeOf(t, err))
-		assert.Contains(t, err.Error(), `"hello" should be of type string`)
+		assert.Contains(t, err.Error(), "Hello must be of type string.")
 	})
 
 	t.Run("applies mod tags before validation", func(t *testing.T) {
@@ -80,7 +80,7 @@ func TestNew(t *testing.T) {
 		p := params{}
 		err := b.Bind(&p, c)
 		assert.Equal(t, string(errcodes.CodeValidationError), codeOf(t, err))
-		assert.Contains(t, err.Error(), "length must be less than or equal to 9 characters")
+		assert.Contains(t, err.Error(), "Hello must be at most 9 characters.")
 	})
 
 	t.Run("rejects an empty body on a non-GET/DELETE request", func(t *testing.T) {
@@ -257,6 +257,45 @@ func TestValidators(t *testing.T) {
 			} else {
 				assert.Equal(t, string(errcodes.CodeValidationError), codeOf(t, bindErr))
 			}
+		})
+	}
+}
+
+// TestValidationMessages pins the client-facing wording the formatter produces:
+// every message is sentence case (with the snake_case JSON field humanized to a
+// spaced, capitalized label) and ends in a period.
+func TestValidationMessages(t *testing.T) {
+	t.Parallel()
+	b, err := New()
+	require.NoError(t, err)
+
+	type payload struct {
+		FullName string   `json:"full_name" validate:"required,min=1,max=200"`
+		Side     string   `json:"side" validate:"omitempty,oneof=robin madeline"`
+		Email    string   `json:"email" validate:"omitempty,email"`
+		Circle   []string `json:"circle" validate:"omitempty,max=2"`
+	}
+
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"required humanizes the field", `{"full_name":""}`, "Full name is required."},
+		{"oneof lists the valid values", `{"full_name":"A","side":"nobody"}`, "Side must be one of: robin, madeline."},
+		{"email reads as a sentence", `{"full_name":"A","email":"nope"}`, "Email must be a valid email address."},
+		{"max on a string counts characters", `{"full_name":"` + strings.Repeat("x", 201) + `"}`, "Full name must be at most 200 characters."},
+		{"max on a slice counts elements", `{"full_name":"A","circle":["a","b","c"]}`, "Circle must have at most 2 elements."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := newContext(http.MethodPost, "/", tc.body, echo.MIMEApplicationJSON)
+			p := payload{}
+			bindErr := b.Bind(&p, c)
+			require.Error(t, bindErr)
+			assert.Equal(t, string(errcodes.CodeValidationError), codeOf(t, bindErr))
+			assert.Equal(t, tc.want, bindErr.Error())
 		})
 	}
 }

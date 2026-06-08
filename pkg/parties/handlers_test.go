@@ -362,12 +362,16 @@ func TestGuestLifecycleHandlers(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(addRec.Body.Bytes(), &guest))
 
-	// Flat guest list returns the {items, total} envelope holding the guest.
+	// Flat guest list returns the {items, total} envelope holding the guest, and
+	// each item carries the owning party's name (and id) so the UI can link back
+	// to and edit the guest in its party's context.
 	listRec := do(t, e, http.MethodGet, "/api/admin/guests", nil)
 	require.Equal(t, http.StatusOK, listRec.Code)
 	var listed struct {
 		Items []struct {
-			ID string `json:"id"`
+			ID        string `json:"id"`
+			PartyID   string `json:"party_id"`
+			PartyName string `json:"party_name"`
 		} `json:"items"`
 		Total int `json:"total"`
 	}
@@ -375,6 +379,8 @@ func TestGuestLifecycleHandlers(t *testing.T) {
 	require.Equal(t, 1, listed.Total)
 	require.Len(t, listed.Items, 1)
 	assert.Equal(t, guest.ID, listed.Items[0].ID)
+	assert.Equal(t, party.ID, listed.Items[0].PartyID)
+	assert.Equal(t, "Fam", listed.Items[0].PartyName, "flat list item carries the owning party's name")
 
 	// PATCH the guest.
 	patchRec := do(t, e, http.MethodPatch, "/api/admin/guests/"+guest.ID,

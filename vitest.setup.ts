@@ -11,6 +11,16 @@ globalThis.ResizeObserver = class ResizeObserver {
   disconnect() {}
 };
 
+// jsdom omits these Element methods that Radix UI (Select, Dialog) calls during
+// pointer interactions and focus management. Stub them so those components are
+// testable; they are no-ops that only need to exist.
+if (typeof Element !== "undefined") {
+  Element.prototype.hasPointerCapture ??= () => false;
+  Element.prototype.setPointerCapture ??= () => {};
+  Element.prototype.releasePointerCapture ??= () => {};
+  Element.prototype.scrollIntoView ??= () => {};
+}
+
 afterEach(() => {
   cleanup();
 });

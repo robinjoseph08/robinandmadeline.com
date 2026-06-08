@@ -66,12 +66,14 @@ func (s *Service) ListParties(ctx context.Context, f ListPartiesQuery) ([]*model
 }
 
 // ListGuests returns guests matching the flat filter (ordered by creation time)
-// and the total count. Party-level filters (side/relation/circle) are applied
-// via a correlated EXISTS against the guest's party, keeping the result a flat
-// guest list.
+// and the total count. Each guest's owning party is eager-loaded so the flat
+// list can show the party name (a guest has no detail page of its own; it is
+// edited in the context of its party). Party-level filters (side/relation/
+// circle) are applied via a correlated EXISTS against the guest's party, keeping
+// the result a flat guest list.
 func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.Guest, int, error) {
 	var guests []*models.Guest
-	q := s.db.NewSelect().Model(&guests).Order("g.created_at ASC")
+	q := s.db.NewSelect().Model(&guests).Relation("Party").Order("g.created_at ASC")
 
 	if f.IsDrinking != nil {
 		q = q.Where("g.is_drinking = ?", *f.IsDrinking)

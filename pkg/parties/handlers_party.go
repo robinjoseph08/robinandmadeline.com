@@ -111,7 +111,7 @@ func (h *handler) markInfo(c echo.Context) error {
 	case models.StatusIncomplete:
 		party, err = h.service.MarkIncomplete(ctx, id)
 	default:
-		return errcodes.ValidationError(`status must be "complete" or "incomplete"`)
+		return errcodes.ValidationError("Status must be one of: complete, incomplete.")
 	}
 	if err != nil {
 		return err
