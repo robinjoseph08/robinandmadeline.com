@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { GuestsGrid } from "@/components/pages/admin/grid/GuestsGrid";
@@ -15,6 +14,7 @@ import {
 } from "@/components/pages/admin/parties/options";
 import { Input } from "@/components/ui/input";
 import { useGuests, useUpdateGuest } from "@/hooks/queries/guests";
+import { useParties } from "@/hooks/queries/parties";
 import type { Circle, Relation, Side } from "@/types/generated/models";
 import type {
   CreateGuestPayload,
@@ -43,6 +43,17 @@ export default function AdminGuests() {
   const guestsQuery = useGuests(filters);
   const guests = guestsQuery.data?.items ?? [];
   const updateGuest = useUpdateGuest();
+
+  // Every party, for the editable Party combobox and the add row's party picker.
+  const partiesQuery = useParties({});
+  const partyOptions = useMemo(
+    () =>
+      (partiesQuery.data?.items ?? []).map((party) => ({
+        id: party.id,
+        name: party.name,
+      })),
+    [partiesQuery.data],
+  );
 
   const setFilter = <K extends keyof ListGuestsQuery>(
     key: K,
@@ -144,23 +155,23 @@ export default function AdminGuests() {
         <p className="text-muted-foreground">Loading guests...</p>
       ) : guestsQuery.isError ? (
         <p className="text-destructive">{guestsQuery.error.message}</p>
-      ) : guests.length === 0 ? (
-        <p className="text-muted-foreground">No guests match these filters.</p>
       ) : (
-        <div className="rounded-md border border-ink/10">
-          <GuestsGrid<GuestListItem>
-            guests={guests}
-            onEditGuest={openEdit}
-            partyIdFor={(guest) => guest.party_id}
-            renderParty={(guest) => (
-              <Link
-                className="text-sm font-medium hover:underline"
-                to={`/admin/parties/${guest.party_id}`}
-              >
-                {guest.party_name}
-              </Link>
-            )}
-          />
+        // The grid always renders so its add row stays available; a hint above it
+        // explains an empty result.
+        <div className="space-y-2">
+          {guests.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No guests match these filters. Add one in the row below.
+            </p>
+          ) : null}
+          <div className="rounded-md border border-ink/10">
+            <GuestsGrid<GuestListItem>
+              guests={guests}
+              onEditGuest={openEdit}
+              parties={partyOptions}
+              partyIdFor={(guest) => guest.party_id}
+            />
+          </div>
         </div>
       )}
 

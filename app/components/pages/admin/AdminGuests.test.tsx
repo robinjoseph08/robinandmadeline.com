@@ -1,13 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type {
   GuestListItem,
   ListGuestsResponse,
+  PartyResponse,
 } from "@/types/generated/parties";
 
 import AdminGuests from "./AdminGuests";
@@ -24,8 +25,8 @@ vi.mock("@/libraries/admin-api", async () => {
 function makeGuestItem(overrides: Partial<GuestListItem>): GuestListItem {
   return {
     id: "g1",
-    party_id: "p1",
-    party_name: "The Party",
+    party_id: "p7",
+    party_name: "The Smiths",
     full_name: "Guest",
     tags: [],
     is_primary: false,
@@ -38,12 +39,53 @@ function makeGuestItem(overrides: Partial<GuestListItem>): GuestListItem {
   };
 }
 
+function makeParty(id: string, name: string): PartyResponse {
+  return {
+    id,
+    name,
+    side: "robin",
+    relation: "family",
+    circle: [],
+    invitation_type: "digital",
+    info_token: `tok_${id}`,
+    info_collection_requested: false,
+    info_collection_confirmed: false,
+    info_collection_status: "incomplete",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    guests: [],
+  };
+}
+
+const PARTIES = [makeParty("p7", "The Smiths"), makeParty("p8", "The Joneses")];
+
 function listOf(items: GuestListItem[]): ListGuestsResponse {
   return { items, total: items.length };
 }
 
-// Renders AdminGuests with the party-detail route registered too, so we can
-// assert the party-name link actually targets the party detail page.
+// Stubs both list endpoints the page reads (guests + parties for the Party
+// combobox) and resolves writes; onWrite lets a test shape the write response.
+function setMock(opts: {
+  guests?: GuestListItem[];
+  onWrite?: (path: string, options?: { method?: string }) => unknown;
+}) {
+  const guests = opts.guests ?? [];
+  adminRequest.mockImplementation(
+    (path: string, options?: { method?: string }) => {
+      const method = options?.method ?? "GET";
+      if (path === "/admin/guests" && method === "GET") {
+        return Promise.resolve(listOf(guests));
+      }
+      if (path === "/admin/parties" && method === "GET") {
+        return Promise.resolve({ items: PARTIES, total: PARTIES.length });
+      }
+      return Promise.resolve(
+        opts.onWrite?.(path, options) ?? makeGuestItem({ id: "written" }),
+      );
+    },
+  );
+}
+
 function renderGuests() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -52,13 +94,7 @@ function renderGuests() {
     <TooltipProvider>
       <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={["/admin/guests"]}>
-          <Routes>
-            <Route element={<AdminGuests />} path="/admin/guests" />
-            <Route
-              element={<div>Party detail page</div>}
-              path="/admin/parties/:id"
-            />
-          </Routes>
+          <AdminGuests />
         </MemoryRouter>
       </QueryClientProvider>
     </TooltipProvider>,
@@ -70,63 +106,50 @@ beforeEach(() => {
 });
 
 describe("AdminGuests flat list", () => {
-  it("links each guest to its owning party by name", async () => {
-    adminRequest.mockResolvedValue(
-      listOf([
+  it("shows each guest's party and reassigns it via the combobox", async () => {
+    setMock({
+      guests: [
         makeGuestItem({
-          id: "g1",
+          id: "alice",
           full_name: "Alice",
           party_id: "p7",
           party_name: "The Smiths",
         }),
-      ]),
-    );
+      ],
+    });
 
     const user = userEvent.setup();
     renderGuests();
 
-    // The Party cell is a link carrying the party name and pointing at the
-    // party's detail route (guests have no detail page of their own).
-    const link = await screen.findByRole("link", { name: "The Smiths" });
-    expect(link).toHaveAttribute("href", "/admin/parties/p7");
+    // The Party cell is an editable combobox showing the guest's current party.
+    const row = (await screen.findByDisplayValue("Alice")).closest("tr")!;
+    const partyCell = within(row).getByRole("combobox", { name: "Party" });
+    expect(partyCell).toHaveTextContent("The Smiths");
 
-    // Following it lands on the party detail route.
-    await user.click(link);
-    expect(await screen.findByText("Party detail page")).toBeInTheDocument();
+    // Reassigning the party PATCHes party_id (moving the guest to another party).
+    await user.click(partyCell);
+    await user.click(
+      await screen.findByRole("option", { name: "The Joneses" }),
+    );
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/guests/alice", {
+        method: "PATCH",
+        body: { party_id: "p8" },
+      });
+    });
   });
 
   it("edits a guest cell in place, patching it with its party context", async () => {
-    adminRequest.mockImplementation(
-      (path: string, options?: { method?: string }) => {
-        const method = options?.method ?? "GET";
-        if (path === "/admin/guests" && method === "GET") {
-          return Promise.resolve(
-            listOf([
-              makeGuestItem({
-                id: "alice",
-                full_name: "Alice",
-                party_id: "p1",
-                party_name: "The Party",
-              }),
-            ]),
-          );
-        }
-        // The PATCH (and any post-mutation refetch) resolve to a value.
-        return Promise.resolve(makeGuestItem({ id: "alice" }));
-      },
-    );
+    setMock({ guests: [makeGuestItem({ id: "alice", full_name: "Alice" })] });
 
     const user = userEvent.setup();
     renderGuests();
 
-    // Rename Alice directly in her name cell, then blur to commit.
     const nameCell = await screen.findByDisplayValue("Alice");
     await user.clear(nameCell);
     await user.type(nameCell, "Alice Cooper");
     await user.tab();
 
-    // The edit went through the guest PATCH for the right guest, carrying just
-    // the new name (a single-field partial update).
     await waitFor(() => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/guests/alice", {
         method: "PATCH",
@@ -136,17 +159,7 @@ describe("AdminGuests flat list", () => {
   });
 
   it("toggles a flag inline, patching only that field", async () => {
-    adminRequest.mockImplementation(
-      (path: string, options?: { method?: string }) => {
-        const method = options?.method ?? "GET";
-        if (path === "/admin/guests" && method === "GET") {
-          return Promise.resolve(
-            listOf([makeGuestItem({ id: "alice", full_name: "Alice" })]),
-          );
-        }
-        return Promise.resolve(makeGuestItem({ id: "alice" }));
-      },
-    );
+    setMock({ guests: [makeGuestItem({ id: "alice", full_name: "Alice" })] });
 
     const user = userEvent.setup();
     renderGuests();
@@ -163,24 +176,13 @@ describe("AdminGuests flat list", () => {
   });
 
   it("creates and applies a new tag via the tags cell", async () => {
-    adminRequest.mockImplementation(
-      (path: string, options?: { method?: string }) => {
-        const method = options?.method ?? "GET";
-        if (path === "/admin/guests" && method === "GET") {
-          return Promise.resolve(
-            listOf([
-              makeGuestItem({ id: "alice", full_name: "Alice", tags: [] }),
-            ]),
-          );
-        }
-        return Promise.resolve(makeGuestItem({ id: "alice" }));
-      },
-    );
+    setMock({
+      guests: [makeGuestItem({ id: "alice", full_name: "Alice", tags: [] })],
+    });
 
     const user = userEvent.setup();
     renderGuests();
 
-    // Open Alice's tags cell, type a brand-new tag, and create it.
     const row = (await screen.findByDisplayValue("Alice")).closest("tr")!;
     await user.click(within(row).getByRole("button", { name: "Tags" }));
     await user.type(
@@ -191,13 +193,41 @@ describe("AdminGuests flat list", () => {
       await screen.findByRole("option", { name: /Create "Bridal Party"/ }),
     );
 
-    // Closing the popover commits the new tag set as a single PATCH.
     await user.keyboard("{Escape}");
     await waitFor(() => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/guests/alice", {
         method: "PATCH",
         body: { tags: ["Bridal Party"] },
       });
+    });
+  });
+
+  it("adds a guest from the flat list once a name and party are chosen", async () => {
+    setMock({ guests: [] });
+
+    const user = userEvent.setup();
+    renderGuests();
+
+    // The flat list also offers an add row, with a required party picker.
+    await user.click(await screen.findByRole("button", { name: "Add guest" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "New guest name" }),
+      "Newbie",
+    );
+    await user.click(screen.getByRole("combobox", { name: "New guest party" }));
+    await user.click(
+      await screen.findByRole("option", { name: "The Joneses" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith(
+        "/admin/parties/p8/guests",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.objectContaining({ full_name: "Newbie" }),
+        }),
+      );
     });
   });
 });

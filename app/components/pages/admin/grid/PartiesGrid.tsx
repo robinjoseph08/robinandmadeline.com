@@ -217,9 +217,10 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
               placeholder="None"
               value={party.rsvp_code ?? ""}
             />
-            <GridReadOnlyCell>
+            <GridReadOnlyCell className="p-0">
               <Link
-                className="font-medium hover:underline"
+                className="flex h-full min-h-9 w-full items-center px-3 font-medium transition-colors hover:bg-muted/40 hover:underline"
+                title="View guests"
                 to={`/admin/parties/${party.id}`}
               >
                 {party.guests?.length ?? 0}

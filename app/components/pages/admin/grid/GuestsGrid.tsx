@@ -1,5 +1,5 @@
 import { Pencil, Plus, Trash2, X } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import type {
 import {
   GridBoolCell,
   GridChipsCell,
+  GridComboboxCell,
   GridReadOnlyCell,
   GridTextCell,
 } from "./cells";
@@ -41,19 +42,32 @@ const FLAG_HINTS = {
     "A stand-in for an unnamed guest or an unconfirmed plus-one (e.g. a +1 whose name you do not have yet).",
 };
 
+interface PartyOption {
+  id: string;
+  name: string;
+}
+
 interface GuestsGridProps<TGuest extends Guest> {
   guests: TGuest[];
   /** Party id used to scope each guest write's cache invalidation. */
   partyIdFor: (guest: TGuest) => string;
   /** Opens the full-edit dialog (dietary restrictions, table/seat numbers). */
   onEditGuest: (guest: TGuest) => void;
-  /** Renders the trailing party cell (the flat list links each guest's party). */
-  renderParty?: (guest: TGuest) => ReactNode;
-  /** When set, the "Add guest" button creates a guest in this party. */
+  /**
+   * Flat-list mode: every party, so the Party column becomes an editable combobox
+   * (reassign a guest) and the add row includes a party picker. Mutually
+   * exclusive with addPartyId.
+   */
+  parties?: PartyOption[];
+  /**
+   * Detail-page mode: the add row creates a guest in this one party, and no Party
+   * column is shown (the party is implicit). Mutually exclusive with parties.
+   */
   addPartyId?: string;
 }
 
 interface GuestDraft {
+  partyId?: string;
   fullName: string;
   email: string;
   phone: string;
@@ -75,27 +89,22 @@ const EMPTY_DRAFT: GuestDraft = {
   isPlaceholder: false,
 };
 
-// renderParty and addPartyId are mutually exclusive in practice: the flat guest
-// list passes renderParty (and no add row, since a guest needs a party), while a
-// party's detail page passes addPartyId (and no party column, the party is
-// implicit). Keeping them apart matters because the add row has no party cell, so
-// it would be one column short if a party column were also rendered.
-
 /**
  * The guest list as an editable spreadsheet, shared by the flat guest list and a
  * party's detail page. Each cell saves itself via PATCH on blur/Enter; the four
  * flags are inline checkboxes (with info tooltips in their headers), tags is a
  * searchable, creatable, colored-chip multi-select, and promoting a guest to
- * primary demotes the party's previous primary (enforced by the API). The flat
- * list passes renderParty to link each guest back to its party; the detail page
- * passes addPartyId to enable the "Add guest" row. Dietary restrictions and
- * table/seat numbers stay behind the edit dialog (onEditGuest).
+ * primary demotes the party's previous primary (enforced by the API). Both pages
+ * can add a guest from a trailing row: the detail page targets its own party,
+ * while the flat list shows an editable Party combobox (per row and in the add
+ * row) so a guest can be assigned or moved between parties. Dietary restrictions
+ * and table/seat numbers stay behind the edit dialog (onEditGuest).
  */
 export function GuestsGrid<TGuest extends Guest>({
   guests,
   partyIdFor,
   onEditGuest,
-  renderParty,
+  parties,
   addPartyId,
 }: GuestsGridProps<TGuest>) {
   const patchGuest = usePatchGuest();
@@ -104,6 +113,14 @@ export function GuestsGrid<TGuest extends Guest>({
 
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<GuestDraft>(EMPTY_DRAFT);
+
+  const showPartyColumn = parties !== undefined;
+  const canAdd = addPartyId !== undefined || parties !== undefined;
+  const partyOptions = useMemo(
+    () => (parties ?? []).map((p) => ({ value: p.id, label: p.name })),
+    [parties],
+  );
+  const columnCount = 8 + (showPartyColumn ? 1 : 0) + 1;
 
   // Existing tags across the loaded guests, to suggest in every tag cell.
   const tagSuggestions = useMemo(() => {
@@ -141,10 +158,11 @@ export function GuestsGrid<TGuest extends Guest>({
     value: GuestDraft[K],
   ) => setDraft((prev) => ({ ...prev, [key]: value }));
 
-  const canCreate = draft.fullName.trim() !== "";
+  const targetPartyId = addPartyId ?? draft.partyId;
+  const canCreate = draft.fullName.trim() !== "" && Boolean(targetPartyId);
 
   const handleCreate = async () => {
-    if (!canCreate || !addPartyId) return;
+    if (!canCreate || !targetPartyId) return;
     const payload: CreateGuestPayload = {
       full_name: draft.fullName.trim(),
       email: draft.email.trim() || undefined,
@@ -156,9 +174,11 @@ export function GuestsGrid<TGuest extends Guest>({
       is_placeholder: draft.isPlaceholder,
     };
     try {
-      await createGuest.mutateAsync({ partyId: addPartyId, payload });
+      await createGuest.mutateAsync({ partyId: targetPartyId, payload });
       toast.success(`Added ${payload.full_name}`);
-      setDraft(EMPTY_DRAFT); // keep the add row open for rapid entry
+      // Keep the add row open for rapid entry; in the flat list keep the chosen
+      // party so several guests can be added to it in a row.
+      setDraft((prev) => ({ ...EMPTY_DRAFT, partyId: prev.partyId }));
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to add guest",
@@ -206,7 +226,9 @@ export function GuestsGrid<TGuest extends Guest>({
           <TableHead className="w-28 text-center">
             <HeaderWithHint hint={FLAG_HINTS.placeholder} label="Placeholder" />
           </TableHead>
-          {renderParty ? <TableHead className="w-40">Party</TableHead> : null}
+          {showPartyColumn ? (
+            <TableHead className="min-w-44">Party</TableHead>
+          ) : null}
           <TableHead className="w-20 text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
@@ -276,8 +298,15 @@ export function GuestsGrid<TGuest extends Guest>({
                 }
                 value={guest.is_placeholder}
               />
-              {renderParty ? (
-                <GridReadOnlyCell>{renderParty(guest)}</GridReadOnlyCell>
+              {showPartyColumn ? (
+                <GridComboboxCell
+                  ariaLabel="Party"
+                  onCommit={(value) =>
+                    patchField(guest.id, partyId, { party_id: value })
+                  }
+                  options={partyOptions}
+                  value={guest.party_id}
+                />
               ) : null}
               <GridReadOnlyCell className="text-right">
                 <div className="flex justify-end gap-1">
@@ -300,7 +329,7 @@ export function GuestsGrid<TGuest extends Guest>({
           );
         })}
 
-        {addPartyId && adding ? (
+        {canAdd && adding ? (
           <TableRow className="bg-muted/30">
             <GridBoolCell
               ariaLabel="New guest primary"
@@ -356,6 +385,15 @@ export function GuestsGrid<TGuest extends Guest>({
               onCommit={(value) => setDraftField("isPlaceholder", value)}
               value={draft.isPlaceholder}
             />
+            {showPartyColumn ? (
+              <GridComboboxCell
+                ariaLabel="New guest party"
+                onCommit={(value) => setDraftField("partyId", value)}
+                options={partyOptions}
+                placeholder="Party..."
+                value={draft.partyId}
+              />
+            ) : null}
             <GridReadOnlyCell className="text-right">
               <div className="flex justify-end gap-1">
                 <TooltipIconButton label="Cancel" onClick={cancelAdd}>
@@ -372,9 +410,9 @@ export function GuestsGrid<TGuest extends Guest>({
               </div>
             </GridReadOnlyCell>
           </TableRow>
-        ) : addPartyId ? (
+        ) : canAdd ? (
           <TableRow>
-            <TableCell className="p-0" colSpan={9}>
+            <TableCell className="p-0" colSpan={columnCount}>
               <button
                 className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
                 onClick={() => setAdding(true)}

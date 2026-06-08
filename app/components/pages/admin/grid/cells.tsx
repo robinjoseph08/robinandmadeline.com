@@ -322,17 +322,19 @@ export function GridChipsCell({
         <PopoverTrigger asChild>
           <button
             aria-label={ariaLabel}
-            className="flex h-9 w-full items-center gap-1 overflow-hidden px-3 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+            // min-h (not fixed h) so the chips wrap onto more lines and the row
+            // grows to show them all, rather than clipping a tag mid-word.
+            className="flex min-h-9 w-full items-center px-3 py-1 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
             type="button"
           >
             {cell.value.length === 0 ? (
               <span className="text-sm text-ink/40">{placeholder}</span>
             ) : (
-              <span className="flex flex-nowrap items-center gap-1 overflow-hidden">
+              <span className="flex flex-wrap items-center gap-1">
                 {cell.value.map((item) => (
                   <span
                     className={cn(
-                      "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium",
+                      "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
                       chipColorClass(item),
                     )}
                     key={item}

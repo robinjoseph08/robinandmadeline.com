@@ -28,7 +28,10 @@ export default function AdminLayout() {
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    // disableHoverableContent keeps the hover/in-transit tracking simple so the
+    // many icon-button tooltips in the grids trigger reliably (the default
+    // hoverable-content path gets confused moving between adjacent triggers).
+    <TooltipProvider delayDuration={100} disableHoverableContent>
       <div className="flex min-h-screen bg-background text-foreground">
         <aside className="flex w-56 flex-col border-r border-ink/10 bg-cream px-3 py-4">
           <NavLink className="px-3 text-lg font-bold" end to="/admin">
