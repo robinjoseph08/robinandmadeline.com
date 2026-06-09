@@ -238,6 +238,30 @@ func TestListGuests_SearchMatchesPartyName(t *testing.T) {
 	assert.True(t, ids[g.ID], "a guest matches when its party's name matches the search")
 }
 
+// TestListGuests_SearchMatchesFormattedPhone proves the phone search tolerates
+// formatting: a query typed with punctuation still finds a number stored as
+// canonical E.164, while a text-only query does not match a guest merely because
+// it has a phone (the formatting-stripped clause is skipped when the query has no
+// digits).
+func TestListGuests_SearchMatchesFormattedPhone(t *testing.T) {
+	svc, _ := newService(t)
+	p := createPartyT(t, svc, digitalPartyInput())
+	withPhone := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{
+		FullName: "Pat", Phone: pointerutil.String("+14155552671"),
+	})
+
+	t.Run("formatted query matches stored E.164", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("(415) 555-2671")})
+		require.NoError(t, err)
+		assert.True(t, guestIDs(got)[withPhone.ID], "a formatted phone query finds the E.164 number")
+	})
+	t.Run("text-only query does not match on the phone", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("zzz")})
+		require.NoError(t, err)
+		assert.False(t, guestIDs(got)[withPhone.ID], "a non-digit query must not match every guest who has a phone")
+	})
+}
+
 // TestListGuests_LoadsOwningParty proves the flat guest list eager-loads each
 // guest's owning party so the response can surface the party name (a guest has
 // no detail page; it is edited in its party's context).
