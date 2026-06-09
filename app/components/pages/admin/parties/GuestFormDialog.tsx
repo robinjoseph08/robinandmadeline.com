@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { formatPhone } from "@/libraries/phone";
 import type { Guest } from "@/types/generated/models";
 import type { CreateGuestPayload } from "@/types/generated/parties";
 
@@ -60,7 +61,7 @@ function formFromGuest(guest: Guest): FormState {
   return {
     fullName: guest.full_name,
     email: guest.email ?? "",
-    phone: guest.phone ?? "",
+    phone: formatPhone(guest.phone ?? ""),
     tags: guest.tags.join(", "),
     dietaryRestrictions: guest.dietary_restrictions ?? "",
     tableNumber: guest.table_number?.toString() ?? "",
@@ -189,6 +190,7 @@ export function GuestFormDialog({
               <Input
                 id="guest-phone"
                 onChange={(e) => update("phone", e.target.value)}
+                placeholder="(555) 123-4567"
                 value={form.phone}
               />
             </div>

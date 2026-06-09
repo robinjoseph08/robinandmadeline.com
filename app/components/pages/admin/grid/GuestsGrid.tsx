@@ -22,6 +22,7 @@ import {
   usePatchGuest,
 } from "@/hooks/queries/guests";
 import { useCreatePartyWithGuest } from "@/hooks/queries/parties";
+import { formatPhone } from "@/libraries/phone";
 import type { Guest, Relation, Side } from "@/types/generated/models";
 import type {
   CreateGuestPayload,
@@ -363,7 +364,9 @@ export function GuestsGrid<TGuest extends Guest>({
                   patchField(guest.id, partyId, { phone: value })
                 }
                 placeholder="None"
-                value={guest.phone ?? ""}
+                // Show the stored E.164 number in a friendly format; the backend
+                // re-normalizes whatever is typed back to E.164 on save.
+                value={formatPhone(guest.phone ?? "")}
               />
               <GridChipsCell
                 ariaLabel="Tags"
