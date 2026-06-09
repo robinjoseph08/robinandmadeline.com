@@ -29,7 +29,42 @@ type CreatePartyPayload struct {
 	StateOrProvince *string  `json:"state_or_province" mod:"trim" validate:"omitempty,max=200"`
 	PostalCode      *string  `json:"postal_code" mod:"trim" validate:"omitempty,max=200"`
 	Country         *string  `json:"country" mod:"trim" validate:"omitempty,max=200"`
-	RSVPCode        *string  `json:"rsvp_code" mod:"trim" validate:"omitempty,min=1,max=64"`
+	RSVPCode        *string  `json:"rsvp_code" mod:"trim,ucase" validate:"omitempty,min=1,max=64"`
+}
+
+// CreatePartyWithGuestPayload is the body for the public create endpoint (POST
+// /parties): a party is born together with its first guest, so a party never
+// exists without at least one member. The first guest is always the party's
+// primary (is_primary is not a field here; the service forces it), which seeds
+// the single-primary invariant. side and relation are required (there is no
+// sensible default for whose side a party is on), but invitation_type defaults
+// to "physical" since the overwhelming majority are, and a digital party can be
+// switched afterward. Address fields are omitted (filled in later via the party
+// edit), so a freshly created party reads incomplete until its details arrive.
+type CreatePartyWithGuestPayload struct {
+	Name           string            `json:"name" mod:"trim" validate:"required,max=200"`
+	Side           string            `json:"side" validate:"required,oneof=robin madeline" tstype:"models.Side"`
+	Relation       string            `json:"relation" validate:"required,oneof=family friend" tstype:"models.Relation"`
+	Circle         []string          `json:"circle" mod:"dive,trim" validate:"omitempty,dive,oneof=Immediate Extended College Work Childhood Other" default:"[]" tstype:"models.Circle[]"`
+	InvitationType string            `json:"invitation_type" validate:"omitempty,oneof=physical digital" default:"physical" tstype:"models.InvitationType"`
+	RSVPCode       *string           `json:"rsvp_code" mod:"trim,ucase" validate:"omitempty,min=1,max=64"`
+	Guest          FirstGuestPayload `json:"guest"`
+}
+
+// FirstGuestPayload is the nested first-guest body inside
+// CreatePartyWithGuestPayload. It mirrors the quick-add fields of
+// CreateGuestPayload (full edit details like dietary/table/seat stay behind the
+// dialog) and omits is_primary, since the first guest is always primary. The
+// binder recurses into this nested struct, so its mod/default/validate tags fire
+// exactly as a top-level payload's would.
+type FirstGuestPayload struct {
+	FullName      string   `json:"full_name" mod:"trim" validate:"required,max=200"`
+	Email         *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
+	Phone         *string  `json:"phone" mod:"trim" validate:"omitempty,max=32"`
+	Tags          []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
+	IsChild       bool     `json:"is_child"`
+	IsDrinking    bool     `json:"is_drinking"`
+	IsPlaceholder bool     `json:"is_placeholder"`
 }
 
 // UpdatePartyPayload is the full desired state of a party's editable fields
@@ -49,7 +84,7 @@ type UpdatePartyPayload struct {
 	StateOrProvince *string  `json:"state_or_province" mod:"trim" validate:"omitempty,max=200"`
 	PostalCode      *string  `json:"postal_code" mod:"trim" validate:"omitempty,max=200"`
 	Country         *string  `json:"country" mod:"trim" validate:"omitempty,max=200"`
-	RSVPCode        *string  `json:"rsvp_code" mod:"trim" validate:"omitempty,min=1,max=64"`
+	RSVPCode        *string  `json:"rsvp_code" mod:"trim,ucase" validate:"omitempty,min=1,max=64"`
 }
 
 // PatchPartyPayload is a partial update of a party's editable fields: a nil
@@ -82,7 +117,7 @@ type PatchPartyPayload struct {
 	StateOrProvince *string  `json:"state_or_province,omitempty" mod:"trim" validate:"omitempty,max=200"`
 	PostalCode      *string  `json:"postal_code,omitempty" mod:"trim" validate:"omitempty,max=200"`
 	Country         *string  `json:"country,omitempty" mod:"trim" validate:"omitempty,max=200"`
-	RSVPCode        *string  `json:"rsvp_code,omitempty" mod:"trim" validate:"omitempty,max=64"`
+	RSVPCode        *string  `json:"rsvp_code,omitempty" mod:"trim,ucase" validate:"omitempty,max=64"`
 }
 
 // MarkInfoPayload is the body of mark-info, selecting the target status. status

@@ -39,14 +39,16 @@ func (h *handler) getParty(c echo.Context) error {
 }
 
 // createParty handles POST /api/admin/parties, returning 201 with the created
-// party (including its generated info token and derived status).
+// party (its generated info token, derived status, and first guest). A party is
+// always born with its first guest, who becomes the primary, so parties are
+// never empty and start with exactly one primary.
 func (h *handler) createParty(c echo.Context) error {
-	var body CreatePartyPayload
+	var body CreatePartyWithGuestPayload
 	if err := c.Bind(&body); err != nil {
 		return errors.WithStack(err)
 	}
 
-	party, err := h.service.CreateParty(c.Request().Context(), body)
+	party, err := h.service.CreatePartyWithGuest(c.Request().Context(), body)
 	if err != nil {
 		return err
 	}

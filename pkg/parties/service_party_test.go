@@ -65,6 +65,55 @@ func TestCreateParty_NilCirclePersistsAsEmptyArray(t *testing.T) {
 	assert.Empty(t, reloaded.Circle)
 }
 
+func TestCreatePartyWithGuest_CreatesPrimaryFirstGuest(t *testing.T) {
+	svc, db := newService(t)
+
+	// The public create path is born with its first guest, who is the primary.
+	p, err := svc.CreatePartyWithGuest(ctx(), parties.CreatePartyWithGuestPayload{
+		Name:           "The Smiths",
+		Side:           models.SideRobin,
+		Relation:       models.RelationFriend,
+		InvitationType: models.InvitationDigital,
+		Guest:          parties.FirstGuestPayload{FullName: "Pat Smith"},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, p.InfoToken)
+	require.Len(t, p.Guests, 1)
+	assert.Equal(t, "Pat Smith", p.Guests[0].FullName)
+	assert.True(t, p.Guests[0].IsPrimary, "the first guest is the party's primary")
+	assert.Equal(t, 1, countPrimaries(t, db, p.ID))
+
+	// Both rows persisted in one transaction.
+	reloaded, err := svc.GetParty(ctx(), p.ID)
+	require.NoError(t, err)
+	require.Len(t, reloaded.Guests, 1)
+	assert.True(t, reloaded.Guests[0].IsPrimary)
+}
+
+func TestCreatePartyWithGuest_DuplicateRSVPRollsBack(t *testing.T) {
+	svc, db := newService(t)
+
+	in := parties.CreatePartyWithGuestPayload{
+		Name: "First", Side: models.SideRobin, Relation: models.RelationFriend,
+		InvitationType: models.InvitationDigital, RSVPCode: pointerutil.String("KALEL"),
+		Guest: parties.FirstGuestPayload{FullName: "A"},
+	}
+	_, err := svc.CreatePartyWithGuest(ctx(), in)
+	require.NoError(t, err)
+
+	// A second party reusing the code conflicts, and the whole transaction rolls
+	// back so the failed attempt leaves no orphaned guest behind.
+	in2 := in
+	in2.Name = "Second"
+	in2.Guest = parties.FirstGuestPayload{FullName: "B"}
+	_, err = svc.CreatePartyWithGuest(ctx(), in2)
+	assertErrCode(t, err, errcodes.CodeConflict)
+
+	n, err := db.NewSelect().Model((*models.Guest)(nil)).Where("full_name = ?", "B").Count(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "a rolled-back create leaves no guest behind")
+}
+
 func TestGetParty_NotFound(t *testing.T) {
 	svc, _ := newService(t)
 

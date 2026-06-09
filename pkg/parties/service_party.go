@@ -2,6 +2,7 @@ package parties
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/pkg/errors"
@@ -11,11 +12,14 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// CreateParty inserts a party, generating a unique info token. The payload is
-// already bound, trimmed, defaulted, and validated by the binder, so the fields
-// are assigned directly; circle arrives as a non-nil slice (defaulted to []) so
-// it stores '{}', not NULL. A supplied RSVP code that is already taken yields a
-// 409. An omitted optional field is nil and persists as SQL NULL.
+// CreateParty inserts a party, generating a unique info token. This is the
+// internal primitive (used to compose CreatePartyWithGuest and to build test
+// fixtures); the public create path is CreatePartyWithGuest, which guarantees a
+// party is born with its first guest. The payload is already bound, trimmed,
+// defaulted, and validated by the binder, so the fields are assigned directly;
+// circle arrives as a non-nil slice (defaulted to []) so it stores '{}', not
+// NULL. A supplied RSVP code that is already taken yields a 409. An omitted
+// optional field is nil and persists as SQL NULL.
 func (s *Service) CreateParty(ctx context.Context, in CreatePartyPayload) (*models.Party, error) {
 	now := time.Now()
 	party := &models.Party{
@@ -36,31 +40,98 @@ func (s *Service) CreateParty(ctx context.Context, in CreatePartyPayload) (*mode
 		UpdatedAt:       now,
 	}
 
-	// Generate a unique info token, retrying only on a token collision. Any other
-	// unique conflict (the RSVP code) is the caller's input and is reported as a
-	// 409 immediately rather than retried.
+	if err := insertPartyWithUniqueToken(ctx, s.db, party, in.RSVPCode != nil); err != nil {
+		return nil, err
+	}
+	return party, nil
+}
+
+// CreatePartyWithGuest creates a party together with its first guest in one
+// transaction, the public create path (POST /parties). The party is never left
+// without a member, and the first guest is forced primary, seeding the
+// single-primary invariant. invitation_type has already been defaulted to
+// "physical" by the binder when omitted. A taken RSVP code yields a 409; if the
+// insert fails the whole thing rolls back, so a failed guest insert never leaves
+// an empty party behind. The returned party carries its guest so the response
+// status derives correctly.
+func (s *Service) CreatePartyWithGuest(ctx context.Context, in CreatePartyWithGuestPayload) (*models.Party, error) {
+	now := time.Now()
+	party := &models.Party{
+		ID:             newID(),
+		Name:           in.Name,
+		Side:           in.Side,
+		Relation:       in.Relation,
+		Circle:         in.Circle,
+		InvitationType: in.InvitationType,
+		RSVPCode:       in.RSVPCode,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	guest := &models.Guest{
+		ID:            newID(),
+		PartyID:       party.ID,
+		FullName:      in.Guest.FullName,
+		Email:         in.Guest.Email,
+		Phone:         in.Guest.Phone,
+		Tags:          in.Guest.Tags,
+		IsPrimary:     true, // the first guest is always the party's primary
+		IsChild:       in.Guest.IsChild,
+		IsDrinking:    in.Guest.IsDrinking,
+		IsPlaceholder: in.Guest.IsPlaceholder,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+
+	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		if err := insertPartyWithUniqueToken(ctx, tx, party, in.RSVPCode != nil); err != nil {
+			return err
+		}
+		if _, err := tx.NewInsert().Model(guest).Exec(ctx); err != nil {
+			return errors.Wrap(err, "insert first guest")
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	party.Guests = []*models.Guest{guest}
+	return party, nil
+}
+
+// insertPartyWithUniqueToken inserts a party with a unique info token. It takes a
+// bun.IDB so it works on both the pool (CreateParty) and a transaction
+// (CreatePartyWithGuest). Uniqueness is checked up front with SELECTs rather than
+// by catching a failed INSERT: inside a transaction a failed statement aborts the
+// whole transaction (so a follow-up query would error with "current transaction
+// is aborted"), which is exactly the path CreatePartyWithGuest exercises. A taken
+// RSVP code is a clean 409; an info-token collision (astronomically unlikely)
+// just regenerates. The unique indexes remain the ultimate backstop against a
+// concurrent racer slipping in between the check and the insert.
+func insertPartyWithUniqueToken(ctx context.Context, db bun.IDB, party *models.Party, rsvpProvided bool) error {
+	if rsvpProvided && isRSVPCodeConflict(ctx, db, party.RSVPCode) {
+		return errcodes.Conflict("A party with that RSVP code already exists.")
+	}
+
 	for attempt := 0; attempt < maxTokenAttempts; attempt++ {
 		token, err := generateInfoToken()
 		if err != nil {
-			return nil, err
+			return err
 		}
-		party.InfoToken = token
-
-		_, err = s.db.NewInsert().Model(party).Exec(ctx)
-		if err == nil {
-			return party, nil
+		taken, err := db.NewSelect().Model((*models.Party)(nil)).Where("info_token = ?", token).Exists(ctx)
+		if err != nil {
+			return errors.Wrap(err, "check info token")
 		}
-		if errcodes.IsUniqueViolation(err) {
-			// Distinguish an RSVP-code conflict (caller's fault, do not retry) from
-			// an info-token collision (retry with a new token).
-			if in.RSVPCode != nil && isRSVPCodeConflict(ctx, s.db, party.RSVPCode) {
-				return nil, errcodes.Conflict("A party with that RSVP code already exists.")
-			}
+		if taken {
 			continue
 		}
-		return nil, errors.Wrap(err, "insert party")
+
+		party.InfoToken = token
+		if _, err := db.NewInsert().Model(party).Exec(ctx); err != nil {
+			return errors.Wrap(err, "insert party")
+		}
+		return nil
 	}
-	return nil, errors.Errorf("generate unique info token: exhausted %d attempts", maxTokenAttempts)
+	return errors.Errorf("generate unique info token: exhausted %d attempts", maxTokenAttempts)
 }
 
 // GetParty loads a single party with its guests, or a 404.

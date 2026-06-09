@@ -188,27 +188,61 @@ func TestPatchGuest_MovesToAnotherParty(t *testing.T) {
 	assert.Equal(t, b.ID, reloaded.PartyID)
 }
 
-func TestPatchGuest_MovingPrimaryDemotesDestinationPrimary(t *testing.T) {
+func TestPatchGuest_MoveArrivesNonPrimaryAndRepairsSource(t *testing.T) {
 	svc, db := newService(t)
 	a := createPartyT(t, svc, digitalPartyInput())
 	b := createPartyT(t, svc, digitalPartyInput())
+	// A has a primary plus another guest; B has its own primary.
 	mover := addGuestT(t, svc, a.ID, parties.CreateGuestPayload{FullName: "A Primary", IsPrimary: true})
+	aOther := addGuestT(t, svc, a.ID, parties.CreateGuestPayload{FullName: "A Other"})
 	bPrimary := addGuestT(t, svc, b.ID, parties.CreateGuestPayload{FullName: "B Primary", IsPrimary: true})
 
-	// Moving the primary guest from A into B must demote B's existing primary, so
-	// B keeps exactly one primary (the moved guest) rather than tripping the
-	// one-primary-per-party index.
+	// Moving A's primary into B lands the mover there as a non-primary (B keeps its
+	// own primary), and A promotes its oldest remaining guest so it still has one.
 	_, err := svc.PatchGuest(ctx(), mover.ID, parties.PatchGuestPayload{PartyID: pointerutil.String(b.ID)})
 	require.NoError(t, err)
+
+	reMover, err := svc.GetGuest(ctx(), mover.ID)
+	require.NoError(t, err)
+	assert.Equal(t, b.ID, reMover.PartyID)
+	assert.False(t, reMover.IsPrimary, "a moved guest arrives non-primary")
 
 	assert.Equal(t, 1, countPrimaries(t, db, b.ID))
 	reBPrimary, err := svc.GetGuest(ctx(), bPrimary.ID)
 	require.NoError(t, err)
-	assert.False(t, reBPrimary.IsPrimary, "destination's previous primary should have been demoted")
-	reMover, err := svc.GetGuest(ctx(), mover.ID)
+	assert.True(t, reBPrimary.IsPrimary, "destination keeps its own primary")
+
+	assert.Equal(t, 1, countPrimaries(t, db, a.ID))
+	reAOther, err := svc.GetGuest(ctx(), aOther.ID)
 	require.NoError(t, err)
-	assert.True(t, reMover.IsPrimary)
-	assert.Equal(t, b.ID, reMover.PartyID)
+	assert.True(t, reAOther.IsPrimary, "the source promotes its remaining guest")
+}
+
+func TestPatchGuest_MovingLastGuestDeletesSourceParty(t *testing.T) {
+	svc, _ := newService(t)
+	a := createPartyT(t, svc, digitalPartyInput())
+	b := createPartyT(t, svc, digitalPartyInput())
+	addGuestT(t, svc, b.ID, parties.CreateGuestPayload{FullName: "B Primary", IsPrimary: true})
+	mover := addGuestT(t, svc, a.ID, parties.CreateGuestPayload{FullName: "A Only", IsPrimary: true})
+
+	// Moving A's only guest into B empties A, so A is deleted, never left behind.
+	_, err := svc.PatchGuest(ctx(), mover.ID, parties.PatchGuestPayload{PartyID: pointerutil.String(b.ID)})
+	require.NoError(t, err)
+
+	_, err = svc.GetParty(ctx(), a.ID)
+	assertErrCode(t, err, errcodes.CodeNotFound)
+}
+
+func TestPatchGuest_UnsettingSolePrimaryRejected(t *testing.T) {
+	svc, _ := newService(t)
+	p := createPartyT(t, svc, digitalPartyInput())
+	primary := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Primary", IsPrimary: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Other"})
+
+	// A party must keep a primary: unchecking the only one in place is refused
+	// (you promote another guest instead, which demotes this one).
+	_, err := svc.PatchGuest(ctx(), primary.ID, parties.PatchGuestPayload{IsPrimary: pointerutil.Bool(false)})
+	assertErrCode(t, err, errcodes.CodeValidationError)
 }
 
 func TestPatchGuest_MoveToNonexistentPartyIsValidationError(t *testing.T) {

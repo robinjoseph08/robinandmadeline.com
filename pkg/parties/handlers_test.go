@@ -66,13 +66,23 @@ func rawPost(t *testing.T, e *echo.Echo, target, body string) *httptest.Response
 	return rec
 }
 
+// withGuest attaches a default first guest to a party-create body when one is
+// not already present, so a test focused on the party fields still satisfies the
+// create-with-guest contract (POST /parties is born with its primary guest).
+func withGuest(party map[string]any) map[string]any {
+	if _, ok := party["guest"]; !ok {
+		party["guest"] = map[string]any{"full_name": "First Guest"}
+	}
+	return party
+}
+
 func TestCreatePartyHandler_ReturnsStatusAndToken(t *testing.T) {
 	e := newAPI(t)
 
-	rec := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	rec := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "The Smiths", "side": "robin", "relation": "friend",
 		"invitation_type": "digital", "circle": []string{"College"},
-	})
+	}))
 	require.Equal(t, http.StatusCreated, rec.Code)
 
 	var resp struct {
@@ -163,9 +173,9 @@ func TestCreatePartyHandler_EmptyBodyIs400(t *testing.T) {
 
 func TestCreateGuestHandler_InvalidEmailIs422(t *testing.T) {
 	e := newAPI(t)
-	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
-	})
+	}))
 	require.Equal(t, http.StatusCreated, create.Code)
 	var party struct {
 		ID string `json:"id"`
@@ -192,12 +202,12 @@ func TestListPartiesHandler_FilterByQueryParam(t *testing.T) {
 	e := newAPI(t)
 	// Create a robin party and a madeline party, then filter to robin via the
 	// query string, proving list filters now flow through c.Bind.
-	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "R", "side": "robin", "relation": "friend", "invitation_type": "digital",
-	}).Code)
-	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	})).Code)
+	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "M", "side": "madeline", "relation": "family", "invitation_type": "digital",
-	}).Code)
+	})).Code)
 
 	rec := do(t, e, http.MethodGet, "/api/admin/parties?side=robin", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -218,9 +228,9 @@ func TestCreatePartyHandler_OmittedCirclePersistsAsEmptyArray(t *testing.T) {
 	// Omitting circle entirely must persist (and read back) as an empty array, not
 	// null: default:"[]" initializes it before validate, and the model hook is the
 	// backstop. The same applies to guest tags below.
-	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "NoCircle", "side": "robin", "relation": "friend", "invitation_type": "digital",
-	})
+	}))
 	require.Equal(t, http.StatusCreated, create.Code)
 	var party struct {
 		ID string `json:"id"`
@@ -241,12 +251,51 @@ func TestCreatePartyHandler_OmittedCirclePersistsAsEmptyArray(t *testing.T) {
 
 func TestCreatePartyHandler_DuplicateRSVPCodeIs409(t *testing.T) {
 	e := newAPI(t)
-	body := map[string]any{
+	body := withGuest(map[string]any{
 		"name": "X", "side": "robin", "relation": "friend",
 		"invitation_type": "digital", "rsvp_code": "KALEL",
-	}
+	})
 	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties", body).Code)
 	assert.Equal(t, http.StatusConflict, do(t, e, http.MethodPost, "/api/admin/parties", body).Code)
+}
+
+func TestCreatePartyHandler_DefaultsInvitationAndUppercasesRSVP(t *testing.T) {
+	e := newAPI(t)
+
+	// invitation_type omitted defaults to physical (the common case); rsvp_code is
+	// upper-cased on the way in, since codes are always shown in all caps.
+	rec := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+		"name": "Defaults", "side": "robin", "relation": "friend",
+		"rsvp_code": "kal-el",
+		"guest":     map[string]any{"full_name": "Pat"},
+	})
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var resp struct {
+		InvitationType string `json:"invitation_type"`
+		RSVPCode       string `json:"rsvp_code"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "physical", resp.InvitationType, "omitted invitation_type defaults to physical")
+	assert.Equal(t, "KAL-EL", resp.RSVPCode, "rsvp_code is stored upper-cased")
+}
+
+func TestPatchPartyHandler_UppercasesRSVPCode(t *testing.T) {
+	e := newAPI(t)
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
+		"name": "Up", "side": "robin", "relation": "friend", "invitation_type": "digital",
+	}))
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &party))
+
+	rec := do(t, e, http.MethodPatch, "/api/admin/parties/"+party.ID, map[string]any{"rsvp_code": "abc123"})
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got struct {
+		RSVPCode string `json:"rsvp_code"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, "ABC123", got.RSVPCode, "a patched rsvp_code is upper-cased")
 }
 
 func TestGetPartyHandler_404(t *testing.T) {
@@ -260,9 +309,9 @@ func TestMarkInfoHandler_CompleteWithMissingFieldsIs422(t *testing.T) {
 	e := newAPI(t)
 
 	// Physical party, no address, no primary email: not markable complete.
-	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "Y", "side": "madeline", "relation": "family", "invitation_type": "physical",
-	})
+	}))
 	require.Equal(t, http.StatusCreated, create.Code)
 	var p struct {
 		ID string `json:"id"`
@@ -275,9 +324,9 @@ func TestMarkInfoHandler_CompleteWithMissingFieldsIs422(t *testing.T) {
 
 func TestMarkInfoHandler_InvalidStatusIs422(t *testing.T) {
 	e := newAPI(t)
-	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "Z", "side": "robin", "relation": "friend", "invitation_type": "digital",
-	})
+	}))
 	var p struct {
 		ID string `json:"id"`
 	}
@@ -313,9 +362,9 @@ func TestListPartiesHandler_EnvelopeCarriesItemsAndTotal(t *testing.T) {
 	e := newAPI(t)
 
 	// Create a party with a primary guest so the list item carries its status.
-	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
-	})
+	}))
 	require.Equal(t, http.StatusCreated, create.Code)
 	var party struct {
 		ID string `json:"id"`
@@ -345,22 +394,21 @@ func TestListPartiesHandler_EnvelopeCarriesItemsAndTotal(t *testing.T) {
 func TestGuestLifecycleHandlers(t *testing.T) {
 	e := newAPI(t)
 
-	// Create a party, add a guest under it, then list/update/delete via HTTP.
+	// A party is born with its first (primary) guest; list/patch/delete it via HTTP.
 	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
 		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
+		"guest": map[string]any{"full_name": "Pat", "email": "pat@example.com"},
 	})
+	require.Equal(t, http.StatusCreated, create.Code)
 	var party struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		Guests []struct {
+			ID string `json:"id"`
+		} `json:"guests"`
 	}
 	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &party))
-
-	addRec := do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
-		map[string]any{"full_name": "Pat", "email": "pat@example.com", "is_primary": true})
-	require.Equal(t, http.StatusCreated, addRec.Code)
-	var guest struct {
-		ID string `json:"id"`
-	}
-	require.NoError(t, json.Unmarshal(addRec.Body.Bytes(), &guest))
+	require.Len(t, party.Guests, 1)
+	guestID := party.Guests[0].ID
 
 	// Flat guest list returns the {items, total} envelope holding the guest, and
 	// each item carries the owning party's name (and id) so the UI can link back
@@ -378,26 +426,26 @@ func TestGuestLifecycleHandlers(t *testing.T) {
 	require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &listed))
 	require.Equal(t, 1, listed.Total)
 	require.Len(t, listed.Items, 1)
-	assert.Equal(t, guest.ID, listed.Items[0].ID)
+	assert.Equal(t, guestID, listed.Items[0].ID)
 	assert.Equal(t, party.ID, listed.Items[0].PartyID)
 	assert.Equal(t, "Fam", listed.Items[0].PartyName, "flat list item carries the owning party's name")
 
 	// PATCH the guest.
-	patchRec := do(t, e, http.MethodPatch, "/api/admin/guests/"+guest.ID,
-		map[string]any{"full_name": "Patricia", "is_primary": true})
+	patchRec := do(t, e, http.MethodPatch, "/api/admin/guests/"+guestID,
+		map[string]any{"full_name": "Patricia"})
 	assert.Equal(t, http.StatusOK, patchRec.Code)
 
-	// DELETE the guest.
-	delRec := do(t, e, http.MethodDelete, "/api/admin/guests/"+guest.ID, nil)
+	// DELETE the guest (its party's last, so the party goes too).
+	delRec := do(t, e, http.MethodDelete, "/api/admin/guests/"+guestID, nil)
 	assert.Equal(t, http.StatusNoContent, delRec.Code)
 }
 
 func TestPatchPartyHandler_TouchesOnlySentField(t *testing.T) {
 	e := newAPI(t)
 
-	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
-	})
+	}))
 	require.Equal(t, http.StatusCreated, create.Code)
 	var party struct {
 		ID string `json:"id"`
@@ -425,9 +473,9 @@ func TestPatchPartyHandler_TouchesOnlySentField(t *testing.T) {
 
 func TestPatchPartyHandler_BlankNameIs422(t *testing.T) {
 	e := newAPI(t)
-	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "Keep", "side": "robin", "relation": "friend", "invitation_type": "digital",
-	})
+	}))
 	var party struct {
 		ID string `json:"id"`
 	}
@@ -445,9 +493,9 @@ func TestPatchPartyHandler_BlankNameIs422(t *testing.T) {
 
 func TestPatchGuestHandler_PartialUpdateAndEmailClear(t *testing.T) {
 	e := newAPI(t)
-	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
-	})
+	}))
 	var party struct {
 		ID string `json:"id"`
 	}
@@ -484,9 +532,9 @@ func TestPatchGuestHandler_PartialUpdateAndEmailClear(t *testing.T) {
 
 func TestPatchGuestHandler_InvalidEmailIs422(t *testing.T) {
 	e := newAPI(t)
-	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
-	})
+	}))
 	var party struct {
 		ID string `json:"id"`
 	}
@@ -505,9 +553,9 @@ func TestPatchGuestHandler_InvalidEmailIs422(t *testing.T) {
 
 func TestUpdateGuestHandler_PutReplacesFullState(t *testing.T) {
 	e := newAPI(t)
-	create := do(t, e, http.MethodPost, "/api/admin/parties", map[string]any{
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
-	})
+	}))
 	var party struct {
 		ID string `json:"id"`
 	}
