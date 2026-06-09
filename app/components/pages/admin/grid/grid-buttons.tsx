@@ -30,6 +30,7 @@ export function TooltipIconButton({
       <TooltipTrigger asChild>
         <Button
           aria-label={label}
+          className="size-8"
           disabled={disabled}
           onClick={onClick}
           size="icon"

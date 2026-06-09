@@ -74,6 +74,7 @@ export function CopyButton({
         <TooltipTrigger asChild>
           <Button
             aria-label={label}
+            className="size-8"
             disabled={disabled}
             onClick={handleClick}
             size={size ?? "icon"}

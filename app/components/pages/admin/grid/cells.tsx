@@ -35,6 +35,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { TableCell } from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/libraries/utils";
 
 import { chipColorClass } from "./chips";
@@ -44,7 +49,26 @@ import { focusCellBelow } from "./grid-nav";
 // Shared borderless look: fill the cell, drop the control's own border/shadow/
 // radius, and show an inset focus ring so the focused cell reads as selected.
 const GRID_CONTROL_CLASS =
-  "h-9 w-full rounded-none border-0 bg-transparent px-3 shadow-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+  "h-8 w-full rounded-none border-0 bg-transparent px-3 shadow-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+
+// The save lifecycle of a single cell edit, surfaced as a brief background tint
+// so you can see a change land: amber while the write is in flight, green on
+// success, red on a failed write that rolled back.
+type CellStatus = "idle" | "saving" | "saved" | "error";
+
+function statusBgClass(status: CellStatus, show: boolean): string {
+  if (!show) return "";
+  switch (status) {
+    case "saving":
+      return "bg-amber-100/60";
+    case "saved":
+      return "bg-emerald-100/70";
+    case "error":
+      return "bg-destructive/10";
+    default:
+      return "";
+  }
+}
 
 function arraysEqual<T>(a: readonly T[], b: readonly T[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
@@ -81,16 +105,35 @@ function useCommittableValue<T>(
     committed.current = serverValue;
   }, [serverValue]);
 
-  // Send `next`, holding it optimistically. If the write rejects (the grid
-  // surfaces the toast), roll the cell back to the last known-good value.
+  const [status, setStatus] = useState<CellStatus>("idle");
+
+  // Clear the transient "saved"/"error" tint after a moment so it reads as a
+  // flash, not a stuck state. "saving" persists until the write settles.
+  useEffect(() => {
+    if (status !== "saved" && status !== "error") return;
+    const timer = setTimeout(
+      () => setStatus("idle"),
+      status === "saved" ? 1400 : 3000,
+    );
+    return () => clearTimeout(timer);
+  }, [status]);
+
+  // Send `next`, holding it optimistically and tracking the save status. If the
+  // write rejects (the grid surfaces the toast), roll the cell back to the last
+  // known-good value.
   const send = (next: T) => {
     if (isEqual(next, committed.current)) return;
     const previous = committed.current;
     committed.current = next;
-    Promise.resolve(onCommit(next)).catch(() => {
-      committed.current = previous;
-      setValue(previous);
-    });
+    setStatus("saving");
+    Promise.resolve(onCommit(next)).then(
+      () => setStatus("saved"),
+      () => {
+        committed.current = previous;
+        setValue(previous);
+        setStatus("error");
+      },
+    );
   };
 
   const commit = () => send(value);
@@ -105,7 +148,7 @@ function useCommittableValue<T>(
     committed.current = serverValue;
   };
 
-  return { value, setValue, commit, commitValue, revert };
+  return { value, setValue, commit, commitValue, revert, status };
 }
 
 interface GridTextCellProps {
@@ -122,6 +165,8 @@ interface GridTextCellProps {
   className?: string;
   /** Normalize each typed value (e.g. force upper-case for RSVP codes). */
   transform?: (value: string) => string;
+  /** Show the save-status tint (off for add-row draft cells, which do not save). */
+  showStatus?: boolean;
 }
 
 /** A text (or email) cell. Clearing it sends a blank value the API treats as "unset". */
@@ -136,11 +181,17 @@ export function GridTextCell({
   autoFocus,
   className,
   transform,
+  showStatus = true,
 }: GridTextCellProps) {
   const cell = useCommittableValue(value, onCommit);
 
   return (
-    <TableCell className="p-0">
+    <TableCell
+      className={cn(
+        "p-0 transition-colors",
+        statusBgClass(cell.status, showStatus),
+      )}
+    >
       <Input
         aria-label={ariaLabel}
         // The add row is opened by an explicit user action, so focusing its first
@@ -187,6 +238,8 @@ interface GridComboboxCellProps {
   onCommit: (value: string) => void | Promise<void>;
   ariaLabel: string;
   placeholder?: string;
+  /** Show the save-status tint (off for add-row draft cells, which do not save). */
+  showStatus?: boolean;
 }
 
 /**
@@ -200,13 +253,19 @@ export function GridComboboxCell({
   onCommit,
   ariaLabel,
   placeholder = "Select...",
+  showStatus = true,
 }: GridComboboxCellProps) {
   const cell = useCommittableValue<string | undefined>(value, (next) =>
     next === undefined ? undefined : onCommit(next),
   );
 
   return (
-    <TableCell className="p-0">
+    <TableCell
+      className={cn(
+        "p-0 transition-colors",
+        statusBgClass(cell.status, showStatus),
+      )}
+    >
       <Combobox
         ariaLabel={ariaLabel}
         onChange={(next) => {
@@ -214,7 +273,7 @@ export function GridComboboxCell({
         }}
         options={options}
         placeholder={placeholder}
-        triggerClassName="rounded-none"
+        triggerClassName="h-8 rounded-none"
         value={cell.value}
       />
     </TableCell>
@@ -231,6 +290,10 @@ interface GridBoolCellProps {
    * promoting another guest is how you move it.
    */
   disabled?: boolean;
+  /** Explains why the box is set (e.g. a new party's forced-primary first guest). */
+  tooltip?: string;
+  /** Show the save-status tint (off for add-row draft cells, which do not save). */
+  showStatus?: boolean;
 }
 
 /** A checkbox cell. Space toggles (native); Enter moves to the next row. */
@@ -239,25 +302,49 @@ export function GridBoolCell({
   onCommit,
   ariaLabel,
   disabled,
+  tooltip,
+  showStatus = true,
 }: GridBoolCellProps) {
   const cell = useCommittableValue<boolean>(value, onCommit);
 
+  const checkbox = (
+    <Checkbox
+      aria-label={ariaLabel}
+      checked={cell.value}
+      className={disabled ? undefined : "cursor-pointer"}
+      disabled={disabled}
+      onCheckedChange={(checked) => cell.commitValue(checked === true)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          focusCellBelow(e.currentTarget);
+        }
+      }}
+    />
+  );
+
   return (
-    <TableCell className="p-0">
-      <div className="flex h-9 items-center justify-center">
-        <Checkbox
-          aria-label={ariaLabel}
-          checked={cell.value}
-          className={disabled ? undefined : "cursor-pointer"}
-          disabled={disabled}
-          onCheckedChange={(checked) => cell.commitValue(checked === true)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              focusCellBelow(e.currentTarget);
-            }
-          }}
-        />
+    <TableCell
+      className={cn(
+        "p-0 transition-colors",
+        statusBgClass(cell.status, showStatus),
+      )}
+    >
+      <div className="flex h-8 items-center justify-center">
+        {tooltip ? (
+          <Tooltip>
+            {/* A disabled checkbox emits no pointer events, so wrap it in a
+                focusable span so the tooltip still triggers on hover. */}
+            <TooltipTrigger asChild>
+              <span className="inline-flex" tabIndex={0}>
+                {checkbox}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{tooltip}</TooltipContent>
+          </Tooltip>
+        ) : (
+          checkbox
+        )}
       </div>
     </TableCell>
   );
@@ -272,6 +359,8 @@ interface GridChipsCellProps {
   /** Allow creating a new value from the search query (tags). */
   creatable?: boolean;
   placeholder?: string;
+  /** Show the save-status tint (off for add-row draft cells, which do not save). */
+  showStatus?: boolean;
 }
 
 /**
@@ -287,6 +376,7 @@ export function GridChipsCell({
   options,
   creatable = false,
   placeholder = "None",
+  showStatus = true,
 }: GridChipsCellProps) {
   const cell = useCommittableValue<string[]>(value, onCommit, arraysEqual);
   const [query, setQuery] = useState("");
@@ -325,7 +415,12 @@ export function GridChipsCell({
     );
 
   return (
-    <TableCell className="p-0">
+    <TableCell
+      className={cn(
+        "p-0 transition-colors",
+        statusBgClass(cell.status, showStatus),
+      )}
+    >
       <Popover
         onOpenChange={(open) => {
           // Commit the batch of toggles when the popover closes.
@@ -338,19 +433,19 @@ export function GridChipsCell({
         <PopoverTrigger asChild>
           <button
             aria-label={ariaLabel}
-            // min-h (not fixed h) so the chips wrap onto more lines and the row
-            // grows to show them all, rather than clipping a tag mid-word.
-            className="flex min-h-9 w-full cursor-pointer items-center px-3 py-1 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+            // Fixed height + nowrap keeps rows uniformly compact; chips clip on
+            // overflow, and the full set is shown in the popover.
+            className="flex h-8 w-full cursor-pointer items-center overflow-hidden px-3 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
             type="button"
           >
             {cell.value.length === 0 ? (
               <span className="text-sm text-ink/40">{placeholder}</span>
             ) : (
-              <span className="flex flex-wrap items-center gap-1">
+              <span className="flex items-center gap-1">
                 {cell.value.map((item) => (
                   <span
                     className={cn(
-                      "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+                      "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
                       chipColorClass(item),
                     )}
                     key={item}
@@ -390,7 +485,7 @@ export function GridChipsCell({
                     />
                     <span
                       className={cn(
-                        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+                        "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
                         chipColorClass(option),
                       )}
                     >
@@ -433,6 +528,8 @@ interface GridFlagsCellProps {
   onCommit: (value: Record<string, boolean>) => void | Promise<void>;
   ariaLabel: string;
   placeholder?: string;
+  /** Show the save-status tint (off for add-row draft cells, which do not save). */
+  showStatus?: boolean;
 }
 
 /**
@@ -448,6 +545,7 @@ export function GridFlagsCell({
   onCommit,
   ariaLabel,
   placeholder = "None",
+  showStatus = true,
 }: GridFlagsCellProps) {
   const flagsEqual = (a: Record<string, boolean>, b: Record<string, boolean>) =>
     options.every(
@@ -465,7 +563,12 @@ export function GridFlagsCell({
   const selected = options.filter((option) => cell.value[option.key]);
 
   return (
-    <TableCell className="p-0">
+    <TableCell
+      className={cn(
+        "p-0 transition-colors",
+        statusBgClass(cell.status, showStatus),
+      )}
+    >
       <Popover
         onOpenChange={(open) => {
           // Commit the batch of toggles when the popover closes.
@@ -475,17 +578,17 @@ export function GridFlagsCell({
         <PopoverTrigger asChild>
           <button
             aria-label={ariaLabel}
-            className="flex min-h-9 w-full cursor-pointer items-center px-3 py-1 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+            className="flex h-8 w-full cursor-pointer items-center overflow-hidden px-3 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
             type="button"
           >
             {selected.length === 0 ? (
               <span className="text-sm text-ink/40">{placeholder}</span>
             ) : (
-              <span className="flex flex-wrap items-center gap-1">
+              <span className="flex items-center gap-1">
                 {selected.map((option) => (
                   <span
                     className={cn(
-                      "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+                      "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
                       chipColorClass(option.label),
                     )}
                     key={option.key}
@@ -515,7 +618,7 @@ export function GridFlagsCell({
                     />
                     <span
                       className={cn(
-                        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+                        "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
                         chipColorClass(option.label),
                       )}
                     >
@@ -590,7 +693,7 @@ export function GridCreatablePartyCell({
           <button
             aria-label="New guest party"
             className={cn(
-              "flex h-9 w-full cursor-pointer items-center justify-between gap-1 px-3 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+              "flex h-8 w-full cursor-pointer items-center justify-between gap-1 px-3 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
               !selectedName && "text-ink/40",
             )}
             role="combobox"

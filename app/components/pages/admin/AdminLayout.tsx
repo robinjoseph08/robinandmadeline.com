@@ -33,7 +33,7 @@ export default function AdminLayout() {
     // hoverable-content path gets confused moving between adjacent triggers).
     <TooltipProvider delayDuration={100} disableHoverableContent>
       <div className="flex min-h-screen bg-background text-foreground">
-        <aside className="flex w-56 flex-col border-r border-ink/10 bg-cream px-3 py-4">
+        <aside className="flex w-56 shrink-0 flex-col border-r border-ink/10 bg-cream px-3 py-4">
           <NavLink className="px-3 text-lg font-bold" end to="/admin">
             R &amp; M Admin
           </NavLink>
@@ -65,7 +65,7 @@ export default function AdminLayout() {
           </div>
         </aside>
 
-        <main className="flex-1 px-6 py-8">
+        <main className="min-w-0 flex-1 px-6 py-8">
           <Outlet />
         </main>
       </div>

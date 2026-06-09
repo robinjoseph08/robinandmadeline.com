@@ -159,21 +159,23 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
             />
             <GridReadOnlyCell className="p-0">
               <Link
-                className="flex h-full min-h-9 w-full items-center px-3 font-medium transition-colors hover:bg-muted/40 hover:underline"
+                className="flex h-8 w-full items-center px-3 font-medium transition-colors hover:bg-muted/40 hover:underline"
                 title="View guests"
                 to={`/admin/parties/${party.id}`}
               >
                 {party.guests?.length ?? 0}
               </Link>
             </GridReadOnlyCell>
-            <GridReadOnlyCell>
-              <InfoStatusBadge
-                requested={party.info_collection_requested}
-                status={party.info_collection_status}
-              />
+            <GridReadOnlyCell className="p-0">
+              <div className="flex h-8 items-center px-3">
+                <InfoStatusBadge
+                  requested={party.info_collection_requested}
+                  status={party.info_collection_status}
+                />
+              </div>
             </GridReadOnlyCell>
-            <GridReadOnlyCell className="text-right">
-              <div className="flex justify-end gap-1">
+            <GridReadOnlyCell className="p-0">
+              <div className="flex h-8 items-center justify-end gap-1 px-3">
                 {/* RSVP copy sits left of the info link so the always-present
                     link/edit/delete buttons stay column-aligned across rows
                     whether or not a party has an RSVP code. */}

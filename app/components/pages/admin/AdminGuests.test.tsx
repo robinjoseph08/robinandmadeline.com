@@ -86,14 +86,14 @@ function setMock(opts: {
   );
 }
 
-function renderGuests() {
+function renderGuests(path = "/admin/guests") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <TooltipProvider>
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={["/admin/guests"]}>
+        <MemoryRouter initialEntries={[path]}>
           <AdminGuests />
         </MemoryRouter>
       </QueryClientProvider>
@@ -231,6 +231,22 @@ describe("AdminGuests flat list", () => {
           method: "POST",
           body: expect.objectContaining({ full_name: "Newbie" }),
         }),
+      );
+    });
+  });
+
+  it("applies a party filter from the URL, so a filtered view is shareable", async () => {
+    setMock({ guests: [] });
+    // Loading a URL that already carries the filter must apply it on the first
+    // fetch (filters live in the query string).
+    renderGuests("/admin/guests?party_id=p8");
+
+    await waitFor(() => {
+      const guestCalls = adminRequest.mock.calls.filter(
+        (call) => call[0] === "/admin/guests",
+      );
+      expect(guestCalls.some((call) => call[1]?.query?.party_id === "p8")).toBe(
+        true,
       );
     });
   });

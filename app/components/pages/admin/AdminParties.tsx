@@ -15,6 +15,7 @@ import {
 } from "@/components/pages/admin/parties/options";
 import { PartyFormDialog } from "@/components/pages/admin/parties/PartyFormDialog";
 import { useParties, useUpdateParty } from "@/hooks/queries/parties";
+import { useFilterParams } from "@/hooks/useFilterParams";
 import type {
   Circle,
   InfoCollectionStatus,
@@ -28,15 +29,19 @@ import type {
   PartyResponse,
 } from "@/types/generated/parties";
 
+// Boolean party filters, listed so useFilterParams parses them back from the URL.
+const BOOL_FILTERS = ["info_collection_requested"] as const;
+
 /**
  * Admin parties list, edited like a spreadsheet: every cell saves on the spot via
- * PATCH and the trailing row adds a new party. Filters sit above the grid; the
- * derived info-collection status and per-row copy buttons (the info link still
- * triggers request-info) are unchanged. The full edit dialog survives for the
- * mailing address, opened from a row's edit button.
+ * PATCH (a tint confirms the save). Parties are created from the guest list, so
+ * there is no add row here. Filters sit above the grid and live in the URL so a
+ * filtered view can be shared and bookmarked; the derived info-collection status
+ * and per-row copy buttons (the info link still triggers request-info) are
+ * unchanged. The full edit dialog survives for the mailing address.
  */
 export default function AdminParties() {
-  const [filters, setFilters] = useState<ListPartiesQuery>({});
+  const [filters, setFilter] = useFilterParams<ListPartiesQuery>(BOOL_FILTERS);
   const [editParty, setEditParty] = useState<PartyResponse | undefined>(
     undefined,
   );
@@ -46,11 +51,6 @@ export default function AdminParties() {
   const updateParty = useUpdateParty();
 
   const parties = partiesQuery.data?.items ?? [];
-
-  const setFilter = <K extends keyof ListPartiesQuery>(
-    key: K,
-    value: ListPartiesQuery[K],
-  ) => setFilters((prev) => ({ ...prev, [key]: value }));
 
   const openEdit = (party: PartyResponse) => {
     setEditParty(party);

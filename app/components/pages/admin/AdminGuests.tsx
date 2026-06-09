@@ -15,6 +15,7 @@ import {
 } from "@/components/pages/admin/parties/options";
 import { useGuests, useUpdateGuest } from "@/hooks/queries/guests";
 import { useParties } from "@/hooks/queries/parties";
+import { useFilterParams } from "@/hooks/useFilterParams";
 import type { Circle, Relation, Side } from "@/types/generated/models";
 import type {
   CreateGuestPayload,
@@ -22,17 +23,20 @@ import type {
   ListGuestsQuery,
 } from "@/types/generated/parties";
 
+// Boolean guest filters, listed so useFilterParams parses them back from the URL.
+const BOOL_FILTERS = ["is_drinking", "is_child", "is_placeholder"] as const;
+
 /**
  * Admin flat guest list: every guest across all parties, edited like a
- * spreadsheet (each cell saves via PATCH on blur/Enter). Filters cover the
- * party-level attributes (side, relation, circle) and the guest-level ones (tag,
- * plus the flags). The Party column links each guest to its owning
- * party; the full edit dialog survives for dietary restrictions and table/seat.
- * There is no add row here (a guest needs a party, so guests are added from a
- * party's detail page).
+ * spreadsheet (each cell saves via PATCH on blur/Enter, with a tint confirming
+ * the save). Filters cover the party plus the party-level attributes (side,
+ * relation, circle) and the guest-level ones (tag and the flags), and live in the
+ * URL so a filtered view can be shared and bookmarked. Guests are added inline
+ * from the trailing row (which can also create a party); the full edit dialog
+ * survives for dietary restrictions and table/seat.
  */
 export default function AdminGuests() {
-  const [filters, setFilters] = useState<ListGuestsQuery>({});
+  const [filters, setFilter] = useFilterParams<ListGuestsQuery>(BOOL_FILTERS);
   const [editGuest, setEditGuest] = useState<GuestListItem | undefined>(
     undefined,
   );
@@ -42,8 +46,8 @@ export default function AdminGuests() {
   const guests = guestsQuery.data?.items ?? [];
   const updateGuest = useUpdateGuest();
 
-  // Every party, for the editable Party combobox, the add row's party picker, and
-  // the read-only Side/Relation/Invitation columns (looked up by party).
+  // Every party, for the Party filter, the editable Party combobox, the add row's
+  // party picker, and the read-only Side/Relation columns (looked up by party).
   const partiesQuery = useParties({});
   const partyOptions = useMemo(
     () =>
@@ -52,9 +56,13 @@ export default function AdminGuests() {
         name: party.name,
         side: party.side,
         relation: party.relation,
-        invitationType: party.invitation_type,
       })),
     [partiesQuery.data],
+  );
+  // Parties as filter options (by id), for the Party filter at the top.
+  const partyFilterOptions = useMemo<Option<string>[]>(
+    () => partyOptions.map((party) => ({ value: party.id, label: party.name })),
+    [partyOptions],
   );
 
   // Distinct tags across all guests, offered as the tag filter's options. The
@@ -76,11 +84,6 @@ export default function AdminGuests() {
     }
     return opts.sort((a, b) => a.label.localeCompare(b.label));
   }, [partiesQuery.data]);
-
-  const setFilter = <K extends keyof ListGuestsQuery>(
-    key: K,
-    value: ListGuestsQuery[K],
-  ) => setFilters((prev) => ({ ...prev, [key]: value }));
 
   const openEdit = (guest: GuestListItem) => {
     setEditGuest(guest);
@@ -120,6 +123,12 @@ export default function AdminGuests() {
         className="flex flex-wrap items-end gap-4"
         role="group"
       >
+        <FilterSelect<string>
+          label="Party"
+          onChange={(v) => setFilter("party_id", v)}
+          options={partyFilterOptions}
+          value={filters.party_id}
+        />
         <FilterSelect<Side>
           label="Side"
           onChange={(v) => setFilter("side", v)}
