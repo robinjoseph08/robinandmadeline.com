@@ -102,7 +102,7 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
           <TableHead className="w-32">Relation</TableHead>
           <TableHead className="w-32">Invitation</TableHead>
           <TableHead className="min-w-40">Circle</TableHead>
-          <TableHead className="w-32">RSVP code</TableHead>
+          <TableHead className="min-w-32">RSVP code</TableHead>
           <TableHead className="w-20">Guests</TableHead>
           <TableHead className="w-40">Info status</TableHead>
           <TableHead className="w-32 text-right">Actions</TableHead>

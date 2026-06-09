@@ -46,10 +46,13 @@ import { chipColorClass } from "./chips";
 import { InfoHint } from "./grid-buttons";
 import { focusCellBelow } from "./grid-nav";
 
-// Shared borderless look: fill the cell, drop the control's own border/shadow/
-// radius, and show an inset focus ring so the focused cell reads as selected.
+// Shared borderless look: drop the control's own border/shadow/radius and show
+// an inset focus ring so the focused cell reads as selected. Width is auto plus
+// min-w-full so a text field's `size` can grow its column to fit the longest
+// value (table-layout:auto reads the intrinsic width), while a short or empty
+// field still fills the resolved column width so the whole cell stays clickable.
 const GRID_CONTROL_CLASS =
-  "h-8 w-full rounded-none border-0 bg-transparent px-3 shadow-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+  "h-8 w-auto min-w-full rounded-none border-0 bg-transparent px-3 shadow-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
 // The save lifecycle of a single cell edit, surfaced as a brief background tint
 // so you can see a change land: amber while the write is in flight, green on
@@ -191,6 +194,15 @@ export function GridTextCell({
 }: GridTextCellProps) {
   const cell = useCommittableValue(value, onCommit);
 
+  // Drive the field's intrinsic width off its content so the column grows to fit
+  // the longest value (see GRID_CONTROL_CLASS). The lower bound keeps an empty
+  // cell from collapsing under its placeholder; the upper bound stops a freak
+  // long value from blowing the column out (it scrolls within the field instead).
+  const fieldSize = Math.min(
+    Math.max(value.length, placeholder?.length ?? 0, 2),
+    40,
+  );
+
   return (
     <TableCell
       className={cn(
@@ -240,6 +252,7 @@ export function GridTextCell({
           }
         }}
         placeholder={placeholder}
+        size={fieldSize}
         type={type}
         value={cell.value}
       />

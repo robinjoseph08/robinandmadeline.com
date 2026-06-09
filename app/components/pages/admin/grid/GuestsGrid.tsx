@@ -320,7 +320,7 @@ export function GuestsGrid<TGuest extends Guest>({
         <TableRow>
           <TableHead className="min-w-40">Name</TableHead>
           <TableHead className="min-w-48">Email</TableHead>
-          <TableHead className="w-36">Phone</TableHead>
+          <TableHead className="min-w-36">Phone</TableHead>
           <TableHead className="min-w-40">Tags</TableHead>
           <TableHead className="min-w-40">Flags</TableHead>
           <TableHead className="w-24 text-center">
