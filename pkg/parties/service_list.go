@@ -2,11 +2,16 @@ package parties
 
 import (
 	"context"
+	"regexp"
 
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/uptrace/bun"
 )
+
+// nonDigitRE strips formatting from a phone search term so it can match stored
+// E.164 numbers, which are digits only.
+var nonDigitRE = regexp.MustCompile(`\D`)
 
 // ListParties returns parties matching the filter (each with guests loaded,
 // ordered by creation time) and the total count.
@@ -75,6 +80,28 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 	var guests []*models.Guest
 	q := s.db.NewSelect().Model(&guests).Relation("Party").Order("g.created_at ASC")
 
+	if f.PartyID != nil {
+		q = q.Where("g.party_id = ?", *f.PartyID)
+	}
+	if f.Search != nil && *f.Search != "" {
+		// A single search box across the guest's own fields and the owning party's
+		// name, case-insensitive substring. The party name match is a correlated
+		// EXISTS so it stays a flat guest query.
+		pattern := "%" + *f.Search + "%"
+		partyNameMatch := s.db.NewSelect().Model((*models.Party)(nil)).Column("id").
+			Where("p.id = g.party_id").Where("p.name ILIKE ?", pattern)
+		clause := "g.full_name ILIKE ? OR g.email ILIKE ? OR EXISTS (?)"
+		args := []any{pattern, pattern, partyNameMatch}
+		// Phones are stored as canonical E.164 (digits, no formatting), so match the
+		// query with its formatting stripped too, letting "(415) 555-2671" find
+		// "+14155552671". Only when the query has digits, so a text-only search does
+		// not match every guest who happens to have a phone.
+		if digits := nonDigitRE.ReplaceAllString(*f.Search, ""); digits != "" {
+			clause += " OR regexp_replace(g.phone, '\\D', '', 'g') ILIKE ?"
+			args = append(args, "%"+digits+"%")
+		}
+		q = q.Where("("+clause+")", args...)
+	}
 	if f.IsDrinking != nil {
 		q = q.Where("g.is_drinking = ?", *f.IsDrinking)
 	}
@@ -84,8 +111,8 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 	if f.IsPlaceholder != nil {
 		q = q.Where("g.is_placeholder = ?", *f.IsPlaceholder)
 	}
-	if f.Roles != nil {
-		q = q.Where("? = ANY(g.roles)", *f.Roles)
+	if f.Tags != nil {
+		q = q.Where("? = ANY(g.tags)", *f.Tags)
 	}
 
 	// Party-level attributes filter the guest list by constraining the owning

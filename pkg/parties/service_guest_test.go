@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
@@ -30,18 +29,18 @@ func TestCreateGuest_RequiresExistingParty(t *testing.T) {
 	assertErrCode(t, err, errcodes.CodeNotFound)
 }
 
-func TestCreateGuest_NilRolesPersistsAsEmptyArray(t *testing.T) {
+func TestCreateGuest_NilTagsPersistsAsEmptyArray(t *testing.T) {
 	svc, _ := newService(t)
 	p := createPartyT(t, svc, digitalPartyInput())
 
-	// A direct service call with nil Roles must persist '{}', not NULL, via the
+	// A direct service call with nil Tags must persist '{}', not NULL, via the
 	// model's BeforeAppendModel hook (the same backstop as Party.Circle).
-	g := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "No Roles"})
+	g := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "No Tags"})
 
 	reloaded, err := svc.GetGuest(ctx(), g.ID)
 	require.NoError(t, err)
-	assert.NotNil(t, reloaded.Roles, "nil roles should persist as an empty array, not null")
-	assert.Empty(t, reloaded.Roles)
+	assert.NotNil(t, reloaded.Tags, "nil tags should persist as an empty array, not null")
+	assert.Empty(t, reloaded.Tags)
 }
 
 func TestCreateGuest_SecondPrimaryDemotesFirst(t *testing.T) {
@@ -93,6 +92,20 @@ func TestUpdateGuest_ReaffirmingSamePrimaryKeepsExactlyOne(t *testing.T) {
 	assert.Equal(t, 1, countPrimaries(t, db, p.ID))
 }
 
+func TestUpdateGuest_UnsettingSolePrimaryRejected(t *testing.T) {
+	svc, db := newService(t)
+	p := createPartyT(t, svc, digitalPartyInput())
+	primary := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Primary", IsPrimary: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Other"})
+
+	// The full-state edit (PUT) honors the single-primary invariant too: clearing
+	// is_primary on the only primary is refused, mirroring PatchGuest and the
+	// grid's locked primary cell. Promote another guest to move it instead.
+	_, err := svc.UpdateGuest(ctx(), primary.ID, parties.UpdateGuestPayload{FullName: "Primary", IsPrimary: false})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+	assert.Equal(t, 1, countPrimaries(t, db, p.ID), "the primary is untouched after the rejected unset")
+}
+
 func TestPrimaryIsScopedPerParty(t *testing.T) {
 	svc, db := newService(t)
 
@@ -106,20 +119,36 @@ func TestPrimaryIsScopedPerParty(t *testing.T) {
 	assert.Equal(t, 1, countPrimaries(t, db, b.ID))
 }
 
-func TestDeletePrimaryGuest_LeavesPartyIncomplete(t *testing.T) {
+func TestDeleteGuest_LastGuestDeletesParty(t *testing.T) {
+	svc, _ := newService(t)
+
+	// A party never outlives its last guest: deleting the only guest deletes the
+	// party too, so an empty party can never linger.
+	p := createPartyT(t, svc, digitalPartyInput())
+	only := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Only", IsPrimary: true})
+
+	require.NoError(t, svc.DeleteGuest(ctx(), only.ID))
+
+	_, err := svc.GetParty(ctx(), p.ID)
+	assertErrCode(t, err, errcodes.CodeNotFound)
+}
+
+func TestDeleteGuest_PrimaryWithOthersPromotesOldest(t *testing.T) {
 	svc, db := newService(t)
 
-	// A complete digital party loses its only primary: status falls back to
-	// incomplete (no primary email) via derivation, and no primary remains.
+	// Deleting the primary while other guests remain promotes the oldest remaining
+	// one, so the party keeps exactly one primary rather than dropping to zero.
 	p := createPartyT(t, svc, digitalPartyInput())
-	primary := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Primary", Email: pointerutil.String("p@example.com"), IsPrimary: true})
+	primary := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Primary", IsPrimary: true})
+	older := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Older"})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Younger"})
 
 	require.NoError(t, svc.DeleteGuest(ctx(), primary.ID))
-	assert.Equal(t, 0, countPrimaries(t, db, p.ID))
 
-	reloaded, err := svc.GetParty(ctx(), p.ID)
+	assert.Equal(t, 1, countPrimaries(t, db, p.ID))
+	rePromoted, err := svc.GetGuest(ctx(), older.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.StatusIncomplete, reloaded.InfoCollectionStatus())
+	assert.True(t, rePromoted.IsPrimary, "the oldest remaining guest should be promoted")
 }
 
 func TestDeleteGuest_NotFound(t *testing.T) {

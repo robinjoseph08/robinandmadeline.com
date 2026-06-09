@@ -138,9 +138,9 @@ func TestListGuests_FlatFilters(t *testing.T) {
 		Circle: []string{"Immediate"}, InvitationType: models.InvitationDigital,
 	})
 
-	// Guest in A: bridal party role, drinking adult.
+	// Guest in A: bridal party tag, drinking adult.
 	ga := addGuestT(t, svc, a.ID, parties.CreateGuestPayload{
-		FullName: "Adult A", Roles: []string{"Bridal Party", "UIUC"}, IsDrinking: true, IsPrimary: true,
+		FullName: "Adult A", Tags: []string{"Bridal Party", "UIUC"}, IsDrinking: true, IsPrimary: true,
 	})
 	// Guest in B: a child placeholder, not drinking.
 	gb := addGuestT(t, svc, b.ID, parties.CreateGuestPayload{
@@ -168,8 +168,8 @@ func TestListGuests_FlatFilters(t *testing.T) {
 		assert.True(t, ids[ga.ID])
 		assert.False(t, ids[gb.ID])
 	})
-	t.Run("roles containment", func(t *testing.T) {
-		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Roles: pointerutil.String("Bridal Party")})
+	t.Run("tags containment", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Tags: pointerutil.String("Bridal Party")})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[ga.ID])
@@ -203,6 +203,62 @@ func TestListGuests_FlatFilters(t *testing.T) {
 		ids := guestIDs(got)
 		assert.True(t, ids[gb.ID])
 		assert.False(t, ids[ga.ID])
+	})
+	t.Run("party_id", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{PartyID: pointerutil.String(a.ID)})
+		require.NoError(t, err)
+		ids := guestIDs(got)
+		assert.True(t, ids[ga.ID])
+		assert.False(t, ids[gb.ID], "the party filter excludes guests of other parties")
+	})
+	t.Run("search by name (case-insensitive)", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("adult")})
+		require.NoError(t, err)
+		ids := guestIDs(got)
+		assert.True(t, ids[ga.ID], "Adult A matches a case-insensitive substring of its name")
+		assert.False(t, ids[gb.ID])
+	})
+}
+
+// TestListGuests_SearchMatchesPartyName proves the single search box also matches
+// a guest by its owning party's name, not just the guest's own fields.
+func TestListGuests_SearchMatchesPartyName(t *testing.T) {
+	svc, _ := newService(t)
+	p := createPartyT(t, svc, parties.CreatePartyPayload{
+		Name: "The Hendersons", Side: models.SideRobin, Relation: models.RelationFamily,
+		InvitationType: models.InvitationDigital,
+	})
+	// The guest's own name shares nothing with the search term, so a match can
+	// only come from the party name.
+	g := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Zoe"})
+
+	got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("henderson")})
+	require.NoError(t, err)
+	ids := guestIDs(got)
+	assert.True(t, ids[g.ID], "a guest matches when its party's name matches the search")
+}
+
+// TestListGuests_SearchMatchesFormattedPhone proves the phone search tolerates
+// formatting: a query typed with punctuation still finds a number stored as
+// canonical E.164, while a text-only query does not match a guest merely because
+// it has a phone (the formatting-stripped clause is skipped when the query has no
+// digits).
+func TestListGuests_SearchMatchesFormattedPhone(t *testing.T) {
+	svc, _ := newService(t)
+	p := createPartyT(t, svc, digitalPartyInput())
+	withPhone := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{
+		FullName: "Pat", Phone: pointerutil.String("+14155552671"),
+	})
+
+	t.Run("formatted query matches stored E.164", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("(415) 555-2671")})
+		require.NoError(t, err)
+		assert.True(t, guestIDs(got)[withPhone.ID], "a formatted phone query finds the E.164 number")
+	})
+	t.Run("text-only query does not match on the phone", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("zzz")})
+		require.NoError(t, err)
+		assert.False(t, guestIDs(got)[withPhone.ID], "a non-digit query must not match every guest who has a phone")
 	})
 }
 

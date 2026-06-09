@@ -3,11 +3,14 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
 
+import { adminRequest } from "@/libraries/admin-api";
+
 import {
   QueryKey,
-  useCreateParty,
+  useCreatePartyWithGuest,
   useDeleteParty,
   useMarkInfo,
+  usePatchParty,
   useRequestInfo,
   useUpdateParty,
 } from "./parties";
@@ -33,12 +36,13 @@ function newClient() {
   });
 }
 
-describe("useCreateParty", () => {
-  it("invalidates the parties list on success", async () => {
+describe("useCreatePartyWithGuest", () => {
+  it("invalidates the parties and guest lists on success", async () => {
     const client = newClient();
     client.setQueryData([QueryKey.ListParties, {}], { items: [], total: 0 });
+    client.setQueryData([QueryKey.ListGuests, {}], { items: [], total: 0 });
 
-    const { result } = renderHook(() => useCreateParty(), {
+    const { result } = renderHook(() => useCreatePartyWithGuest(), {
       wrapper: makeWrapper(client),
     });
 
@@ -48,7 +52,14 @@ describe("useCreateParty", () => {
         side: "robin",
         relation: "family",
         circle: [],
-        invitation_type: "digital",
+        invitation_type: "physical",
+        guest: {
+          full_name: "Pat",
+          tags: [],
+          is_child: false,
+          is_drinking: false,
+          is_placeholder: false,
+        },
       });
     });
 
@@ -57,6 +68,9 @@ describe("useCreateParty", () => {
         client.getQueryState([QueryKey.ListParties, {}])?.isInvalidated,
       ).toBe(true);
     });
+    expect(client.getQueryState([QueryKey.ListGuests, {}])?.isInvalidated).toBe(
+      true,
+    );
   });
 });
 
@@ -82,6 +96,45 @@ describe("useUpdateParty", () => {
           invitation_type: "digital",
         },
       });
+    });
+
+    await waitFor(() => {
+      expect(
+        client.getQueryState([QueryKey.RetrieveParty, "p1"])?.isInvalidated,
+      ).toBe(true);
+    });
+    expect(
+      client.getQueryState([QueryKey.ListParties, {}])?.isInvalidated,
+    ).toBe(true);
+    expect(client.getQueryState([QueryKey.ListGuests, {}])?.isInvalidated).toBe(
+      true,
+    );
+  });
+});
+
+describe("usePatchParty", () => {
+  it("PATCHes only the changed field and invalidates the affected caches", async () => {
+    const client = newClient();
+    client.setQueryData([QueryKey.RetrieveParty, "p1"], { id: "p1" });
+    client.setQueryData([QueryKey.ListParties, {}], { items: [], total: 0 });
+    client.setQueryData([QueryKey.ListGuests, {}], { items: [], total: 0 });
+    vi.mocked(adminRequest).mockClear();
+
+    const { result } = renderHook(() => usePatchParty(), {
+      wrapper: makeWrapper(client),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        partyId: "p1",
+        payload: { invitation_type: "physical" },
+      });
+    });
+
+    // A single-cell save sends just that field via PATCH, not the whole party.
+    expect(adminRequest).toHaveBeenCalledWith("/admin/parties/p1", {
+      method: "PATCH",
+      body: { invitation_type: "physical" },
     });
 
     await waitFor(() => {

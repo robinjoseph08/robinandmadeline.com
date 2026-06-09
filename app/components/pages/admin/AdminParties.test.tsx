@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { PartyResponse } from "@/types/generated/parties";
 
 import AdminParties from "./AdminParties";
@@ -43,11 +44,13 @@ function renderParties() {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <AdminParties />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <TooltipProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <AdminParties />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </TooltipProvider>,
   );
 }
 
@@ -63,7 +66,7 @@ beforeEach(() => {
 });
 
 describe("AdminParties filters", () => {
-  it("narrows the table to the side filter the admin selects", async () => {
+  it("narrows the grid to the side filter the admin selects", async () => {
     // Route the list response off the side filter so selecting "Madeline"
     // returns only her party. The first call (no filter) returns both.
     adminRequest.mockImplementation(
@@ -85,19 +88,28 @@ describe("AdminParties filters", () => {
     const user = userEvent.setup();
     renderParties();
 
-    // Initially both parties show.
-    expect(await screen.findByText("Robin's Party")).toBeInTheDocument();
-    expect(screen.getByText("Madeline's Party")).toBeInTheDocument();
+    // Each party name is an editable cell, so rows are identified by the input's
+    // value. Initially both parties show.
+    expect(
+      await screen.findByDisplayValue("Robin's Party"),
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Madeline's Party")).toBeInTheDocument();
 
-    // Select Side = Madeline.
-    await user.click(screen.getByRole("combobox", { name: /side/i }));
+    // Filters live behind a "Filters" sheet now: open it, then select Side =
+    // Madeline (scoped to the sheet so it is not confused with the per-row Side
+    // cells, which share the "Side" label).
+    await user.click(screen.getByRole("button", { name: /Filters/ }));
+    const sheet = await screen.findByRole("dialog");
+    await user.click(within(sheet).getByRole("combobox", { name: "Side" }));
     await user.click(await screen.findByRole("option", { name: "Madeline" }));
 
     // The list refetches with the side filter and narrows to Madeline's party.
     await waitFor(() => {
-      expect(screen.queryByText("Robin's Party")).not.toBeInTheDocument();
+      expect(
+        screen.queryByDisplayValue("Robin's Party"),
+      ).not.toBeInTheDocument();
     });
-    expect(screen.getByText("Madeline's Party")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Madeline's Party")).toBeInTheDocument();
 
     // The last list request carried the side filter.
     const listCalls = adminRequest.mock.calls.filter(
@@ -105,6 +117,45 @@ describe("AdminParties filters", () => {
     );
     const lastListCall = listCalls[listCalls.length - 1];
     expect(lastListCall?.[1]?.query).toMatchObject({ side: "madeline" });
+  });
+});
+
+describe("AdminParties inline editing", () => {
+  it("saves a single cell via PATCH when it loses focus", async () => {
+    adminRequest.mockImplementation((path: string) => {
+      if (path === "/admin/parties") {
+        return Promise.resolve({ items: [ROBIN_PARTY], total: 1 });
+      }
+      return Promise.resolve(makeParty({ id: "p-robin" }));
+    });
+
+    const user = userEvent.setup();
+    renderParties();
+
+    const nameCell = await screen.findByDisplayValue("Robin's Party");
+    await user.clear(nameCell);
+    await user.type(nameCell, "The Robins");
+    await user.tab(); // blur commits the cell
+
+    // Leaving the cell PATCHes just the edited field for that party.
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/parties/p-robin", {
+        method: "PATCH",
+        body: { name: "The Robins" },
+      });
+    });
+  });
+
+  it("has no add-party row, since parties are created from the guest list", async () => {
+    adminRequest.mockResolvedValue({ items: [ROBIN_PARTY], total: 1 });
+    renderParties();
+
+    // Parties are now born from a guest (the guest list creates them), so the
+    // parties grid only manages existing ones and offers no add row.
+    await screen.findByDisplayValue("Robin's Party");
+    expect(
+      screen.queryByRole("button", { name: "Add party" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -130,7 +181,9 @@ describe("AdminParties copy info link", () => {
 
     renderParties();
 
-    const row = (await screen.findByText("Robin's Party")).closest("tr")!;
+    const row = (await screen.findByDisplayValue("Robin's Party")).closest(
+      "tr",
+    )!;
     await user.click(within(row).getByRole("button", { name: /info link/i }));
 
     // Copying the info link POSTs to request-info for that party (per the spec),

@@ -1,29 +1,20 @@
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 
 import type { Option } from "./options";
-
-// Radix Select forbids an empty-string item value, so the "all" sentinel stands
-// in for "no filter" in the control and maps back to undefined for the query.
-const ALL_VALUE = "__all__";
 
 interface FilterSelectProps<T extends string> {
   label: string;
   value: T | undefined;
   options: Option<T>[];
   onChange: (value: T | undefined) => void;
-  /** Label for the clear/no-filter option. */
+  /** Label shown when nothing is selected (the no-filter state). */
   allLabel?: string;
 }
 
 /**
- * A labeled enum filter dropdown with a leading "all" option that clears the
- * filter (value undefined). Used across the parties and guests list filter bars.
+ * A labeled enum filter built on the searchable Combobox: type to filter the
+ * options, pick one, or clear it back to "no filter" (the X affordance). Used
+ * across the parties and guests list filter bars.
  */
 export function FilterSelect<T extends string>({
   label,
@@ -35,24 +26,15 @@ export function FilterSelect<T extends string>({
   return (
     <div className="flex flex-col gap-1 text-sm">
       <span className="font-medium">{label}</span>
-      <Select
-        onValueChange={(next) =>
-          onChange(next === ALL_VALUE ? undefined : (next as T))
-        }
-        value={value ?? ALL_VALUE}
-      >
-        <SelectTrigger aria-label={label} className="w-40">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL_VALUE}>{allLabel}</SelectItem>
-          {options.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <Combobox
+        ariaLabel={label}
+        clearable
+        onChange={(next) => onChange(next as T | undefined)}
+        options={options}
+        placeholder={allLabel}
+        triggerClassName="w-40 rounded-md border border-input bg-transparent shadow-sm"
+        value={value}
+      />
     </div>
   );
 }

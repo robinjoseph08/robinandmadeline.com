@@ -15,18 +15,20 @@ import (
 // Validation tag names the formatter renders friendly messages for. They mirror
 // the tags used across the request payloads.
 const (
-	date     = "date"
-	email    = "email"
-	gt       = "gt"
-	gte      = "gte"
-	gtfield  = "gtfield"
-	ltfield  = "ltfield"
-	mx       = "max"
-	mn       = "min"
-	ne       = "ne"
-	oneof    = "oneof"
-	required = "required"
-	urlTag   = "url"
+	date       = "date"
+	email      = "email"
+	emailblank = "emailblank"
+	gt         = "gt"
+	gte        = "gte"
+	gtfield    = "gtfield"
+	ltfield    = "ltfield"
+	mx         = "max"
+	mn         = "min"
+	ne         = "ne"
+	oneof      = "oneof"
+	phone      = "phone"
+	required   = "required"
+	urlTag     = "url"
 )
 
 var timeType = reflect.TypeOf(timepkg.Time{})
@@ -78,7 +80,7 @@ func formatValidationError(err validator.FieldError) string {
 	switch err.Tag() {
 	case date:
 		return field + " must be in the format YYYY-MM-DD."
-	case email:
+	case email, emailblank:
 		return field + " must be a valid email address."
 	case gt:
 		v := err.Param()
@@ -129,6 +131,8 @@ func formatValidationError(err validator.FieldError) string {
 	case oneof:
 		valids := strings.Fields(err.Param())
 		return fmt.Sprintf("%s must be one of: %s.", field, strings.Join(valids, ", "))
+	case phone:
+		return field + " must be a valid phone number."
 	case required:
 		return field + " is required."
 	case urlTag:

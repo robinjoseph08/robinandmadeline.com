@@ -29,7 +29,42 @@ type CreatePartyPayload struct {
 	StateOrProvince *string  `json:"state_or_province" mod:"trim" validate:"omitempty,max=200"`
 	PostalCode      *string  `json:"postal_code" mod:"trim" validate:"omitempty,max=200"`
 	Country         *string  `json:"country" mod:"trim" validate:"omitempty,max=200"`
-	RSVPCode        *string  `json:"rsvp_code" mod:"trim" validate:"omitempty,min=1,max=64"`
+	RSVPCode        *string  `json:"rsvp_code" mod:"trim,ucase" validate:"omitempty,min=1,max=64"`
+}
+
+// CreatePartyWithGuestPayload is the body for the public create endpoint (POST
+// /parties): a party is born together with its first guest, so a party never
+// exists without at least one member. The first guest is always the party's
+// primary (is_primary is not a field here; the service forces it), which seeds
+// the single-primary invariant. side and relation are required (there is no
+// sensible default for whose side a party is on), but invitation_type defaults
+// to "physical" since the overwhelming majority are, and a digital party can be
+// switched afterward. Address fields are omitted (filled in later via the party
+// edit), so a freshly created party reads incomplete until its details arrive.
+type CreatePartyWithGuestPayload struct {
+	Name           string            `json:"name" mod:"trim" validate:"required,max=200"`
+	Side           string            `json:"side" validate:"required,oneof=robin madeline" tstype:"models.Side"`
+	Relation       string            `json:"relation" validate:"required,oneof=family friend" tstype:"models.Relation"`
+	Circle         []string          `json:"circle" mod:"dive,trim" validate:"omitempty,dive,oneof=Immediate Extended College Work Childhood Other" default:"[]" tstype:"models.Circle[]"`
+	InvitationType string            `json:"invitation_type" validate:"omitempty,oneof=physical digital" default:"physical" tstype:"models.InvitationType"`
+	RSVPCode       *string           `json:"rsvp_code" mod:"trim,ucase" validate:"omitempty,min=1,max=64"`
+	Guest          FirstGuestPayload `json:"guest"`
+}
+
+// FirstGuestPayload is the nested first-guest body inside
+// CreatePartyWithGuestPayload. It mirrors the quick-add fields of
+// CreateGuestPayload (full edit details like dietary/table/seat stay behind the
+// dialog) and omits is_primary, since the first guest is always primary. The
+// binder recurses into this nested struct, so its mod/default/validate tags fire
+// exactly as a top-level payload's would.
+type FirstGuestPayload struct {
+	FullName      string   `json:"full_name" mod:"trim" validate:"required,max=200"`
+	Email         *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
+	Phone         *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
+	Tags          []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
+	IsChild       bool     `json:"is_child"`
+	IsDrinking    bool     `json:"is_drinking"`
+	IsPlaceholder bool     `json:"is_placeholder"`
 }
 
 // UpdatePartyPayload is the full desired state of a party's editable fields
@@ -49,7 +84,40 @@ type UpdatePartyPayload struct {
 	StateOrProvince *string  `json:"state_or_province" mod:"trim" validate:"omitempty,max=200"`
 	PostalCode      *string  `json:"postal_code" mod:"trim" validate:"omitempty,max=200"`
 	Country         *string  `json:"country" mod:"trim" validate:"omitempty,max=200"`
-	RSVPCode        *string  `json:"rsvp_code" mod:"trim" validate:"omitempty,min=1,max=64"`
+	RSVPCode        *string  `json:"rsvp_code" mod:"trim,ucase" validate:"omitempty,min=1,max=64"`
+}
+
+// PatchPartyPayload is a partial update of a party's editable fields: a nil
+// pointer (an absent JSON key) leaves that column unchanged, while a provided
+// field is applied. It backs the spreadsheet's single-cell edits (PATCH), where
+// saving a cell touches only the field the user changed; the PUT full-state
+// payload (UpdatePartyPayload) backs the dialog "full edit". Like
+// UpdatePartyPayload it can never alter info_token or the info_collection_*
+// flags (ADR 0005): the service excludes those columns.
+//
+// Validation is tag-driven and uniformly omitempty, so an absent field is
+// skipped while a provided one is normalized (mod) then validated. validator
+// treats a non-nil pointer as present even when it points at an empty string, so
+// a provided-but-blank required field is still rejected: name carries min=1, so
+// blanking the name cell is a 422. The nullable text fields instead permit blank
+// (max-only, plus emailblank-style format checks elsewhere) because a provided
+// blank is the grid's "clear this cell" gesture, which the service stores as SQL
+// NULL (so a cleared rsvp_code leaves the partial unique index rather than
+// colliding on ""). circle is a plain slice (not a pointer): nil leaves it
+// unchanged, a present array (including []) replaces it.
+type PatchPartyPayload struct {
+	Name            *string  `json:"name,omitempty" mod:"trim" validate:"omitempty,min=1,max=200"`
+	Side            *string  `json:"side,omitempty" validate:"omitempty,oneof=robin madeline" tstype:"models.Side"`
+	Relation        *string  `json:"relation,omitempty" validate:"omitempty,oneof=family friend" tstype:"models.Relation"`
+	Circle          []string `json:"circle,omitempty" mod:"dive,trim" validate:"omitempty,dive,oneof=Immediate Extended College Work Childhood Other" tstype:"models.Circle[]"`
+	InvitationType  *string  `json:"invitation_type,omitempty" validate:"omitempty,oneof=physical digital" tstype:"models.InvitationType"`
+	AddressLine1    *string  `json:"address_line_1,omitempty" mod:"trim" validate:"omitempty,max=200"`
+	AddressLine2    *string  `json:"address_line_2,omitempty" mod:"trim" validate:"omitempty,max=200"`
+	City            *string  `json:"city,omitempty" mod:"trim" validate:"omitempty,max=200"`
+	StateOrProvince *string  `json:"state_or_province,omitempty" mod:"trim" validate:"omitempty,max=200"`
+	PostalCode      *string  `json:"postal_code,omitempty" mod:"trim" validate:"omitempty,max=200"`
+	Country         *string  `json:"country,omitempty" mod:"trim" validate:"omitempty,max=200"`
+	RSVPCode        *string  `json:"rsvp_code,omitempty" mod:"trim,ucase" validate:"omitempty,max=64"`
 }
 
 // MarkInfoPayload is the body of mark-info, selecting the target status. status
@@ -77,13 +145,13 @@ type ListPartiesQuery struct {
 // the route (create is nested under the party), so it is not a field here.
 // is_primary may be requested; when true the service demotes any existing
 // primary in the same transaction. Validation is tag-driven through the custom
-// binder. roles is open-ended (no closed union) so it only bounds element
+// binder. tags is open-ended (no closed union) so it only bounds element
 // length; it defaults to [] so a nil slice stores '{}', not NULL.
 type CreateGuestPayload struct {
 	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
 	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
-	Phone               *string  `json:"phone" mod:"trim" validate:"omitempty,max=32"`
-	Roles               []string `json:"roles" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
+	Phone               *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
+	Tags                []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
 	IsPrimary           bool     `json:"is_primary"`
 	IsChild             bool     `json:"is_child"`
 	IsDrinking          bool     `json:"is_drinking"`
@@ -100,8 +168,8 @@ type CreateGuestPayload struct {
 type UpdateGuestPayload struct {
 	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
 	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
-	Phone               *string  `json:"phone" mod:"trim" validate:"omitempty,max=32"`
-	Roles               []string `json:"roles" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
+	Phone               *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
+	Tags                []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
 	IsPrimary           bool     `json:"is_primary"`
 	IsChild             bool     `json:"is_child"`
 	IsDrinking          bool     `json:"is_drinking"`
@@ -111,16 +179,47 @@ type UpdateGuestPayload struct {
 	SeatNumber          *int     `json:"seat_number" validate:"omitempty,min=1"`
 }
 
+// PatchGuestPayload is a partial update of a guest's editable fields, the guest
+// analogue of PatchPartyPayload: a nil pointer (an absent JSON key) leaves that
+// column unchanged, while a provided field is applied. It backs the
+// spreadsheet's single-cell guest edits (PATCH); the PUT full-state payload
+// (UpdateGuestPayload) backs the dialog "full edit". Setting is_primary=true
+// promotes this guest and demotes the party's previous primary transactionally.
+//
+// Validation is uniformly omitempty: an absent field is skipped, full_name keeps
+// min=1 so blanking the name cell is a 422, and email uses emailblank so a
+// provided blank clears it (the service stores NULL) while a present value is
+// still format-checked. tags is a plain slice: nil leaves it unchanged, a
+// present array (including []) replaces it. party_id moves the guest to another
+// party (the flat guest list edits it inline); the service checks the target
+// party exists and keeps the single-primary invariant in the destination.
+type PatchGuestPayload struct {
+	PartyID             *string  `json:"party_id,omitempty" validate:"omitempty,uuid"`
+	FullName            *string  `json:"full_name,omitempty" mod:"trim" validate:"omitempty,min=1,max=200"`
+	Email               *string  `json:"email,omitempty" mod:"trim" validate:"omitempty,emailblank,max=320"`
+	Phone               *string  `json:"phone,omitempty" mod:"trim,phone" validate:"omitempty,phone,max=32"`
+	Tags                []string `json:"tags,omitempty" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100"`
+	IsPrimary           *bool    `json:"is_primary,omitempty"`
+	IsChild             *bool    `json:"is_child,omitempty"`
+	IsDrinking          *bool    `json:"is_drinking,omitempty"`
+	IsPlaceholder       *bool    `json:"is_placeholder,omitempty"`
+	DietaryRestrictions *string  `json:"dietary_restrictions,omitempty" mod:"trim" validate:"omitempty,max=1000"`
+	TableNumber         *int     `json:"table_number,omitempty" validate:"omitempty,min=1"`
+	SeatNumber          *int     `json:"seat_number,omitempty" validate:"omitempty,min=1"`
+}
+
 // ListGuestsQuery is the set of flat guest-list filters, bound from the query
 // string by the custom binder (gorilla/schema via the `query` tag). Side /
 // Relation / Circle are party-level attributes, so those clauses join through
 // the guest's party. Event- and RSVP-status filters are absent: they depend on
 // the event model (#6) which does not exist yet.
 type ListGuestsQuery struct {
+	Search        *string `query:"search" json:"search"`                               // case-insensitive match on name, email, phone, or party name
+	PartyID       *string `query:"party_id" json:"party_id" validate:"omitempty,uuid"` // matches guests in this one party
 	Side          *string `query:"side" json:"side" validate:"omitempty,oneof=robin madeline"`
 	Relation      *string `query:"relation" json:"relation" validate:"omitempty,oneof=family friend"`
 	Circle        *string `query:"circle" json:"circle"`
-	Roles         *string `query:"roles" json:"roles"` // matches guests whose roles array contains this value
+	Tags          *string `query:"tags" json:"tags"` // matches guests whose tags array contains this value
 	IsDrinking    *bool   `query:"is_drinking" json:"is_drinking"`
 	IsChild       *bool   `query:"is_child" json:"is_child"`
 	IsPlaceholder *bool   `query:"is_placeholder" json:"is_placeholder"`

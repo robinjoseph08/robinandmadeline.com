@@ -11,3 +11,4 @@ tmp/
 pnpm-lock.yaml
 app/components/ui
 app/types/generated
+.playwright-mcp

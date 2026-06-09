@@ -13,7 +13,7 @@ var _ bun.BeforeAppendModelHook = (*Guest)(nil)
 
 // Guest is an individual person belonging to exactly one party.
 //
-// email and phone are per-guest (the mailing address lives on the party). roles
+// email and phone are per-guest (the mailing address lives on the party). tags
 // is a Postgres text[] of open-ended relationship tags (no closed union).
 // table_number / seat_number are nullable ints set during seating. is_primary is
 // constrained to at most one true per party by a partial unique index and
@@ -26,7 +26,7 @@ type Guest struct {
 	FullName string   `bun:"full_name" json:"full_name"`
 	Email    *string  `bun:"email" json:"email"`
 	Phone    *string  `bun:"phone" json:"phone"`
-	Roles    []string `bun:"roles,array" json:"roles"`
+	Tags     []string `bun:"tags,array" json:"tags"`
 
 	IsPrimary     bool `bun:"is_primary" json:"is_primary"`
 	IsChild       bool `bun:"is_child" json:"is_child"`
@@ -48,16 +48,16 @@ type Guest struct {
 	Party *Party `bun:"rel:belongs-to,join:party_id=id" json:"-" tstype:"-"`
 }
 
-// BeforeAppendModel normalizes a nil Roles to an empty (non-nil) slice before
-// any insert or update so the NOT NULL roles text[] column always stores '{}'
+// BeforeAppendModel normalizes a nil Tags to an empty (non-nil) slice before
+// any insert or update so the NOT NULL tags text[] column always stores '{}'
 // rather than NULL. Like Party.BeforeAppendModel, this is the single,
 // code-path-independent enforcement point for the slice invariant (the binder's
 // `default:"[]"` covers the HTTP path; this hook covers direct service calls).
 func (g *Guest) BeforeAppendModel(_ context.Context, query bun.Query) error {
 	switch query.(type) {
 	case *bun.InsertQuery, *bun.UpdateQuery:
-		if g.Roles == nil {
-			g.Roles = []string{}
+		if g.Tags == nil {
+			g.Tags = []string{}
 		}
 	}
 	return nil

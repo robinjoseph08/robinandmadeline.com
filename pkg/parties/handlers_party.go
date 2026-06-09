@@ -39,14 +39,16 @@ func (h *handler) getParty(c echo.Context) error {
 }
 
 // createParty handles POST /api/admin/parties, returning 201 with the created
-// party (including its generated info token and derived status).
+// party (its generated info token, derived status, and first guest). A party is
+// always born with its first guest, who becomes the primary, so parties are
+// never empty and start with exactly one primary.
 func (h *handler) createParty(c echo.Context) error {
-	var body CreatePartyPayload
+	var body CreatePartyWithGuestPayload
 	if err := c.Bind(&body); err != nil {
 		return errors.WithStack(err)
 	}
 
-	party, err := h.service.CreateParty(c.Request().Context(), body)
+	party, err := h.service.CreatePartyWithGuest(c.Request().Context(), body)
 	if err != nil {
 		return err
 	}
@@ -62,6 +64,23 @@ func (h *handler) updateParty(c echo.Context) error {
 	}
 
 	party, err := h.service.UpdateParty(c.Request().Context(), c.Param("id"), body)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, newPartyResponse(party))
+}
+
+// patchParty handles PATCH /api/admin/parties/:id, a partial update: only the
+// fields present in the body change (the spreadsheet's single-cell save), so an
+// absent field is left as-is. Like updateParty it never alters the info token or
+// collection status.
+func (h *handler) patchParty(c echo.Context) error {
+	var body PatchPartyPayload
+	if err := c.Bind(&body); err != nil {
+		return errors.WithStack(err)
+	}
+
+	party, err := h.service.PatchParty(c.Request().Context(), c.Param("id"), body)
 	if err != nil {
 		return err
 	}

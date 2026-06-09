@@ -1,34 +1,25 @@
-import { Pencil, Trash2 } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { keepPreviousData } from "@tanstack/react-query";
+import { Loader2, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { GuestsGrid } from "@/components/pages/admin/grid/GuestsGrid";
 import {
   BoolFilterSelect,
   FilterSelect,
 } from "@/components/pages/admin/parties/FilterSelect";
+import { FilterSheet } from "@/components/pages/admin/parties/FilterSheet";
 import { GuestFormDialog } from "@/components/pages/admin/parties/GuestFormDialog";
 import {
   CIRCLE_OPTIONS,
   RELATION_OPTIONS,
   SIDE_OPTIONS,
+  type Option,
 } from "@/components/pages/admin/parties/options";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  useDeleteGuest,
-  useGuests,
-  useUpdateGuest,
-} from "@/hooks/queries/guests";
+import { useGuests, useUpdateGuest } from "@/hooks/queries/guests";
+import { useParties } from "@/hooks/queries/parties";
+import { useFilterParams } from "@/hooks/useFilterParams";
 import type { Circle, Relation, Side } from "@/types/generated/models";
 import type {
   CreateGuestPayload,
@@ -36,77 +27,127 @@ import type {
   ListGuestsQuery,
 } from "@/types/generated/parties";
 
+// Boolean guest filters, listed so useFilterParams parses them back from the URL.
+const BOOL_FILTERS = ["is_drinking", "is_child", "is_placeholder"] as const;
+
+// Filter keys (everything but the search box), counted for the "Filters" badge.
+const FILTER_KEYS = [
+  "party_id",
+  "side",
+  "relation",
+  "circle",
+  "is_drinking",
+  "is_child",
+  "is_placeholder",
+  "tags",
+] as const;
+
 /**
- * Admin flat guest list: every guest across all parties in a filterable table.
- * Filters cover the party-level attributes (side, relation, circle) and the
- * guest-level ones (roles contains, plus the drinking/child/placeholder flags).
- * Event- and RSVP-status filters are deferred to #6 (they need the event model).
- *
- * A guest is a sub-entity of its party and has no detail page of its own, so the
- * Party column links to the owning party by name, and each row is edited in
- * place via the shared GuestFormDialog (seeded with the guest and its party_id,
- * which the update mutation needs for cache invalidation and the single-primary
- * swap) or deleted with a confirmation.
+ * Admin flat guest list: every guest across all parties, edited like a
+ * spreadsheet (each cell saves via PATCH on blur/Enter, with a tint confirming
+ * the save). Filters cover the party plus the party-level attributes (side,
+ * relation, circle) and the guest-level ones (tag and the flags), and live in the
+ * URL so a filtered view can be shared and bookmarked. Guests are added inline
+ * from the trailing row (which can also create a party); the full edit dialog
+ * survives for dietary restrictions and table/seat.
  */
 export default function AdminGuests() {
-  const [filters, setFilters] = useState<ListGuestsQuery>({});
-  // Local text state for the roles "contains" filter, committed to the query.
-  const [rolesInput, setRolesInput] = useState("");
-
-  const guestsQuery = useGuests(filters);
-  const guests = guestsQuery.data?.items ?? [];
-
-  const updateGuest = useUpdateGuest();
-  const deleteGuest = useDeleteGuest();
-
-  const [editGuestOpen, setEditGuestOpen] = useState(false);
-  const [editingGuest, setEditingGuest] = useState<GuestListItem | undefined>(
+  const [filters, setFilter, clearAll] =
+    useFilterParams<ListGuestsQuery>(BOOL_FILTERS);
+  const [editGuest, setEditGuest] = useState<GuestListItem | undefined>(
     undefined,
   );
+  const [editOpen, setEditOpen] = useState(false);
 
-  const setFilter = <K extends keyof ListGuestsQuery>(
-    key: K,
-    value: ListGuestsQuery[K],
-  ) => setFilters((prev) => ({ ...prev, [key]: value }));
+  // Local search box state, debounced into the URL `search` param so a filtered
+  // view stays shareable without firing a request on every keystroke.
+  const [searchInput, setSearchInput] = useState(filters.search ?? "");
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const next = searchInput.trim() || undefined;
+      if (next !== filters.search) setFilter("search", next);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [searchInput, filters.search, setFilter]);
+  // Resync the box when `search` changes in the URL from outside it (back/forward
+  // navigation, or a shared link loaded into the mounted page). Guarded on focus
+  // so it never clobbers what the user is actively typing; that direction is the
+  // debounced effect above.
+  useEffect(() => {
+    if (searchRef.current !== document.activeElement) {
+      setSearchInput(filters.search ?? "");
+    }
+  }, [filters.search]);
 
-  const commitRoles = () => {
-    const trimmed = rolesInput.trim();
-    setFilter("roles", trimmed === "" ? undefined : trimmed);
+  const activeFilterCount = FILTER_KEYS.filter(
+    (key) => filters[key] !== undefined,
+  ).length;
+
+  // keepPreviousData holds the last results (and the count) on screen while a new
+  // search/filter fetches, so the list does not flash to a loading state on every
+  // keystroke; the search box's spinner signals the refetch instead.
+  const guestsQuery = useGuests(filters, { placeholderData: keepPreviousData });
+  const guests = guestsQuery.data?.items ?? [];
+  const updateGuest = useUpdateGuest();
+
+  // Every party, for the Party filter, the editable Party combobox, the add row's
+  // party picker, and the read-only Side/Relation columns (looked up by party).
+  const partiesQuery = useParties({});
+  const partyOptions = useMemo(
+    () =>
+      (partiesQuery.data?.items ?? []).map((party) => ({
+        id: party.id,
+        name: party.name,
+        side: party.side,
+        relation: party.relation,
+      })),
+    [partiesQuery.data],
+  );
+  // Parties as filter options (by id), for the Party filter at the top.
+  const partyFilterOptions = useMemo<Option<string>[]>(
+    () => partyOptions.map((party) => ({ value: party.id, label: party.name })),
+    [partyOptions],
+  );
+
+  // Distinct tags across all guests, offered as the tag filter's options. The
+  // parties query already loads each party's guests, so this needs no extra
+  // fetch; tags are open-ended, so the option set is whatever is currently used.
+  const tagOptions = useMemo<Option<string>[]>(() => {
+    const seen = new Set<string>();
+    const opts: Option<string>[] = [];
+    for (const party of partiesQuery.data?.items ?? []) {
+      for (const guest of party.guests ?? []) {
+        for (const tag of guest.tags) {
+          const key = tag.toLowerCase();
+          if (!seen.has(key)) {
+            seen.add(key);
+            opts.push({ value: tag, label: tag });
+          }
+        }
+      }
+    }
+    return opts.sort((a, b) => a.label.localeCompare(b.label));
+  }, [partiesQuery.data]);
+
+  const openEdit = (guest: GuestListItem) => {
+    setEditGuest(guest);
+    setEditOpen(true);
   };
 
-  const openEditGuest = (guest: GuestListItem) => {
-    setEditingGuest(guest);
-    setEditGuestOpen(true);
-  };
-
-  const handleGuestSubmit = async (payload: CreateGuestPayload) => {
-    if (!editingGuest) return;
+  const handleEditSubmit = async (payload: CreateGuestPayload) => {
+    if (!editGuest) return;
     try {
       await updateGuest.mutateAsync({
-        guestId: editingGuest.id,
-        partyId: editingGuest.party_id,
+        guestId: editGuest.id,
+        partyId: editGuest.party_id,
         payload,
       });
       toast.success("Guest updated");
-      setEditGuestOpen(false);
+      setEditOpen(false);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to update guest",
-      );
-    }
-  };
-
-  const handleDeleteGuest = async (guest: GuestListItem) => {
-    if (!window.confirm(`Delete ${guest.full_name}?`)) return;
-    try {
-      await deleteGuest.mutateAsync({
-        guestId: guest.id,
-        partyId: guest.party_id,
-      });
-      toast.success("Guest deleted");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete guest",
       );
     }
   };
@@ -122,140 +163,106 @@ export default function AdminGuests() {
         </p>
       </div>
 
-      <div className="flex flex-wrap items-end gap-4">
-        <FilterSelect<Side>
-          label="Side"
-          onChange={(v) => setFilter("side", v)}
-          options={SIDE_OPTIONS}
-          value={filters.side as Side | undefined}
-        />
-        <FilterSelect<Relation>
-          label="Relation"
-          onChange={(v) => setFilter("relation", v)}
-          options={RELATION_OPTIONS}
-          value={filters.relation as Relation | undefined}
-        />
-        <FilterSelect<Circle>
-          label="Circle"
-          onChange={(v) => setFilter("circle", v)}
-          options={CIRCLE_OPTIONS}
-          value={filters.circle as Circle | undefined}
-        />
-        <BoolFilterSelect
-          label="Drinking"
-          onChange={(v) => setFilter("is_drinking", v)}
-          value={filters.is_drinking}
-        />
-        <BoolFilterSelect
-          label="Child"
-          onChange={(v) => setFilter("is_child", v)}
-          value={filters.is_child}
-        />
-        <BoolFilterSelect
-          label="Placeholder"
-          onChange={(v) => setFilter("is_placeholder", v)}
-          value={filters.is_placeholder}
-        />
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="font-medium">Role contains</span>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative w-full max-w-xs">
+          <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground">
+            {guestsQuery.isFetching ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Search className="size-4" />
+            )}
+          </span>
           <Input
-            className="w-40"
-            onBlur={commitRoles}
-            onChange={(e) => setRolesInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitRoles();
-            }}
-            placeholder="e.g. Bridesmaid"
-            value={rolesInput}
+            aria-label="Search guests"
+            className="pl-8"
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search name, email, phone, party..."
+            ref={searchRef}
+            value={searchInput}
           />
-        </label>
+        </div>
+        <FilterSheet
+          activeCount={activeFilterCount}
+          onClearAll={() => clearAll(["search"])}
+        >
+          <FilterSelect<string>
+            label="Party"
+            onChange={(v) => setFilter("party_id", v)}
+            options={partyFilterOptions}
+            value={filters.party_id}
+          />
+          <FilterSelect<Side>
+            label="Side"
+            onChange={(v) => setFilter("side", v)}
+            options={SIDE_OPTIONS}
+            value={filters.side as Side | undefined}
+          />
+          <FilterSelect<Relation>
+            label="Relation"
+            onChange={(v) => setFilter("relation", v)}
+            options={RELATION_OPTIONS}
+            value={filters.relation as Relation | undefined}
+          />
+          <FilterSelect<Circle>
+            label="Circle"
+            onChange={(v) => setFilter("circle", v)}
+            options={CIRCLE_OPTIONS}
+            value={filters.circle as Circle | undefined}
+          />
+          <BoolFilterSelect
+            label="Drinking"
+            onChange={(v) => setFilter("is_drinking", v)}
+            value={filters.is_drinking}
+          />
+          <BoolFilterSelect
+            label="Child"
+            onChange={(v) => setFilter("is_child", v)}
+            value={filters.is_child}
+          />
+          <BoolFilterSelect
+            label="Placeholder"
+            onChange={(v) => setFilter("is_placeholder", v)}
+            value={filters.is_placeholder}
+          />
+          <FilterSelect<string>
+            label="Tag"
+            onChange={(v) => setFilter("tags", v)}
+            options={tagOptions}
+            value={filters.tags}
+          />
+        </FilterSheet>
       </div>
 
       {guestsQuery.isLoading ? (
         <p className="text-muted-foreground">Loading guests...</p>
       ) : guestsQuery.isError ? (
         <p className="text-destructive">{guestsQuery.error.message}</p>
-      ) : guests.length === 0 ? (
-        <p className="text-muted-foreground">No guests match these filters.</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Phone</TableHead>
-              <TableHead>Roles</TableHead>
-              <TableHead>Flags</TableHead>
-              <TableHead>Party</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {guests.map((guest) => (
-              <TableRow key={guest.id}>
-                <TableCell className="font-medium">{guest.full_name}</TableCell>
-                <TableCell>{guest.email ?? "--"}</TableCell>
-                <TableCell>{guest.phone ?? "--"}</TableCell>
-                <TableCell>
-                  {guest.roles.length > 0 ? guest.roles.join(", ") : "--"}
-                </TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap gap-1">
-                    {guest.is_primary ? (
-                      <Badge variant="default">Primary</Badge>
-                    ) : null}
-                    {guest.is_child ? (
-                      <Badge variant="secondary">Child</Badge>
-                    ) : null}
-                    {guest.is_drinking ? (
-                      <Badge variant="secondary">Drinking</Badge>
-                    ) : null}
-                    {guest.is_placeholder ? (
-                      <Badge variant="outline">Placeholder</Badge>
-                    ) : null}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <Link
-                    className="text-sm font-medium hover:underline"
-                    to={`/admin/parties/${guest.party_id}`}
-                  >
-                    {guest.party_name}
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      aria-label={`Edit ${guest.full_name}`}
-                      onClick={() => openEditGuest(guest)}
-                      size="icon"
-                      variant="ghost"
-                    >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      aria-label={`Delete ${guest.full_name}`}
-                      disabled={deleteGuest.isPending}
-                      onClick={() => handleDeleteGuest(guest)}
-                      size="icon"
-                      variant="ghost"
-                    >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        // The grid always renders so its add row stays available; a hint above it
+        // explains an empty result.
+        <div className="space-y-2">
+          {guests.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No guests match these filters. Add one in the row below.
+            </p>
+          ) : null}
+          <div className="rounded-md border border-ink/10">
+            <GuestsGrid<GuestListItem>
+              guests={guests}
+              onEditGuest={openEdit}
+              parties={partyOptions}
+              partyIdFor={(guest) => guest.party_id}
+            />
+          </div>
+        </div>
       )}
 
       <GuestFormDialog
-        guest={editingGuest}
+        guest={editGuest}
         isPending={updateGuest.isPending}
-        onOpenChange={setEditGuestOpen}
-        onSubmit={handleGuestSubmit}
-        open={editGuestOpen}
+        onOpenChange={setEditOpen}
+        onSubmit={handleEditSubmit}
+        open={editOpen}
       />
     </div>
   );

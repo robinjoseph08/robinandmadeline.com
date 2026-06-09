@@ -1,8 +1,9 @@
-import { ArrowLeft, Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, Pencil } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
+import { GuestsGrid } from "@/components/pages/admin/grid/GuestsGrid";
 import { CopyButton } from "@/components/pages/admin/parties/CopyButton";
 import { GuestFormDialog } from "@/components/pages/admin/parties/GuestFormDialog";
 import { InfoStatusBadge } from "@/components/pages/admin/parties/InfoStatusBadge";
@@ -15,19 +16,7 @@ import {
 import { PartyFormDialog } from "@/components/pages/admin/parties/PartyFormDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  useCreateGuest,
-  useDeleteGuest,
-  useUpdateGuest,
-} from "@/hooks/queries/guests";
+import { useUpdateGuest } from "@/hooks/queries/guests";
 import {
   useMarkInfo,
   useParty,
@@ -46,12 +35,13 @@ import type {
 } from "@/types/generated/parties";
 
 /**
- * Admin party detail: shows and edits a single party, exposes the
- * info-collection actions (request info, mark complete which surfaces the 422
- * when required fields are missing, mark incomplete), copy buttons for the info
- * link and RSVP code, and the party's guests in a table with inline
- * create/edit/delete. The single-primary invariant is enforced by the API; after
- * a guest write the refetched party shows exactly one primary.
+ * Admin party detail: edits a single party (full edit via the dialog for the
+ * mailing address), drives the info-collection actions (request info, mark
+ * complete/incomplete, copy the info link / RSVP code), and manages the party's
+ * guests as an editable spreadsheet with a trailing add row. Inline cell edits go
+ * through PATCH; the guest edit dialog survives for dietary restrictions and
+ * table/seat. The single-primary invariant is enforced by the API, so after a
+ * write the refetched party shows exactly one primary.
  */
 export default function AdminPartyDetail() {
   const { id } = useParams<{ id: string }>();
@@ -60,15 +50,11 @@ export default function AdminPartyDetail() {
   const updateParty = useUpdateParty();
   const requestInfo = useRequestInfo();
   const markInfo = useMarkInfo();
-  const createGuest = useCreateGuest();
   const updateGuest = useUpdateGuest();
-  const deleteGuest = useDeleteGuest();
 
   const [editPartyOpen, setEditPartyOpen] = useState(false);
-  const [guestDialogOpen, setGuestDialogOpen] = useState(false);
-  const [editingGuest, setEditingGuest] = useState<Guest | undefined>(
-    undefined,
-  );
+  const [editGuest, setEditGuest] = useState<Guest | undefined>(undefined);
+  const [editGuestOpen, setEditGuestOpen] = useState(false);
 
   if (partyQuery.isLoading) {
     return <p className="text-muted-foreground">Loading party...</p>;
@@ -130,52 +116,27 @@ export default function AdminPartyDetail() {
     }
   };
 
-  const openCreateGuest = () => {
-    setEditingGuest(undefined);
-    setGuestDialogOpen(true);
-  };
-
   const openEditGuest = (guest: Guest) => {
-    setEditingGuest(guest);
-    setGuestDialogOpen(true);
+    setEditGuest(guest);
+    setEditGuestOpen(true);
   };
 
-  const handleGuestSubmit = async (payload: CreateGuestPayload) => {
-    if (!id) return;
+  const handleEditGuest = async (payload: CreateGuestPayload) => {
+    if (!id || !editGuest) return;
     try {
-      if (editingGuest) {
-        await updateGuest.mutateAsync({
-          guestId: editingGuest.id,
-          partyId: id,
-          payload,
-        });
-        toast.success("Guest updated");
-      } else {
-        await createGuest.mutateAsync({ partyId: id, payload });
-        toast.success("Guest added");
-      }
-      setGuestDialogOpen(false);
+      await updateGuest.mutateAsync({
+        guestId: editGuest.id,
+        partyId: id,
+        payload,
+      });
+      toast.success("Guest updated");
+      setEditGuestOpen(false);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to save guest",
+        error instanceof Error ? error.message : "Failed to update guest",
       );
     }
   };
-
-  const handleDeleteGuest = async (guest: Guest) => {
-    if (!id) return;
-    if (!window.confirm(`Delete ${guest.full_name}?`)) return;
-    try {
-      await deleteGuest.mutateAsync({ guestId: guest.id, partyId: id });
-      toast.success("Guest deleted");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete guest",
-      );
-    }
-  };
-
-  const guestSubmitting = createGuest.isPending || updateGuest.isPending;
 
   return (
     <div className="space-y-8">
@@ -265,100 +226,20 @@ export default function AdminPartyDetail() {
       </section>
 
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">
-            Guests{" "}
-            <span className="text-sm font-normal text-muted-foreground">
-              ({guests.length})
-            </span>
-          </h2>
-          <Button onClick={openCreateGuest} size="sm">
-            <Plus />
-            Add guest
-          </Button>
+        <h2 className="text-lg font-medium">
+          Guests{" "}
+          <span className="text-sm font-normal text-muted-foreground">
+            ({guests.length})
+          </span>
+        </h2>
+        <div className="rounded-md border border-ink/10">
+          <GuestsGrid<Guest>
+            addPartyId={id}
+            guests={guests}
+            onEditGuest={openEditGuest}
+            partyIdFor={() => id ?? ""}
+          />
         </div>
-
-        {guests.length === 0 ? (
-          <p className="text-muted-foreground">
-            No guests yet. Add the primary guest to get started.
-          </p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Roles</TableHead>
-                <TableHead>Flags</TableHead>
-                <TableHead>Seat</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {guests.map((guest) => (
-                <TableRow key={guest.id}>
-                  <TableCell className="font-medium">
-                    <span className="flex items-center gap-1.5">
-                      {guest.is_primary ? (
-                        <Star
-                          aria-label="Primary guest"
-                          className="size-3.5 fill-current text-complementary-2"
-                        />
-                      ) : null}
-                      {guest.full_name}
-                    </span>
-                  </TableCell>
-                  <TableCell>{guest.email ?? "--"}</TableCell>
-                  <TableCell>
-                    {guest.roles.length > 0 ? guest.roles.join(", ") : "--"}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {guest.is_primary ? (
-                        <Badge variant="default">Primary</Badge>
-                      ) : null}
-                      {guest.is_child ? (
-                        <Badge variant="secondary">Child</Badge>
-                      ) : null}
-                      {guest.is_drinking ? (
-                        <Badge variant="secondary">Drinking</Badge>
-                      ) : null}
-                      {guest.is_placeholder ? (
-                        <Badge variant="outline">Placeholder</Badge>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {guest.table_number != null || guest.seat_number != null
-                      ? `T${guest.table_number ?? "?"} / S${guest.seat_number ?? "?"}`
-                      : "--"}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        aria-label={`Edit ${guest.full_name}`}
-                        onClick={() => openEditGuest(guest)}
-                        size="icon"
-                        variant="ghost"
-                      >
-                        <Pencil />
-                      </Button>
-                      <Button
-                        aria-label={`Delete ${guest.full_name}`}
-                        disabled={deleteGuest.isPending}
-                        onClick={() => handleDeleteGuest(guest)}
-                        size="icon"
-                        variant="ghost"
-                      >
-                        <Trash2 />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
       </section>
 
       <PartyFormDialog
@@ -370,11 +251,11 @@ export default function AdminPartyDetail() {
       />
 
       <GuestFormDialog
-        guest={editingGuest}
-        isPending={guestSubmitting}
-        onOpenChange={setGuestDialogOpen}
-        onSubmit={handleGuestSubmit}
-        open={guestDialogOpen}
+        guest={editGuest}
+        isPending={updateGuest.isPending}
+        onOpenChange={setEditGuestOpen}
+        onSubmit={handleEditGuest}
+        open={editGuestOpen}
       />
     </div>
   );

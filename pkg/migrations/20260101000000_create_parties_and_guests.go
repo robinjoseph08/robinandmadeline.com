@@ -71,7 +71,7 @@ func init() {
 		// guests: an individual person belonging to exactly one party.
 		//
 		// party_id cascades on delete so removing a party removes its guests.
-		// email / phone are per-guest (the address lives on the party). roles is
+		// email / phone are per-guest (the address lives on the party). tags is
 		// a text[] of relationship tags. The is_* booleans are NOT NULL with
 		// sensible defaults; is_primary in particular is constrained to at most
 		// one true per party by a partial unique index below.
@@ -82,7 +82,7 @@ func init() {
 				full_name TEXT NOT NULL,
 				email TEXT,
 				phone TEXT,
-				roles TEXT[] NOT NULL DEFAULT '{}',
+				tags TEXT[] NOT NULL DEFAULT '{}',
 				is_primary BOOLEAN NOT NULL DEFAULT FALSE,
 				is_child BOOLEAN NOT NULL DEFAULT FALSE,
 				is_drinking BOOLEAN NOT NULL DEFAULT FALSE,

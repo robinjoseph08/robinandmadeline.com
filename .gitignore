@@ -335,3 +335,6 @@ tags
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,node,vim,go,visualstudiocode,jetbrains+all
+
+# Claude-in-Chrome / Playwright MCP scratch output
+.playwright-mcp/

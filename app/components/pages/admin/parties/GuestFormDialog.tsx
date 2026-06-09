@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { formatPhone } from "@/libraries/phone";
 import type { Guest } from "@/types/generated/models";
 import type { CreateGuestPayload } from "@/types/generated/parties";
 
@@ -32,7 +33,7 @@ interface FormState {
   fullName: string;
   email: string;
   phone: string;
-  roles: string;
+  tags: string;
   dietaryRestrictions: string;
   tableNumber: string;
   seatNumber: string;
@@ -46,7 +47,7 @@ const EMPTY_FORM: FormState = {
   fullName: "",
   email: "",
   phone: "",
-  roles: "",
+  tags: "",
   dietaryRestrictions: "",
   tableNumber: "",
   seatNumber: "",
@@ -60,8 +61,8 @@ function formFromGuest(guest: Guest): FormState {
   return {
     fullName: guest.full_name,
     email: guest.email ?? "",
-    phone: guest.phone ?? "",
-    roles: guest.roles.join(", "),
+    phone: formatPhone(guest.phone ?? ""),
+    tags: guest.tags.join(", "),
     dietaryRestrictions: guest.dietary_restrictions ?? "",
     tableNumber: guest.table_number?.toString() ?? "",
     seatNumber: guest.seat_number?.toString() ?? "",
@@ -86,13 +87,13 @@ function optionalInt(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-// Splits the comma-separated roles field into trimmed, non-empty tags. roles is
-// open-ended (no closed union), so it is just a list of strings.
-function parseRoles(value: string): string[] {
+// Splits the comma-separated tags field into trimmed, non-empty tags. tags is
+// open-ended, so it is just a list of strings.
+function parseTags(value: string): string[] {
   return value
     .split(",")
-    .map((role) => role.trim())
-    .filter((role) => role.length > 0);
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
 }
 
 /**
@@ -130,7 +131,7 @@ export function GuestFormDialog({
       full_name: form.fullName.trim(),
       email: optional(form.email),
       phone: optional(form.phone),
-      roles: parseRoles(form.roles),
+      tags: parseTags(form.tags),
       dietary_restrictions: optional(form.dietaryRestrictions),
       table_number: optionalInt(form.tableNumber),
       seat_number: optionalInt(form.seatNumber),
@@ -189,18 +190,19 @@ export function GuestFormDialog({
               <Input
                 id="guest-phone"
                 onChange={(e) => update("phone", e.target.value)}
+                placeholder="(555) 123-4567"
                 value={form.phone}
               />
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="guest-roles">Roles</Label>
+            <Label htmlFor="guest-tags">Tags</Label>
             <Input
-              id="guest-roles"
-              onChange={(e) => update("roles", e.target.value)}
-              placeholder="Comma-separated, e.g. Bridesmaid, Usher"
-              value={form.roles}
+              id="guest-tags"
+              onChange={(e) => update("tags", e.target.value)}
+              placeholder="Comma-separated, e.g. Bridal Party, College"
+              value={form.tags}
             />
           </div>
 
@@ -240,20 +242,33 @@ export function GuestFormDialog({
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Flags</legend>
             <div className="grid grid-cols-2 gap-2">
-              {flags.map((flag) => (
-                <label
-                  className="flex items-center gap-2 text-sm"
-                  key={flag.key}
-                >
-                  <Checkbox
-                    checked={form[flag.key] as boolean}
-                    onCheckedChange={(checked) =>
-                      update(flag.key, (checked === true) as never)
+              {flags.map((flag) => {
+                // Lock the current primary's flag like the grid's primary cell
+                // does: a party must keep one primary, so you promote another
+                // guest to move it (the API refuses unchecking it here too).
+                const lockPrimary =
+                  flag.key === "isPrimary" && guest?.is_primary === true;
+                return (
+                  <label
+                    className="flex items-center gap-2 text-sm"
+                    key={flag.key}
+                    title={
+                      lockPrimary
+                        ? "A party must keep a primary guest. Promote another guest to move it."
+                        : undefined
                     }
-                  />
-                  {flag.label}
-                </label>
-              ))}
+                  >
+                    <Checkbox
+                      checked={form[flag.key] as boolean}
+                      disabled={lockPrimary}
+                      onCheckedChange={(checked) =>
+                        update(flag.key, (checked === true) as never)
+                      }
+                    />
+                    {flag.label}
+                  </label>
+                );
+              })}
             </div>
           </fieldset>
         </DialogBody>
