@@ -1,6 +1,6 @@
 import { keepPreviousData } from "@tanstack/react-query";
 import { Loader2, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { GuestsGrid } from "@/components/pages/admin/grid/GuestsGrid";
@@ -62,6 +62,7 @@ export default function AdminGuests() {
   // Local search box state, debounced into the URL `search` param so a filtered
   // view stays shareable without firing a request on every keystroke.
   const [searchInput, setSearchInput] = useState(filters.search ?? "");
+  const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const handle = setTimeout(() => {
       const next = searchInput.trim() || undefined;
@@ -69,6 +70,15 @@ export default function AdminGuests() {
     }, 300);
     return () => clearTimeout(handle);
   }, [searchInput, filters.search, setFilter]);
+  // Resync the box when `search` changes in the URL from outside it (back/forward
+  // navigation, or a shared link loaded into the mounted page). Guarded on focus
+  // so it never clobbers what the user is actively typing; that direction is the
+  // debounced effect above.
+  useEffect(() => {
+    if (searchRef.current !== document.activeElement) {
+      setSearchInput(filters.search ?? "");
+    }
+  }, [filters.search]);
 
   const activeFilterCount = FILTER_KEYS.filter(
     (key) => filters[key] !== undefined,
@@ -167,6 +177,7 @@ export default function AdminGuests() {
             className="pl-8"
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Search name, email, phone, party..."
+            ref={searchRef}
             value={searchInput}
           />
         </div>
