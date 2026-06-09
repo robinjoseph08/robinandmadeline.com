@@ -95,10 +95,12 @@ describe("AdminParties filters", () => {
     ).toBeInTheDocument();
     expect(screen.getByDisplayValue("Madeline's Party")).toBeInTheDocument();
 
-    // Select Side = Madeline from the filter bar (scoped so it is not confused
-    // with the per-row Side cells, which share the "Side" label).
-    const filters = screen.getByRole("group", { name: "Filters" });
-    await user.click(within(filters).getByRole("combobox", { name: "Side" }));
+    // Filters live behind a "Filters" sheet now: open it, then select Side =
+    // Madeline (scoped to the sheet so it is not confused with the per-row Side
+    // cells, which share the "Side" label).
+    await user.click(screen.getByRole("button", { name: /Filters/ }));
+    const sheet = await screen.findByRole("dialog");
+    await user.click(within(sheet).getByRole("combobox", { name: "Side" }));
     await user.click(await screen.findByRole("option", { name: "Madeline" }));
 
     // The list refetches with the side filter and narrows to Madeline's party.

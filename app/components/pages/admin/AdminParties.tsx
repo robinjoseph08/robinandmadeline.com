@@ -6,6 +6,7 @@ import {
   BoolFilterSelect,
   FilterSelect,
 } from "@/components/pages/admin/parties/FilterSelect";
+import { FilterSheet } from "@/components/pages/admin/parties/FilterSheet";
 import {
   CIRCLE_OPTIONS,
   INFO_STATUS_OPTIONS,
@@ -32,6 +33,16 @@ import type {
 // Boolean party filters, listed so useFilterParams parses them back from the URL.
 const BOOL_FILTERS = ["info_collection_requested"] as const;
 
+// Filter keys, counted for the "Filters" badge.
+const FILTER_KEYS = [
+  "side",
+  "relation",
+  "circle",
+  "invitation_type",
+  "info_collection_status",
+  "info_collection_requested",
+] as const;
+
 /**
  * Admin parties list, edited like a spreadsheet: every cell saves on the spot via
  * PATCH (a tint confirms the save). Parties are created from the guest list, so
@@ -41,7 +52,8 @@ const BOOL_FILTERS = ["info_collection_requested"] as const;
  * unchanged. The full edit dialog survives for the mailing address.
  */
 export default function AdminParties() {
-  const [filters, setFilter] = useFilterParams<ListPartiesQuery>(BOOL_FILTERS);
+  const [filters, setFilter, clearAll] =
+    useFilterParams<ListPartiesQuery>(BOOL_FILTERS);
   const [editParty, setEditParty] = useState<PartyResponse | undefined>(
     undefined,
   );
@@ -51,6 +63,10 @@ export default function AdminParties() {
   const updateParty = useUpdateParty();
 
   const parties = partiesQuery.data?.items ?? [];
+
+  const activeFilterCount = FILTER_KEYS.filter(
+    (key) => filters[key] !== undefined,
+  ).length;
 
   const openEdit = (party: PartyResponse) => {
     setEditParty(party);
@@ -81,42 +97,47 @@ export default function AdminParties() {
         </p>
       </div>
 
-      <div aria-label="Filters" className="flex flex-wrap gap-4" role="group">
-        <FilterSelect<Side>
-          label="Side"
-          onChange={(v) => setFilter("side", v)}
-          options={SIDE_OPTIONS}
-          value={filters.side as Side | undefined}
-        />
-        <FilterSelect<Relation>
-          label="Relation"
-          onChange={(v) => setFilter("relation", v)}
-          options={RELATION_OPTIONS}
-          value={filters.relation as Relation | undefined}
-        />
-        <FilterSelect<Circle>
-          label="Circle"
-          onChange={(v) => setFilter("circle", v)}
-          options={CIRCLE_OPTIONS}
-          value={filters.circle as Circle | undefined}
-        />
-        <FilterSelect<InvitationType>
-          label="Invitation"
-          onChange={(v) => setFilter("invitation_type", v)}
-          options={INVITATION_TYPE_OPTIONS}
-          value={filters.invitation_type as InvitationType | undefined}
-        />
-        <FilterSelect<InfoCollectionStatus>
-          label="Info status"
-          onChange={(v) => setFilter("info_collection_status", v)}
-          options={INFO_STATUS_OPTIONS}
-          value={filters.info_collection_status}
-        />
-        <BoolFilterSelect
-          label="Info requested"
-          onChange={(v) => setFilter("info_collection_requested", v)}
-          value={filters.info_collection_requested}
-        />
+      <div className="flex flex-wrap items-center gap-3">
+        <FilterSheet
+          activeCount={activeFilterCount}
+          onClearAll={() => clearAll()}
+        >
+          <FilterSelect<Side>
+            label="Side"
+            onChange={(v) => setFilter("side", v)}
+            options={SIDE_OPTIONS}
+            value={filters.side as Side | undefined}
+          />
+          <FilterSelect<Relation>
+            label="Relation"
+            onChange={(v) => setFilter("relation", v)}
+            options={RELATION_OPTIONS}
+            value={filters.relation as Relation | undefined}
+          />
+          <FilterSelect<Circle>
+            label="Circle"
+            onChange={(v) => setFilter("circle", v)}
+            options={CIRCLE_OPTIONS}
+            value={filters.circle as Circle | undefined}
+          />
+          <FilterSelect<InvitationType>
+            label="Invitation"
+            onChange={(v) => setFilter("invitation_type", v)}
+            options={INVITATION_TYPE_OPTIONS}
+            value={filters.invitation_type as InvitationType | undefined}
+          />
+          <FilterSelect<InfoCollectionStatus>
+            label="Info status"
+            onChange={(v) => setFilter("info_collection_status", v)}
+            options={INFO_STATUS_OPTIONS}
+            value={filters.info_collection_status}
+          />
+          <BoolFilterSelect
+            label="Info requested"
+            onChange={(v) => setFilter("info_collection_requested", v)}
+            value={filters.info_collection_requested}
+          />
+        </FilterSheet>
       </div>
 
       {partiesQuery.isLoading ? (

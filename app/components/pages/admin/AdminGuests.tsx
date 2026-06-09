@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { GuestsGrid } from "@/components/pages/admin/grid/GuestsGrid";
@@ -6,6 +7,7 @@ import {
   BoolFilterSelect,
   FilterSelect,
 } from "@/components/pages/admin/parties/FilterSelect";
+import { FilterSheet } from "@/components/pages/admin/parties/FilterSheet";
 import { GuestFormDialog } from "@/components/pages/admin/parties/GuestFormDialog";
 import {
   CIRCLE_OPTIONS,
@@ -13,6 +15,7 @@ import {
   SIDE_OPTIONS,
   type Option,
 } from "@/components/pages/admin/parties/options";
+import { Input } from "@/components/ui/input";
 import { useGuests, useUpdateGuest } from "@/hooks/queries/guests";
 import { useParties } from "@/hooks/queries/parties";
 import { useFilterParams } from "@/hooks/useFilterParams";
@@ -26,6 +29,18 @@ import type {
 // Boolean guest filters, listed so useFilterParams parses them back from the URL.
 const BOOL_FILTERS = ["is_drinking", "is_child", "is_placeholder"] as const;
 
+// Filter keys (everything but the search box), counted for the "Filters" badge.
+const FILTER_KEYS = [
+  "party_id",
+  "side",
+  "relation",
+  "circle",
+  "is_drinking",
+  "is_child",
+  "is_placeholder",
+  "tags",
+] as const;
+
 /**
  * Admin flat guest list: every guest across all parties, edited like a
  * spreadsheet (each cell saves via PATCH on blur/Enter, with a tint confirming
@@ -36,11 +51,27 @@ const BOOL_FILTERS = ["is_drinking", "is_child", "is_placeholder"] as const;
  * survives for dietary restrictions and table/seat.
  */
 export default function AdminGuests() {
-  const [filters, setFilter] = useFilterParams<ListGuestsQuery>(BOOL_FILTERS);
+  const [filters, setFilter, clearAll] =
+    useFilterParams<ListGuestsQuery>(BOOL_FILTERS);
   const [editGuest, setEditGuest] = useState<GuestListItem | undefined>(
     undefined,
   );
   const [editOpen, setEditOpen] = useState(false);
+
+  // Local search box state, debounced into the URL `search` param so a filtered
+  // view stays shareable without firing a request on every keystroke.
+  const [searchInput, setSearchInput] = useState(filters.search ?? "");
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const next = searchInput.trim() || undefined;
+      if (next !== filters.search) setFilter("search", next);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [searchInput, filters.search, setFilter]);
+
+  const activeFilterCount = FILTER_KEYS.filter(
+    (key) => filters[key] !== undefined,
+  ).length;
 
   const guestsQuery = useGuests(filters);
   const guests = guestsQuery.data?.items ?? [];
@@ -118,56 +149,67 @@ export default function AdminGuests() {
         </p>
       </div>
 
-      <div
-        aria-label="Filters"
-        className="flex flex-wrap items-end gap-4"
-        role="group"
-      >
-        <FilterSelect<string>
-          label="Party"
-          onChange={(v) => setFilter("party_id", v)}
-          options={partyFilterOptions}
-          value={filters.party_id}
-        />
-        <FilterSelect<Side>
-          label="Side"
-          onChange={(v) => setFilter("side", v)}
-          options={SIDE_OPTIONS}
-          value={filters.side as Side | undefined}
-        />
-        <FilterSelect<Relation>
-          label="Relation"
-          onChange={(v) => setFilter("relation", v)}
-          options={RELATION_OPTIONS}
-          value={filters.relation as Relation | undefined}
-        />
-        <FilterSelect<Circle>
-          label="Circle"
-          onChange={(v) => setFilter("circle", v)}
-          options={CIRCLE_OPTIONS}
-          value={filters.circle as Circle | undefined}
-        />
-        <BoolFilterSelect
-          label="Drinking"
-          onChange={(v) => setFilter("is_drinking", v)}
-          value={filters.is_drinking}
-        />
-        <BoolFilterSelect
-          label="Child"
-          onChange={(v) => setFilter("is_child", v)}
-          value={filters.is_child}
-        />
-        <BoolFilterSelect
-          label="Placeholder"
-          onChange={(v) => setFilter("is_placeholder", v)}
-          value={filters.is_placeholder}
-        />
-        <FilterSelect<string>
-          label="Tag"
-          onChange={(v) => setFilter("tags", v)}
-          options={tagOptions}
-          value={filters.tags}
-        />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative w-full max-w-xs">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            aria-label="Search guests"
+            className="pl-8"
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search name, email, phone, party..."
+            value={searchInput}
+          />
+        </div>
+        <FilterSheet
+          activeCount={activeFilterCount}
+          onClearAll={() => clearAll(["search"])}
+        >
+          <FilterSelect<string>
+            label="Party"
+            onChange={(v) => setFilter("party_id", v)}
+            options={partyFilterOptions}
+            value={filters.party_id}
+          />
+          <FilterSelect<Side>
+            label="Side"
+            onChange={(v) => setFilter("side", v)}
+            options={SIDE_OPTIONS}
+            value={filters.side as Side | undefined}
+          />
+          <FilterSelect<Relation>
+            label="Relation"
+            onChange={(v) => setFilter("relation", v)}
+            options={RELATION_OPTIONS}
+            value={filters.relation as Relation | undefined}
+          />
+          <FilterSelect<Circle>
+            label="Circle"
+            onChange={(v) => setFilter("circle", v)}
+            options={CIRCLE_OPTIONS}
+            value={filters.circle as Circle | undefined}
+          />
+          <BoolFilterSelect
+            label="Drinking"
+            onChange={(v) => setFilter("is_drinking", v)}
+            value={filters.is_drinking}
+          />
+          <BoolFilterSelect
+            label="Child"
+            onChange={(v) => setFilter("is_child", v)}
+            value={filters.is_child}
+          />
+          <BoolFilterSelect
+            label="Placeholder"
+            onChange={(v) => setFilter("is_placeholder", v)}
+            value={filters.is_placeholder}
+          />
+          <FilterSelect<string>
+            label="Tag"
+            onChange={(v) => setFilter("tags", v)}
+            options={tagOptions}
+            value={filters.tags}
+          />
+        </FilterSheet>
       </div>
 
       {guestsQuery.isLoading ? (

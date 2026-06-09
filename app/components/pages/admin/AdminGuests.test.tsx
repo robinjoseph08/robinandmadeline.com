@@ -250,4 +250,26 @@ describe("AdminGuests flat list", () => {
       );
     });
   });
+
+  it("searches guests, debounced into the request query", async () => {
+    setMock({ guests: [] });
+
+    const user = userEvent.setup();
+    renderGuests();
+
+    await user.type(
+      await screen.findByRole("textbox", { name: "Search guests" }),
+      "smith",
+    );
+
+    // The debounced search term lands in the guest list request as `search`.
+    await waitFor(() => {
+      const guestCalls = adminRequest.mock.calls.filter(
+        (call) => call[0] === "/admin/guests",
+      );
+      expect(
+        guestCalls.some((call) => call[1]?.query?.search === "smith"),
+      ).toBe(true);
+    });
+  });
 });

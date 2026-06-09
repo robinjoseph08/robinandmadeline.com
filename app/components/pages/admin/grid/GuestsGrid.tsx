@@ -54,6 +54,9 @@ const FLAG_HINTS = {
 const NEW_PARTY_PRIMARY_HINT =
   "The first guest of a new party is automatically its primary.";
 
+const PRIMARY_LOCK_HINT =
+  "The party's primary. Check another guest to make them the primary instead.";
+
 // The three boolean flags collapsed into one chip multi-select, each chip
 // carrying its own tooltip in the dropdown.
 const GUEST_FLAG_OPTIONS: FlagOption[] = [
@@ -362,11 +365,12 @@ export function GuestsGrid<TGuest extends Guest>({
               <GridBoolCell
                 ariaLabel="Primary"
                 // The current primary cannot be unchecked (a party must keep one);
-                // promote another guest to move it.
+                // promote another guest to move it. The tooltip explains the lock.
                 disabled={guest.is_primary}
                 onCommit={(value) =>
                   patchField(guest.id, partyId, { is_primary: value })
                 }
+                tooltip={guest.is_primary ? PRIMARY_LOCK_HINT : undefined}
                 value={guest.is_primary}
               />
               {showPartyColumn ? (
@@ -543,8 +547,8 @@ export function GuestsGrid<TGuest extends Guest>({
                 )}
               </>
             ) : null}
-            <GridReadOnlyCell className="text-right">
-              <div className="flex justify-end gap-1">
+            <GridReadOnlyCell className="p-0">
+              <div className="flex h-8 items-center justify-end gap-1 px-3">
                 <TooltipIconButton label="Cancel" onClick={cancelAdd}>
                   <X />
                 </TooltipIconButton>

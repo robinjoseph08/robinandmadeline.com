@@ -55,5 +55,24 @@ export function useFilterParams<T extends object>(
     [setSearchParams],
   );
 
-  return [filters, setFilter] as const;
+  // Drop every filter at once (the sheet's "Clear all"), optionally keeping a few
+  // params untouched (e.g. the search box, which lives outside the filter sheet).
+  const clearAll = useCallback(
+    (keep: readonly (keyof T)[] = []) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams();
+          for (const key of keep) {
+            const value = prev.get(key as string);
+            if (value) next.set(key as string, value);
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  return [filters, setFilter, clearAll] as const;
 }
