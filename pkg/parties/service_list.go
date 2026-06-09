@@ -78,6 +78,18 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 	if f.PartyID != nil {
 		q = q.Where("g.party_id = ?", *f.PartyID)
 	}
+	if f.Search != nil && *f.Search != "" {
+		// A single search box across the guest's own fields and the owning party's
+		// name, case-insensitive substring. The party name match is a correlated
+		// EXISTS so it stays a flat guest query.
+		pattern := "%" + *f.Search + "%"
+		partyNameMatch := s.db.NewSelect().Model((*models.Party)(nil)).Column("id").
+			Where("p.id = g.party_id").Where("p.name ILIKE ?", pattern)
+		q = q.Where(
+			"(g.full_name ILIKE ? OR g.email ILIKE ? OR g.phone ILIKE ? OR EXISTS (?))",
+			pattern, pattern, pattern, partyNameMatch,
+		)
+	}
 	if f.IsDrinking != nil {
 		q = q.Where("g.is_drinking = ?", *f.IsDrinking)
 	}

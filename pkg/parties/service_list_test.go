@@ -211,6 +211,31 @@ func TestListGuests_FlatFilters(t *testing.T) {
 		assert.True(t, ids[ga.ID])
 		assert.False(t, ids[gb.ID], "the party filter excludes guests of other parties")
 	})
+	t.Run("search by name (case-insensitive)", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("adult")})
+		require.NoError(t, err)
+		ids := guestIDs(got)
+		assert.True(t, ids[ga.ID], "Adult A matches a case-insensitive substring of its name")
+		assert.False(t, ids[gb.ID])
+	})
+}
+
+// TestListGuests_SearchMatchesPartyName proves the single search box also matches
+// a guest by its owning party's name, not just the guest's own fields.
+func TestListGuests_SearchMatchesPartyName(t *testing.T) {
+	svc, _ := newService(t)
+	p := createPartyT(t, svc, parties.CreatePartyPayload{
+		Name: "The Hendersons", Side: models.SideRobin, Relation: models.RelationFamily,
+		InvitationType: models.InvitationDigital,
+	})
+	// The guest's own name shares nothing with the search term, so a match can
+	// only come from the party name.
+	g := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Zoe"})
+
+	got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("henderson")})
+	require.NoError(t, err)
+	ids := guestIDs(got)
+	assert.True(t, ids[g.ID], "a guest matches when its party's name matches the search")
 }
 
 // TestListGuests_LoadsOwningParty proves the flat guest list eager-loads each
