@@ -147,3 +147,65 @@ jobs:
       # `pnpm build` runs `tsc -b` which type-checks them.
       - run: mise tygo
       - run: pnpm build # Frontend bundle (tsc -b && vite build)
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    # check:quiet does not run e2e. This job builds and boots the API + Vite
+    # against a dedicated Postgres database (created and migrated by
+    # `mise e2e:setup`), then drives Chromium through the issue #4 flow. The
+    # credentials/db below match the e2e DATABASE_URL default in
+    # playwright.config.ts and mise's e2e:setup task.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: robinandmadeline_admin
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: robinandmadeline_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U robinandmadeline_admin -d robinandmadeline_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-${{ runner.os }}-
+      - name: Locate pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      # Pre-fetch Go modules so the Playwright-managed API build only compiles.
+      - run: go mod download
+      # Generate the (gitignored) TS types the Vite dev server imports at runtime.
+      - run: mise tygo
+      - name: Get Playwright version
+        id: playwright-version
+        run: echo "version=$(pnpm exec playwright --version | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+      - name: Install Playwright browser (cache miss)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install Playwright system deps (cache hit)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+      - run: mise e2e:chromium
