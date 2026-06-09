@@ -1,3 +1,4 @@
+import { keepPreviousData } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -59,7 +60,11 @@ export default function AdminParties() {
   );
   const [editOpen, setEditOpen] = useState(false);
 
-  const partiesQuery = useParties(filters);
+  // keepPreviousData keeps the current rows on screen while a filter change
+  // refetches, instead of flashing the "Loading parties..." state.
+  const partiesQuery = useParties(filters, {
+    placeholderData: keepPreviousData,
+  });
   const updateParty = useUpdateParty();
 
   const parties = partiesQuery.data?.items ?? [];

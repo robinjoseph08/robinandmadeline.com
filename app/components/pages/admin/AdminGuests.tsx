@@ -1,4 +1,5 @@
-import { Search } from "lucide-react";
+import { keepPreviousData } from "@tanstack/react-query";
+import { Loader2, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -73,7 +74,10 @@ export default function AdminGuests() {
     (key) => filters[key] !== undefined,
   ).length;
 
-  const guestsQuery = useGuests(filters);
+  // keepPreviousData holds the last results (and the count) on screen while a new
+  // search/filter fetches, so the list does not flash to a loading state on every
+  // keystroke; the search box's spinner signals the refetch instead.
+  const guestsQuery = useGuests(filters, { placeholderData: keepPreviousData });
   const guests = guestsQuery.data?.items ?? [];
   const updateGuest = useUpdateGuest();
 
@@ -151,7 +155,13 @@ export default function AdminGuests() {
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative w-full max-w-xs">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground">
+            {guestsQuery.isFetching ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Search className="size-4" />
+            )}
+          </span>
           <Input
             aria-label="Search guests"
             className="pl-8"
