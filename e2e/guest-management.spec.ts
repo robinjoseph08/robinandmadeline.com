@@ -77,7 +77,17 @@ test("admin manages parties and guests end to end", async ({ page }) => {
   const email = page.getByRole("textbox", { name: "Email", exact: true });
   await expect(email).toHaveCount(1);
   await email.fill("alice@example.com");
-  await email.press("Enter");
+  // Wait for the PATCH to land before reloading: the guest PATCH has no
+  // optimistic cache write, and a reload would abort an in-flight save.
+  await Promise.all([
+    page.waitForResponse(
+      (r) =>
+        r.request().method() === "PATCH" &&
+        /\/api\/admin\/guests\//.test(r.url()) &&
+        r.ok(),
+    ),
+    email.press("Enter"),
+  ]);
   // Reload and re-search to confirm the PATCH persisted, not just optimistic.
   await page.reload({ waitUntil: "domcontentloaded" });
   await search.fill(alice);
@@ -98,11 +108,13 @@ test("admin manages parties and guests end to end", async ({ page }) => {
 
   // --- Confirm a filter narrows the list -----------------------------------
   // Search by the run stamp so both remaining guests (matched via their shared
-  // party name) are listed, then filter to placeholders and watch it narrow.
+  // party name) are listed. Identify them by their per-guest delete buttons, so
+  // the check is by name and never depends on a row count.
+  const aliceDelete = page.getByRole("button", { name: `Delete ${alice}` });
+  const bobDelete = page.getByRole("button", { name: `Delete ${bob}` });
   await search.fill(stamp);
-  await expect(
-    page.getByRole("textbox", { name: "Name", exact: true }),
-  ).toHaveCount(2);
+  await expect(aliceDelete).toBeVisible();
+  await expect(bobDelete).toBeVisible();
   await page.getByRole("button", { name: "Filters" }).click();
   const sheet = page.getByRole("dialog");
   await sheet
@@ -116,10 +128,9 @@ test("admin manages parties and guests end to end", async ({ page }) => {
   ).toBeHidden();
   await page.keyboard.press("Escape");
   await expect(sheet).toBeHidden();
-  // Only the placeholder (Bob) survives the filter; Alice is gone.
-  const names = page.getByRole("textbox", { name: "Name", exact: true });
-  await expect(names).toHaveCount(1);
-  await expect(names).toHaveValue(bob);
+  // The placeholder (Bob) survives the filter; Alice is narrowed out.
+  await expect(bobDelete).toBeVisible();
+  await expect(aliceDelete).toBeHidden();
 
   // --- Copy the info link and the RSVP code (on the parties page) ----------
   await page.goto("/admin/parties", { waitUntil: "domcontentloaded" });

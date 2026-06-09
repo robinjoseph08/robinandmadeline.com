@@ -13,7 +13,10 @@ e2e is for whole-journey coverage through the browser.
   the API and Vite and runs the specs.
 - Needs local Postgres up (`docker compose up -d`). The dev server does not need
   to be running; Playwright starts its own on dedicated ports (API 8500, web
-  8501) so an e2e run never collides with `mise start` on 8400/8401.
+  8501) so an e2e run never collides with `mise start` on 8400/8401. Do not run
+  `mise e2e` and `mise start` at the same time, though: the e2e API still writes
+  the shared `tmp/api.port`, so the dev Vite proxy could momentarily target the
+  e2e API.
 - CI runs the same thing in a dedicated `e2e` job (its own Postgres service); see
   `.github/workflows/ci.yml`. `mise check:quiet` does not run e2e.
 
