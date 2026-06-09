@@ -15,7 +15,7 @@
  * The combobox, checkbox, and chips cells commit on change or on popover close.
  */
 
-import { Check, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Checkbox } from "@/components/ui/checkbox";
@@ -38,6 +38,7 @@ import { TableCell } from "@/components/ui/table";
 import { cn } from "@/libraries/utils";
 
 import { chipColorClass } from "./chips";
+import { InfoHint } from "./grid-buttons";
 import { focusCellBelow } from "./grid-nav";
 
 // Shared borderless look: fill the cell, drop the control's own border/shadow/
@@ -119,6 +120,8 @@ interface GridTextCellProps {
   onEnter?: () => void;
   autoFocus?: boolean;
   className?: string;
+  /** Normalize each typed value (e.g. force upper-case for RSVP codes). */
+  transform?: (value: string) => string;
 }
 
 /** A text (or email) cell. Clearing it sends a blank value the API treats as "unset". */
@@ -132,6 +135,7 @@ export function GridTextCell({
   onEnter,
   autoFocus,
   className,
+  transform,
 }: GridTextCellProps) {
   const cell = useCommittableValue(value, onCommit);
 
@@ -144,11 +148,14 @@ export function GridTextCell({
         autoFocus={autoFocus}
         className={cn(GRID_CONTROL_CLASS, className)}
         onBlur={commitOnChange ? undefined : cell.commit}
-        onChange={(e) =>
-          commitOnChange
-            ? cell.commitValue(e.target.value)
-            : cell.setValue(e.target.value)
-        }
+        onChange={(e) => {
+          const next = transform ? transform(e.target.value) : e.target.value;
+          if (commitOnChange) {
+            cell.commitValue(next);
+          } else {
+            cell.setValue(next);
+          }
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
@@ -218,6 +225,12 @@ interface GridBoolCellProps {
   value: boolean;
   onCommit: (value: boolean) => void | Promise<void>;
   ariaLabel: string;
+  /**
+   * Render the checkbox non-interactive. The guest grid uses this on the current
+   * primary so it cannot be unchecked (which would leave the party with none);
+   * promoting another guest is how you move it.
+   */
+  disabled?: boolean;
 }
 
 /** A checkbox cell. Space toggles (native); Enter moves to the next row. */
@@ -225,6 +238,7 @@ export function GridBoolCell({
   value,
   onCommit,
   ariaLabel,
+  disabled,
 }: GridBoolCellProps) {
   const cell = useCommittableValue<boolean>(value, onCommit);
 
@@ -234,6 +248,8 @@ export function GridBoolCell({
         <Checkbox
           aria-label={ariaLabel}
           checked={cell.value}
+          className={disabled ? undefined : "cursor-pointer"}
+          disabled={disabled}
           onCheckedChange={(checked) => cell.commitValue(checked === true)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -324,7 +340,7 @@ export function GridChipsCell({
             aria-label={ariaLabel}
             // min-h (not fixed h) so the chips wrap onto more lines and the row
             // grows to show them all, rather than clipping a tag mid-word.
-            className="flex min-h-9 w-full items-center px-3 py-1 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+            className="flex min-h-9 w-full cursor-pointer items-center px-3 py-1 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
             type="button"
           >
             {cell.value.length === 0 ? (
@@ -386,6 +402,240 @@ export function GridChipsCell({
                   <CommandItem
                     onSelect={() => {
                       toggle(trimmed);
+                      setQuery("");
+                    }}
+                    value={`__create__${trimmed}`}
+                  >
+                    <Plus className="size-4 shrink-0" />
+                    Create &quot;{trimmed}&quot;
+                  </CommandItem>
+                ) : null}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </TableCell>
+  );
+}
+
+export interface FlagOption {
+  /** The boolean field this chip toggles (e.g. "is_child"). */
+  key: string;
+  label: string;
+  /** Tooltip text shown on the option's info icon. */
+  hint: string;
+}
+
+interface GridFlagsCellProps {
+  options: FlagOption[];
+  value: Record<string, boolean>;
+  onCommit: (value: Record<string, boolean>) => void | Promise<void>;
+  ariaLabel: string;
+  placeholder?: string;
+}
+
+/**
+ * A multi-select cell for a small fixed set of boolean flags (a guest's
+ * child/drinking/placeholder), rendered as colored chips. The popover lists each
+ * flag with a toggle and an info tooltip explaining it; toggles batch into one
+ * commit when the popover closes. Collapsing several checkbox columns into a
+ * single chip cell keeps each row compact.
+ */
+export function GridFlagsCell({
+  options,
+  value,
+  onCommit,
+  ariaLabel,
+  placeholder = "None",
+}: GridFlagsCellProps) {
+  const flagsEqual = (a: Record<string, boolean>, b: Record<string, boolean>) =>
+    options.every(
+      (option) => Boolean(a[option.key]) === Boolean(b[option.key]),
+    );
+  const cell = useCommittableValue<Record<string, boolean>>(
+    value,
+    onCommit,
+    flagsEqual,
+  );
+
+  const toggle = (key: string) =>
+    cell.setValue({ ...cell.value, [key]: !cell.value[key] });
+
+  const selected = options.filter((option) => cell.value[option.key]);
+
+  return (
+    <TableCell className="p-0">
+      <Popover
+        onOpenChange={(open) => {
+          // Commit the batch of toggles when the popover closes.
+          if (!open) cell.commit();
+        }}
+      >
+        <PopoverTrigger asChild>
+          <button
+            aria-label={ariaLabel}
+            className="flex min-h-9 w-full cursor-pointer items-center px-3 py-1 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+            type="button"
+          >
+            {selected.length === 0 ? (
+              <span className="text-sm text-ink/40">{placeholder}</span>
+            ) : (
+              <span className="flex flex-wrap items-center gap-1">
+                {selected.map((option) => (
+                  <span
+                    className={cn(
+                      "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+                      chipColorClass(option.label),
+                    )}
+                    key={option.key}
+                  >
+                    {option.label}
+                  </span>
+                ))}
+              </span>
+            )}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-60 p-0">
+          <Command>
+            <CommandList>
+              <CommandGroup>
+                {options.map((option) => (
+                  <CommandItem
+                    key={option.key}
+                    onSelect={() => toggle(option.key)}
+                    value={option.label}
+                  >
+                    <Check
+                      className={cn(
+                        "size-4 shrink-0",
+                        cell.value[option.key] ? "opacity-100" : "opacity-0",
+                      )}
+                    />
+                    <span
+                      className={cn(
+                        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+                        chipColorClass(option.label),
+                      )}
+                    >
+                      {option.label}
+                    </span>
+                    {/* Stop the info icon from toggling the flag; it only shows
+                        the tooltip on hover. */}
+                    <span
+                      className="ml-auto"
+                      onClick={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => e.stopPropagation()}
+                    >
+                      <InfoHint text={option.hint} />
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </TableCell>
+  );
+}
+
+interface GridCreatablePartyCellProps {
+  parties: { id: string; name: string }[];
+  partyId?: string;
+  newPartyName?: string;
+  onSelectExisting: (id: string) => void;
+  onCreateNew: (name: string) => void;
+}
+
+/**
+ * The add row's party picker: a single-select combobox over existing parties
+ * that is also creatable. Selecting a party assigns the new guest to it; typing a
+ * new name and choosing "Create" starts a brand-new party (whose side/relation
+ * cells then become editable in the add row). Used only in the flat guest list.
+ */
+export function GridCreatablePartyCell({
+  parties,
+  partyId,
+  newPartyName,
+  onSelectExisting,
+  onCreateNew,
+}: GridCreatablePartyCellProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selectedName =
+    newPartyName ?? parties.find((party) => party.id === partyId)?.name;
+
+  const trimmed = query.trim();
+  const filtered = parties.filter((party) =>
+    party.name.toLowerCase().includes(trimmed.toLowerCase()),
+  );
+  const canCreate =
+    trimmed !== "" &&
+    !parties.some(
+      (party) => party.name.toLowerCase() === trimmed.toLowerCase(),
+    );
+
+  return (
+    <TableCell className="p-0">
+      <Popover
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) setQuery("");
+        }}
+        open={open}
+      >
+        <PopoverTrigger asChild>
+          <button
+            aria-label="New guest party"
+            className={cn(
+              "flex h-9 w-full cursor-pointer items-center justify-between gap-1 px-3 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+              !selectedName && "text-ink/40",
+            )}
+            role="combobox"
+            type="button"
+          >
+            <span className="truncate">{selectedName ?? "Party..."}</span>
+            <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-60 p-0">
+          <Command shouldFilter={false}>
+            <CommandInput
+              onValueChange={setQuery}
+              placeholder="Search or add..."
+              value={query}
+            />
+            <CommandList>
+              {filtered.length === 0 && !canCreate ? (
+                <CommandEmpty>No match.</CommandEmpty>
+              ) : null}
+              <CommandGroup>
+                {filtered.map((party) => (
+                  <CommandItem
+                    key={party.id}
+                    onSelect={() => {
+                      onSelectExisting(party.id);
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                    value={party.name}
+                  >
+                    <Check
+                      className={cn(
+                        "size-4 shrink-0",
+                        partyId === party.id ? "opacity-100" : "opacity-0",
+                      )}
+                    />
+                    {party.name}
+                  </CommandItem>
+                ))}
+                {canCreate ? (
+                  <CommandItem
+                    onSelect={() => {
+                      onCreateNew(trimmed);
+                      setOpen(false);
                       setQuery("");
                     }}
                     value={`__create__${trimmed}`}

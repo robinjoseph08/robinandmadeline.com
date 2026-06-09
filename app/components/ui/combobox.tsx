@@ -64,7 +64,7 @@ export function Combobox({
         <button
           aria-label={ariaLabel}
           className={cn(
-            "flex h-9 w-full items-center justify-between gap-1 whitespace-nowrap px-3 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+            "flex h-9 w-full cursor-pointer items-center justify-between gap-1 whitespace-nowrap px-3 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
             !selected && "text-ink/40",
             triggerClassName,
           )}

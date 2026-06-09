@@ -2,6 +2,12 @@ import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import {
+  INVITATION_TYPE_OPTIONS,
+  labelFor,
+  RELATION_OPTIONS,
+  SIDE_OPTIONS,
+} from "@/components/pages/admin/parties/options";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -16,7 +22,13 @@ import {
   useDeleteGuest,
   usePatchGuest,
 } from "@/hooks/queries/guests";
-import type { Guest } from "@/types/generated/models";
+import { useCreatePartyWithGuest } from "@/hooks/queries/parties";
+import type {
+  Guest,
+  InvitationType,
+  Relation,
+  Side,
+} from "@/types/generated/models";
 import type {
   CreateGuestPayload,
   PatchGuestPayload,
@@ -26,13 +38,16 @@ import {
   GridBoolCell,
   GridChipsCell,
   GridComboboxCell,
+  GridCreatablePartyCell,
+  GridFlagsCell,
   GridReadOnlyCell,
   GridTextCell,
+  type FlagOption,
 } from "./cells";
 import { InfoHint, TooltipIconButton } from "./grid-buttons";
 
-// Tooltip copy for the guest flag columns, surfaced via an info icon in each
-// header so the meaning of each flag is discoverable.
+// Tooltip copy for the guest flags. Primary keeps its own header hint; the other
+// three are surfaced on the chips inside the Flags cell.
 const FLAG_HINTS = {
   primary:
     "The party's main contact (one per party). Their email is required to mark the party's info complete.",
@@ -42,9 +57,20 @@ const FLAG_HINTS = {
     "A stand-in for an unnamed guest or an unconfirmed plus-one (e.g. a +1 whose name you do not have yet).",
 };
 
+// The three boolean flags collapsed into one chip multi-select, each chip
+// carrying its own tooltip in the dropdown.
+const GUEST_FLAG_OPTIONS: FlagOption[] = [
+  { key: "is_child", label: "Child", hint: FLAG_HINTS.child },
+  { key: "is_drinking", label: "Drinking", hint: FLAG_HINTS.drinking },
+  { key: "is_placeholder", label: "Placeholder", hint: FLAG_HINTS.placeholder },
+];
+
 interface PartyOption {
   id: string;
   name: string;
+  side: Side;
+  relation: Relation;
+  invitationType: InvitationType;
 }
 
 interface GuestsGridProps<TGuest extends Guest> {
@@ -54,20 +80,29 @@ interface GuestsGridProps<TGuest extends Guest> {
   /** Opens the full-edit dialog (dietary restrictions, table/seat numbers). */
   onEditGuest: (guest: TGuest) => void;
   /**
-   * Flat-list mode: every party, so the Party column becomes an editable combobox
-   * (reassign a guest) and the add row includes a party picker. Mutually
-   * exclusive with addPartyId.
+   * Flat-list mode: every party, so the Party column becomes editable (reassign a
+   * guest) and the add row can pick or create a party (with the Side/Relation/
+   * Invitation columns alongside). Mutually exclusive with addPartyId.
    */
   parties?: PartyOption[];
   /**
-   * Detail-page mode: the add row creates a guest in this one party, and no Party
-   * column is shown (the party is implicit). Mutually exclusive with parties.
+   * Detail-page mode: the add row creates a guest in this one party, and the
+   * party-context columns are hidden (the party is implicit). Mutually exclusive
+   * with parties.
    */
   addPartyId?: string;
 }
 
 interface GuestDraft {
+  // Party selection: an existing party id, or a new party being created by name.
   partyId?: string;
+  newPartyName?: string;
+  // New-party fields (used only when newPartyName is set): side and relation are
+  // required; invitationType defaults to physical and is editable.
+  side?: Side;
+  relation?: Relation;
+  invitationType: InvitationType;
+  // Guest fields.
   fullName: string;
   email: string;
   phone: string;
@@ -79,6 +114,7 @@ interface GuestDraft {
 }
 
 const EMPTY_DRAFT: GuestDraft = {
+  invitationType: "physical",
   fullName: "",
   email: "",
   phone: "",
@@ -91,14 +127,18 @@ const EMPTY_DRAFT: GuestDraft = {
 
 /**
  * The guest list as an editable spreadsheet, shared by the flat guest list and a
- * party's detail page. Each cell saves itself via PATCH on blur/Enter; the four
- * flags are inline checkboxes (with info tooltips in their headers), tags is a
- * searchable, creatable, colored-chip multi-select, and promoting a guest to
- * primary demotes the party's previous primary (enforced by the API). Both pages
- * can add a guest from a trailing row: the detail page targets its own party,
- * while the flat list shows an editable Party combobox (per row and in the add
- * row) so a guest can be assigned or moved between parties. Dietary restrictions
- * and table/seat numbers stay behind the edit dialog (onEditGuest).
+ * party's detail page. Each cell saves itself via PATCH on blur/Enter; the
+ * child/drinking/placeholder flags collapse into one chip cell (Primary stays a
+ * checkbox), and tags is a creatable colored-chip multi-select. The single
+ * primary is enforced by the API: the current primary's checkbox is locked
+ * (promote another guest to move it), and deleting it promotes the next guest.
+ *
+ * In flat-list mode (parties given) the add row's Party picker is creatable:
+ * choose an existing party and its Side/Relation/Invitation show read-only, or
+ * type a new name to create the party with this guest as its primary (Side and
+ * Relation become required, Invitation defaults to physical). The detail page
+ * adds straight into its own party. Dietary restrictions and table/seat numbers
+ * stay behind the edit dialog (onEditGuest).
  */
 export function GuestsGrid<TGuest extends Guest>({
   guests,
@@ -109,6 +149,7 @@ export function GuestsGrid<TGuest extends Guest>({
 }: GuestsGridProps<TGuest>) {
   const patchGuest = usePatchGuest();
   const createGuest = useCreateGuest();
+  const createPartyWithGuest = useCreatePartyWithGuest();
   const deleteGuest = useDeleteGuest();
 
   const [adding, setAdding] = useState(false);
@@ -120,7 +161,14 @@ export function GuestsGrid<TGuest extends Guest>({
     () => (parties ?? []).map((p) => ({ value: p.id, label: p.name })),
     [parties],
   );
-  const columnCount = 8 + (showPartyColumn ? 1 : 0) + 1;
+  const partyById = useMemo(() => {
+    const map = new Map<string, PartyOption>();
+    for (const party of parties ?? []) map.set(party.id, party);
+    return map;
+  }, [parties]);
+  // Base columns: Primary, Name, Email, Phone, Tags, Flags, Actions. The flat
+  // list adds Party, Side, Relation, Invitation.
+  const columnCount = 7 + (showPartyColumn ? 4 : 0);
 
   // Existing tags across the loaded guests, to suggest in every tag cell.
   const tagSuggestions = useMemo(() => {
@@ -158,27 +206,56 @@ export function GuestsGrid<TGuest extends Guest>({
     value: GuestDraft[K],
   ) => setDraft((prev) => ({ ...prev, [key]: value }));
 
-  const targetPartyId = addPartyId ?? draft.partyId;
-  const canCreate = draft.fullName.trim() !== "" && Boolean(targetPartyId);
+  const isNewParty = draft.newPartyName !== undefined;
+  const draftExistingParty =
+    draft.partyId !== undefined ? partyById.get(draft.partyId) : undefined;
+  const targetExistingPartyId = addPartyId ?? draft.partyId;
+  const canCreate =
+    draft.fullName.trim() !== "" &&
+    (addPartyId !== undefined
+      ? true
+      : isNewParty
+        ? Boolean(draft.side) && Boolean(draft.relation)
+        : draft.partyId !== undefined);
 
   const handleCreate = async () => {
-    if (!canCreate || !targetPartyId) return;
-    const payload: CreateGuestPayload = {
+    if (!canCreate) return;
+    const guestFields = {
       full_name: draft.fullName.trim(),
       email: draft.email.trim() || undefined,
       phone: draft.phone.trim() || undefined,
       tags: draft.tags,
-      is_primary: draft.isPrimary,
       is_child: draft.isChild,
       is_drinking: draft.isDrinking,
       is_placeholder: draft.isPlaceholder,
     };
     try {
-      await createGuest.mutateAsync({ partyId: targetPartyId, payload });
-      toast.success(`Added ${payload.full_name}`);
-      // Keep the add row open for rapid entry; in the flat list keep the chosen
-      // party so several guests can be added to it in a row.
-      setDraft((prev) => ({ ...EMPTY_DRAFT, partyId: prev.partyId }));
+      if (isNewParty && draft.newPartyName) {
+        // Create the party together with this guest, who becomes its primary.
+        await createPartyWithGuest.mutateAsync({
+          name: draft.newPartyName.trim(),
+          side: draft.side as Side,
+          relation: draft.relation as Relation,
+          invitation_type: draft.invitationType,
+          circle: [],
+          guest: guestFields,
+        });
+        toast.success(
+          `Added ${guestFields.full_name} to new party ${draft.newPartyName.trim()}`,
+        );
+      } else if (targetExistingPartyId) {
+        const payload: CreateGuestPayload = {
+          ...guestFields,
+          is_primary: draft.isPrimary,
+        };
+        await createGuest.mutateAsync({
+          partyId: targetExistingPartyId,
+          payload,
+        });
+        toast.success(`Added ${guestFields.full_name}`);
+      }
+      // Reset every field (party included) so the next guest starts clean.
+      setDraft(EMPTY_DRAFT);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to add guest",
@@ -206,6 +283,8 @@ export function GuestsGrid<TGuest extends Guest>({
     }
   };
 
+  const creating = createGuest.isPending || createPartyWithGuest.isPending;
+
   return (
     <Table>
       <TableHeader>
@@ -217,17 +296,14 @@ export function GuestsGrid<TGuest extends Guest>({
           <TableHead className="min-w-48">Email</TableHead>
           <TableHead className="w-36">Phone</TableHead>
           <TableHead className="min-w-40">Tags</TableHead>
-          <TableHead className="w-20 text-center">
-            <HeaderWithHint hint={FLAG_HINTS.child} label="Child" />
-          </TableHead>
-          <TableHead className="w-24 text-center">
-            <HeaderWithHint hint={FLAG_HINTS.drinking} label="Drinking" />
-          </TableHead>
-          <TableHead className="w-28 text-center">
-            <HeaderWithHint hint={FLAG_HINTS.placeholder} label="Placeholder" />
-          </TableHead>
+          <TableHead className="min-w-40">Flags</TableHead>
           {showPartyColumn ? (
-            <TableHead className="min-w-44">Party</TableHead>
+            <>
+              <TableHead className="min-w-44">Party</TableHead>
+              <TableHead className="w-28">Side</TableHead>
+              <TableHead className="w-28">Relation</TableHead>
+              <TableHead className="w-28">Invitation</TableHead>
+            </>
           ) : null}
           <TableHead className="w-20 text-right">Actions</TableHead>
         </TableRow>
@@ -235,10 +311,14 @@ export function GuestsGrid<TGuest extends Guest>({
       <TableBody>
         {guests.map((guest) => {
           const partyId = partyIdFor(guest);
+          const party = partyById.get(guest.party_id);
           return (
             <TableRow key={guest.id}>
               <GridBoolCell
                 ariaLabel="Primary"
+                // The current primary cannot be unchecked (a party must keep one);
+                // promote another guest to move it.
+                disabled={guest.is_primary}
                 onCommit={(value) =>
                   patchField(guest.id, partyId, { is_primary: value })
                 }
@@ -277,36 +357,51 @@ export function GuestsGrid<TGuest extends Guest>({
                 options={tagSuggestions}
                 value={guest.tags}
               />
-              <GridBoolCell
-                ariaLabel="Child"
+              <GridFlagsCell
+                ariaLabel="Flags"
                 onCommit={(value) =>
-                  patchField(guest.id, partyId, { is_child: value })
+                  patchField(guest.id, partyId, {
+                    is_child: value.is_child,
+                    is_drinking: value.is_drinking,
+                    is_placeholder: value.is_placeholder,
+                  })
                 }
-                value={guest.is_child}
-              />
-              <GridBoolCell
-                ariaLabel="Drinking"
-                onCommit={(value) =>
-                  patchField(guest.id, partyId, { is_drinking: value })
-                }
-                value={guest.is_drinking}
-              />
-              <GridBoolCell
-                ariaLabel="Placeholder"
-                onCommit={(value) =>
-                  patchField(guest.id, partyId, { is_placeholder: value })
-                }
-                value={guest.is_placeholder}
+                options={GUEST_FLAG_OPTIONS}
+                value={{
+                  is_child: guest.is_child,
+                  is_drinking: guest.is_drinking,
+                  is_placeholder: guest.is_placeholder,
+                }}
               />
               {showPartyColumn ? (
-                <GridComboboxCell
-                  ariaLabel="Party"
-                  onCommit={(value) =>
-                    patchField(guest.id, partyId, { party_id: value })
-                  }
-                  options={partyOptions}
-                  value={guest.party_id}
-                />
+                <>
+                  <GridComboboxCell
+                    ariaLabel="Party"
+                    onCommit={(value) =>
+                      patchField(guest.id, partyId, { party_id: value })
+                    }
+                    options={partyOptions}
+                    value={guest.party_id}
+                  />
+                  <ReadOnlyAttr
+                    value={party ? labelFor(SIDE_OPTIONS, party.side) : ""}
+                  />
+                  <ReadOnlyAttr
+                    value={
+                      party ? labelFor(RELATION_OPTIONS, party.relation) : ""
+                    }
+                  />
+                  <ReadOnlyAttr
+                    value={
+                      party
+                        ? labelFor(
+                            INVITATION_TYPE_OPTIONS,
+                            party.invitationType,
+                          )
+                        : ""
+                    }
+                  />
+                </>
               ) : null}
               <GridReadOnlyCell className="text-right">
                 <div className="flex justify-end gap-1">
@@ -333,8 +428,10 @@ export function GuestsGrid<TGuest extends Guest>({
           <TableRow className="bg-muted/30">
             <GridBoolCell
               ariaLabel="New guest primary"
+              // A brand-new party's first guest is always its primary.
+              disabled={isNewParty}
               onCommit={(value) => setDraftField("isPrimary", value)}
-              value={draft.isPrimary}
+              value={isNewParty ? true : draft.isPrimary}
             />
             <GridTextCell
               ariaLabel="New guest name"
@@ -370,29 +467,104 @@ export function GuestsGrid<TGuest extends Guest>({
               placeholder="Optional"
               value={draft.tags}
             />
-            <GridBoolCell
-              ariaLabel="New guest child"
-              onCommit={(value) => setDraftField("isChild", value)}
-              value={draft.isChild}
-            />
-            <GridBoolCell
-              ariaLabel="New guest drinking"
-              onCommit={(value) => setDraftField("isDrinking", value)}
-              value={draft.isDrinking}
-            />
-            <GridBoolCell
-              ariaLabel="New guest placeholder"
-              onCommit={(value) => setDraftField("isPlaceholder", value)}
-              value={draft.isPlaceholder}
+            <GridFlagsCell
+              ariaLabel="New guest flags"
+              onCommit={(value) => {
+                setDraftField("isChild", value.is_child);
+                setDraftField("isDrinking", value.is_drinking);
+                setDraftField("isPlaceholder", value.is_placeholder);
+              }}
+              options={GUEST_FLAG_OPTIONS}
+              placeholder="Optional"
+              value={{
+                is_child: draft.isChild,
+                is_drinking: draft.isDrinking,
+                is_placeholder: draft.isPlaceholder,
+              }}
             />
             {showPartyColumn ? (
-              <GridComboboxCell
-                ariaLabel="New guest party"
-                onCommit={(value) => setDraftField("partyId", value)}
-                options={partyOptions}
-                placeholder="Party..."
-                value={draft.partyId}
-              />
+              <>
+                <GridCreatablePartyCell
+                  newPartyName={draft.newPartyName}
+                  onCreateNew={(name) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      partyId: undefined,
+                      newPartyName: name,
+                    }))
+                  }
+                  onSelectExisting={(id) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      partyId: id,
+                      newPartyName: undefined,
+                      side: undefined,
+                      relation: undefined,
+                      invitationType: "physical",
+                    }))
+                  }
+                  parties={parties ?? []}
+                  partyId={draft.partyId}
+                />
+                {isNewParty ? (
+                  <>
+                    <GridComboboxCell
+                      ariaLabel="New party side"
+                      onCommit={(value) => setDraftField("side", value as Side)}
+                      options={SIDE_OPTIONS}
+                      placeholder="Side..."
+                      value={draft.side}
+                    />
+                    <GridComboboxCell
+                      ariaLabel="New party relation"
+                      onCommit={(value) =>
+                        setDraftField("relation", value as Relation)
+                      }
+                      options={RELATION_OPTIONS}
+                      placeholder="Relation..."
+                      value={draft.relation}
+                    />
+                    <GridComboboxCell
+                      ariaLabel="New party invitation"
+                      onCommit={(value) =>
+                        setDraftField("invitationType", value as InvitationType)
+                      }
+                      options={INVITATION_TYPE_OPTIONS}
+                      value={draft.invitationType}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <ReadOnlyAttr
+                      value={
+                        draftExistingParty
+                          ? labelFor(SIDE_OPTIONS, draftExistingParty.side)
+                          : ""
+                      }
+                    />
+                    <ReadOnlyAttr
+                      value={
+                        draftExistingParty
+                          ? labelFor(
+                              RELATION_OPTIONS,
+                              draftExistingParty.relation,
+                            )
+                          : ""
+                      }
+                    />
+                    <ReadOnlyAttr
+                      value={
+                        draftExistingParty
+                          ? labelFor(
+                              INVITATION_TYPE_OPTIONS,
+                              draftExistingParty.invitationType,
+                            )
+                          : ""
+                      }
+                    />
+                  </>
+                )}
+              </>
             ) : null}
             <GridReadOnlyCell className="text-right">
               <div className="flex justify-end gap-1">
@@ -400,7 +572,7 @@ export function GuestsGrid<TGuest extends Guest>({
                   <X />
                 </TooltipIconButton>
                 <Button
-                  disabled={!canCreate || createGuest.isPending}
+                  disabled={!canCreate || creating}
                   onClick={handleCreate}
                   size="sm"
                 >
@@ -426,6 +598,15 @@ export function GuestsGrid<TGuest extends Guest>({
         ) : null}
       </TableBody>
     </Table>
+  );
+}
+
+/** A read-only party-attribute cell (Side/Relation/Invitation in the flat list). */
+function ReadOnlyAttr({ value }: { value: string }) {
+  return (
+    <GridReadOnlyCell className="text-sm text-muted-foreground">
+      {value || "None"}
+    </GridReadOnlyCell>
   );
 }
 

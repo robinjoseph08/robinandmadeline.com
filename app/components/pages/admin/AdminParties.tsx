@@ -77,7 +77,7 @@ export default function AdminParties() {
         <p className="text-sm text-muted-foreground">
           {partiesQuery.data
             ? `${partiesQuery.data.total} part${partiesQuery.data.total === 1 ? "y" : "ies"}`
-            : "Edit inline; add a party in the last row."}
+            : "Edit inline; parties are created from the guest list."}
         </p>
       </div>
 
@@ -129,7 +129,8 @@ export default function AdminParties() {
         <div className="space-y-2">
           {parties.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No parties match these filters. Add one in the row below.
+              No parties match these filters. Parties are created by adding a
+              guest from the Guests page.
             </p>
           ) : null}
           <div className="rounded-md border border-ink/10">

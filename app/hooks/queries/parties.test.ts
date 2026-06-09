@@ -7,7 +7,7 @@ import { adminRequest } from "@/libraries/admin-api";
 
 import {
   QueryKey,
-  useCreateParty,
+  useCreatePartyWithGuest,
   useDeleteParty,
   useMarkInfo,
   usePatchParty,
@@ -36,12 +36,13 @@ function newClient() {
   });
 }
 
-describe("useCreateParty", () => {
-  it("invalidates the parties list on success", async () => {
+describe("useCreatePartyWithGuest", () => {
+  it("invalidates the parties and guest lists on success", async () => {
     const client = newClient();
     client.setQueryData([QueryKey.ListParties, {}], { items: [], total: 0 });
+    client.setQueryData([QueryKey.ListGuests, {}], { items: [], total: 0 });
 
-    const { result } = renderHook(() => useCreateParty(), {
+    const { result } = renderHook(() => useCreatePartyWithGuest(), {
       wrapper: makeWrapper(client),
     });
 
@@ -51,7 +52,14 @@ describe("useCreateParty", () => {
         side: "robin",
         relation: "family",
         circle: [],
-        invitation_type: "digital",
+        invitation_type: "physical",
+        guest: {
+          full_name: "Pat",
+          tags: [],
+          is_child: false,
+          is_drinking: false,
+          is_placeholder: false,
+        },
       });
     });
 
@@ -60,6 +68,9 @@ describe("useCreateParty", () => {
         client.getQueryState([QueryKey.ListParties, {}])?.isInvalidated,
       ).toBe(true);
     });
+    expect(client.getQueryState([QueryKey.ListGuests, {}])?.isInvalidated).toBe(
+      true,
+    );
   });
 });
 

@@ -65,16 +65,6 @@ beforeEach(() => {
   adminRequest.mockReset();
 });
 
-// Opens a combobox by its accessible name and selects the named option.
-async function pickOption(
-  user: ReturnType<typeof userEvent.setup>,
-  triggerName: string,
-  optionName: string,
-) {
-  await user.click(screen.getByRole("combobox", { name: triggerName }));
-  await user.click(await screen.findByRole("option", { name: optionName }));
-}
-
 describe("AdminParties filters", () => {
   it("narrows the grid to the side filter the admin selects", async () => {
     // Route the list response off the side filter so selecting "Madeline"
@@ -154,67 +144,16 @@ describe("AdminParties inline editing", () => {
     });
   });
 
-  it("adds a party from the add row once the required fields are set", async () => {
-    adminRequest.mockImplementation(
-      (path: string, options?: { method?: string }) => {
-        const method = options?.method ?? "GET";
-        if (path === "/admin/parties" && method === "GET") {
-          return Promise.resolve({ items: [], total: 0 });
-        }
-        // The create POST (and any refetch) resolve to a value.
-        return Promise.resolve(makeParty({ id: "new", name: "Newcomers" }));
-      },
-    );
-
-    const user = userEvent.setup();
+  it("has no add-party row, since parties are created from the guest list", async () => {
+    adminRequest.mockResolvedValue({ items: [ROBIN_PARTY], total: 1 });
     renderParties();
 
-    // The add row is opened on demand, and creation is gated until name, side,
-    // relation, and invitation (the required fields) are all set.
-    await user.click(await screen.findByRole("button", { name: "Add party" }));
-    await user.type(
-      screen.getByRole("textbox", { name: "New party name" }),
-      "Newcomers",
-    );
-    await pickOption(user, "New party side", "Robin");
-    await pickOption(user, "New party relation", "Family");
-    await pickOption(user, "New party invitation", "Digital");
-    await user.click(screen.getByRole("button", { name: "Add" }));
-
-    await waitFor(() => {
-      expect(adminRequest).toHaveBeenCalledWith(
-        "/admin/parties",
-        expect.objectContaining({
-          method: "POST",
-          body: expect.objectContaining({
-            name: "Newcomers",
-            side: "robin",
-            relation: "family",
-            invitation_type: "digital",
-          }),
-        }),
-      );
-    });
-  });
-
-  it("opens and dismisses the add row", async () => {
-    adminRequest.mockResolvedValue({ items: [], total: 0 });
-    const user = userEvent.setup();
-    renderParties();
-
-    await user.click(await screen.findByRole("button", { name: "Add party" }));
+    // Parties are now born from a guest (the guest list creates them), so the
+    // parties grid only manages existing ones and offers no add row.
+    await screen.findByDisplayValue("Robin's Party");
     expect(
-      screen.getByRole("textbox", { name: "New party name" }),
-    ).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(
-      screen.queryByRole("textbox", { name: "New party name" }),
+      screen.queryByRole("button", { name: "Add party" }),
     ).not.toBeInTheDocument();
-    // The add button returns once the row is dismissed.
-    expect(
-      screen.getByRole("button", { name: "Add party" }),
-    ).toBeInTheDocument();
   });
 });
 

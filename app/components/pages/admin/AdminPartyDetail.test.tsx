@@ -166,13 +166,16 @@ describe("AdminPartyDetail add guest", () => {
     const user = userEvent.setup();
     renderDetail();
 
-    // Open the add row, fill the name, mark it a placeholder, submit with Add.
+    // Open the add row, fill the name, mark it a placeholder via the flags cell,
+    // submit with Add.
     await user.click(await screen.findByRole("button", { name: "Add guest" }));
     const addName = screen.getByRole("textbox", { name: "New guest name" });
     await user.type(addName, "Plus One");
+    await user.click(screen.getByRole("button", { name: "New guest flags" }));
     await user.click(
-      screen.getByRole("checkbox", { name: "New guest placeholder" }),
+      await screen.findByRole("option", { name: /Placeholder/ }),
     );
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Add" }));
 
     await waitFor(() => {

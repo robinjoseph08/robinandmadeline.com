@@ -158,19 +158,23 @@ describe("AdminGuests flat list", () => {
     });
   });
 
-  it("toggles a flag inline, patching only that field", async () => {
+  it("toggles a flag via the flags cell, patching the flag set", async () => {
     setMock({ guests: [makeGuestItem({ id: "alice", full_name: "Alice" })] });
 
     const user = userEvent.setup();
     renderGuests();
 
+    // The child/drinking/placeholder flags live in one chip cell now; toggling
+    // Drinking and closing the popover commits the whole flag set.
     const row = (await screen.findByDisplayValue("Alice")).closest("tr")!;
-    await user.click(within(row).getByRole("checkbox", { name: "Drinking" }));
+    await user.click(within(row).getByRole("button", { name: "Flags" }));
+    await user.click(await screen.findByRole("option", { name: /Drinking/ }));
+    await user.keyboard("{Escape}");
 
     await waitFor(() => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/guests/alice", {
         method: "PATCH",
-        body: { is_drinking: true },
+        body: { is_child: false, is_drinking: true, is_placeholder: false },
       });
     });
   });

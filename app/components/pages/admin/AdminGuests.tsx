@@ -11,8 +11,8 @@ import {
   CIRCLE_OPTIONS,
   RELATION_OPTIONS,
   SIDE_OPTIONS,
+  type Option,
 } from "@/components/pages/admin/parties/options";
-import { Input } from "@/components/ui/input";
 import { useGuests, useUpdateGuest } from "@/hooks/queries/guests";
 import { useParties } from "@/hooks/queries/parties";
 import type { Circle, Relation, Side } from "@/types/generated/models";
@@ -25,16 +25,14 @@ import type {
 /**
  * Admin flat guest list: every guest across all parties, edited like a
  * spreadsheet (each cell saves via PATCH on blur/Enter). Filters cover the
- * party-level attributes (side, relation, circle) and the guest-level ones (tag
- * contains, plus the flags). The Party column links each guest to its owning
+ * party-level attributes (side, relation, circle) and the guest-level ones (tag,
+ * plus the flags). The Party column links each guest to its owning
  * party; the full edit dialog survives for dietary restrictions and table/seat.
  * There is no add row here (a guest needs a party, so guests are added from a
  * party's detail page).
  */
 export default function AdminGuests() {
   const [filters, setFilters] = useState<ListGuestsQuery>({});
-  // Local text state for the "tag contains" filter, committed to the query.
-  const [tagsInput, setTagsInput] = useState("");
   const [editGuest, setEditGuest] = useState<GuestListItem | undefined>(
     undefined,
   );
@@ -44,26 +42,45 @@ export default function AdminGuests() {
   const guests = guestsQuery.data?.items ?? [];
   const updateGuest = useUpdateGuest();
 
-  // Every party, for the editable Party combobox and the add row's party picker.
+  // Every party, for the editable Party combobox, the add row's party picker, and
+  // the read-only Side/Relation/Invitation columns (looked up by party).
   const partiesQuery = useParties({});
   const partyOptions = useMemo(
     () =>
       (partiesQuery.data?.items ?? []).map((party) => ({
         id: party.id,
         name: party.name,
+        side: party.side,
+        relation: party.relation,
+        invitationType: party.invitation_type,
       })),
     [partiesQuery.data],
   );
+
+  // Distinct tags across all guests, offered as the tag filter's options. The
+  // parties query already loads each party's guests, so this needs no extra
+  // fetch; tags are open-ended, so the option set is whatever is currently used.
+  const tagOptions = useMemo<Option<string>[]>(() => {
+    const seen = new Set<string>();
+    const opts: Option<string>[] = [];
+    for (const party of partiesQuery.data?.items ?? []) {
+      for (const guest of party.guests ?? []) {
+        for (const tag of guest.tags) {
+          const key = tag.toLowerCase();
+          if (!seen.has(key)) {
+            seen.add(key);
+            opts.push({ value: tag, label: tag });
+          }
+        }
+      }
+    }
+    return opts.sort((a, b) => a.label.localeCompare(b.label));
+  }, [partiesQuery.data]);
 
   const setFilter = <K extends keyof ListGuestsQuery>(
     key: K,
     value: ListGuestsQuery[K],
   ) => setFilters((prev) => ({ ...prev, [key]: value }));
-
-  const commitTags = () => {
-    const trimmed = tagsInput.trim();
-    setFilter("tags", trimmed === "" ? undefined : trimmed);
-  };
 
   const openEdit = (guest: GuestListItem) => {
     setEditGuest(guest);
@@ -136,19 +153,12 @@ export default function AdminGuests() {
           onChange={(v) => setFilter("is_placeholder", v)}
           value={filters.is_placeholder}
         />
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="font-medium">Tag contains</span>
-          <Input
-            className="w-40"
-            onBlur={commitTags}
-            onChange={(e) => setTagsInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitTags();
-            }}
-            placeholder="e.g. Bridal Party"
-            value={tagsInput}
-          />
-        </label>
+        <FilterSelect<string>
+          label="Tag"
+          onChange={(v) => setFilter("tags", v)}
+          options={tagOptions}
+          value={filters.tags}
+        />
       </div>
 
       {guestsQuery.isLoading ? (

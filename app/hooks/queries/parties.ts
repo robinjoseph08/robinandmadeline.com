@@ -7,7 +7,7 @@ import {
 
 import { adminRequest, ApiError } from "@/libraries/admin-api";
 import type {
-  CreatePartyPayload,
+  CreatePartyWithGuestPayload,
   ListPartiesQuery,
   ListPartiesResponse,
   MarkInfoPayload,
@@ -65,14 +65,19 @@ export const useParty = (
   });
 };
 
-export const useCreateParty = () => {
+// useCreatePartyWithGuest backs the only way to create a party: a party is born
+// together with its first (primary) guest via POST /parties, so it can never be
+// empty. It affects both lists, so it invalidates the parties list and the flat
+// guest list.
+export const useCreatePartyWithGuest = () => {
   const queryClient = useQueryClient();
 
-  return useMutation<PartyResponse, ApiError, CreatePartyPayload>({
+  return useMutation<PartyResponse, ApiError, CreatePartyWithGuestPayload>({
     mutationFn: (payload) =>
       adminRequest("/admin/parties", { method: "POST", body: payload }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QueryKey.ListParties] });
+      queryClient.invalidateQueries({ queryKey: [QueryKey.ListGuests] });
     },
   });
 };
