@@ -615,7 +615,15 @@ export function GridFlagsCell({
             )}
           </button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-60 p-0">
+        <PopoverContent
+          align="start"
+          className="w-60 p-0"
+          // Without a CommandInput to receive it, the popover's open-focus would
+          // land on the first row's info icon, whose tooltip then springs open
+          // (and lingers) every time the cell is opened. Keep focus on the
+          // trigger so the flag tooltips only show on an actual hover of the icon.
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
           <Command>
             <CommandList>
               <CommandGroup>
