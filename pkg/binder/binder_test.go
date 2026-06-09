@@ -267,6 +267,52 @@ func TestValidators(t *testing.T) {
 	}
 }
 
+// TestPhone covers the phone validator and the phone mold modifier together: a
+// valid number is normalized to E.164 (mod) and accepted (validate), a blank is
+// allowed so a cleared cell persists, and anything that is not a real number is
+// rejected. The default region is US, so a domestic number needs no country
+// code while an international one must carry its leading "+".
+func TestPhone(t *testing.T) {
+	t.Parallel()
+	b, err := New()
+	require.NoError(t, err)
+
+	type payload struct {
+		Phone string `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
+	}
+
+	cases := []struct {
+		name string
+		in   string
+		want string // expected normalized value when ok
+		ok   bool
+	}{
+		{"US national formatting", "(415) 555-2671", "+14155552671", true},
+		{"US bare digits", "4155552671", "+14155552671", true},
+		{"US with country code", "+1 415 555 2671", "+14155552671", true},
+		{"surrounding space trimmed", "  415-555-2671  ", "+14155552671", true},
+		{"international with plus", "+44 20 7946 0958", "+442079460958", true},
+		{"blank allowed", "", "", true},
+		{"garbage rejected", "asds", "", false},
+		{"too short rejected", "12345", "", false},
+		{"international without plus rejected", "020 7946 0958", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := newContext(http.MethodPost, "/", `{"phone":"`+tc.in+`"}`, echo.MIMEApplicationJSON)
+			p := payload{}
+			bindErr := b.Bind(&p, c)
+			if tc.ok {
+				require.NoError(t, bindErr)
+				assert.Equal(t, tc.want, p.Phone, "phone should normalize to E.164")
+			} else {
+				assert.Equal(t, string(errcodes.CodeValidationError), codeOf(t, bindErr))
+			}
+		})
+	}
+}
+
 // TestValidationMessages pins the client-facing wording the formatter produces:
 // every message is sentence case (with the snake_case JSON field humanized to a
 // spaced, capitalized label) and ends in a period.
@@ -279,6 +325,7 @@ func TestValidationMessages(t *testing.T) {
 		FullName string   `json:"full_name" validate:"required,min=1,max=200"`
 		Side     string   `json:"side" validate:"omitempty,oneof=robin madeline"`
 		Email    string   `json:"email" validate:"omitempty,email"`
+		Phone    string   `json:"phone" validate:"omitempty,phone"`
 		Circle   []string `json:"circle" validate:"omitempty,max=2"`
 	}
 
@@ -290,6 +337,7 @@ func TestValidationMessages(t *testing.T) {
 		{"required humanizes the field", `{"full_name":""}`, "Full name is required."},
 		{"oneof lists the valid values", `{"full_name":"A","side":"nobody"}`, "Side must be one of: robin, madeline."},
 		{"email reads as a sentence", `{"full_name":"A","email":"nope"}`, "Email must be a valid email address."},
+		{"phone reads as a sentence", `{"full_name":"A","phone":"asds"}`, "Phone must be a valid phone number."},
 		{"max on a string counts characters", `{"full_name":"` + strings.Repeat("x", 201) + `"}`, "Full name must be at most 200 characters."},
 		{"max on a slice counts elements", `{"full_name":"A","circle":["a","b","c"]}`, "Circle must have at most 2 elements."},
 	}

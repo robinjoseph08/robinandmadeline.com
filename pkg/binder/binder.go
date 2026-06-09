@@ -52,6 +52,7 @@ func New() (*Binder, error) {
 	queryDecoder := schema.NewDecoder()
 	queryDecoder.SetAliasTag("query")
 	conform := modifiers.New()
+	conform.Register("phone", phoneModifier)
 	validate := validator.New()
 	validate.RegisterTagNameFunc(func(fld reflect.StructField) string {
 		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
@@ -67,6 +68,9 @@ func New() (*Binder, error) {
 		return nil, errors.WithStack(err)
 	}
 	if err := validate.RegisterValidation("emailblank", emailBlankValidator); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	if err := validate.RegisterValidation("phone", phoneValidator); err != nil {
 		return nil, errors.WithStack(err)
 	}
 

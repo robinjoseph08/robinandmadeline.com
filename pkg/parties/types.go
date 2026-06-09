@@ -60,7 +60,7 @@ type CreatePartyWithGuestPayload struct {
 type FirstGuestPayload struct {
 	FullName      string   `json:"full_name" mod:"trim" validate:"required,max=200"`
 	Email         *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
-	Phone         *string  `json:"phone" mod:"trim" validate:"omitempty,max=32"`
+	Phone         *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
 	Tags          []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
 	IsChild       bool     `json:"is_child"`
 	IsDrinking    bool     `json:"is_drinking"`
@@ -150,7 +150,7 @@ type ListPartiesQuery struct {
 type CreateGuestPayload struct {
 	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
 	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
-	Phone               *string  `json:"phone" mod:"trim" validate:"omitempty,max=32"`
+	Phone               *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
 	Tags                []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
 	IsPrimary           bool     `json:"is_primary"`
 	IsChild             bool     `json:"is_child"`
@@ -168,7 +168,7 @@ type CreateGuestPayload struct {
 type UpdateGuestPayload struct {
 	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
 	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
-	Phone               *string  `json:"phone" mod:"trim" validate:"omitempty,max=32"`
+	Phone               *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
 	Tags                []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
 	IsPrimary           bool     `json:"is_primary"`
 	IsChild             bool     `json:"is_child"`
@@ -197,7 +197,7 @@ type PatchGuestPayload struct {
 	PartyID             *string  `json:"party_id,omitempty" validate:"omitempty,uuid"`
 	FullName            *string  `json:"full_name,omitempty" mod:"trim" validate:"omitempty,min=1,max=200"`
 	Email               *string  `json:"email,omitempty" mod:"trim" validate:"omitempty,emailblank,max=320"`
-	Phone               *string  `json:"phone,omitempty" mod:"trim" validate:"omitempty,max=32"`
+	Phone               *string  `json:"phone,omitempty" mod:"trim,phone" validate:"omitempty,phone,max=32"`
 	Tags                []string `json:"tags,omitempty" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100"`
 	IsPrimary           *bool    `json:"is_primary,omitempty"`
 	IsChild             *bool    `json:"is_child,omitempty"`

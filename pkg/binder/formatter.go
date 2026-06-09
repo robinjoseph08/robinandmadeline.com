@@ -26,6 +26,7 @@ const (
 	mn         = "min"
 	ne         = "ne"
 	oneof      = "oneof"
+	phone      = "phone"
 	required   = "required"
 	urlTag     = "url"
 )
@@ -130,6 +131,8 @@ func formatValidationError(err validator.FieldError) string {
 	case oneof:
 		valids := strings.Fields(err.Param())
 		return fmt.Sprintf("%s must be one of: %s.", field, strings.Join(valids, ", "))
+	case phone:
+		return field + " must be a valid phone number."
 	case required:
 		return field + " is required."
 	case urlTag:
