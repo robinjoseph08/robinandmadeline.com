@@ -214,6 +214,7 @@ type PatchGuestPayload struct {
 // the guest's party. Event- and RSVP-status filters are absent: they depend on
 // the event model (#6) which does not exist yet.
 type ListGuestsQuery struct {
+	PartyID       *string `query:"party_id" json:"party_id" validate:"omitempty,uuid"` // matches guests in this one party
 	Side          *string `query:"side" json:"side" validate:"omitempty,oneof=robin madeline"`
 	Relation      *string `query:"relation" json:"relation" validate:"omitempty,oneof=family friend"`
 	Circle        *string `query:"circle" json:"circle"`

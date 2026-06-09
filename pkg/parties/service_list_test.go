@@ -204,6 +204,13 @@ func TestListGuests_FlatFilters(t *testing.T) {
 		assert.True(t, ids[gb.ID])
 		assert.False(t, ids[ga.ID])
 	})
+	t.Run("party_id", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{PartyID: pointerutil.String(a.ID)})
+		require.NoError(t, err)
+		ids := guestIDs(got)
+		assert.True(t, ids[ga.ID])
+		assert.False(t, ids[gb.ID], "the party filter excludes guests of other parties")
+	})
 }
 
 // TestListGuests_LoadsOwningParty proves the flat guest list eager-loads each

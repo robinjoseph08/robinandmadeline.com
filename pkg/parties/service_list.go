@@ -75,6 +75,9 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 	var guests []*models.Guest
 	q := s.db.NewSelect().Model(&guests).Relation("Party").Order("g.created_at ASC")
 
+	if f.PartyID != nil {
+		q = q.Where("g.party_id = ?", *f.PartyID)
+	}
 	if f.IsDrinking != nil {
 		q = q.Where("g.is_drinking = ?", *f.IsDrinking)
 	}
