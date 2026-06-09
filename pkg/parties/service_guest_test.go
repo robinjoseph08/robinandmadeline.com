@@ -92,6 +92,20 @@ func TestUpdateGuest_ReaffirmingSamePrimaryKeepsExactlyOne(t *testing.T) {
 	assert.Equal(t, 1, countPrimaries(t, db, p.ID))
 }
 
+func TestUpdateGuest_UnsettingSolePrimaryRejected(t *testing.T) {
+	svc, db := newService(t)
+	p := createPartyT(t, svc, digitalPartyInput())
+	primary := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Primary", IsPrimary: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Other"})
+
+	// The full-state edit (PUT) honors the single-primary invariant too: clearing
+	// is_primary on the only primary is refused, mirroring PatchGuest and the
+	// grid's locked primary cell. Promote another guest to move it instead.
+	_, err := svc.UpdateGuest(ctx(), primary.ID, parties.UpdateGuestPayload{FullName: "Primary", IsPrimary: false})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+	assert.Equal(t, 1, countPrimaries(t, db, p.ID), "the primary is untouched after the rejected unset")
+}
+
 func TestPrimaryIsScopedPerParty(t *testing.T) {
 	svc, db := newService(t)
 

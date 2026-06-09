@@ -93,6 +93,14 @@ func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayl
 			return errors.Wrap(err, "load guest")
 		}
 
+		// A party must keep exactly one primary, so a full-state edit cannot clear
+		// the flag on the current primary any more than the grid can (its primary
+		// cell is locked, and PatchGuest refuses the same in-place unset). Promote
+		// another guest to move it.
+		if guest.IsPrimary && !in.IsPrimary {
+			return errcodes.ValidationError("A party must have a primary guest; promote another guest first.")
+		}
+
 		// Demote the previous primary (excluding this guest) before promoting this
 		// one, so at most one primary remains.
 		if in.IsPrimary {

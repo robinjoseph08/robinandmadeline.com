@@ -242,20 +242,33 @@ export function GuestFormDialog({
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Flags</legend>
             <div className="grid grid-cols-2 gap-2">
-              {flags.map((flag) => (
-                <label
-                  className="flex items-center gap-2 text-sm"
-                  key={flag.key}
-                >
-                  <Checkbox
-                    checked={form[flag.key] as boolean}
-                    onCheckedChange={(checked) =>
-                      update(flag.key, (checked === true) as never)
+              {flags.map((flag) => {
+                // Lock the current primary's flag like the grid's primary cell
+                // does: a party must keep one primary, so you promote another
+                // guest to move it (the API refuses unchecking it here too).
+                const lockPrimary =
+                  flag.key === "isPrimary" && guest?.is_primary === true;
+                return (
+                  <label
+                    className="flex items-center gap-2 text-sm"
+                    key={flag.key}
+                    title={
+                      lockPrimary
+                        ? "A party must keep a primary guest. Promote another guest to move it."
+                        : undefined
                     }
-                  />
-                  {flag.label}
-                </label>
-              ))}
+                  >
+                    <Checkbox
+                      checked={form[flag.key] as boolean}
+                      disabled={lockPrimary}
+                      onCheckedChange={(checked) =>
+                        update(flag.key, (checked === true) as never)
+                      }
+                    />
+                    {flag.label}
+                  </label>
+                );
+              })}
             </div>
           </fieldset>
         </DialogBody>
