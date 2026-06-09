@@ -124,6 +124,28 @@ const EMPTY_DRAFT: GuestDraft = {
 };
 
 /**
+ * Whether the add-row draft is still untouched (every field at its EMPTY_DRAFT
+ * default). Escape exits add mode only when this holds, so a half-filled row is
+ * never discarded by a stray keypress.
+ */
+function isDraftPristine(draft: GuestDraft): boolean {
+  return (
+    draft.fullName === "" &&
+    draft.email === "" &&
+    draft.phone === "" &&
+    draft.tags.length === 0 &&
+    !draft.isPrimary &&
+    !draft.isChild &&
+    !draft.isDrinking &&
+    !draft.isPlaceholder &&
+    draft.partyId === undefined &&
+    draft.newPartyName === undefined &&
+    draft.side === undefined &&
+    draft.relation === undefined
+  );
+}
+
+/**
  * The guest list as an editable spreadsheet, shared by the flat guest list and a
  * party's detail page. Each cell saves itself via PATCH on blur/Enter (a brief
  * tint confirms the save); the child/drinking/placeholder flags collapse into one
@@ -266,6 +288,12 @@ export function GuestsGrid<TGuest extends Guest>({
   const cancelAdd = () => {
     setAdding(false);
     setDraft(EMPTY_DRAFT);
+  };
+
+  // Escape from a draft text cell exits add mode, but only while the row is still
+  // untouched, so an in-progress row is never discarded by a stray keypress.
+  const handleAddRowEscape = () => {
+    if (isDraftPristine(draft)) cancelAdd();
   };
 
   const handleDelete = async (guest: TGuest) => {
@@ -422,6 +450,7 @@ export function GuestsGrid<TGuest extends Guest>({
               commitOnChange
               onCommit={(value) => setDraftField("fullName", value)}
               onEnter={handleCreate}
+              onEscape={handleAddRowEscape}
               placeholder="Guest name..."
               showStatus={false}
               value={draft.fullName}
@@ -431,6 +460,7 @@ export function GuestsGrid<TGuest extends Guest>({
               commitOnChange
               onCommit={(value) => setDraftField("email", value)}
               onEnter={handleCreate}
+              onEscape={handleAddRowEscape}
               placeholder="Optional"
               showStatus={false}
               type="email"
@@ -441,6 +471,7 @@ export function GuestsGrid<TGuest extends Guest>({
               commitOnChange
               onCommit={(value) => setDraftField("phone", value)}
               onEnter={handleCreate}
+              onEscape={handleAddRowEscape}
               placeholder="Optional"
               showStatus={false}
               value={draft.phone}

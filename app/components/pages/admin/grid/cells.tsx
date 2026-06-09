@@ -161,6 +161,11 @@ interface GridTextCellProps {
   commitOnChange?: boolean;
   /** Overrides Enter: the add row passes its create handler here. */
   onEnter?: () => void;
+  /**
+   * Add-row only: Escape handler. The add row wires this to exit add mode when
+   * the row is still empty. Data cells ignore it and revert in place instead.
+   */
+  onEscape?: () => void;
   autoFocus?: boolean;
   className?: string;
   /** Normalize each typed value (e.g. force upper-case for RSVP codes). */
@@ -178,6 +183,7 @@ export function GridTextCell({
   type = "text",
   commitOnChange = false,
   onEnter,
+  onEscape,
   autoFocus,
   className,
   transform,
@@ -217,11 +223,20 @@ export function GridTextCell({
               focusCellBelow(e.currentTarget);
             }
           } else if (e.key === "Escape") {
-            // Cancel the edit and keep the cell focused (like a spreadsheet).
-            // Not blurring here is deliberate: a blur would fire a commit with
-            // the not-yet-re-rendered value and undo the revert.
-            cell.revert();
-            e.currentTarget.select();
+            if (commitOnChange) {
+              // Add row: nothing to revert (every keystroke is already in the
+              // draft), so hand Escape to the parent, which exits add mode while
+              // the row is still empty. A text cell can never have a dropdown
+              // open at the same time, so this never competes with a popover's
+              // own Escape-to-close.
+              onEscape?.();
+            } else {
+              // Data rows: cancel the edit and keep the cell focused (like a
+              // spreadsheet). Not blurring here is deliberate: a blur would fire a
+              // commit with the not-yet-re-rendered value and undo the revert.
+              cell.revert();
+              e.currentTarget.select();
+            }
           }
         }}
         placeholder={placeholder}
