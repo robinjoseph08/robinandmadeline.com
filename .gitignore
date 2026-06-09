@@ -338,3 +338,8 @@ tags
 
 # Claude-in-Chrome / Playwright MCP scratch output
 .playwright-mcp/
+
+# Playwright e2e output (the API binary lands in /build, already ignored)
+/playwright-report/
+/test-results/
+/blob-report/

@@ -99,6 +99,26 @@ run = "go test ./pkg/... ./cmd/... ./internal/..."
 description = "Run JS unit tests"
 run = "pnpm test:unit"
 
+[tasks."e2e:setup"]
+description = "Create and migrate the dedicated e2e database"
+# The e2e API does not migrate at startup (ADR 0007), so provision its database
+# here before Playwright boots the servers. Always a dedicated database, never
+# the shell's DATABASE_URL, so an e2e run can never touch dev data.
+run = '''
+export DATABASE_URL="${E2E_DATABASE_URL:-postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline_e2e?sslmode=disable}"
+go run ./cmd/migrations createdb
+go run ./cmd/migrations migrate
+'''
+
+[tasks."e2e:chromium"]
+description = "Run the e2e tests in Chromium"
+depends = ["e2e:setup"]
+run = "pnpm e2e:chromium"
+
+[tasks.e2e]
+description = "Run the e2e tests (Chromium)"
+depends = ["e2e:chromium"]
+
 # === Check ===
 
 [tasks.check]
