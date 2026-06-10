@@ -1,9 +1,10 @@
 // Package errcodes defines the application's typed HTTP errors and the Echo
 // error handler that renders them. Constructors return an *Error carrying the
-// HTTP status, a stable machine code, and a client-safe message; the handler
-// resolves any error to the standard envelope. No custom As/Is is defined:
-// stdlib errors.As / errors.Is traverse the chain (including pkg/errors wraps)
-// to find an *Error.
+// HTTP status, a stable machine code, and a message (client-safe for 4xx; 5xx
+// messages are log-only detail the handler masks); the handler resolves any
+// error to the standard envelope. No custom As/Is is defined: stdlib
+// errors.As / errors.Is traverse the chain (including pkg/errors wraps) to
+// find an *Error.
 package errcodes
 
 import (
