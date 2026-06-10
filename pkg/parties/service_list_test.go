@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/robinjoseph08/golib/pointerutil"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/stretchr/testify/assert"
@@ -334,4 +335,84 @@ func TestListGuests_LoadsOwningParty(t *testing.T) {
 	}
 	assert.Equal(t, "The Smiths", names[a.ID])
 	assert.Equal(t, "The Joneses", names[b.ID])
+}
+
+// TestListGuests_EventAndRSVPStatusFilters covers the #6 guest-list filters:
+// an event filter alone matches the event's invited set (the guests holding an
+// Event RSVP row for it, ADR 0002); adding a status constrains within that
+// event; a status alone matches guests holding a row in that status on any
+// event.
+func TestListGuests_EventAndRSVPStatusFilters(t *testing.T) {
+	svc, db := newService(t)
+	eventSvc := events.NewService(db)
+
+	a := createPartyT(t, svc, digitalPartyInput())
+	g1 := addGuestT(t, svc, a.ID, parties.CreateGuestPayload{FullName: "Alice"})
+	g2 := addGuestT(t, svc, a.ID, parties.CreateGuestPayload{FullName: "Bob"})
+	b := createPartyT(t, svc, digitalPartyInput())
+	g3 := addGuestT(t, svc, b.ID, parties.CreateGuestPayload{FullName: "Carol"})
+
+	// A public event invites everyone; a private one invites only party A.
+	public, err := eventSvc.CreateEvent(ctx(), events.CreateEventPayload{Name: "Reception", Date: "2026-10-17", IsPublic: true})
+	require.NoError(t, err)
+	private, err := eventSvc.CreateEvent(ctx(), events.CreateEventPayload{Name: "Rehearsal", Date: "2026-10-16"})
+	require.NoError(t, err)
+	_, err = eventSvc.InviteParties(ctx(), private.ID, events.InvitePartiesPayload{PartyIDs: []string{a.ID}})
+	require.NoError(t, err)
+
+	// Alice attends the private event; Carol attends the public one.
+	_, err = eventSvc.UpdateRSVPStatus(ctx(), private.ID, g1.ID, events.UpdateEventRSVPPayload{Status: models.RSVPAttending})
+	require.NoError(t, err)
+	_, err = eventSvc.UpdateRSVPStatus(ctx(), public.ID, g3.ID, events.UpdateEventRSVPPayload{Status: models.RSVPAttending})
+	require.NoError(t, err)
+
+	t.Run("event alone matches the invited set", func(t *testing.T) {
+		got, total, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{EventID: pointerutil.String(private.ID)})
+		require.NoError(t, err)
+		assert.Equal(t, 2, total)
+		ids := guestIDs(got)
+		assert.True(t, ids[g1.ID])
+		assert.True(t, ids[g2.ID])
+		assert.False(t, ids[g3.ID], "a guest with no row for the event is not invited to it")
+	})
+	t.Run("event plus status constrains within that event", func(t *testing.T) {
+		got, total, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{
+			EventID:    pointerutil.String(private.ID),
+			RSVPStatus: pointerutil.String(models.RSVPAttending),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 1, total)
+		ids := guestIDs(got)
+		assert.True(t, ids[g1.ID])
+		assert.False(t, ids[g3.ID], "Carol attends the public event, not this one")
+	})
+	t.Run("event plus pending", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{
+			EventID:    pointerutil.String(private.ID),
+			RSVPStatus: pointerutil.String(models.RSVPPending),
+		})
+		require.NoError(t, err)
+		ids := guestIDs(got)
+		assert.False(t, ids[g1.ID], "Alice already responded")
+		assert.True(t, ids[g2.ID])
+	})
+	t.Run("status alone matches any event", func(t *testing.T) {
+		got, total, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{RSVPStatus: pointerutil.String(models.RSVPAttending)})
+		require.NoError(t, err)
+		assert.Equal(t, 2, total)
+		ids := guestIDs(got)
+		assert.True(t, ids[g1.ID], "attending the private event")
+		assert.True(t, ids[g3.ID], "attending the public event")
+		assert.False(t, ids[g2.ID], "pending everywhere")
+	})
+	t.Run("combines with other guest filters", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{
+			PartyID:    pointerutil.String(a.ID),
+			RSVPStatus: pointerutil.String(models.RSVPAttending),
+		})
+		require.NoError(t, err)
+		ids := guestIDs(got)
+		assert.True(t, ids[g1.ID])
+		assert.False(t, ids[g3.ID], "filtered out by the party filter")
+	})
 }

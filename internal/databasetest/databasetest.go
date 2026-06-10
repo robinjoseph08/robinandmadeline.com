@@ -17,8 +17,10 @@
 // concurrently against shared tables. Across package binaries, which `go test`
 // runs in parallel, a test must not make order-sensitive assertions against the
 // shared database unless it either only reads / runs idempotent statements or
-// uses its own dedicated database (as pkg/migrations does for its destructive
-// up/down round-trip). Provisioning itself is concurrency-safe: EnsureExists
+// uses its own dedicated database: NewIsolated provisions one per package (as
+// pkg/events does, since its tests truncate parties, which pkg/parties owns in
+// the shared database), and pkg/migrations rolls its own for its destructive
+// up/down round-trip. Provisioning itself is concurrency-safe: EnsureExists
 // treats losing the create-database race as success, and New serializes
 // migration under a Postgres advisory lock, since bun's Migrator.Migrate takes
 // no lock of its own and two binaries migrating a fresh database would race.
@@ -28,6 +30,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -70,10 +73,32 @@ const migrateLockID = 824873
 // to assert.
 func New(t *testing.T) *bun.DB {
 	t.Helper()
+	return newAtDSN(t, testDatabaseURL())
+}
 
-	require.NoError(t, ensureDatabase(t), "ensure test database exists")
+// NewIsolated is New pointed at a dedicated database named dbName (on the same
+// server as the shared test database), for package binaries whose tests would
+// interfere with another binary's tables. go test runs package binaries in
+// parallel against one server, and truncation-based isolation only works
+// within a binary: two binaries truncating the same shared table wipe each
+// other's fixtures mid-test. A package that must truncate tables another
+// package also truncates (e.g. pkg/events truncates parties, which pkg/parties
+// owns in the shared database) gets its own database instead, provisioned and
+// migrated exactly like the shared one.
+func NewIsolated(t *testing.T, dbName string) *bun.DB {
+	t.Helper()
+	return newAtDSN(t, isolatedDSN(t, dbName))
+}
 
-	db := open(t, testDatabaseURL())
+// newAtDSN connects to the database at dsn, creating it if absent and bringing
+// it up to date with the registered migrations (serialized under the shared
+// advisory lock).
+func newAtDSN(t *testing.T, dsn string) *bun.DB {
+	t.Helper()
+
+	require.NoError(t, ensureDatabase(dsn), "ensure test database exists")
+
+	db := open(t, dsn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -112,14 +137,24 @@ func open(t *testing.T, dsn string) *bun.DB {
 	return db
 }
 
-// ensureDatabase creates the test database if it is absent, delegating to the
+// ensureDatabase creates the database at dsn if it is absent, delegating to the
 // shared database.EnsureExists so the create-if-missing logic lives in one place
 // (the migrations CLI's createdb command and the e2e setup reuse it too).
-func ensureDatabase(t *testing.T) error {
-	t.Helper()
+func ensureDatabase(dsn string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	return database.EnsureExists(ctx, testDatabaseURL())
+	return database.EnsureExists(ctx, dsn)
+}
+
+// isolatedDSN derives the DSN for a dedicated database from the shared test
+// DSN, swapping only the database name so credentials/host/options (including
+// a TEST_DATABASE_URL override in CI) carry over.
+func isolatedDSN(t *testing.T, dbName string) string {
+	t.Helper()
+	u, err := url.Parse(testDatabaseURL())
+	require.NoError(t, err, "parse test database url")
+	u.Path = "/" + dbName
+	return u.String()
 }
 
 // Truncate empties the given tables and is the per-test isolation primitive.

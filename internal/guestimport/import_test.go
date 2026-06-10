@@ -226,3 +226,45 @@ func TestImport_EmptyPlanImportsNothing(t *testing.T) {
 	require.Zero(t, summary.GuestsCreated)
 	require.Empty(t, loadParties(t, db))
 }
+
+func TestImport_BackfillsPublicEventRSVPs(t *testing.T) {
+	db := newDB(t)
+	// Truncate events too: this test seeds an event with a fixed id, and the
+	// shared newDB truncation only covers parties (and, via cascade, guests
+	// and event_rsvps).
+	databasetest.Truncate(t, db, "events")
+
+	public := &models.Event{
+		ID:       "0197fc00-0000-7000-8000-0000000000e1",
+		Name:     "Reception",
+		Date:     "2026-10-17",
+		IsPublic: true,
+	}
+	private := &models.Event{
+		ID:       "0197fc00-0000-7000-8000-0000000000e2",
+		Name:     "Rehearsal Dinner",
+		Date:     "2026-10-16",
+		IsPublic: false,
+	}
+	_, err := db.NewInsert().Model(&[]*models.Event{public, private}).Exec(ctx())
+	require.NoError(t, err)
+
+	plan := parseT(t,
+		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,2,,,,,No,Yes,,,,`,
+	)
+	summary, err := guestimport.Import(ctx(), db, plan, guestimport.Options{})
+	require.NoError(t, err)
+	require.Equal(t, 2, summary.GuestsCreated)
+
+	// Every imported guest (including the placeholder) is born invited to the
+	// public event, pending; the private event gets nothing (ADR 0002).
+	count, err := db.NewSelect().Model((*models.EventRSVP)(nil)).
+		Where("event_id = ?", public.ID).Where("status = ?", models.RSVPPending).Count(ctx())
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+
+	count, err = db.NewSelect().Model((*models.EventRSVP)(nil)).
+		Where("event_id = ?", private.ID).Count(ctx())
+	require.NoError(t, err)
+	require.Zero(t, count)
+}
