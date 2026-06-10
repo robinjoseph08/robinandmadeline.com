@@ -341,7 +341,7 @@ func (p *parser) buildPlan() *Plan {
 // are the union across rows; the address is the first non-blank with a
 // warning when rows disagree; the first guest is the primary. A row with
 // Size N expands into the named guest followed immediately by its N-1
-// placeholder plus-ones, so guest order (and the import's in-order IDs)
+// placeholder guests, so guest order (and the import's in-order IDs)
 // keeps each placeholder next to its host.
 func (p *parser) buildParty(name string, rows []parsedRow, codeOwners map[string]string) *PartyPlan {
 	party := &models.Party{
