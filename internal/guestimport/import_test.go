@@ -56,8 +56,8 @@ func loadParties(t *testing.T, db *bun.DB) []*models.Party {
 func TestImport_CreatesPartiesAndGuestsInOneTransaction(t *testing.T) {
 	db := newDB(t)
 	plan := parseT(t,
-		`Alice,Adams,Alice Adams,Robin,Family,Immediate,"Sibling, Bridal Party",Adams,2,555-0100,alice@example.com,123 Main St,Springfield,No,Yes,Ms.,KALEL,,`,
-		`Bob,Adams,Bob Adams,Robin,Family,Immediate,In-Law,Adams,2,,,,,Yes,No,Mr.,KALEL,,`,
+		`Alice,Adams,Alice Adams,Robin,Family,Immediate,"Sibling, Bridal Party",Adams,1,555-0100,alice@example.com,123 Main St,Springfield,No,Yes,Ms.,KALEL,,`,
+		`Bob,Adams,Bob Adams,Robin,Family,Immediate,In-Law,Adams,1,,,,,Yes,No,Mr.,KALEL,,`,
 		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,1,,,,,No,Yes,,,,`,
 	)
 
@@ -107,6 +107,42 @@ func TestImport_CreatesPartiesAndGuestsInOneTransaction(t *testing.T) {
 	// derives incomplete (ADR 0005); both imported parties read incomplete.
 	require.Equal(t, models.StatusIncomplete, adams.InfoCollectionStatus())
 	require.Equal(t, models.StatusIncomplete, brown.InfoCollectionStatus())
+}
+
+func TestImport_PersistsPlaceholdersAfterTheirHostGuest(t *testing.T) {
+	db := newDB(t)
+	plan := parseT(t,
+		`Alice,Adams,Alice Adams,Robin,Family,Immediate,Sibling,Adams,2,,,,,No,Yes,,,,`,
+		`Bob,Adams,Bob Adams,Robin,Family,Immediate,In-Law,Adams,1,,,,,No,No,,,,`,
+	)
+
+	summary, err := guestimport.Import(ctx(), db, plan, guestimport.Options{})
+	require.NoError(t, err)
+	require.Equal(t, 1, summary.PartiesCreated)
+	require.Equal(t, 3, summary.GuestsCreated, "guests created includes placeholders")
+	require.Equal(t, 1, summary.PlaceholdersCreated)
+
+	parties := loadParties(t, db)
+	require.Len(t, parties, 1)
+	guests := parties[0].Guests
+	require.Len(t, guests, 3)
+
+	require.Equal(t, "Alice Adams", guests[0].FullName)
+	require.True(t, guests[0].IsPrimary)
+	require.False(t, guests[0].IsPlaceholder)
+
+	require.Equal(t, "Guest of Alice Adams", guests[1].FullName,
+		"the placeholder sorts right after its host under the created_at/id order the API uses")
+	require.True(t, guests[1].IsPlaceholder)
+	require.False(t, guests[1].IsPrimary)
+	require.False(t, guests[1].IsChild)
+	require.False(t, guests[1].IsDrinking)
+	require.Equal(t, []string{}, guests[1].Tags)
+	require.Nil(t, guests[1].Email)
+	require.Nil(t, guests[1].Phone)
+
+	require.Equal(t, "Bob Adams", guests[2].FullName)
+	require.False(t, guests[2].IsPlaceholder)
 }
 
 func TestImport_FailsCleanlyWhenPartiesAlreadyExist(t *testing.T) {

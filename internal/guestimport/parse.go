@@ -6,8 +6,10 @@
 //
 // The sheet's taxonomy maps onto the domain language (CONTEXT.md): Kingdom is
 // the party's side, Phylum its relation, Class its circles, Order the guest's
-// tags, and "Family (Party)" the party grouping key. The Prefix column and the
-// trailing junk "Column N" columns are ignored.
+// tags, and "Family (Party)" the party grouping key. Size is per-row: a guest
+// with Size N brings N-1 unnamed plus-ones, imported as placeholder guests
+// (blank means 1, just the named guest). The Prefix column and the trailing
+// junk "Column N" columns are ignored.
 package guestimport
 
 import (
@@ -36,10 +38,10 @@ type Plan struct {
 	// fully blank spacer rows), which are skipped rather than imported.
 	SkippedBlankRows int
 
-	// Warnings are non-fatal data observations (size mismatches, blank
-	// Child?/Drinking? cells, conflicting addresses) for the operator to fix in
-	// the admin afterward. Anything that would import wrong data is a Parse
-	// error instead, never a warning.
+	// Warnings are non-fatal data observations (blank Child?/Drinking? cells,
+	// conflicting addresses) for the operator to fix in the admin afterward.
+	// Anything that would import wrong data is a Parse error instead, never a
+	// warning.
 	Warnings []string
 }
 
@@ -120,7 +122,7 @@ type parsedRow struct {
 	code       string // "" means generate at import time
 	address    string
 	city       string
-	size       string
+	size       int // this guest plus their unnamed plus-ones; always >= 1
 }
 
 // parser accumulates rows, warnings, and problems across a Parse run.
@@ -238,7 +240,19 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 		tags:      splitMulti(get(colOrder)),
 		address:   get(colAddress),
 		city:      get(colCity),
-		size:      get(colSize),
+		size:      1,
+	}
+
+	// Size is per-row: this guest plus their unnamed plus-ones, expanded into
+	// placeholder guests when the party is built. Blank means just the named
+	// guest; anything else must be a positive count or the row's meaning is
+	// unclear (a shifted column, or sheet math left over from another scheme).
+	if s := get(colSize); s != "" {
+		if n, err := strconv.Atoi(s); err != nil || n < 1 {
+			problem("%s must be a positive whole number or blank, got %q", colSize, s)
+		} else {
+			row.size = n
+		}
 	}
 
 	// The user guarantees every named row of the final sheet has a party; a
@@ -292,7 +306,7 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 // buildPlan groups the parsed rows into parties (in first-appearance order)
 // and derives each party's fields from its rows, recording cross-row problems
 // (conflicting sides, relations, or codes; codes shared across parties) and
-// warnings (size mismatches, conflicting addresses).
+// warnings (conflicting addresses).
 func (p *parser) buildPlan() *Plan {
 	groups := make(map[string][]parsedRow)
 	var order []string
@@ -325,7 +339,10 @@ func (p *parser) buildPlan() *Plan {
 // buildParty derives one party and its guests from the party's rows. The
 // party-level fields must agree across rows (side, relation, code); circles
 // are the union across rows; the address is the first non-blank with a
-// warning when rows disagree; the first guest is the primary.
+// warning when rows disagree; the first guest is the primary. A row with
+// Size N expands into the named guest followed immediately by its N-1
+// placeholder plus-ones, so guest order (and the import's in-order IDs)
+// keeps each placeholder next to its host.
 func (p *parser) buildParty(name string, rows []parsedRow, codeOwners map[string]string) *PartyPlan {
 	party := &models.Party{
 		Name:           name,
@@ -397,6 +414,7 @@ func (p *parser) buildParty(name string, rows []parsedRow, codeOwners map[string
 			IsChild:    row.isChild,
 			IsDrinking: row.isDrinking,
 		})
+		guests = append(guests, placeholderGuests(row)...)
 	}
 
 	switch len(codes) {
@@ -412,27 +430,31 @@ func (p *parser) buildParty(name string, rows []parsedRow, codeOwners map[string
 		problem("conflicting %s values across its rows: %s", colCode, strings.Join(codes, ", "))
 	}
 
-	// Size is informational; the actual guest count wins, but a mismatch is
-	// worth a look (a missing row, or stale sheet math).
-	if size := firstNonBlankSize(rows); size != "" {
-		if n, err := strconv.Atoi(size); err != nil {
-			warn("unparseable %s value %q", colSize, size)
-		} else if n != len(guests) {
-			warn("%s column says %d but %d guest(s) were imported", colSize, n, len(guests))
-		}
-	}
-
 	return &PartyPlan{Party: party, Guests: guests}
 }
 
-// firstNonBlankSize returns the party's first non-blank Size cell, or "".
-func firstNonBlankSize(rows []parsedRow) string {
-	for _, row := range rows {
-		if row.size != "" {
-			return row.size
+// placeholderGuests builds a row's Size-1 placeholder guests: the unnamed
+// plus-ones the named guest brings, stubbed with is_placeholder until the
+// party fills in real details during RSVP (CONTEXT.md). A single plus-one is
+// "Guest of <host>"; several are numbered "Guest 1 of <host>", "Guest 2 of
+// <host>". Placeholders are never the party's primary, carry no contact info
+// or tags, and default is_child/is_drinking to false; their blank-by-design
+// fields are not tallied into the blank-cell warnings, which count real rows.
+func placeholderGuests(row parsedRow) []*models.Guest {
+	extras := row.size - 1
+	guests := make([]*models.Guest, 0, extras)
+	for n := 1; n <= extras; n++ {
+		name := "Guest of " + row.fullName
+		if extras > 1 {
+			name = fmt.Sprintf("Guest %d of %s", n, row.fullName)
 		}
+		guests = append(guests, &models.Guest{
+			FullName:      name,
+			Tags:          []string{},
+			IsPlaceholder: true,
+		})
 	}
-	return ""
+	return guests
 }
 
 // splitMulti splits a multi-value cell ("Childhood, College") on commas,
