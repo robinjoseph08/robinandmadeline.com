@@ -86,13 +86,17 @@ func TestCreatePartyHandler_ReturnsStatusAndToken(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code)
 
 	var resp struct {
-		ID                   string `json:"id"`
-		InfoToken            string `json:"info_token"`
-		InfoCollectionStatus string `json:"info_collection_status"`
+		ID                   string  `json:"id"`
+		InfoToken            string  `json:"info_token"`
+		RSVPCode             *string `json:"rsvp_code"`
+		InfoCollectionStatus string  `json:"info_collection_status"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp.ID)
 	assert.NotEmpty(t, resp.InfoToken, "response should include the generated info token")
+	// No code in the request, so the response carries a generated one.
+	require.NotNil(t, resp.RSVPCode, "response should include the generated rsvp_code")
+	assert.Regexp(t, rsvpCodePattern, *resp.RSVPCode)
 	// No primary email yet, so a fresh digital party derives incomplete.
 	assert.Equal(t, models.StatusIncomplete, resp.InfoCollectionStatus)
 }
@@ -301,6 +305,23 @@ func TestPatchPartyHandler_UppercasesRSVPCode(t *testing.T) {
 func TestGetPartyHandler_404(t *testing.T) {
 	e := newAPI(t)
 	rec := do(t, e, http.MethodGet, "/api/admin/parties/00000000-0000-0000-0000-000000000000", nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, string(errcodes.CodeNotFound), errorCode(t, rec))
+}
+
+func TestGetPartyHandler_MalformedIDIs404(t *testing.T) {
+	e := newAPI(t)
+	// A non-UUID path id can never name a row, so it gets the same 404 as a
+	// missing party rather than a 500 from a failed text-to-uuid cast.
+	rec := do(t, e, http.MethodGet, "/api/admin/parties/abc", nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, string(errcodes.CodeNotFound), errorCode(t, rec))
+}
+
+func TestPatchGuestHandler_MalformedIDIs404(t *testing.T) {
+	e := newAPI(t)
+	// Same contract on the guest routes: a malformed guest id is a 404.
+	rec := do(t, e, http.MethodPatch, "/api/admin/guests/abc", map[string]any{"full_name": "X"})
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, string(errcodes.CodeNotFound), errorCode(t, rec))
 }

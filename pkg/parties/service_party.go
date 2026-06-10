@@ -12,14 +12,15 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// CreateParty inserts a party, generating a unique info token. This is the
-// internal primitive (used to compose CreatePartyWithGuest and to build test
-// fixtures); the public create path is CreatePartyWithGuest, which guarantees a
-// party is born with its first guest. The payload is already bound, trimmed,
+// CreateParty inserts a party, generating a unique info token. No handler calls
+// it: it exists to build test fixtures, sharing insertPartyWithUniqueToken with
+// the public create path, CreatePartyWithGuest, which guarantees a party is
+// born with its first guest. The payload is already bound, trimmed,
 // defaulted, and validated by the binder, so the fields are assigned directly;
 // circle arrives as a non-nil slice (defaulted to []) so it stores '{}', not
 // NULL. A supplied RSVP code that is already taken yields a 409. An omitted
-// optional field is nil and persists as SQL NULL.
+// optional field is nil and persists as SQL NULL, except rsvp_code: a nil code
+// is auto-generated, so a party is always created with one.
 func (s *Service) CreateParty(ctx context.Context, in CreatePartyPayload) (*models.Party, error) {
 	now := time.Now()
 	party := &models.Party{
@@ -50,7 +51,8 @@ func (s *Service) CreateParty(ctx context.Context, in CreatePartyPayload) (*mode
 // transaction, the public create path (POST /parties). The party is never left
 // without a member, and the first guest is forced primary, seeding the
 // single-primary invariant. invitation_type has already been defaulted to
-// "physical" by the binder when omitted. A taken RSVP code yields a 409; if the
+// "physical" by the binder when omitted. A taken RSVP code yields a 409, and an
+// omitted one is auto-generated, so the party is born ready to RSVP; if the
 // insert fails the whole thing rolls back, so a failed guest insert never leaves
 // an empty party behind. The returned party carries its guest so the response
 // status derives correctly.
@@ -98,18 +100,30 @@ func (s *Service) CreatePartyWithGuest(ctx context.Context, in CreatePartyWithGu
 	return party, nil
 }
 
-// insertPartyWithUniqueToken inserts a party with a unique info token. It takes a
-// bun.IDB so it works on both the pool (CreateParty) and a transaction
+// insertPartyWithUniqueToken inserts a party with a unique info token and a
+// guaranteed RSVP code: a provided code is kept (after the uniqueness check), a
+// nil one is generated, so every create path births a party with a code. It
+// takes a bun.IDB so it works on both the pool (CreateParty) and a transaction
 // (CreatePartyWithGuest). Uniqueness is checked up front with SELECTs rather than
 // by catching a failed INSERT: inside a transaction a failed statement aborts the
 // whole transaction (so a follow-up query would error with "current transaction
 // is aborted"), which is exactly the path CreatePartyWithGuest exercises. A taken
-// RSVP code is a clean 409; an info-token collision (astronomically unlikely)
-// just regenerates. The unique indexes remain the ultimate backstop against a
-// concurrent racer slipping in between the check and the insert.
+// provided RSVP code is a clean 409; a taken generated code and an info-token
+// collision (astronomically unlikely) just regenerate. The unique indexes remain
+// the ultimate backstop against a concurrent racer slipping in between the check
+// and the insert; when that backstop fires on the RSVP code, the insert error is
+// mapped to the same 409 the up-front check produces (for a generated code that
+// retried create draws a fresh one). An insert-time info-token collision stays
+// an error: the aborted transaction cannot retry the loop, and 192-bit tokens
+// make it not worth handling.
 func insertPartyWithUniqueToken(ctx context.Context, db bun.IDB, party *models.Party, rsvpProvided bool) error {
 	if rsvpProvided && isRSVPCodeConflict(ctx, db, party.RSVPCode) {
 		return errcodes.Conflict("A party with that RSVP code already exists.")
+	}
+	if !rsvpProvided {
+		if err := assignGeneratedRSVPCode(ctx, db, party); err != nil {
+			return err
+		}
 	}
 
 	for attempt := 0; attempt < maxTokenAttempts; attempt++ {
@@ -127,7 +141,8 @@ func insertPartyWithUniqueToken(ctx context.Context, db bun.IDB, party *models.P
 
 		party.InfoToken = token
 		if _, err := db.NewInsert().Model(party).Exec(ctx); err != nil {
-			return errors.Wrap(err, "insert party")
+			return errcodes.ConflictOnConstraint(errors.Wrap(err, "insert party"),
+				"ux_parties_rsvp_code", "A party with that RSVP code already exists.")
 		}
 		return nil
 	}
@@ -277,6 +292,32 @@ func (s *Service) DeleteParty(ctx context.Context, id string) error {
 		return errcodes.NotFound("party")
 	}
 	return nil
+}
+
+// assignGeneratedRSVPCode fills party.RSVPCode with a freshly generated code no
+// existing party holds, so a create that supplies no code still yields a party
+// guests can RSVP with. Mirroring the info-token loop, uniqueness is checked
+// with a SELECT and a taken code just regenerates (bounded attempts): a failed
+// INSERT could not be retried inside CreatePartyWithGuest's transaction, so
+// collisions are caught before the insert and the partial unique index stays
+// the backstop against a concurrent racer.
+func assignGeneratedRSVPCode(ctx context.Context, db bun.IDB, party *models.Party) error {
+	for attempt := 0; attempt < maxRSVPCodeAttempts; attempt++ {
+		code, err := generateRSVPCode()
+		if err != nil {
+			return err
+		}
+		taken, err := db.NewSelect().Model((*models.Party)(nil)).Where("rsvp_code = ?", code).Exists(ctx)
+		if err != nil {
+			return errors.Wrap(err, "check rsvp code")
+		}
+		if taken {
+			continue
+		}
+		party.RSVPCode = pointerutil.String(code)
+		return nil
+	}
+	return errors.Errorf("generate unique rsvp code: exhausted %d attempts", maxRSVPCodeAttempts)
 }
 
 // isRSVPCodeConflict reports whether some party already holds the given RSVP

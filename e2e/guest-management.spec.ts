@@ -142,14 +142,15 @@ test("admin manages parties and guests end to end", async ({ page }) => {
   await expect(page.getByText(/info link copied/i)).toBeVisible();
   expect(await readClipboard(page)).toContain("/i/");
 
-  // Set an RSVP code, then copy it.
-  const rsvp = `RSVP${stamp}`.toUpperCase();
+  // Copy the RSVP code. A freshly created party always has one: the backend
+  // auto-generates five uppercase letters from an unambiguous no-vowel
+  // alphabet, so there is nothing to set manually first.
   const rsvpCell = row.getByRole("textbox", { name: "RSVP code" });
-  await rsvpCell.fill(rsvp);
-  await rsvpCell.press("Enter");
+  await expect(rsvpCell).toHaveValue(/^[BCDFGHJKLMNPQRSTVWXZ]{5}$/);
+  const rsvpCode = await rsvpCell.inputValue();
   await row.getByRole("button", { name: "Copy RSVP code" }).click();
   await expect(page.getByText(/rsvp code copied/i)).toBeVisible();
-  expect(await readClipboard(page)).toBe(rsvp);
+  expect(await readClipboard(page)).toBe(rsvpCode);
 });
 
 /**

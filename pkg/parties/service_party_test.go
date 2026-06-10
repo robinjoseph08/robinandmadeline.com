@@ -40,12 +40,79 @@ func TestCreateParty_DuplicateRSVPCodeConflicts(t *testing.T) {
 	assertErrCode(t, err, errcodes.CodeConflict)
 }
 
-func TestCreateParty_AllowsMultipleNullRSVPCodes(t *testing.T) {
+// TestCreateParty_InsertTimeUniqueViolationMapsByConstraint pins the insert-time
+// 23505 mapping with a real driver error. The create paths check uniqueness up
+// front, so the index only fires when a concurrent racer slips a duplicate in
+// between the check and the insert; that interleaving itself is untested by
+// design (it needs two in-flight transactions), but the mapping it relies on is
+// driven here with the genuine error a duplicate insert produces: a 409 when
+// the named constraint matches, untouched passthrough when it does not.
+func TestCreateParty_InsertTimeUniqueViolationMapsByConstraint(t *testing.T) {
+	svc, db := newService(t)
+
+	in := digitalPartyInput()
+	in.RSVPCode = pointerutil.String("RACER")
+	createPartyT(t, svc, in)
+
+	dup := &models.Party{
+		ID:             "11111111-1111-1111-1111-111111111111",
+		Name:           "Dup",
+		Side:           models.SideRobin,
+		Relation:       models.RelationFriend,
+		InvitationType: models.InvitationDigital,
+		InfoToken:      "dup-info-token",
+		RSVPCode:       pointerutil.String("RACER"),
+	}
+	_, err := db.NewInsert().Model(dup).Exec(ctx())
+	require.Error(t, err, "the duplicate rsvp_code insert must violate ux_parties_rsvp_code")
+
+	mapped := errcodes.ConflictOnConstraint(err, "ux_parties_rsvp_code", "A party with that RSVP code already exists.")
+	assertErrCode(t, mapped, errcodes.CodeConflict)
+
+	var appErr *errcodes.Error
+	passedThrough := errcodes.ConflictOnConstraint(err, "ux_parties_info_token", "wrong constraint")
+	require.NotErrorAs(t, passedThrough, &appErr, "a violation of a different constraint must pass through unmapped")
+}
+
+// rsvpCodePattern is the shape of a generated RSVP code: exactly five letters
+// from the unambiguous uppercase alphabet (no vowels, no confusable I or O).
+const rsvpCodePattern = `^[BCDFGHJKLMNPQRSTVWXZ]{5}$`
+
+func TestCreateParty_GeneratesRSVPCodeWhenAbsent(t *testing.T) {
 	svc, _ := newService(t)
 
-	// The partial unique index must allow many parties with no RSVP code.
-	createPartyT(t, svc, digitalPartyInput())
-	createPartyT(t, svc, digitalPartyInput())
+	// No code supplied: the service draws one, so every party is born with a
+	// usable RSVP code. (NULL codes now arise only from a PATCH clear; see
+	// TestPatchParty_SetsAndClearsRSVPCode.)
+	p := createPartyT(t, svc, digitalPartyInput())
+	require.NotNil(t, p.RSVPCode, "a code-less create must auto-generate an rsvp_code")
+	assert.Regexp(t, rsvpCodePattern, *p.RSVPCode)
+
+	// The generated code is persisted, not just set on the returned struct.
+	reloaded, err := svc.GetParty(ctx(), p.ID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded.RSVPCode)
+	assert.Equal(t, *p.RSVPCode, *reloaded.RSVPCode)
+
+	// A second code-less party draws its own distinct code, satisfying the
+	// unique index where two NULLs used to.
+	p2 := createPartyT(t, svc, digitalPartyInput())
+	require.NotNil(t, p2.RSVPCode)
+	assert.NotEqual(t, *p.RSVPCode, *p2.RSVPCode)
+}
+
+func TestCreateParty_KeepsProvidedRSVPCode(t *testing.T) {
+	svc, _ := newService(t)
+
+	// An explicit code is respected, never replaced by a generated one. (The
+	// binder upper-cases it on the way in; that is covered at the handler level
+	// by TestCreatePartyHandler_DefaultsInvitationAndUppercasesRSVP.)
+	in := digitalPartyInput()
+	in.RSVPCode = pointerutil.String("KALEL")
+	p := createPartyT(t, svc, in)
+
+	require.NotNil(t, p.RSVPCode)
+	assert.Equal(t, "KALEL", *p.RSVPCode)
 }
 
 func TestCreateParty_NilCirclePersistsAsEmptyArray(t *testing.T) {
@@ -78,6 +145,9 @@ func TestCreatePartyWithGuest_CreatesPrimaryFirstGuest(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, p.InfoToken)
+	// The public path auto-generates the omitted RSVP code too.
+	require.NotNil(t, p.RSVPCode)
+	assert.Regexp(t, rsvpCodePattern, *p.RSVPCode)
 	require.Len(t, p.Guests, 1)
 	assert.Equal(t, "Pat Smith", p.Guests[0].FullName)
 	assert.True(t, p.Guests[0].IsPrimary, "the first guest is the party's primary")

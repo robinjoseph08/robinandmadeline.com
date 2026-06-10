@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"math/big"
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
@@ -24,6 +25,22 @@ const maxTokenAttempts = 5
 // infoTokenBytes is the entropy (in bytes) behind a generated info token. 24
 // bytes is 192 bits and base64url-encodes to a compact, URL-safe string.
 const infoTokenBytes = 24
+
+// rsvpCodeLength is the length of a generated RSVP code. Five letters from the
+// 20-letter alphabet is 3.2 million combinations: short enough to copy from a
+// printed card, roomy enough that collisions stay rare at wedding scale.
+const rsvpCodeLength = 5
+
+// maxRSVPCodeAttempts bounds generated-RSVP-code retries when a fresh code is
+// already taken, which (unlike an info-token collision) is genuinely possible
+// in a code space this small.
+const maxRSVPCodeAttempts = 5
+
+// rsvpCodeAlphabet is the character set for generated RSVP codes: uppercase
+// consonants only. I and O are dropped as confusable (in print they read as 1
+// and 0), and excluding every vowel (plus Y) means a random code can never
+// spell an English word, so nothing rude or odd lands on an invitation.
+const rsvpCodeAlphabet = "BCDFGHJKLMNPQRSTVWXZ"
 
 // Service is the parties/guests data layer over a Bun DB. Construct it with
 // NewService. It owns all writes, so the single-primary and status invariants
@@ -53,6 +70,22 @@ func generateInfoToken() (string, error) {
 		return "", errors.Wrap(err, "generate info token")
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// generateRSVPCode returns a random RSVP code: rsvpCodeLength characters drawn
+// uniformly (crypto/rand, the same randomness source as generateInfoToken)
+// from rsvpCodeAlphabet. Unlike info tokens the code space is small enough
+// that collisions are plausible, so the caller checks uniqueness and retries.
+func generateRSVPCode() (string, error) {
+	code := make([]byte, rsvpCodeLength)
+	for i := range code {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(rsvpCodeAlphabet))))
+		if err != nil {
+			return "", errors.Wrap(err, "generate rsvp code")
+		}
+		code[i] = rsvpCodeAlphabet[n.Int64()]
+	}
+	return string(code), nil
 }
 
 // loadPartyWithGuests fetches a party and its guests within a query context (the
