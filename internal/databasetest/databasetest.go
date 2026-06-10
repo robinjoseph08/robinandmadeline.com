@@ -20,10 +20,11 @@
 // uses its own dedicated database: NewIsolated provisions one per package (as
 // pkg/events and internal/guestimport do, since their tests truncate parties
 // and events, which pkg/parties owns in the shared database), and
-// pkg/migrations rolls its own for its destructive up/down round-trip. Provisioning itself is concurrency-safe: EnsureExists
-// treats losing the create-database race as success, and New serializes
-// migration under a Postgres advisory lock, since bun's Migrator.Migrate takes
-// no lock of its own and two binaries migrating a fresh database would race.
+// pkg/migrations rolls its own for its destructive up/down round-trip.
+// Provisioning itself is concurrency-safe: EnsureExists treats losing the
+// create-database race as success, and New serializes migration under a
+// Postgres advisory lock, since bun's Migrator.Migrate takes no lock of its
+// own and two binaries migrating a fresh database would race.
 package databasetest
 
 import (

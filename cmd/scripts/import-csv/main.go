@@ -9,8 +9,9 @@
 // "Family (Party)" column; any data problem fails before the database is
 // touched), then written in a single transaction. By default the import
 // refuses to run against a database that already has parties, so running it
-// twice cannot create duplicates; --truncate wipes parties and guests inside
-// the same transaction first, for iterating during setup. A row whose Size is
+// twice cannot create duplicates; --truncate wipes parties and guests (plus
+// the guests' event_rsvps rows; events themselves are kept) inside the same
+// transaction first, for iterating during setup. A row whose Size is
 // N imports as the named guest plus N-1 placeholder guests. On success it
 // prints a summary plus any warnings (blank cells, conflicting addresses) to
 // fix in the admin afterward. See internal/guestimport for the column mapping.
@@ -32,7 +33,7 @@ import (
 func main() {
 	log := logger.New()
 
-	truncate := flag.Bool("truncate", false, "wipe existing parties and guests (inside the import transaction) before importing")
+	truncate := flag.Bool("truncate", false, "wipe existing parties, guests, and their event RSVPs (inside the import transaction) before importing")
 	flag.Usage = usage
 	flag.Parse()
 	if flag.NArg() != 1 {
