@@ -1,0 +1,37 @@
+type_mappings:
+  time.Time: "string /* RFC3339 */"
+  github.com/google/uuid.UUID: "string"
+
+packages:
+  # The persistent models plus their closed enum unions (Side, Relation, Circle,
+  # InvitationType, InfoCollectionStatus). Full-package export.
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/models"
+    output_path: "app/types/generated/models.ts"
+
+  # The parties API payload, query, and response types. Only types.go is emitted;
+  # the response types reference the model enums and embed Party/Guest, imported
+  # from the generated models module.
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
+    output_path: "app/types/generated/parties.ts"
+    frontmatter: |
+      import * as models from "@/types/generated/models";
+    include_files:
+      - types.go
+
+  # The ErrorCode union shared by the API error envelope.
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
+    output_path: "app/types/generated/errcodes.ts"
+    include_files:
+      - errors.go
+
+  # The auth API payload and response types (admin login).
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
+    output_path: "app/types/generated/auth.ts"
+    include_files:
+      - types.go
+
+  # The server-registered endpoint bodies (health, me).
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/server"
+    output_path: "app/types/generated/server.ts"
+    include_files:
+      - types.go

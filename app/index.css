@@ -10,7 +10,7 @@
  * `white`/`black` utilities while still mapping to our palette.
  */
 @theme {
-  --color-cream: #f9f5e9;
+  --color-cream: #f6f5f1;
   --color-ink: #161822;
   --color-primary: #ffdcdc;
   --color-secondary: #adc8ff;
@@ -31,11 +31,11 @@
 :root {
   --radius: 0.625rem;
 
-  --background: #f9f5e9; /* cream */
+  --background: #f6f5f1; /* cream */
   --foreground: #161822; /* ink */
-  --card: #f9f5e9;
+  --card: #f6f5f1;
   --card-foreground: #161822;
-  --popover: #f9f5e9;
+  --popover: #f6f5f1;
   --popover-foreground: #161822;
   --primary: #ffdcdc; /* palette primary (soft pink) */
   --primary-foreground: #161822; /* ink for contrast on soft pink */

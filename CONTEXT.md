@@ -32,9 +32,9 @@ _Avoid_: Phylum
 How the couple knows a party (Immediate, Extended, College, Work, Childhood, Other). A party-level attribute that can hold multiple values.
 _Avoid_: Class
 
-**Roles**:
-A guest's relationship tags (Sibling, In-Law, Bridal Party, Cousin, UIUC, etc.). A guest-level attribute that can hold multiple values.
-_Avoid_: Order, tags
+**Tags**:
+A guest's relationship labels (Sibling, In-Law, Bridal Party, Cousin, UIUC, etc.). A guest-level attribute that can hold multiple values, open-ended rather than a fixed set.
+_Avoid_: Order, roles (the PRD's original name for this attribute)
 
 **Event**:
 A scheduled wedding activity (Rehearsal Dinner / Madhuram Veppu, Ceremony, Reception, possibly Brunch).
@@ -57,7 +57,7 @@ A random, opaque per-party token embedded in the pre-invitation info-collection 
 _Avoid_: Code (guests never see this as a code)
 
 **RSVP Code**:
-A memorable, often personalized per-party code (e.g. KALEL, PEPPER) revealed on the printed invitation and used to authenticate the RSVP flow.
+A memorable, often personalized per-party code (e.g. KALEL, PEPPER) revealed on the printed invitation and used to authenticate the RSVP flow. When the couple does not set a personalized code, a random five-letter code (from an alphabet that avoids confusable letters and cannot spell words) is generated at party creation; a cleared code stays empty until set again.
 _Avoid_: Password, info token
 
 **Invitation Type**:
@@ -81,8 +81,10 @@ _Avoid_: Photo shoot, album (the photo gallery is unrelated)
 ## Relationships
 
 - A **Party** has one or more **Guests**; exactly one is the **Primary Guest**.
+- A **Party** is born with its first **Guest** (who starts as its **Primary Guest**) and never exists empty: deleting the last **Guest** deletes the **Party**.
+- When the **Primary Guest** leaves a **Party** (deleted, or moved to another party), the oldest remaining **Guest** is promoted; unsetting the sole primary is refused.
 - A **Party** has one **Side**, one **Relation**, and one or more **Circles**.
-- A **Guest** has zero or more **Roles**.
+- A **Guest** has zero or more **Tags**.
 - A **Party** has one **Info Token** and one **RSVP Code**.
 - A **Guest** has one **Event RSVP** per **Event** they are invited to.
 - A **Photo Group** belongs to one **Event** and contains one or more **Guests**.
@@ -102,6 +104,7 @@ _Avoid_: Photo shoot, album (the photo gallery is unrelated)
 
 - "RSVP" was used to mean both a single wedding-wide response and a per-event response. Resolved: RSVP is always per-event (**Event RSVP**); there is no wedding-wide RSVP.
 - "Code" was ambiguous between the early info-collection link and the printed RSVP credential. Resolved: these are two distinct per-party values, the **Info Token** and the **RSVP Code**.
-- Side / Relation / Circle / Roles were initially treated as guest attributes. Resolved: Side, Relation, and Circle are party-level; Roles are guest-level.
+- Side / Relation / Circle / Tags were initially treated as guest attributes. Resolved: Side, Relation, and Circle are party-level; Tags are guest-level.
+- The PRD and issue #4 called the guest attribute "roles". Resolved: the attribute is **Tags** (a deliberate rename during implementation); "roles" is reserved for auth role claims (admin, guest) and should not be used for the guest attribute.
 - "Address" was assumed to be per-guest. Resolved: the mailing address is party-level (one envelope per party); only email and phone are per-guest.
 - "Complete" was overloaded between "has all required fields" (a data condition) and **Info Collection Status** = complete (a tracked state). Resolved: all-fields-present is necessary for complete, but once a party is **Info Collection Requested** the guest must submit the form (or the couple must mark it complete): data presence alone no longer completes it.

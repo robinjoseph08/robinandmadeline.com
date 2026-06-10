@@ -1,10 +1,10 @@
 package auth
 
 import (
-	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 )
 
 // Context keys under which validated claims are stashed on the Echo context.
@@ -35,7 +35,7 @@ func (m *Middleware) RequireAdmin(next echo.HandlerFunc) echo.HandlerFunc {
 			return err
 		}
 		if claims.Role != RoleAdmin {
-			return echo.NewHTTPError(http.StatusUnauthorized, "admin access required")
+			return errcodes.Unauthorized("Admin access is required.")
 		}
 		c.Set(ContextKeyClaims, claims)
 		return next(c)
@@ -47,12 +47,12 @@ func (m *Middleware) RequireAdmin(next echo.HandlerFunc) echo.HandlerFunc {
 func (m *Middleware) authenticate(c echo.Context) (*JWTClaims, error) {
 	token, err := tokenFromHeader(c.Request().Header.Get(echo.HeaderAuthorization))
 	if err != nil {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
+		return nil, errcodes.Unauthorized("Authentication is required.")
 	}
 
 	claims, err := m.service.ValidateToken(token)
 	if err != nil {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired token")
+		return nil, errcodes.Unauthorized("Invalid or expired token.")
 	}
 	return claims, nil
 }

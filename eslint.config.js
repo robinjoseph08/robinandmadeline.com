@@ -9,7 +9,18 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["build/*", "app/components/ui", "tmp", "coverage"],
+    ignores: [
+      "build/*",
+      "app/components/ui",
+      "app/types/generated",
+      "tmp",
+      "coverage",
+      // Playwright output (generated; also avoids an eslint/e2e scandir race when
+      // both run in the parallel `mise check` fan-out).
+      "test-results",
+      "playwright-report",
+      "blob-report",
+    ],
   },
   {
     files: ["app/**/*.{ts,tsx}"],

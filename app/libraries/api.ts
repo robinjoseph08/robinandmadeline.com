@@ -8,21 +8,26 @@
  * client state library yet, just this and the auth context.
  */
 
+import type { ErrorCode, ErrorEnvelope } from "@/types/generated/errcodes";
+
 const API_PREFIX = "/api";
 
 export interface ApiErrorShape {
   status: number;
   message: string;
+  code?: ErrorCode;
 }
 
 /** Error thrown for any non-2xx API response. */
 export class ApiError extends Error implements ApiErrorShape {
   status: number;
+  code?: ErrorCode;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: ErrorCode) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -59,7 +64,8 @@ export async function apiRequest<T>(
   });
 
   if (!response.ok) {
-    throw new ApiError(response.status, await errorMessage(response));
+    const { message, code } = await errorDetail(response);
+    throw new ApiError(response.status, message, code);
   }
 
   // 204 No Content (and other empty bodies) parse to undefined.
@@ -67,15 +73,25 @@ export async function apiRequest<T>(
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-/** Extracts a human-readable message from an error response body. */
-async function errorMessage(response: Response): Promise<string> {
+/**
+ * Extracts the message (and code) from the API's nested error envelope:
+ * `{ "error": { "code", "message", "status_code" } }`. Falls back to a generic
+ * message when the body is absent or not the expected shape.
+ */
+async function errorDetail(
+  response: Response,
+): Promise<{ message: string; code?: ErrorCode }> {
   try {
-    const data = (await response.clone().json()) as { message?: string };
-    if (data && typeof data.message === "string") {
-      return data.message;
+    // Cast to the generated envelope type (ADR 0008); Partial keeps the parse
+    // defensive against non-envelope bodies, and the message check below guards
+    // shapes that are JSON but not ours.
+    const data = (await response.clone().json()) as Partial<ErrorEnvelope>;
+    const detail = data?.error;
+    if (detail && typeof detail.message === "string") {
+      return { message: detail.message, code: detail.code };
     }
   } catch {
     // Fall through to a generic message when the body is not JSON.
   }
-  return `Request failed with status ${response.status}`;
+  return { message: `Request failed with status ${response.status}` };
 }

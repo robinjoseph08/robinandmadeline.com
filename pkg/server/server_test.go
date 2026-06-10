@@ -67,6 +67,14 @@ func TestProtectedAdminRoute_RequiresToken(t *testing.T) {
 	srv.Handler.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 
+	// The parties routes hang off the same protected group, so they reject a
+	// tokenless request too (proving RegisterRoutes mounted them behind the
+	// middleware, not beside it).
+	partiesReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/parties", http.NoBody)
+	partiesRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(partiesRec, partiesReq)
+	require.Equal(t, http.StatusUnauthorized, partiesRec.Code)
+
 	// Logging in then presenting the token grants access.
 	loginBody := `{"username":"admin","password":"correct-horse"}`
 	loginReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/admin/login", strings.NewReader(loginBody))

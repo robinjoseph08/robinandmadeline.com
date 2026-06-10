@@ -4,6 +4,7 @@ node = "24.16.0"
 "npm:pnpm" = "11.4.0"
 "github:air-verse/air" = "1.65.3"
 "github:golangci/golangci-lint" = "2.12.2"
+"github:gzuidhof/tygo" = "0.2.20"
 
 # === Build ===
 
@@ -19,19 +20,46 @@ run = "go build -o ./build/api/api-air ./cmd/api"
 
 [tasks.start]
 description = "Start development environment (API + web)"
-depends = ["start:air", "start:web"]
+# db:migrate runs first (the servers depend on it) so local dev applies pending
+# migrations without baking auto-migration into the server process. Production
+# migrates via the Fly release_command instead.
+depends = ["db:migrate", "start:air", "start:web"]
 
 [tasks."start:air"]
 description = "Start API with hot reload via Air"
+depends = ["db:migrate"]
 run = "air"
 
 [tasks."start:web"]
 description = "Start Vite dev server (waits for API)"
+depends = ["db:migrate"]
 run = "until nc -z localhost 8400 2>/dev/null; do sleep 0.5; done && pnpm start"
 
 [tasks."start:api"]
 description = "Start API directly (no hot reload)"
 run = "go run ./cmd/api"
+
+# === Database ===
+
+[tasks."db:migrate"]
+description = "Apply pending database migrations"
+run = "go run ./cmd/migrations migrate"
+
+[tasks."db:rollback"]
+description = "Roll back the last applied migration group"
+run = "go run ./cmd/migrations rollback"
+
+[tasks."db:status"]
+description = "Show applied and pending database migrations"
+run = "go run ./cmd/migrations status"
+
+# === Type Generation ===
+
+[tasks.tygo]
+description = "Generate TypeScript types from Go structs"
+run = "tygo generate"
+sources = ["tygo.yaml", "pkg/models/*.go", "pkg/parties/types.go", "pkg/errcodes/errors.go", "pkg/auth/types.go", "pkg/server/types.go"]
+outputs = ["app/types/generated/**/*.ts"]
 
 # === Linting ===
 
@@ -44,7 +72,8 @@ run = "golangci-lint run"
 
 [tasks."lint:js"]
 description = "Run all JS/TS linting"
-depends = ["lint:eslint", "lint:prettier", "lint:types"]
+# tygo first so lint:types has the generated types on disk (they are gitignored).
+depends = ["tygo", "lint:eslint", "lint:prettier", "lint:types"]
 
 [tasks."lint:eslint"]
 description = "Run ESLint"
@@ -56,6 +85,7 @@ run = "pnpm lint:prettier"
 
 [tasks."lint:types"]
 description = "Run TypeScript type checking"
+depends = ["tygo"]
 run = "pnpm lint:types"
 
 # === Testing ===
@@ -63,32 +93,56 @@ run = "pnpm lint:types"
 [tasks.test]
 description = "Run Go tests"
 env = { CI = "true" }
-run = "go test ./pkg/... ./cmd/..."
+run = "go test -race ./pkg/... ./cmd/... ./internal/..."
 
 [tasks."test:unit"]
 description = "Run JS unit tests"
 run = "pnpm test:unit"
 
+[tasks."e2e:setup"]
+description = "Create and migrate the dedicated e2e database"
+# The e2e API does not migrate at startup (ADR 0007), so provision its database
+# here before Playwright boots the servers. Always a dedicated database, never
+# the shell's DATABASE_URL, so an e2e run can never touch dev data.
+run = '''
+export DATABASE_URL="${E2E_DATABASE_URL:-postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline_e2e?sslmode=disable}"
+go run ./cmd/migrations createdb
+go run ./cmd/migrations migrate
+'''
+
+[tasks."e2e:chromium"]
+description = "Run the e2e tests in Chromium"
+# tygo so the Vite dev server has the generated API types on disk; e2e:setup for
+# the database. Both run before Playwright boots the servers.
+depends = ["tygo", "e2e:setup"]
+run = "pnpm e2e:chromium"
+
+[tasks.e2e]
+description = "Run the e2e tests (Chromium)"
+depends = ["e2e:chromium"]
+
 # === Check ===
 
 [tasks.check]
 description = "Run all validation checks"
-depends = ["lint", "lint:js", "test", "test:unit"]
+depends = ["lint", "lint:js", "test", "test:unit", "e2e:chromium"]
 
 [tasks."check:quiet"]
 description = "Run all checks, suppress output on success; dump output and exit non-zero on failure"
+# tygo up front so the parallel fan-out below has the generated types on disk.
+depends = ["tygo"]
 run = '''
 echo "Running checks..."
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
-for step in lint lint:js test test:unit; do
+for step in lint lint:js test test:unit e2e:chromium; do
   echo 1 >"$tmpdir/$(echo "$step" | tr ':' '_').rc"
   touch "$tmpdir/$(echo "$step" | tr ':' '_').out"
   ( mise "$step" >"$tmpdir/$(echo "$step" | tr ':' '_').out" 2>&1; echo $? >"$tmpdir/$(echo "$step" | tr ':' '_').rc" ) &
 done
 wait
 failed=0
-for step in lint lint:js test test:unit; do
+for step in lint lint:js test test:unit e2e:chromium; do
   key=$(echo "$step" | tr ':' '_')
   rc=$(cat "$tmpdir/$key.rc" 2>/dev/null || echo 1)
   if [ "$rc" -eq 0 ]; then
@@ -114,4 +168,5 @@ run = '''
 mise install
 pnpm install
 go mod download
+pnpm exec playwright install chromium
 '''

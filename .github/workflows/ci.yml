@@ -40,6 +40,27 @@ jobs:
   go-test:
     name: Go Test
     runs-on: ubuntu-latest
+    # The Go tests run against a real Postgres (they exercise text[], CHECK
+    # constraints, UUIDs and partial indexes that an in-memory engine cannot
+    # reproduce). The test harness connects to this service, creates the
+    # dedicated test database if absent, migrates it, and isolates tests by
+    # truncation. Credentials/host below must match TEST_DATABASE_URL.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: robinandmadeline_admin
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: robinandmadeline_test
+        ports:
+          - 5432:5432
+        # Wait until Postgres is accepting connections before the job's steps
+        # run, so the first test does not race the database coming up.
+        options: >-
+          --health-cmd "pg_isready -U robinandmadeline_admin -d robinandmadeline_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4
@@ -51,6 +72,8 @@ jobs:
           key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: go-${{ runner.os }}-
       - run: mise test
+        env:
+          TEST_DATABASE_URL: postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline_test?sslmode=disable
 
   js-lint:
     name: JS Lint
@@ -69,6 +92,9 @@ jobs:
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
+      # Generate the (gitignored) TS types so lint:types can resolve them. tygo
+      # needs Go, which mise provides.
+      - run: mise tygo
       - run: mise lint:js
 
   js-test:
@@ -88,6 +114,8 @@ jobs:
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
+      # Generate the (gitignored) TS types so any test importing them resolves.
+      - run: mise tygo
       - run: mise test:unit
 
   build:
@@ -115,4 +143,83 @@ jobs:
           restore-keys: pnpm-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - run: mise build # Production Go API binary
+      # Generate the (gitignored) TS types before the frontend bundle, since
+      # `pnpm build` runs `tsc -b` which type-checks them.
+      - run: mise tygo
       - run: pnpm build # Frontend bundle (tsc -b && vite build)
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    # Locally e2e runs as part of `mise check` / `mise check:quiet`; in CI it
+    # gets this dedicated job. The job builds and boots the API + Vite against
+    # a dedicated Postgres database (created and migrated by `mise e2e:setup`),
+    # then drives Chromium through the issue #4 flow. The credentials/db below
+    # match the e2e DATABASE_URL default in playwright.config.ts and mise's
+    # e2e:setup task.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: robinandmadeline_admin
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: robinandmadeline_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U robinandmadeline_admin -d robinandmadeline_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-${{ runner.os }}-
+      - name: Locate pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      # Pre-fetch Go modules so the Playwright-managed API build only compiles.
+      - run: go mod download
+      # Generate the (gitignored) TS types the Vite dev server imports at runtime.
+      - run: mise tygo
+      - name: Get Playwright version
+        id: playwright-version
+        run: echo "version=$(pnpm exec playwright --version | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+      - name: Install Playwright browser (cache miss)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install Playwright system deps (cache hit)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+      - run: mise e2e:chromium
+      # Playwright's failure evidence: the HTML report (playwright-report/) and
+      # the per-test traces/screenshots (test-results/), its default output
+      # directories (playwright.config.ts does not override them).
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
+          if-no-files-found: ignore
