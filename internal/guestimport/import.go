@@ -64,7 +64,7 @@ func Import(ctx context.Context, db *bun.DB, plan *Plan, opts Options) (*Summary
 			// instead of silently wiping it. event_rsvps goes with the guests that
 			// own the rows; events themselves survive a re-import.
 			if _, err := tx.ExecContext(ctx, "TRUNCATE TABLE parties, guests, event_rsvps"); err != nil {
-				return errors.Wrap(err, "truncate parties and guests")
+				return errors.Wrap(err, "truncate parties, guests, and event rsvps")
 			}
 		} else {
 			count, err := tx.NewSelect().Model((*models.Party)(nil)).Count(ctx)

@@ -12,12 +12,17 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// newDB returns the shared Postgres test database, truncated so each test
-// starts clean. Tests using it must not call t.Parallel() (see databasetest).
+// newDB returns this package's own isolated Postgres test database (see
+// databasetest.NewIsolated): the import truncates and writes parties and
+// events, which the concurrently running pkg/parties binary uses in the shared
+// database, and two binaries truncating the same tables wipe each other's
+// fixtures mid-test. Truncating parties (cascading to guests and event_rsvps)
+// plus events gives each test a clean slate. Tests using it must not call
+// t.Parallel() (see databasetest).
 func newDB(t *testing.T) *bun.DB {
 	t.Helper()
-	db := databasetest.New(t)
-	databasetest.Truncate(t, db, "parties")
+	db := databasetest.NewIsolated(t, "robinandmadeline_guestimport_test")
+	databasetest.Truncate(t, db, "parties", "events")
 	return db
 }
 
@@ -229,10 +234,6 @@ func TestImport_EmptyPlanImportsNothing(t *testing.T) {
 
 func TestImport_BackfillsPublicEventRSVPs(t *testing.T) {
 	db := newDB(t)
-	// Truncate events too: this test seeds an event with a fixed id, and the
-	// shared newDB truncation only covers parties (and, via cascade, guests
-	// and event_rsvps).
-	databasetest.Truncate(t, db, "events")
 
 	public := &models.Event{
 		ID:       "0197fc00-0000-7000-8000-0000000000e1",

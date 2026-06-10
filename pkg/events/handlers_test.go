@@ -23,8 +23,8 @@ import (
 // handlers, validation pipeline, and response shapes, while auth enforcement
 // is covered by the server package). Wiring the real binder means requests
 // flow through the same bind -> mod -> default -> validate pipeline as
-// production. It shares the Postgres test DB; the returned services build
-// fixtures.
+// production. It uses the package's isolated Postgres test database; the
+// returned services build fixtures.
 func newAPI(t *testing.T) (*echo.Echo, *events.Service, *parties.Service) {
 	t.Helper()
 	svc, partySvc, _ := newServices(t)
