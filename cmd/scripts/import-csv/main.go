@@ -10,9 +10,10 @@
 // touched), then written in a single transaction. By default the import
 // refuses to run against a database that already has parties, so running it
 // twice cannot create duplicates; --truncate wipes parties and guests inside
-// the same transaction first, for iterating during setup. On success it prints
-// a summary plus any warnings (size mismatches, blank cells) to fix in the
-// admin afterward. See internal/guestimport for the column mapping.
+// the same transaction first, for iterating during setup. A row whose Size is
+// N imports as the named guest plus N-1 placeholder guests. On success it
+// prints a summary plus any warnings (blank cells, conflicting addresses) to
+// fix in the admin afterward. See internal/guestimport for the column mapping.
 package main
 
 import (
@@ -76,7 +77,7 @@ func run(ctx context.Context, path string, truncate bool) error {
 	}
 
 	fmt.Printf("parties created:    %d\n", summary.PartiesCreated)
-	fmt.Printf("guests created:     %d\n", summary.GuestsCreated)
+	fmt.Printf("guests created:     %d (%d placeholders)\n", summary.GuestsCreated, summary.PlaceholdersCreated)
 	fmt.Printf("blank rows skipped: %d\n", plan.SkippedBlankRows)
 	if len(plan.Warnings) > 0 {
 		fmt.Printf("\n%d warning(s):\n", len(plan.Warnings))

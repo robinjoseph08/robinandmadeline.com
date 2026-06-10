@@ -22,10 +22,13 @@ type Options struct {
 	Truncate bool
 }
 
-// Summary reports what an Import wrote.
+// Summary reports what an Import wrote. GuestsCreated counts every guest row,
+// named and placeholder alike; PlaceholdersCreated is the subset expanded from
+// Size cells (unnamed plus-ones with is_placeholder set).
 type Summary struct {
-	PartiesCreated int
-	GuestsCreated  int
+	PartiesCreated      int
+	GuestsCreated       int
+	PlaceholdersCreated int
 }
 
 // maxGenerateAttempts bounds the retry loop for generated RSVP codes and info
@@ -86,6 +89,11 @@ func Import(ctx context.Context, db *bun.DB, plan *Plan, opts Options) (*Summary
 
 		summary.PartiesCreated = len(partyRecords)
 		summary.GuestsCreated = len(guestRecords)
+		for _, guest := range guestRecords {
+			if guest.IsPlaceholder {
+				summary.PlaceholdersCreated++
+			}
+		}
 		return nil
 	})
 	if err != nil {

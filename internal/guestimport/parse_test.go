@@ -29,8 +29,8 @@ func parseT(t *testing.T, rows ...string) *guestimport.Plan {
 
 func TestParse_GroupsGuestsIntoPartiesByFamilyColumn(t *testing.T) {
 	plan := parseT(t,
-		`Alice,Adams,Alice Adams,Robin,Family,Immediate,"Sibling, Bridal Party",Adams,2,555-0100,alice@example.com,123 Main St,Springfield,No,Yes,Ms.,KALEL,,`,
-		`Bob,Adams,Bob Adams,Robin,Family,Immediate,In-Law,Adams,2,,,,,No,No,Mr.,KALEL,,`,
+		`Alice,Adams,Alice Adams,Robin,Family,Immediate,"Sibling, Bridal Party",Adams,1,555-0100,alice@example.com,123 Main St,Springfield,No,Yes,Ms.,KALEL,,`,
+		`Bob,Adams,Bob Adams,Robin,Family,Immediate,In-Law,Adams,1,,,,,No,No,Mr.,KALEL,,`,
 		`Cara,Brown,Cara Brown,Madeline,Friend,"Childhood, College",UIUC,Brown,1,,,,,No,Yes,,RANDOM,,`,
 	)
 
@@ -85,8 +85,8 @@ func TestParse_GroupsGuestsIntoPartiesByFamilyColumn(t *testing.T) {
 
 func TestParse_CircleIsTheUnionAcrossAPartysRows(t *testing.T) {
 	plan := parseT(t,
-		`Dana,Cole,Dana Cole,Robin,Friend,"Childhood, College",JHHS,Cole,2,,,,,No,Yes,,,,`,
-		`Eli,Cole,Eli Cole,Robin,Friend,"College, Work",UTD,Cole,2,,,,,No,Yes,,,,`,
+		`Dana,Cole,Dana Cole,Robin,Friend,"Childhood, College",JHHS,Cole,1,,,,,No,Yes,,,,`,
+		`Eli,Cole,Eli Cole,Robin,Friend,"College, Work",UTD,Cole,1,,,,,No,Yes,,,,`,
 	)
 	require.Len(t, plan.Parties, 1)
 	require.Equal(t, []string{models.CircleChildhood, models.CircleCollege, models.CircleWork}, plan.Parties[0].Party.Circle)
@@ -105,8 +105,8 @@ func TestParse_SkipsFullyBlankRows(t *testing.T) {
 
 func TestParse_BlankChildAndDrinkingDefaultFalseWithAggregateWarnings(t *testing.T) {
 	plan := parseT(t,
-		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,2,,,,,,,,,,`,
-		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,2,,,,,,Yes,,,,`,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,,`,
+		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,1,,,,,,Yes,,,,`,
 	)
 	require.Len(t, plan.Parties, 1)
 	for _, g := range plan.Parties[0].Guests {
@@ -119,16 +119,78 @@ func TestParse_BlankChildAndDrinkingDefaultFalseWithAggregateWarnings(t *testing
 	require.Contains(t, plan.Warnings[1], "1 guest(s) have a blank Drinking? value")
 }
 
-func TestParse_SizeMismatchWarnsButImports(t *testing.T) {
+func TestParse_SizeTwoCreatesAPlaceholderPlusOne(t *testing.T) {
 	plan := parseT(t,
-		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,3,,,,,No,Yes,,,,`,
-		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,3,,,,,No,Yes,,,,`,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,2,555-0100,dana@example.com,,,No,Yes,,,,`,
+		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,1,,,,,No,Yes,,,,`,
 	)
 	require.Len(t, plan.Parties, 1)
-	require.Len(t, plan.Parties[0].Guests, 2)
-	require.Len(t, plan.Warnings, 1)
-	require.Contains(t, plan.Warnings[0], `party "Cole"`)
-	require.Contains(t, plan.Warnings[0], "Size column says 3 but 2 guest(s) were imported")
+	require.Empty(t, plan.Warnings)
+
+	guests := plan.Parties[0].Guests
+	require.Len(t, guests, 3)
+	require.Equal(t, "Dana Cole", guests[0].FullName)
+	require.Equal(t, "Guest of Dana Cole", guests[1].FullName, "a placeholder follows its host guest, before the next named row")
+	require.Equal(t, "Eli Cole", guests[2].FullName)
+
+	require.True(t, guests[0].IsPrimary, "the named host guest keeps primary")
+	require.False(t, guests[0].IsPlaceholder)
+
+	placeholder := guests[1]
+	require.True(t, placeholder.IsPlaceholder)
+	require.False(t, placeholder.IsPrimary)
+	require.False(t, placeholder.IsChild)
+	require.False(t, placeholder.IsDrinking)
+	require.Equal(t, []string{}, placeholder.Tags)
+	require.Nil(t, placeholder.Email)
+	require.Nil(t, placeholder.Phone)
+}
+
+func TestParse_SizeAboveTwoNumbersItsPlaceholders(t *testing.T) {
+	plan := parseT(t,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,3,,,,,No,Yes,,,,`,
+	)
+	guests := plan.Parties[0].Guests
+	require.Len(t, guests, 3)
+	require.Equal(t, "Dana Cole", guests[0].FullName)
+	require.Equal(t, "Guest 1 of Dana Cole", guests[1].FullName)
+	require.Equal(t, "Guest 2 of Dana Cole", guests[2].FullName)
+	require.True(t, guests[1].IsPlaceholder)
+	require.True(t, guests[2].IsPlaceholder)
+}
+
+func TestParse_BlankSizeMeansOneWithoutWarning(t *testing.T) {
+	plan := parseT(t,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,,,,,,No,Yes,,,,`,
+	)
+	require.Len(t, plan.Parties[0].Guests, 1)
+	require.Empty(t, plan.Warnings)
+}
+
+func TestParse_InvalidSizeValuesAreErrors(t *testing.T) {
+	_, err := guestimport.Parse(strings.NewReader(buildCSV(
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,zero,,,,,No,Yes,,,,`,
+		`Eli,Stone,Eli Stone,Robin,Friend,College,UTD,Stone,0,,,,,No,Yes,,,,`,
+		`Fay,Reed,Fay Reed,Robin,Friend,College,UTD,Reed,-1,,,,,No,Yes,,,,`,
+	)))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "3 problem(s)")
+	require.Contains(t, err.Error(), `line 2 (Dana Cole): Size must be a positive whole number or blank, got "zero"`)
+	require.Contains(t, err.Error(), `line 3 (Eli Stone): Size must be a positive whole number or blank, got "0"`)
+	require.Contains(t, err.Error(), `line 4 (Fay Reed): Size must be a positive whole number or blank, got "-1"`)
+}
+
+func TestParse_PlaceholdersAreExcludedFromBlankCellWarnings(t *testing.T) {
+	// The host row's blank Child?/Drinking? cells are real blanks worth one
+	// warning tally each; its two placeholders default those fields by design
+	// and must not inflate the counts.
+	plan := parseT(t,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,3,,,,,,,,,,`,
+	)
+	require.Len(t, plan.Parties[0].Guests, 3)
+	require.Len(t, plan.Warnings, 2)
+	require.Contains(t, plan.Warnings[0], "1 guest(s) have a blank Child? value")
+	require.Contains(t, plan.Warnings[1], "1 guest(s) have a blank Drinking? value")
 }
 
 func TestParse_FullNameFallsBackToFirstAndLast(t *testing.T) {
@@ -163,9 +225,9 @@ func TestParse_UnknownEnumValuesAreErrors(t *testing.T) {
 
 func TestParse_ConflictingSideOrRelationWithinPartyIsError(t *testing.T) {
 	_, err := guestimport.Parse(strings.NewReader(buildCSV(
-		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,3,,,,,No,Yes,,,,`,
-		`Eli,Cole,Eli Cole,Madeline,Family,College,UTD,Cole,3,,,,,No,Yes,,,,`,
-		`Fay,Cole,Fay Cole,Madeline,Family,College,UTD,Cole,3,,,,,No,Yes,,,,`,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,No,Yes,,,,`,
+		`Eli,Cole,Eli Cole,Madeline,Family,College,UTD,Cole,1,,,,,No,Yes,,,,`,
+		`Fay,Cole,Fay Cole,Madeline,Family,College,UTD,Cole,1,,,,,No,Yes,,,,`,
 	)))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `party "Cole": conflicting Kingdom values`)
@@ -176,8 +238,8 @@ func TestParse_ConflictingSideOrRelationWithinPartyIsError(t *testing.T) {
 
 func TestParse_ConflictingCodesWithinPartyIsError(t *testing.T) {
 	_, err := guestimport.Parse(strings.NewReader(buildCSV(
-		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,2,,,,,No,Yes,,PEPPER,,`,
-		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,2,,,,,No,Yes,,SLOTH,,`,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,No,Yes,,PEPPER,,`,
+		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,1,,,,,No,Yes,,SLOTH,,`,
 	)))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `party "Cole": conflicting Code values across its rows: PEPPER, SLOTH`)
@@ -196,8 +258,8 @@ func TestParse_PartialCodeCoverageWithinPartyUsesTheCode(t *testing.T) {
 	// One row carries the code, the other is blank: not a conflict; the
 	// explicit code wins for the whole party.
 	plan := parseT(t,
-		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,2,,,,,No,Yes,,PEPPER,,`,
-		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,2,,,,,No,Yes,,,,`,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,No,Yes,,PEPPER,,`,
+		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,1,,,,,No,Yes,,,,`,
 	)
 	require.NotNil(t, plan.Parties[0].Party.RSVPCode)
 	require.Equal(t, "PEPPER", *plan.Parties[0].Party.RSVPCode)
@@ -205,8 +267,8 @@ func TestParse_PartialCodeCoverageWithinPartyUsesTheCode(t *testing.T) {
 
 func TestParse_ConflictingAddressWarnsAndKeepsFirst(t *testing.T) {
 	plan := parseT(t,
-		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,2,,,12 Oak Ave,Austin,No,Yes,,,,`,
-		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,2,,,99 Elm St,Dallas,No,Yes,,,,`,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,12 Oak Ave,Austin,No,Yes,,,,`,
+		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,1,,,99 Elm St,Dallas,No,Yes,,,,`,
 	)
 	require.Equal(t, "12 Oak Ave", *plan.Parties[0].Party.AddressLine1)
 	require.Equal(t, "Austin", *plan.Parties[0].Party.City)
