@@ -142,6 +142,20 @@ func TestImport_TruncateWipesExistingDataFirst(t *testing.T) {
 	require.Equal(t, "Brown", parties[0].Name)
 }
 
+func TestImport_TruncateRefusesAnEmptyPlan(t *testing.T) {
+	db := newDB(t)
+	seedParty(t, db, "Existing")
+	plan := parseT(t, `,,,,,,,,,,,,,,,,,,`)
+
+	_, err := guestimport.Import(ctx(), db, plan, guestimport.Options{Truncate: true})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "refusing to truncate")
+
+	parties := loadParties(t, db)
+	require.Len(t, parties, 1, "nothing was wiped")
+	require.Equal(t, "Existing", parties[0].Name)
+}
+
 func TestImport_RollsBackEverythingWhenAnInsertFails(t *testing.T) {
 	db := newDB(t)
 	// A hand-built plan whose party row is valid but whose guests violate the

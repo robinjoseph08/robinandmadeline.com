@@ -53,23 +53,23 @@ type PartyPlan struct {
 // Sheet column headers the import reads. The export has more columns (Prefix,
 // "Column 1".."Column 11"); anything not listed here is ignored.
 const (
-	colFirst      = "First"
-	colLast       = "Last"
-	colFull       = "Full"
-	colKingdom    = "Kingdom"
-	colPhylum     = "Phylum"
-	colClass      = "Class"
-	colOrder      = "Order"
-	colParty      = "Family (Party)"
-	colSize       = "Size"
-	colPhone      = "Phone"
-	colEmail      = "Email"
-	colAddress    = "Address"
-	colCity       = "City"
-	colChild      = "Child?"
-	colDrinking   = "Drinking?"
-	colCode       = "Code"
-	rsvpCodeBlank = "RANDOM" // the sheet's marker for "generate a code", same as blank
+	colFirst       = "First"
+	colLast        = "Last"
+	colFull        = "Full"
+	colKingdom     = "Kingdom"
+	colPhylum      = "Phylum"
+	colClass       = "Class"
+	colOrder       = "Order"
+	colParty       = "Family (Party)"
+	colSize        = "Size"
+	colPhone       = "Phone"
+	colEmail       = "Email"
+	colAddress     = "Address"
+	colCity        = "City"
+	colChild       = "Child?"
+	colDrinking    = "Drinking?"
+	colCode        = "Code"
+	rsvpCodeRandom = "RANDOM" // the sheet's marker for "generate a code", same as blank
 )
 
 // requiredColumns are the headers Parse insists on; a missing one means the
@@ -149,22 +149,32 @@ func Parse(r io.Reader) (*Plan, error) {
 	// header name and tolerate ragged rows instead of enforcing a fixed width.
 	cr.FieldsPerRecord = -1
 
-	records, err := cr.ReadAll()
+	header, err := cr.Read()
+	if err == io.EOF {
+		return nil, errors.New("csv is empty")
+	}
 	if err != nil {
 		return nil, errors.Wrap(err, "read csv")
 	}
-	if len(records) == 0 {
-		return nil, errors.New("csv is empty")
-	}
 
-	idx, err := headerIndex(records[0])
+	idx, err := headerIndex(header)
 	if err != nil {
 		return nil, err
 	}
 
 	p := &parser{}
-	for i, record := range records[1:] {
-		p.parseRow(i+2, record, idx) // +2: 1-based lines, after the header
+	for {
+		record, err := cr.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, errors.Wrap(err, "read csv")
+		}
+		// FieldPos gives the real 1-based file line, which stays correct even
+		// when a quoted cell contains a newline and a record spans lines.
+		line, _ := cr.FieldPos(0)
+		p.parseRow(line, record, idx)
 	}
 
 	plan := p.buildPlan()
@@ -273,7 +283,7 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 	}
 
 	// The literal RANDOM marker means the same as a blank code: generate one.
-	if code := get(colCode); !strings.EqualFold(code, rsvpCodeBlank) {
+	if code := get(colCode); !strings.EqualFold(code, rsvpCodeRandom) {
 		row.code = code
 	}
 
@@ -332,16 +342,29 @@ func (p *parser) buildParty(name string, rows []parsedRow, codeOwners map[string
 		p.warnings = append(p.warnings, fmt.Sprintf("party %q: ", name)+fmt.Sprintf(format, args...))
 	}
 
+	// Side and relation must agree across the party's rows. Distinct values are
+	// collected (skipping blanks, which already failed per-row enum validation)
+	// so a conflict is reported once per party, however many rows disagree.
+	var sides, relations []string
+	for _, row := range rows {
+		if row.side != "" && !slices.Contains(sides, row.side) {
+			sides = append(sides, row.side)
+		}
+		if row.relation != "" && !slices.Contains(relations, row.relation) {
+			relations = append(relations, row.relation)
+		}
+	}
+	if len(sides) > 1 {
+		problem("conflicting %s values across its rows", colKingdom)
+	}
+	if len(relations) > 1 {
+		problem("conflicting %s values across its rows", colPhylum)
+	}
+
 	seenCircle := make(map[string]bool)
 	var codes []string
 	guests := make([]*models.Guest, 0, len(rows))
 	for i, row := range rows {
-		if row.side != party.Side {
-			problem("conflicting %s values across its rows", colKingdom)
-		}
-		if row.relation != party.Relation {
-			problem("conflicting %s values across its rows", colPhylum)
-		}
 		for _, c := range row.circles {
 			if !seenCircle[c] {
 				seenCircle[c] = true

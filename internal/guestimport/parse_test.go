@@ -163,12 +163,15 @@ func TestParse_UnknownEnumValuesAreErrors(t *testing.T) {
 
 func TestParse_ConflictingSideOrRelationWithinPartyIsError(t *testing.T) {
 	_, err := guestimport.Parse(strings.NewReader(buildCSV(
-		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,2,,,,,No,Yes,,,,`,
-		`Eli,Cole,Eli Cole,Madeline,Family,College,UTD,Cole,2,,,,,No,Yes,,,,`,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,3,,,,,No,Yes,,,,`,
+		`Eli,Cole,Eli Cole,Madeline,Family,College,UTD,Cole,3,,,,,No,Yes,,,,`,
+		`Fay,Cole,Fay Cole,Madeline,Family,College,UTD,Cole,3,,,,,No,Yes,,,,`,
 	)))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `party "Cole": conflicting Kingdom values`)
 	require.Contains(t, err.Error(), `party "Cole": conflicting Phylum values`)
+	require.Equal(t, 1, strings.Count(err.Error(), "conflicting Kingdom values"), "a conflict is reported once per party, not once per row")
+	require.Equal(t, 1, strings.Count(err.Error(), "conflicting Phylum values"))
 }
 
 func TestParse_ConflictingCodesWithinPartyIsError(t *testing.T) {
@@ -210,6 +213,18 @@ func TestParse_ConflictingAddressWarnsAndKeepsFirst(t *testing.T) {
 	require.Len(t, plan.Warnings, 2)
 	require.Contains(t, plan.Warnings[0], `party "Cole": conflicting Address values; keeping "12 Oak Ave"`)
 	require.Contains(t, plan.Warnings[1], `party "Cole": conflicting City values; keeping "Austin"`)
+}
+
+func TestParse_LineNumbersStayAccurateAcrossMultilineQuotedCells(t *testing.T) {
+	// The first data row's Address cell contains a newline, so the record spans
+	// file lines 2-3 and the bad row below it starts on file line 4. Problem
+	// messages must report the real file line, not the record index.
+	_, err := guestimport.Parse(strings.NewReader(buildCSV(
+		"Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,\"12 Oak Ave\nApt 3\",Austin,No,Yes,,,,",
+		`Eli,Stone,Eli Stone,Robin,Friend,College,UTD,,1,,,,,No,Yes,,,,`,
+	)))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "line 4 (Eli Stone): missing Family (Party) value")
 }
 
 func TestParse_MissingRequiredColumnIsError(t *testing.T) {

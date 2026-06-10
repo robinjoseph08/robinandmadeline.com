@@ -47,9 +47,17 @@ func Import(ctx context.Context, db *bun.DB, plan *Plan, opts Options) (*Summary
 	summary := &Summary{}
 	err := db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
 		if opts.Truncate {
-			// CASCADE reaches guests via its FK on parties.
-			if _, err := tx.ExecContext(ctx, "TRUNCATE TABLE parties CASCADE"); err != nil {
-				return errors.Wrap(err, "truncate parties")
+			// Refuse a destructive no-op: truncating on behalf of a plan with
+			// nothing in it would just wipe the data (an emptied or wrong file
+			// can still parse cleanly when its headers match).
+			if len(plan.Parties) == 0 {
+				return errors.New("refusing to truncate: the parsed plan has no parties to import")
+			}
+			// Both tables are named explicitly (rather than CASCADE) so that if a
+			// future table ever references parties, this stale script fails loudly
+			// instead of silently wiping it.
+			if _, err := tx.ExecContext(ctx, "TRUNCATE TABLE parties, guests"); err != nil {
+				return errors.Wrap(err, "truncate parties and guests")
 			}
 		} else {
 			count, err := tx.NewSelect().Model((*models.Party)(nil)).Count(ctx)
@@ -100,9 +108,14 @@ func buildRecords(plan *Plan) ([]*models.Party, []*models.Guest, error) {
 	}
 	usedTokens := make(map[string]bool)
 
+	totalGuests := 0
+	for _, pp := range plan.Parties {
+		totalGuests += len(pp.Guests)
+	}
+
 	now := time.Now()
 	partyRecords := make([]*models.Party, 0, len(plan.Parties))
-	guestRecords := make([]*models.Guest, 0, len(plan.Parties))
+	guestRecords := make([]*models.Guest, 0, totalGuests)
 	for _, pp := range plan.Parties {
 		party := pp.Party
 		party.ID = newID()
