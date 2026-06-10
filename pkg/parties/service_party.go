@@ -132,7 +132,7 @@ func insertPartyWithUniqueToken(ctx context.Context, db bun.IDB, party *models.P
 	}
 
 	for attempt := 0; attempt < maxTokenAttempts; attempt++ {
-		token, err := generateInfoToken()
+		token, err := GenerateInfoToken()
 		if err != nil {
 			return err
 		}
@@ -308,7 +308,7 @@ func (s *Service) DeleteParty(ctx context.Context, id string) error {
 // the backstop against a concurrent racer.
 func assignGeneratedRSVPCode(ctx context.Context, db bun.IDB, party *models.Party) error {
 	for attempt := 0; attempt < maxRSVPCodeAttempts; attempt++ {
-		code, err := generateRSVPCode()
+		code, err := GenerateRSVPCode()
 		if err != nil {
 			return err
 		}
