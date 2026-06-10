@@ -344,4 +344,49 @@ describe("AdminPartyDetail add guest", () => {
       is_primary: true,
     });
   });
+
+  it("creates once when Enter is pressed again while the create is pending", async () => {
+    // Hold the create POST unresolved: a second Enter during that latency must
+    // not fire a duplicate create (the Add button disables itself, but the
+    // Enter path needs its own guard).
+    let resolveCreate: (guest: Guest) => void = () => {};
+    adminRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        const method = options?.method ?? "GET";
+        if (path === "/admin/parties/p1" && method === "GET") {
+          return Promise.resolve(makeParty([ALICE_PRIMARY]));
+        }
+        if (path === "/admin/parties/p1/guests" && method === "POST") {
+          return new Promise<Guest>((resolve) => {
+            resolveCreate = resolve;
+          });
+        }
+        return Promise.resolve(undefined);
+      },
+    );
+
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(await screen.findByRole("button", { name: "Add guest" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "New guest name" }),
+      "Speedy",
+    );
+    await user.keyboard("{Enter}");
+    await user.keyboard("{Enter}");
+
+    const creates = adminRequest.mock.calls.filter(
+      (call) => call[0] === "/admin/parties/p1/guests",
+    );
+    expect(creates).toHaveLength(1);
+
+    // Release the held create; the add row resets for the next guest.
+    resolveCreate(makeGuest({ id: "new", full_name: "Speedy" }));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("textbox", { name: "New guest name" }),
+      ).toHaveValue("");
+    });
+  });
 });

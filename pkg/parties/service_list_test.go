@@ -118,11 +118,24 @@ func TestListParties_LoadsGuests(t *testing.T) {
 	p := createPartyT(t, svc, digitalPartyInput())
 	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "G1", IsPrimary: true})
 	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "G2"})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "G3"})
 
 	got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.Len(t, got[0].Guests, 2, "list should eager-load guests")
+	require.Len(t, got[0].Guests, 3, "list should eager-load guests")
+
+	// Guests come back in creation order (created_at, id tiebreak), never heap
+	// order, so the admin grid does not reshuffle between loads.
+	listNames := []string{got[0].Guests[0].FullName, got[0].Guests[1].FullName, got[0].Guests[2].FullName}
+	assert.Equal(t, []string{"G1", "G2", "G3"}, listNames)
+
+	// The single-party load orders the same way.
+	reloaded, err := svc.GetParty(ctx(), p.ID)
+	require.NoError(t, err)
+	require.Len(t, reloaded.Guests, 3)
+	getNames := []string{reloaded.Guests[0].FullName, reloaded.Guests[1].FullName, reloaded.Guests[2].FullName}
+	assert.Equal(t, []string{"G1", "G2", "G3"}, getNames)
 }
 
 func TestListGuests_FlatFilters(t *testing.T) {

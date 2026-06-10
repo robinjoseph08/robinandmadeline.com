@@ -64,21 +64,22 @@ export function useFilterParams<T extends object>(
 
   // Drop every filter at once (the sheet's "Clear all"), optionally keeping a few
   // params untouched (e.g. the search box, which lives outside the filter sheet).
+  // Only the page's declared keys are removed: unknown params are not ours to
+  // clear, so they stay in the URL just as the read side leaves them.
   const clearAll = useCallback(
     (keep: readonly (keyof T)[] = []) => {
       setSearchParams(
         (prev) => {
-          const next = new URLSearchParams();
-          for (const key of keep) {
-            const value = prev.get(key as string);
-            if (value) next.set(key as string, value);
+          const next = new URLSearchParams(prev);
+          for (const key of keys) {
+            if (!keep.includes(key)) next.delete(key as string);
           }
           return next;
         },
         { replace: true },
       );
     },
-    [setSearchParams],
+    [setSearchParams, keys],
   );
 
   return [filters, setFilter, clearAll] as const;

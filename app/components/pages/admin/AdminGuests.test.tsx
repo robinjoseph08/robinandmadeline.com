@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -87,6 +87,13 @@ function setMock(opts: {
   );
 }
 
+// Exposes the router's live query string so tests can assert URL behavior
+// (e.g. Clear all preserving params the page does not own).
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-search">{location.search}</div>;
+}
+
 function renderGuests(path = "/admin/guests") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -96,6 +103,7 @@ function renderGuests(path = "/admin/guests") {
       <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={[path]}>
           <AdminGuests />
+          <LocationProbe />
         </MemoryRouter>
       </QueryClientProvider>
     </TooltipProvider>,
@@ -257,6 +265,7 @@ describe("AdminGuests flat list", () => {
     // A shared link can carry foreign params (a utm_ tag); the binder 422s
     // unknown query keys, so they must never reach the API, and the page must
     // still render its rows.
+    const user = userEvent.setup();
     renderGuests("/admin/guests?utm_source=share&party_id=p8");
 
     expect(await screen.findByDisplayValue("Alice")).toBeInTheDocument();
@@ -272,6 +281,19 @@ describe("AdminGuests flat list", () => {
     expect(
       guestCalls.every((call) => !("utm_source" in (call[1]?.query ?? {}))),
     ).toBe(true);
+
+    // Clear all drops only the known filters; the foreign param is not the
+    // page's to clear, so it survives in the URL.
+    await user.click(screen.getByRole("button", { name: /Filters/ }));
+    await user.click(await screen.findByRole("button", { name: "Clear all" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("location-search")).not.toHaveTextContent(
+        "party_id",
+      );
+    });
+    expect(screen.getByTestId("location-search")).toHaveTextContent(
+      "utm_source=share",
+    );
   });
 
   it("rolls the cell back, tints it, and toasts when the PATCH fails", async () => {

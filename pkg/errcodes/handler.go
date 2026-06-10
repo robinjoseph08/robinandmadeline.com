@@ -11,19 +11,9 @@ import (
 	"github.com/robinjoseph08/golib/errutils"
 )
 
-// errorBody is the client-facing error envelope: {"error": {...}}.
-type errorBody struct {
-	Error errorDetail `json:"error"`
-}
-
-type errorDetail struct {
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-	StatusCode int    `json:"status_code"`
-}
-
 // Handler is the Echo error handler. Build it with NewHandler and register it as
-// e.HTTPErrorHandler.
+// e.HTTPErrorHandler. It renders the exported ErrorEnvelope (errors.go), the
+// same type the frontend's generated bindings parse.
 type Handler struct{}
 
 // NewHandler returns a Handler. 5xx responses are logged through the
@@ -59,7 +49,7 @@ func (h *Handler) Handle(err error, c echo.Context) {
 		logger.FromEchoContext(c).Err(err).Error("server error")
 	}
 
-	if writeErr := c.JSON(httpCode, errorBody{errorDetail{code, msg, httpCode}}); writeErr != nil {
+	if writeErr := c.JSON(httpCode, ErrorEnvelope{ErrorDetail{code, msg, httpCode}}); writeErr != nil {
 		logger.FromEchoContext(c).Err(errors.WithStack(writeErr)).Error("error handler failed to write response")
 	}
 }

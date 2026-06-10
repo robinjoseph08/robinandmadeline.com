@@ -117,10 +117,15 @@ func (s *Service) CreatePartyWithGuest(ctx context.Context, in CreatePartyWithGu
 // an error: the aborted transaction cannot retry the loop, and 192-bit tokens
 // make it not worth handling.
 func insertPartyWithUniqueToken(ctx context.Context, db bun.IDB, party *models.Party, rsvpProvided bool) error {
-	if rsvpProvided && isRSVPCodeConflict(ctx, db, party.RSVPCode) {
-		return errcodes.Conflict("A party with that RSVP code already exists.")
-	}
-	if !rsvpProvided {
+	if rsvpProvided {
+		taken, err := isRSVPCodeConflict(ctx, db, party.RSVPCode)
+		if err != nil {
+			return err
+		}
+		if taken {
+			return errcodes.Conflict("A party with that RSVP code already exists.")
+		}
+	} else {
 		if err := assignGeneratedRSVPCode(ctx, db, party); err != nil {
 			return err
 		}
@@ -321,15 +326,15 @@ func assignGeneratedRSVPCode(ctx context.Context, db bun.IDB, party *models.Part
 }
 
 // isRSVPCodeConflict reports whether some party already holds the given RSVP
-// code, used to classify a unique violation during create as an RSVP-code
-// conflict versus an info-token collision.
-func isRSVPCodeConflict(ctx context.Context, db bun.IDB, code *string) bool {
+// code, giving a provided code a clean 409 before the insert. A query failure
+// propagates rather than silently degrading the pre-check to "no conflict".
+func isRSVPCodeConflict(ctx context.Context, db bun.IDB, code *string) (bool, error) {
 	if code == nil {
-		return false
+		return false, nil
 	}
 	exists, err := db.NewSelect().Model((*models.Party)(nil)).Where("rsvp_code = ?", *code).Exists(ctx)
 	if err != nil {
-		return false
+		return false, errors.Wrap(err, "check rsvp code conflict")
 	}
-	return exists
+	return exists, nil
 }

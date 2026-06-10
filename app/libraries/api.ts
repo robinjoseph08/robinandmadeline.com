@@ -8,7 +8,7 @@
  * client state library yet, just this and the auth context.
  */
 
-import type { ErrorCode } from "@/types/generated/errcodes";
+import type { ErrorCode, ErrorEnvelope } from "@/types/generated/errcodes";
 
 const API_PREFIX = "/api";
 
@@ -82,11 +82,10 @@ async function errorDetail(
   response: Response,
 ): Promise<{ message: string; code?: ErrorCode }> {
   try {
-    const data = (await response.clone().json()) as {
-      // The backend only ever emits codes from the closed ErrorCode set, so the
-      // parse boundary is the one place the string narrows to the union.
-      error?: { message?: string; code?: ErrorCode };
-    };
+    // Cast to the generated envelope type (ADR 0008); Partial keeps the parse
+    // defensive against non-envelope bodies, and the message check below guards
+    // shapes that are JSON but not ours.
+    const data = (await response.clone().json()) as Partial<ErrorEnvelope>;
     const detail = data?.error;
     if (detail && typeof detail.message === "string") {
       return { message: detail.message, code: detail.code };

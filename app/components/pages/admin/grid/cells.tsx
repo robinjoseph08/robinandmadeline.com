@@ -246,6 +246,9 @@ export function GridTextCell({
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
+            // A held key auto-repeats Enter; one press means one commit (or
+            // one create via onEnter), not a burst.
+            if (e.repeat) return;
             if (onEnter) {
               onEnter();
             } else {

@@ -182,7 +182,7 @@ export function PartyFormDialog({
           <DialogDescription>
             {isEditMode
               ? "Update this party's details. The info token and collection status are unaffected."
-              : "Add a new party. An info token is generated automatically; the RSVP code is optional."}
+              : "Add a new party. The info token and RSVP code are generated automatically."}
           </DialogDescription>
         </DialogHeader>
 
@@ -342,7 +342,7 @@ export function PartyFormDialog({
             <Input
               id="party-rsvp"
               onChange={(e) => update("rsvpCode", e.target.value)}
-              placeholder="Optional; leave blank for none"
+              placeholder="Leave blank to clear the code"
               value={form.rsvpCode}
             />
           </div>

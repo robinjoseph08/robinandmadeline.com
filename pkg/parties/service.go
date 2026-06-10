@@ -91,10 +91,10 @@ func generateRSVPCode() (string, error) {
 // loadPartyWithGuests fetches a party and its guests within a query context (the
 // receiver may be the DB or a transaction). Returns a 404 when the party does
 // not exist. Guests are needed to derive status and enforce the single-primary
-// invariant.
+// invariant; they come back in creation order so responses never reshuffle.
 func loadPartyWithGuests(ctx context.Context, db bun.IDB, id string) (*models.Party, error) {
 	party := new(models.Party)
-	err := db.NewSelect().Model(party).Relation("Guests").Where("p.id = ?", id).Scan(ctx)
+	err := db.NewSelect().Model(party).Relation("Guests", orderGuestsByCreation).Where("p.id = ?", id).Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errcodes.NotFound("party")
@@ -102,4 +102,12 @@ func loadPartyWithGuests(ctx context.Context, db bun.IDB, id string) (*models.Pa
 		return nil, errors.Wrap(err, "load party")
 	}
 	return party, nil
+}
+
+// orderGuestsByCreation is the relation-query hook every Guests eager load
+// applies: without an ORDER BY the guests come back in heap order, which can
+// visibly reshuffle the admin grid after updates. created_at with the id
+// tiebreak is the same ordering promoteOldestGuest uses.
+func orderGuestsByCreation(q *bun.SelectQuery) *bun.SelectQuery {
+	return q.Order("g.created_at ASC", "g.id ASC")
 }

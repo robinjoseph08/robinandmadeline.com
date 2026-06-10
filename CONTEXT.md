@@ -57,7 +57,7 @@ A random, opaque per-party token embedded in the pre-invitation info-collection 
 _Avoid_: Code (guests never see this as a code)
 
 **RSVP Code**:
-A memorable, often personalized per-party code (e.g. KALEL, PEPPER) revealed on the printed invitation and used to authenticate the RSVP flow.
+A memorable, often personalized per-party code (e.g. KALEL, PEPPER) revealed on the printed invitation and used to authenticate the RSVP flow. When the couple does not set a personalized code, a random five-letter code (from an alphabet that avoids confusable letters and cannot spell words) is generated at party creation; a cleared code stays empty until set again.
 _Avoid_: Password, info token
 
 **Invitation Type**:

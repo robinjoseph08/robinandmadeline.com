@@ -67,7 +67,10 @@ func (s *Service) confirmComplete(ctx context.Context, id string) (*models.Party
 			}
 			return errors.Wrap(err, "load party")
 		}
-		if err := tx.NewSelect().Model(&party.Guests).Where("g.party_id = ?", id).Scan(ctx); err != nil {
+		// The guests ride the response too, so load them in the same creation
+		// order every other party load uses.
+		guestsQuery := orderGuestsByCreation(tx.NewSelect().Model(&party.Guests).Where("g.party_id = ?", id))
+		if err := guestsQuery.Scan(ctx); err != nil {
 			return errors.Wrap(err, "load guests")
 		}
 

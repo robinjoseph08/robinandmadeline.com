@@ -28,7 +28,11 @@ func capitalize(s string) string {
 type Code string
 
 const (
-	//tygo:emit export type ErrorCode = typeof CodeNotFound | typeof CodeBadRequest | typeof CodeValidationError | typeof CodeUnknownParameter | typeof CodeValidationTypeError | typeof CodeMalformedPayload | typeof CodeEmptyRequestBody | typeof CodeUnsupportedMediaType | typeof CodeConflict | typeof CodeUnauthorized | typeof CodeForbidden | typeof CodeInternal;
+	// The emitted union must list the literal strings, kept in sync by hand
+	// with the Code consts below: the consts are typed (tygo emits Code as
+	// string), so a typeof-based union would collapse to string and stop
+	// catching typos like code === "not_fond".
+	//tygo:emit export type ErrorCode = "not_found" | "bad_request" | "validation_error" | "unknown_parameter" | "validation_type_error" | "malformed_payload" | "empty_request_body" | "unsupported_media_type" | "conflict" | "unauthorized" | "forbidden" | "internal_server_error";
 	CodeNotFound             Code = "not_found"
 	CodeBadRequest           Code = "bad_request"
 	CodeValidationError      Code = "validation_error"
@@ -51,6 +55,23 @@ type Error struct {
 }
 
 func (e *Error) Error() string { return e.Message }
+
+// ErrorEnvelope is the JSON body every error response carries: a single
+// "error" key wrapping an ErrorDetail. It lives here (in tygo's include_files
+// for this package) so the frontend parses error responses with the generated
+// type instead of hand-writing the shape (ADR 0008). The handler renders it;
+// see handler.go.
+type ErrorEnvelope struct {
+	Error ErrorDetail `json:"error"`
+}
+
+// ErrorDetail is the inside of the envelope: the stable machine code, the
+// client-safe message, and the HTTP status code.
+type ErrorDetail struct {
+	Code       string `json:"code" tstype:"ErrorCode"`
+	Message    string `json:"message"`
+	StatusCode int    `json:"status_code"`
+}
 
 // NotFound returns a 404 naming the missing resource. The resource is
 // capitalized so callers can pass a lowercase name (e.g. "party") and still get

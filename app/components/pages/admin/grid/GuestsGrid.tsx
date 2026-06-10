@@ -256,7 +256,13 @@ export function GuestsGrid<TGuest extends Guest>({
     return missing;
   };
 
+  const creating = createGuest.isPending || createPartyWithGuest.isPending;
+
   const handleCreate = async () => {
+    // The Add button disables itself while a create is in flight, but the
+    // add-row Enter path lands here directly; ignore it rather than firing a
+    // duplicate POST.
+    if (creating) return;
     if (!canCreate) {
       // Only Enter lands here (the Add button is disabled while !canCreate), so
       // name what is missing instead of silently doing nothing.
@@ -335,8 +341,6 @@ export function GuestsGrid<TGuest extends Guest>({
       );
     }
   };
-
-  const creating = createGuest.isPending || createPartyWithGuest.isPending;
 
   return (
     <Table>

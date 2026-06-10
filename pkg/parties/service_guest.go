@@ -128,13 +128,18 @@ func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayl
 		guest.SeatNumber = in.SeatNumber
 		guest.UpdatedAt = time.Now()
 
+		// A concurrent promotion can commit between the demotion above and this
+		// update, invisible to the demote under read committed, so the
+		// one-primary-per-party index can still fire; surface that as a 409
+		// rather than a raw unique violation.
 		_, err := tx.NewUpdate().Model(guest).
 			Column("full_name", "email", "phone", "tags", "is_primary",
 				"is_child", "is_drinking", "is_placeholder", "dietary_restrictions",
 				"table_number", "seat_number", "updated_at").
 			WherePK().Exec(ctx)
 		if err != nil {
-			return errors.Wrap(err, "update guest")
+			return errcodes.ConflictOnConstraint(errors.Wrap(err, "update guest"),
+				"ux_guests_one_primary_per_party", "Another guest became this party's primary at the same time; try again.")
 		}
 		return nil
 	})
@@ -179,6 +184,12 @@ func (s *Service) PatchGuest(ctx context.Context, id string, in PatchGuestPayloa
 
 		cols := make([]string, 0, 12)
 		if moving {
+			// Lock the source party row before any guest write so the source mend
+			// below (delete-if-empty, re-primary) serializes per party and cannot
+			// strand an empty party; see lockParty.
+			if err := lockParty(ctx, tx, originalPartyID); err != nil {
+				return err
+			}
 			// Confirm the target exists so we return a clear error rather than a raw
 			// FK violation.
 			exists, err := tx.NewSelect().Model((*models.Party)(nil)).Where("id = ?", *in.PartyID).Exists(ctx)
@@ -260,8 +271,12 @@ func (s *Service) PatchGuest(ctx context.Context, id string, in PatchGuestPayloa
 		guest.UpdatedAt = time.Now()
 		cols = append(cols, "updated_at")
 
+		// Same promote race as UpdateGuest: a concurrent primary committing after
+		// the demotion can make this update hit the one-primary-per-party index,
+		// which surfaces as a 409 rather than a raw unique violation.
 		if _, err := tx.NewUpdate().Model(guest).Column(cols...).WherePK().Exec(ctx); err != nil {
-			return errors.Wrap(err, "patch guest")
+			return errcodes.ConflictOnConstraint(errors.Wrap(err, "patch guest"),
+				"ux_guests_one_primary_per_party", "Another guest became this party's primary at the same time; try again.")
 		}
 
 		// After a move, mend the source party: delete it if the mover was its last
@@ -294,8 +309,11 @@ func (s *Service) PatchGuest(ctx context.Context, id string, in PatchGuestPayloa
 // never outlives its last guest: deleting it deletes the party too. Otherwise,
 // if the deleted guest was the primary, the oldest remaining guest is promoted
 // so every non-empty party keeps exactly one primary. A missing guest returns a
-// 404. All of this runs in one transaction so an observer never sees a party
-// with no primary (or an empty party that is about to be deleted).
+// 404. All of this runs in one transaction, with the party row locked before
+// the guest write so concurrent removals from the same party serialize (two
+// deletes of the last two guests would otherwise each see one guest remaining
+// and neither would delete the party); an observer never sees a party with no
+// primary, an empty party that is about to be deleted, or a stranded empty one.
 func (s *Service) DeleteGuest(ctx context.Context, id string) error {
 	return s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
 		guest := new(models.Guest)
@@ -304,6 +322,11 @@ func (s *Service) DeleteGuest(ctx context.Context, id string) error {
 				return errcodes.NotFound("guest")
 			}
 			return errors.Wrap(err, "load guest")
+		}
+
+		// Serialize the mend below per party; see lockParty.
+		if err := lockParty(ctx, tx, guest.PartyID); err != nil {
+			return err
 		}
 
 		if _, err := tx.NewDelete().Model((*models.Guest)(nil)).Where("id = ?", id).Exec(ctx); err != nil {
@@ -362,6 +385,29 @@ func promoteOldestGuest(ctx context.Context, tx bun.Tx, partyID string) error {
 		Where("id = ?", oldest.ID).Exec(ctx)
 	if err != nil {
 		return errors.Wrap(err, "promote oldest guest")
+	}
+	return nil
+}
+
+// lockParty takes the party's row lock (a slim SELECT ... FOR UPDATE, the same
+// shape confirmComplete uses) inside tx. Transactions that remove a guest from
+// a party take it first, before any guest write, so the post-removal mend
+// (delete-if-empty, re-primary) serializes per party: without it, two
+// transactions each removing one of a party's last two guests would both count
+// remaining=1 under read committed and neither would delete the party,
+// stranding it empty. The consistent order (party row first, then guest rows)
+// keeps the menders from deadlocking each other.
+func lockParty(ctx context.Context, tx bun.Tx, partyID string) error {
+	var id string
+	err := tx.NewSelect().Model((*models.Party)(nil)).Column("id").
+		Where("p.id = ?", partyID).For("UPDATE").Scan(ctx, &id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// The party vanished between the guest load and the lock (a concurrent
+			// party delete cascaded over its guests).
+			return errcodes.NotFound("party")
+		}
+		return errors.Wrap(err, "lock party")
 	}
 	return nil
 }

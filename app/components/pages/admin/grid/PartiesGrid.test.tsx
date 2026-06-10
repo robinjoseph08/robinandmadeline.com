@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -97,5 +97,46 @@ describe("PartiesGrid keyboard navigation", () => {
       "/admin/parties/p1",
       expect.objectContaining({ body: { name: "Discard" } }),
     );
+  });
+});
+
+describe("PartiesGrid racing commits", () => {
+  it("ignores a stale failure after a newer commit on the same cell succeeded", async () => {
+    // Two commits race on one cell: the second PATCH settles first (success),
+    // then the first rejects late. The stale rejection must not roll the cell
+    // back to the original value or tint it as an error; the server holds the
+    // second value.
+    const patches: {
+      resolve: (value: PartyResponse) => void;
+      reject: (error: Error) => void;
+    }[] = [];
+    adminRequest.mockImplementation(
+      (_path: string, options?: { method?: string }) => {
+        if (options?.method === "PATCH") {
+          return new Promise((resolve, reject) => {
+            patches.push({ resolve, reject });
+          });
+        }
+        return Promise.resolve(undefined);
+      },
+    );
+
+    const user = userEvent.setup();
+    renderGrid([makeParty({ id: "p1", name: "Original" })]);
+
+    const cell = screen.getByDisplayValue("Original");
+    await user.clear(cell);
+    await user.type(cell, "First{Enter}");
+    await user.clear(cell);
+    await user.type(cell, "Second{Enter}");
+    expect(patches).toHaveLength(2);
+
+    patches[1].resolve(makeParty({ id: "p1", name: "Second" }));
+    await act(async () => {});
+    patches[0].reject(new Error("Stale failure"));
+    await act(async () => {});
+
+    expect(cell).toHaveValue("Second");
+    expect(cell.closest("td")).not.toHaveClass("bg-destructive/10");
   });
 });
