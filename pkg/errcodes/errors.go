@@ -143,7 +143,8 @@ func Forbidden(msg string) error {
 }
 
 // Internal returns a 500 with the given message. The message is for logs only;
-// the handler never sends it to the client (see handler.go).
+// the handler masks every 5xx message to a generic one before it reaches the
+// client (see resolve in handler.go), so the text here may carry detail.
 func Internal(msg string) error {
 	return &Error{http.StatusInternalServerError, msg, string(CodeInternal)}
 }

@@ -88,6 +88,30 @@ func TestHandle_GenericErrorIs500AndDoesNotLeak(t *testing.T) {
 		"a 500 must never leak the internal error text to the client")
 }
 
+func TestHandle_InternalErrorMessageIsMasked(t *testing.T) {
+	// errcodes.Internal carries detail for the log line; the rendered envelope
+	// must mask it like any other 5xx.
+	rec := handle(t, errcodes.Internal("pq: secret table is missing"))
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	code, msg, _ := decodeEnvelope(t, rec)
+	assert.Equal(t, string(errcodes.CodeInternal), code)
+	assert.Equal(t, "Internal Server Error", msg)
+	assert.NotContains(t, rec.Body.String(), "secret table",
+		"a 5xx *Error must never leak its constructor text to the client")
+}
+
+func TestHandle_EchoHTTPError5xxMessageIsMasked(t *testing.T) {
+	// A framework-originated 5xx renders the status text, not its message.
+	rec := handle(t, echo.NewHTTPError(http.StatusServiceUnavailable, "pool exhausted: dsn=secret"))
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	code, msg, _ := decodeEnvelope(t, rec)
+	assert.Equal(t, "service_unavailable", code)
+	assert.Equal(t, "Service Unavailable", msg)
+	assert.NotContains(t, rec.Body.String(), "secret")
+}
+
 func TestHandle_IgnorableErrorsAreSilent(t *testing.T) {
 	// golib's errutils.IsIgnorableErr classifies client-disconnect errors, and
 	// the handler also early-returns on context.Canceled. None should produce a

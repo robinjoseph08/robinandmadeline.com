@@ -60,13 +60,20 @@ func (h *Handler) Handle(err error, c echo.Context) {
 func resolve(err error) (int, string, string) {
 	var e *Error
 	if errors.As(err, &e) {
-		return e.HTTPCode, e.Code, e.Message
+		msg := e.Message
+		// A 5xx *Error renders a generic message: the constructor's text is for
+		// the log line Handle writes, never for the response body.
+		if e.HTTPCode >= http.StatusInternalServerError {
+			msg = "Internal Server Error"
+		}
+		return e.HTTPCode, e.Code, msg
 	}
 
 	var he *echo.HTTPError
 	if errors.As(err, &he) {
 		msg := http.StatusText(he.Code)
-		if m, ok := he.Message.(string); ok && m != "" {
+		// Framework 4xx messages pass through; 5xx stay generic, same as above.
+		if m, ok := he.Message.(string); ok && m != "" && he.Code < http.StatusInternalServerError {
 			msg = m
 		}
 		return he.Code, strcase.ToSnake(msg), msg
