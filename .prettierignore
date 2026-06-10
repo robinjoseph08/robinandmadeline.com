@@ -12,3 +12,6 @@ pnpm-lock.yaml
 app/components/ui
 app/types/generated
 .playwright-mcp
+test-results
+playwright-report
+blob-report
