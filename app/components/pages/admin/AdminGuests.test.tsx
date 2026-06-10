@@ -215,6 +215,40 @@ describe("AdminGuests flat list", () => {
     });
   });
 
+  it("keeps a selected tag toggleable when another guest has it in different casing", async () => {
+    // Bob is listed first, so the shared suggestion list canonicalizes on his
+    // lowercase casing; Alice's popover must still list her selected casing
+    // once, checked, rather than an untoggleable lowercase twin.
+    setMock({
+      guests: [
+        makeGuestItem({ id: "bob", full_name: "Bob", tags: ["vip"] }),
+        makeGuestItem({ id: "alice", full_name: "Alice", tags: ["VIP"] }),
+      ],
+    });
+
+    const user = userEvent.setup();
+    renderGuests();
+
+    const row = (await screen.findByDisplayValue("Alice")).closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: "Tags" }));
+
+    const options = await screen.findAllByRole("option");
+    const vipOptions = options.filter((o) => /vip/i.test(o.textContent ?? ""));
+    expect(vipOptions).toHaveLength(1);
+    expect(vipOptions[0]).toHaveTextContent("VIP");
+
+    // Toggling the listed entry removes the selected tag instead of stacking a
+    // duplicate in the other casing.
+    await user.click(vipOptions[0]);
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/guests/alice", {
+        method: "PATCH",
+        body: { tags: [] },
+      });
+    });
+  });
+
   it("adds a guest from the flat list once a name and party are chosen", async () => {
     setMock({ guests: [] });
 

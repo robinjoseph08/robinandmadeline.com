@@ -441,14 +441,20 @@ export function GridChipsCell({
 
   // Suggestions: the known options plus any already-selected values not among
   // them (so already-selected values always appear), de-duplicated case-insensitively.
+  // On a case-insensitive collision the selected casing wins, because the
+  // checkmark and toggle match exactly: rendering the option's casing instead
+  // would leave the selected value unlisted and impossible to untoggle here.
   const allOptions = useMemo(() => {
+    const selectedByKey = new Map(
+      cell.value.map((item) => [item.toLowerCase(), item]),
+    );
     const seen = new Set<string>();
     const merged: string[] = [];
     for (const option of [...options, ...cell.value]) {
       const key = option.toLowerCase();
       if (!seen.has(key)) {
         seen.add(key);
-        merged.push(option);
+        merged.push(selectedByKey.get(key) ?? option);
       }
     }
     return merged;

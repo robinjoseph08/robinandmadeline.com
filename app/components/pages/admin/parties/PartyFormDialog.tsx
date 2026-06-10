@@ -342,7 +342,11 @@ export function PartyFormDialog({
             <Input
               id="party-rsvp"
               onChange={(e) => update("rsvpCode", e.target.value)}
-              placeholder="Leave blank to clear the code"
+              placeholder={
+                isEditMode
+                  ? "Leave blank to clear the code"
+                  : "Leave blank to auto-generate"
+              }
               value={form.rsvpCode}
             />
           </div>

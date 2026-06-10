@@ -32,6 +32,11 @@ const (
 	// with the Code consts below: the consts are typed (tygo emits Code as
 	// string), so a typeof-based union would collapse to string and stop
 	// catching typos like code === "not_fond".
+	//
+	// The union covers the codes this package constructs. A framework-originated
+	// *echo.HTTPError (e.g. a 405) is rendered by the handler with its reason
+	// snake-cased, which can fall outside the union; the frontend's envelope
+	// parse stays defensive for that reason, and such codes are display-only.
 	//tygo:emit export type ErrorCode = "not_found" | "bad_request" | "validation_error" | "unknown_parameter" | "validation_type_error" | "malformed_payload" | "empty_request_body" | "unsupported_media_type" | "conflict" | "unauthorized" | "forbidden" | "internal_server_error";
 	CodeNotFound             Code = "not_found"
 	CodeBadRequest           Code = "bad_request"
