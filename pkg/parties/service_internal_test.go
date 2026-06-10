@@ -13,7 +13,7 @@ import (
 // uses, and the create paths exercise it through insertPartyWithUniqueToken.
 func TestGenerateRSVPCode_FormatAndAlphabet(t *testing.T) {
 	for i := 0; i < 256; i++ {
-		code, err := generateRSVPCode()
+		code, err := GenerateRSVPCode()
 		require.NoError(t, err)
 		require.Regexp(t, `^[BCDFGHJKLMNPQRSTVWXZ]{5}$`, code)
 	}

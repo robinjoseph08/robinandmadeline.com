@@ -61,10 +61,12 @@ func newID() string {
 	return uuid.Must(uuid.NewV7()).String()
 }
 
-// generateInfoToken returns a random, opaque, URL-safe token for a party's
+// GenerateInfoToken returns a random, opaque, URL-safe token for a party's
 // info-collection link. Tokens use crypto/rand; the service retries on the
-// astronomically unlikely unique-index collision.
-func generateInfoToken() (string, error) {
+// astronomically unlikely unique-index collision. Exported so operational
+// tooling (the CSV guest import) mints tokens with the same shape and entropy
+// as the create paths.
+func GenerateInfoToken() (string, error) {
 	b := make([]byte, infoTokenBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", errors.Wrap(err, "generate info token")
@@ -72,11 +74,12 @@ func generateInfoToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// generateRSVPCode returns a random RSVP code: rsvpCodeLength characters drawn
-// uniformly (crypto/rand, the same randomness source as generateInfoToken)
+// GenerateRSVPCode returns a random RSVP code: rsvpCodeLength characters drawn
+// uniformly (crypto/rand, the same randomness source as GenerateInfoToken)
 // from rsvpCodeAlphabet. Unlike info tokens the code space is small enough
 // that collisions are plausible, so the caller checks uniqueness and retries.
-func generateRSVPCode() (string, error) {
+// Exported for the same operational tooling as GenerateInfoToken.
+func GenerateRSVPCode() (string, error) {
 	code := make([]byte, rsvpCodeLength)
 	for i := range code {
 		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(rsvpCodeAlphabet))))
