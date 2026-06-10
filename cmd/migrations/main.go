@@ -5,6 +5,7 @@
 // plus the bun migrate.Migrator API, to avoid pulling a CLI framework into the
 // dependency set. Subcommands:
 //
+//	createdb  create the configured database if it does not exist
 //	migrate   apply all pending migrations
 //	rollback  roll back the last applied migration group
 //	status    print applied / unapplied migrations
@@ -44,6 +45,16 @@ func run(ctx context.Context, cmd string, args []string) error {
 	cfg, err := config.New()
 	if err != nil {
 		return fmt.Errorf("config error: %w", err)
+	}
+
+	// createdb runs before the target connection below, since the database it
+	// creates may not exist yet (it connects to the maintenance database).
+	if cmd == "createdb" {
+		if err := database.EnsureExists(ctx, cfg.DatabaseURL); err != nil {
+			return err
+		}
+		fmt.Println("database ready")
+		return nil
 	}
 
 	db, err := database.New(cfg)
@@ -111,5 +122,5 @@ func run(ctx context.Context, cmd string, args []string) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: migrations <migrate|rollback|status|create [name]>")
+	fmt.Fprintln(os.Stderr, "usage: migrations <createdb|migrate|rollback|status|create [name]>")
 }

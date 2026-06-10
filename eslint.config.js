@@ -15,6 +15,11 @@ export default tseslint.config(
       "app/types/generated",
       "tmp",
       "coverage",
+      // Playwright output (generated; also avoids an eslint/e2e scandir race when
+      // both run in the parallel `mise check` fan-out).
+      "test-results",
+      "playwright-report",
+      "blob-report",
     ],
   },
   {

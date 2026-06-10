@@ -99,11 +99,33 @@ run = "go test ./pkg/... ./cmd/... ./internal/..."
 description = "Run JS unit tests"
 run = "pnpm test:unit"
 
+[tasks."e2e:setup"]
+description = "Create and migrate the dedicated e2e database"
+# The e2e API does not migrate at startup (ADR 0007), so provision its database
+# here before Playwright boots the servers. Always a dedicated database, never
+# the shell's DATABASE_URL, so an e2e run can never touch dev data.
+run = '''
+export DATABASE_URL="${E2E_DATABASE_URL:-postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline_e2e?sslmode=disable}"
+go run ./cmd/migrations createdb
+go run ./cmd/migrations migrate
+'''
+
+[tasks."e2e:chromium"]
+description = "Run the e2e tests in Chromium"
+# tygo so the Vite dev server has the generated API types on disk; e2e:setup for
+# the database. Both run before Playwright boots the servers.
+depends = ["tygo", "e2e:setup"]
+run = "pnpm e2e:chromium"
+
+[tasks.e2e]
+description = "Run the e2e tests (Chromium)"
+depends = ["e2e:chromium"]
+
 # === Check ===
 
 [tasks.check]
 description = "Run all validation checks"
-depends = ["lint", "lint:js", "test", "test:unit"]
+depends = ["lint", "lint:js", "test", "test:unit", "e2e:chromium"]
 
 [tasks."check:quiet"]
 description = "Run all checks, suppress output on success; dump output and exit non-zero on failure"
@@ -113,14 +135,14 @@ run = '''
 echo "Running checks..."
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
-for step in lint lint:js test test:unit; do
+for step in lint lint:js test test:unit e2e:chromium; do
   echo 1 >"$tmpdir/$(echo "$step" | tr ':' '_').rc"
   touch "$tmpdir/$(echo "$step" | tr ':' '_').out"
   ( mise "$step" >"$tmpdir/$(echo "$step" | tr ':' '_').out" 2>&1; echo $? >"$tmpdir/$(echo "$step" | tr ':' '_').rc" ) &
 done
 wait
 failed=0
-for step in lint lint:js test test:unit; do
+for step in lint lint:js test test:unit e2e:chromium; do
   key=$(echo "$step" | tr ':' '_')
   rc=$(cat "$tmpdir/$key.rc" 2>/dev/null || echo 1)
   if [ "$rc" -eq 0 ]; then
@@ -146,4 +168,5 @@ run = '''
 mise install
 pnpm install
 go mod download
+pnpm exec playwright install chromium
 '''
