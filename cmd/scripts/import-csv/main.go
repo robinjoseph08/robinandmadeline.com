@@ -11,7 +11,7 @@
 // refuses to run against a database that already has parties, so running it
 // twice cannot create duplicates; --truncate wipes parties and guests inside
 // the same transaction first, for iterating during setup. A row whose Size is
-// N imports as the named guest plus N-1 placeholder plus-ones. On success it
+// N imports as the named guest plus N-1 placeholder guests. On success it
 // prints a summary plus any warnings (blank cells, conflicting addresses) to
 // fix in the admin afterward. See internal/guestimport for the column mapping.
 package main
