@@ -104,9 +104,9 @@ var knownCircles = map[string]bool{
 }
 
 // parsedRow is one named CSV data row after per-row mapping and validation,
-// before party grouping. line is the 1-based CSV line number for messages.
+// before party grouping. Row-level problem messages cite the file line as they
+// are recorded in parseRow; grouped rows no longer need it.
 type parsedRow struct {
-	line       int
 	fullName   string
 	partyName  string
 	side       string
@@ -231,7 +231,6 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 	}
 
 	row := parsedRow{
-		line:      line,
 		fullName:  name,
 		partyName: get(colParty),
 		email:     optional(get(colEmail)),
