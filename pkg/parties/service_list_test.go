@@ -262,6 +262,35 @@ func TestListGuests_SearchMatchesFormattedPhone(t *testing.T) {
 	})
 }
 
+// TestListGuests_SearchEscapesLikeWildcards proves a literal "_" or "%" in the
+// search term matches itself rather than acting as an ILIKE wildcard: "a_b"
+// must not match "axb" (unescaped, "_" matches any character) and "%" must not
+// match every guest.
+func TestListGuests_SearchEscapesLikeWildcards(t *testing.T) {
+	svc, _ := newService(t)
+	p := createPartyT(t, svc, digitalPartyInput())
+	underscore := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "a_b"})
+	plain := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "axb"})
+
+	t.Run("underscore is literal", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("a_b")})
+		require.NoError(t, err)
+		ids := guestIDs(got)
+		assert.True(t, ids[underscore.ID], "the literal a_b guest matches")
+		assert.False(t, ids[plain.ID], "an unescaped _ would also match axb")
+	})
+	t.Run("percent is literal", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("%")})
+		require.NoError(t, err)
+		assert.Empty(t, got, "an unescaped %% would match every guest")
+	})
+	t.Run("trailing backslash does not break the pattern", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String(`a\`)})
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+}
+
 // TestListGuests_LoadsOwningParty proves the flat guest list eager-loads each
 // guest's owning party so the response can surface the party name (a guest has
 // no detail page; it is edited in its party's context).

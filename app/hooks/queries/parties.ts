@@ -107,8 +107,11 @@ export const useUpdateParty = () => {
 
 // usePatchParty is the partial update behind the spreadsheet grid: it sends only
 // the fields the user changed (one cell, usually), via PATCH. The full-state
-// useUpdateParty (PUT) still backs the edit dialog. Both invalidate the same
-// keys, since a field edit can change the derived status shown in the lists.
+// useUpdateParty (PUT) still backs the edit dialog. The response is written
+// through to the cached detail and list rows before the invalidations, so
+// anything that snapshots a row in the gap before the refetch (the edit dialog
+// seeding its form) sees the patched values; the invalidations still run to
+// reconcile derived fields across the lists.
 export const usePatchParty = () => {
   const queryClient = useQueryClient();
 
@@ -122,7 +125,31 @@ export const usePatchParty = () => {
         method: "PATCH",
         body: payload,
       }),
-    onSuccess: (_data, variables) => {
+    onSuccess: (data, variables) => {
+      // Merge rather than replace, and never drop a guests array the cache had
+      // (the response carries guests today, but the merge must not regress if
+      // it ever stops being loaded).
+      queryClient.setQueryData<PartyResponse>(
+        [QueryKey.RetrieveParty, variables.partyId],
+        (old) =>
+          old === undefined
+            ? undefined
+            : { ...old, ...data, guests: data.guests ?? old.guests },
+      );
+      queryClient.setQueriesData<ListPartiesResponse>(
+        { queryKey: [QueryKey.ListParties] },
+        (old) =>
+          old === undefined
+            ? undefined
+            : {
+                ...old,
+                items: old.items.map((item) =>
+                  item.id === data.id
+                    ? { ...item, ...data, guests: data.guests ?? item.guests }
+                    : item,
+                ),
+              },
+      );
       queryClient.invalidateQueries({
         queryKey: [QueryKey.RetrieveParty, variables.partyId],
       });

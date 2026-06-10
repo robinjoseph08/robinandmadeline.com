@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -249,6 +250,67 @@ describe("AdminGuests flat list", () => {
         true,
       );
     });
+  });
+
+  it("ignores unknown URL params instead of forwarding them to the API", async () => {
+    setMock({ guests: [makeGuestItem({ id: "alice", full_name: "Alice" })] });
+    // A shared link can carry foreign params (a utm_ tag); the binder 422s
+    // unknown query keys, so they must never reach the API, and the page must
+    // still render its rows.
+    renderGuests("/admin/guests?utm_source=share&party_id=p8");
+
+    expect(await screen.findByDisplayValue("Alice")).toBeInTheDocument();
+
+    const guestCalls = adminRequest.mock.calls.filter(
+      (call) => call[0] === "/admin/guests",
+    );
+    expect(guestCalls.length).toBeGreaterThan(0);
+    // The known filter is forwarded; the foreign param never is.
+    expect(guestCalls.some((call) => call[1]?.query?.party_id === "p8")).toBe(
+      true,
+    );
+    expect(
+      guestCalls.every((call) => !("utm_source" in (call[1]?.query ?? {}))),
+    ).toBe(true);
+  });
+
+  it("rolls the cell back, tints it, and toasts when the PATCH fails", async () => {
+    const errorSpy = vi.spyOn(toast, "error");
+    adminRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        const method = options?.method ?? "GET";
+        if (path === "/admin/guests" && method === "GET") {
+          return Promise.resolve(
+            listOf([makeGuestItem({ id: "alice", full_name: "Alice" })]),
+          );
+        }
+        if (path === "/admin/parties" && method === "GET") {
+          return Promise.resolve({ items: PARTIES, total: PARTIES.length });
+        }
+        if (method === "PATCH") {
+          return Promise.reject(new Error("Save failed"));
+        }
+        return Promise.resolve(undefined);
+      },
+    );
+
+    const user = userEvent.setup();
+    renderGuests();
+
+    const nameCell = await screen.findByDisplayValue("Alice");
+    await user.clear(nameCell);
+    await user.type(nameCell, "Alice Cooper");
+    await user.tab();
+
+    // The rejected PATCH rolls the cell back to the value the server holds...
+    await waitFor(() => {
+      expect(nameCell).toHaveValue("Alice");
+    });
+    // ...marks the cell with the error tint...
+    expect(nameCell.closest("td")).toHaveClass("bg-destructive/10");
+    // ...and surfaces the failure as a toast.
+    expect(errorSpy).toHaveBeenCalledWith("Save failed");
+    errorSpy.mockRestore();
   });
 
   it("searches guests, debounced into the request query", async () => {

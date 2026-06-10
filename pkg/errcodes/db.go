@@ -32,3 +32,15 @@ func ConflictOnUnique(err error, msg string) error {
 	}
 	return err
 }
+
+// ConflictOnConstraint is ConflictOnUnique narrowed to one named constraint,
+// for statements that can violate more than one unique index and want a
+// distinct message (or no 409 at all) per index. A unique violation on a
+// different constraint, or any other error, passes through unchanged.
+func ConflictOnConstraint(err error, constraint, msg string) error {
+	var pgErr pgdriver.Error
+	if errors.As(err, &pgErr) && pgErr.Field('C') == pgUniqueViolation && pgErr.Field('n') == constraint {
+		return Conflict(msg)
+	}
+	return err
+}

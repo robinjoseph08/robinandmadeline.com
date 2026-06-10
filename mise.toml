@@ -93,7 +93,7 @@ run = "pnpm lint:types"
 [tasks.test]
 description = "Run Go tests"
 env = { CI = "true" }
-run = "go test ./pkg/... ./cmd/... ./internal/..."
+run = "go test -race ./pkg/... ./cmd/... ./internal/..."
 
 [tasks."test:unit"]
 description = "Run JS unit tests"

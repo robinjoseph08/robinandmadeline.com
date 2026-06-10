@@ -13,8 +13,9 @@ import (
 )
 
 // Migrations is the registry every migration file appends to from its init().
-// It is shared by the CLI (cmd/migrations) and the API startup path so they
-// always run the exact same set of migrations.
+// It is shared by the CLI (cmd/migrations) and the test harness
+// (internal/databasetest) so both run the exact same set of migrations; the
+// API itself never migrates (ADR 0007).
 var Migrations = migrate.NewMigrations()
 
 // NewMigrator builds a Migrator over the package Migrations registry.
@@ -34,10 +35,11 @@ func newMigrator(db *bun.DB, migrations *migrate.Migrations) *migrate.Migrator {
 }
 
 // BringUpToDate initializes the migration bookkeeping tables (idempotent) and
-// applies every pending migration. It is called at API startup so dev and prod
-// schemas track the registered migrations without a manual step. A non-nil
-// error here is fatal at startup by design: serving against a stale or
-// half-migrated schema is worse than failing fast.
+// applies every pending migration. The API never migrates at startup (ADR
+// 0007): production migrates via the Fly release_command and local dev via
+// `mise db:migrate`, both through the CLI's own Init+Migrate calls. This
+// helper serves the test harness (internal/databasetest), which provisions the
+// test database with it.
 func BringUpToDate(ctx context.Context, db *bun.DB) (*migrate.MigrationGroup, error) {
 	migrator := NewMigrator(db)
 	if err := migrator.Init(ctx); err != nil {

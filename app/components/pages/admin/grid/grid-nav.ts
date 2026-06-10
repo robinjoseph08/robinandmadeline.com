@@ -10,10 +10,18 @@
  * stay plain <table>s.
  */
 
-// Controls a grid cell may hand focus to. The :not negative-tabindex guard skips
-// elements that are deliberately unfocusable.
-const FOCUSABLE_SELECTOR =
-  'input:not([type="hidden"]), button, textarea, select, [tabindex]:not([tabindex="-1"])';
+// Controls a grid cell may hand focus to. Disabled controls are excluded (a
+// locked checkbox cannot take an edit, so Enter keeps walking past it), as are
+// deliberately unfocusable elements (negative tabindex) and focusable-but-not-
+// editable wrappers that opt out via data-grid-nav-skip (the locked primary's
+// tooltip span).
+const FOCUSABLE_SELECTOR = [
+  'input:not([type="hidden"]):not(:disabled)',
+  "button:not(:disabled)",
+  "textarea:not(:disabled)",
+  "select:not(:disabled)",
+  '[tabindex]:not([tabindex="-1"]):not([data-grid-nav-skip])',
+].join(", ");
 
 /**
  * Focuses the focusable control in the same column one row below the cell

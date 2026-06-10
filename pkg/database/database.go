@@ -4,6 +4,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -67,10 +68,24 @@ func EnsureExists(ctx context.Context, dsn string) error {
 	// identifier interpolation here is safe. CREATE DATABASE cannot be
 	// parameterized, hence the formatted statement.
 	_, err = adminDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %q", dbName))
-	if err != nil && !strings.Contains(err.Error(), "already exists") {
+	if err != nil && !isDuplicateDatabase(err) {
 		return fmt.Errorf("create database %q: %w", dbName, err)
 	}
 	return nil
+}
+
+// isDuplicateDatabase reports whether a CREATE DATABASE error means the
+// database already exists, which EnsureExists treats as success. That is
+// SQLSTATE 42P04 (duplicate_database) when it existed before the statement, or
+// 23505 (a unique violation on the pg_database catalog index) when a concurrent
+// EnsureExists won the create race after our existence check.
+func isDuplicateDatabase(err error) bool {
+	var pgErr pgdriver.Error
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	code := pgErr.Field('C')
+	return code == "42P04" || code == "23505"
 }
 
 // maintenanceDSN parses dsn and returns the target database name plus a DSN

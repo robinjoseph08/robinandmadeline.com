@@ -31,7 +31,11 @@ func (h *handler) listParties(c echo.Context) error {
 
 // getParty handles GET /api/admin/parties/:id.
 func (h *handler) getParty(c echo.Context) error {
-	party, err := h.service.GetParty(c.Request().Context(), c.Param("id"))
+	id, err := pathID(c, "party")
+	if err != nil {
+		return err
+	}
+	party, err := h.service.GetParty(c.Request().Context(), id)
 	if err != nil {
 		return err
 	}
@@ -58,12 +62,16 @@ func (h *handler) createParty(c echo.Context) error {
 // updateParty handles PUT /api/admin/parties/:id. It replaces the editable
 // fields and never alters the info token or collection status.
 func (h *handler) updateParty(c echo.Context) error {
+	id, err := pathID(c, "party")
+	if err != nil {
+		return err
+	}
 	var body UpdatePartyPayload
 	if err := c.Bind(&body); err != nil {
 		return errors.WithStack(err)
 	}
 
-	party, err := h.service.UpdateParty(c.Request().Context(), c.Param("id"), body)
+	party, err := h.service.UpdateParty(c.Request().Context(), id, body)
 	if err != nil {
 		return err
 	}
@@ -75,12 +83,16 @@ func (h *handler) updateParty(c echo.Context) error {
 // absent field is left as-is. Like updateParty it never alters the info token or
 // collection status.
 func (h *handler) patchParty(c echo.Context) error {
+	id, err := pathID(c, "party")
+	if err != nil {
+		return err
+	}
 	var body PatchPartyPayload
 	if err := c.Bind(&body); err != nil {
 		return errors.WithStack(err)
 	}
 
-	party, err := h.service.PatchParty(c.Request().Context(), c.Param("id"), body)
+	party, err := h.service.PatchParty(c.Request().Context(), id, body)
 	if err != nil {
 		return err
 	}
@@ -89,7 +101,11 @@ func (h *handler) patchParty(c echo.Context) error {
 
 // deleteParty handles DELETE /api/admin/parties/:id, returning 204 on success.
 func (h *handler) deleteParty(c echo.Context) error {
-	if err := h.service.DeleteParty(c.Request().Context(), c.Param("id")); err != nil {
+	id, err := pathID(c, "party")
+	if err != nil {
+		return err
+	}
+	if err := h.service.DeleteParty(c.Request().Context(), id); err != nil {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -99,7 +115,11 @@ func (h *handler) deleteParty(c echo.Context) error {
 // link as sent (requested=true, confirmed=false) and resetting status to
 // waiting.
 func (h *handler) requestInfo(c echo.Context) error {
-	party, err := h.service.RequestInfo(c.Request().Context(), c.Param("id"))
+	id, err := pathID(c, "party")
+	if err != nil {
+		return err
+	}
+	party, err := h.service.RequestInfo(c.Request().Context(), id)
 	if err != nil {
 		return err
 	}
@@ -110,20 +130,20 @@ func (h *handler) requestInfo(c echo.Context) error {
 // it gates on required fields (422 if missing); with status=incomplete it
 // re-opens the party.
 func (h *handler) markInfo(c echo.Context) error {
+	id, err := pathID(c, "party")
+	if err != nil {
+		return err
+	}
 	var body MarkInfoPayload
 	if err := c.Bind(&body); err != nil {
 		return errors.WithStack(err)
 	}
 
 	ctx := c.Request().Context()
-	id := c.Param("id")
 
 	// The binder already constrained status to complete|incomplete (a bad value is
 	// a 422), so only the two valid branches are reachable here.
-	var (
-		party *models.Party
-		err   error
-	)
+	var party *models.Party
 	switch body.Status {
 	case models.StatusComplete:
 		party, err = h.service.MarkComplete(ctx, id)

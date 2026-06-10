@@ -8,20 +8,22 @@
  * client state library yet, just this and the auth context.
  */
 
+import type { ErrorCode } from "@/types/generated/errcodes";
+
 const API_PREFIX = "/api";
 
 export interface ApiErrorShape {
   status: number;
   message: string;
-  code?: string;
+  code?: ErrorCode;
 }
 
 /** Error thrown for any non-2xx API response. */
 export class ApiError extends Error implements ApiErrorShape {
   status: number;
-  code?: string;
+  code?: ErrorCode;
 
-  constructor(status: number, message: string, code?: string) {
+  constructor(status: number, message: string, code?: ErrorCode) {
     super(message);
     this.name = "ApiError";
     this.status = status;
@@ -78,10 +80,12 @@ export async function apiRequest<T>(
  */
 async function errorDetail(
   response: Response,
-): Promise<{ message: string; code?: string }> {
+): Promise<{ message: string; code?: ErrorCode }> {
   try {
     const data = (await response.clone().json()) as {
-      error?: { message?: string; code?: string };
+      // The backend only ever emits codes from the closed ErrorCode set, so the
+      // parse boundary is the one place the string narrows to the union.
+      error?: { message?: string; code?: ErrorCode };
     };
     const detail = data?.error;
     if (detail && typeof detail.message === "string") {

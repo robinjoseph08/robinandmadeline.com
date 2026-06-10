@@ -4,6 +4,10 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { adminRequest } from "@/libraries/admin-api";
+import type {
+  ListGuestsResponse,
+  PartyResponse,
+} from "@/types/generated/parties";
 
 import {
   QueryKey,
@@ -121,6 +125,11 @@ describe("usePatchGuest", () => {
   it("PATCHes only the changed field and invalidates the same caches", async () => {
     const client = newClient();
     vi.mocked(adminRequest).mockClear();
+    vi.mocked(adminRequest).mockResolvedValueOnce({
+      id: "g1",
+      party_id: "p1",
+      is_primary: true,
+    });
     const { result } = renderHook(() => usePatchGuest(), {
       wrapper: makeWrapper(client),
     });
@@ -139,6 +148,96 @@ describe("usePatchGuest", () => {
       method: "PATCH",
       body: { is_primary: true },
     });
+  });
+
+  it("writes the response through the guest list and party detail caches", async () => {
+    const client = newClient();
+    client.setQueryData([QueryKey.ListGuests, {}], {
+      items: [
+        {
+          id: "g1",
+          party_id: "p1",
+          party_name: "The Smiths",
+          full_name: "Old Name",
+        },
+      ],
+      total: 1,
+    });
+    client.setQueryData([PartiesQueryKey.RetrieveParty, "p1"], {
+      id: "p1",
+      guests: [{ id: "g1", full_name: "Old Name" }],
+    });
+    vi.mocked(adminRequest).mockClear();
+    vi.mocked(adminRequest).mockResolvedValueOnce({
+      id: "g1",
+      party_id: "p1",
+      full_name: "New Name",
+    });
+
+    const { result } = renderHook(() => usePatchGuest(), {
+      wrapper: makeWrapper(client),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        guestId: "g1",
+        partyId: "p1",
+        payload: { full_name: "New Name" },
+      });
+    });
+
+    // The cache holds the patched value immediately (no refetch needed), and
+    // the list row keeps its list-only party_name through the merge.
+    const list = client.getQueryData<ListGuestsResponse>([
+      QueryKey.ListGuests,
+      {},
+    ]);
+    expect(list?.items[0]).toMatchObject({
+      full_name: "New Name",
+      party_name: "The Smiths",
+    });
+    const party = client.getQueryData<PartyResponse>([
+      PartiesQueryKey.RetrieveParty,
+      "p1",
+    ]);
+    expect(party?.guests?.[0]).toMatchObject({ full_name: "New Name" });
+  });
+
+  it("invalidates every party detail when the patch moves the guest", async () => {
+    const client = newClient();
+    client.setQueryData([QueryKey.ListGuests, {}], { items: [], total: 0 });
+    // The carried partyId covers only the source party; the destination (p2)
+    // must be refetched too, via the family-wide invalidation on a move.
+    client.setQueryData([PartiesQueryKey.RetrieveParty, "p1"], { id: "p1" });
+    client.setQueryData([PartiesQueryKey.RetrieveParty, "p2"], { id: "p2" });
+    vi.mocked(adminRequest).mockClear();
+    vi.mocked(adminRequest).mockResolvedValueOnce({
+      id: "g1",
+      party_id: "p2",
+    });
+
+    const { result } = renderHook(() => usePatchGuest(), {
+      wrapper: makeWrapper(client),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        guestId: "g1",
+        partyId: "p1",
+        payload: { party_id: "p2" },
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        client.getQueryState([PartiesQueryKey.RetrieveParty, "p2"])
+          ?.isInvalidated,
+      ).toBe(true);
+    });
+    expect(
+      client.getQueryState([PartiesQueryKey.RetrieveParty, "p1"])
+        ?.isInvalidated,
+    ).toBe(true);
   });
 });
 

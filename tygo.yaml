@@ -23,3 +23,15 @@ packages:
     output_path: "app/types/generated/errcodes.ts"
     include_files:
       - errors.go
+
+  # The auth API payload and response types (admin login).
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
+    output_path: "app/types/generated/auth.ts"
+    include_files:
+      - types.go
+
+  # The server-registered endpoint bodies (health, me).
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/server"
+    output_path: "app/types/generated/server.ts"
+    include_files:
+      - types.go

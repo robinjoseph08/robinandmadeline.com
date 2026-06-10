@@ -16,8 +16,8 @@ import (
 // It deliberately only reads (the count >= 0 assertion holds regardless of any
 // rows) and does not truncate, so it is safe to run concurrently with other
 // packages that share this database (go test runs package binaries in
-// parallel). Migrations are idempotent, so the New call cannot disturb them
-// either.
+// parallel). New serializes provisioning under an advisory lock, so this call
+// cannot race another package's migrate either.
 func TestNew_ProvisionsAndMigratesTestDatabase(t *testing.T) {
 	db := databasetest.New(t)
 

@@ -31,12 +31,17 @@ func (h *handler) listGuests(c echo.Context) error {
 // createGuest handles POST /api/admin/parties/:id/guests, returning 201 with the
 // created guest. Requesting is_primary demotes the party's previous primary.
 func (h *handler) createGuest(c echo.Context) error {
+	// The :id here is the owning party's, so a malformed one 404s as a party.
+	partyID, err := pathID(c, "party")
+	if err != nil {
+		return err
+	}
 	var body CreateGuestPayload
 	if err := c.Bind(&body); err != nil {
 		return errors.WithStack(err)
 	}
 
-	guest, err := h.service.CreateGuest(c.Request().Context(), c.Param("id"), body)
+	guest, err := h.service.CreateGuest(c.Request().Context(), partyID, body)
 	if err != nil {
 		return err
 	}
@@ -45,7 +50,11 @@ func (h *handler) createGuest(c echo.Context) error {
 
 // getGuest handles GET /api/admin/guests/:id.
 func (h *handler) getGuest(c echo.Context) error {
-	guest, err := h.service.GetGuest(c.Request().Context(), c.Param("id"))
+	id, err := pathID(c, "guest")
+	if err != nil {
+		return err
+	}
+	guest, err := h.service.GetGuest(c.Request().Context(), id)
 	if err != nil {
 		return err
 	}
@@ -56,12 +65,16 @@ func (h *handler) getGuest(c echo.Context) error {
 // the edit dialog. Promoting to primary demotes the party's previous primary
 // transactionally.
 func (h *handler) updateGuest(c echo.Context) error {
+	id, err := pathID(c, "guest")
+	if err != nil {
+		return err
+	}
 	var body UpdateGuestPayload
 	if err := c.Bind(&body); err != nil {
 		return errors.WithStack(err)
 	}
 
-	guest, err := h.service.UpdateGuest(c.Request().Context(), c.Param("id"), body)
+	guest, err := h.service.UpdateGuest(c.Request().Context(), id, body)
 	if err != nil {
 		return err
 	}
@@ -72,12 +85,16 @@ func (h *handler) updateGuest(c echo.Context) error {
 // fields present in the body change (the spreadsheet's single-cell save).
 // Promoting to primary demotes the party's previous primary transactionally.
 func (h *handler) patchGuest(c echo.Context) error {
+	id, err := pathID(c, "guest")
+	if err != nil {
+		return err
+	}
 	var body PatchGuestPayload
 	if err := c.Bind(&body); err != nil {
 		return errors.WithStack(err)
 	}
 
-	guest, err := h.service.PatchGuest(c.Request().Context(), c.Param("id"), body)
+	guest, err := h.service.PatchGuest(c.Request().Context(), id, body)
 	if err != nil {
 		return err
 	}
@@ -86,7 +103,11 @@ func (h *handler) patchGuest(c echo.Context) error {
 
 // deleteGuest handles DELETE /api/admin/guests/:id, returning 204 on success.
 func (h *handler) deleteGuest(c echo.Context) error {
-	if err := h.service.DeleteGuest(c.Request().Context(), c.Param("id")); err != nil {
+	id, err := pathID(c, "guest")
+	if err != nil {
+		return err
+	}
+	if err := h.service.DeleteGuest(c.Request().Context(), id); err != nil {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)

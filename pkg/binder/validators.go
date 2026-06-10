@@ -12,7 +12,9 @@ import (
 	"github.com/nyaruka/phonenumbers"
 )
 
-var dateRE = regexp.MustCompile(`^\d{4}-(0[0-9]|1[0-2])-(0[0-9]|1[0-9]|2[0-9]|3[0-1])$`)
+// dateRE constrains the month to 01-12 and the day to 01-31. It is a format
+// check only; it does not validate the calendar (February 31 passes).
+var dateRE = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$`)
 
 // dateValidator ensures the value matches the format YYYY-MM-DD or the empty
 // string. The reason the empty string is allowed is that this validator can be

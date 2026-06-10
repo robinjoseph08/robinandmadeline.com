@@ -8,16 +8,21 @@ import { useSearchParams } from "react-router-dom";
  * reload. Returns the filters parsed from the URL plus a setter that writes one
  * filter (or removes it when cleared back to undefined/empty).
  *
+ * Only the page's declared keys are read back out (keys, a stable, module-level
+ * array of the API query field names). Unknown params (a utm_ tag on a shared
+ * link) may sit in the URL, but they must never reach the API: the binder 422s
+ * unknown query keys, which would brick the list with no recovery.
+ *
  * Query-string values are strings, so boolean filters are stored as
- * "true"/"false"; list their keys in boolKeys (a stable, module-level array) so
- * they parse back to booleans. Every other value stays a plain string. The key
- * names are the API field names, so they map straight onto the list query.
+ * "true"/"false"; list their keys in boolKeys (also stable and module-level) so
+ * they parse back to booleans. Every other value stays a plain string.
  */
 // T is the page's list-query type (e.g. ListGuestsQuery). It is an interface, so
 // it is constrained to `object` rather than a Record (interfaces lack the index
 // signature a Record constraint demands); the values are normalized through
 // strings either way.
 export function useFilterParams<T extends object>(
+  keys: readonly (keyof T)[],
   boolKeys: readonly (keyof T)[] = [],
 ) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -28,11 +33,13 @@ export function useFilterParams<T extends object>(
 
   const filters = useMemo(() => {
     const out: Record<string, string | boolean> = {};
-    for (const [key, value] of searchParams.entries()) {
+    for (const key of keys as readonly string[]) {
+      const value = searchParams.get(key);
+      if (value === null) continue;
       out[key] = boolSet.has(key) ? value === "true" : value;
     }
     return out as T;
-  }, [searchParams, boolSet]);
+  }, [searchParams, keys, boolSet]);
 
   const setFilter = useCallback(
     <K extends keyof T>(key: K, value: T[K]) => {

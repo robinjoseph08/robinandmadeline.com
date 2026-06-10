@@ -150,6 +150,84 @@ describe("AdminPartyDetail single-primary guest editing", () => {
   });
 });
 
+describe("AdminPartyDetail copy info link", () => {
+  it("requests info first, then copies the link", async () => {
+    adminRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        const method = options?.method ?? "GET";
+        if (path === "/admin/parties/p1" && method === "GET") {
+          return Promise.resolve(makeParty([ALICE_PRIMARY]));
+        }
+        // The request-info POST (and any refetch) resolve to the party.
+        return Promise.resolve(makeParty([ALICE_PRIMARY]));
+      },
+    );
+
+    const user = userEvent.setup();
+    // Override the clipboard AFTER userEvent.setup(), which installs its own
+    // clipboard stub; navigator.clipboard is getter-only in jsdom so define it.
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    renderDetail();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Copy info link" }),
+    );
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith(
+        "/admin/parties/p1/request-info",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining("/i/tok"));
+    });
+  });
+
+  it("aborts the copy when request-info fails", async () => {
+    adminRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        const method = options?.method ?? "GET";
+        if (path === "/admin/parties/p1" && method === "GET") {
+          return Promise.resolve(makeParty([ALICE_PRIMARY]));
+        }
+        if (path === "/admin/parties/p1/request-info" && method === "POST") {
+          return Promise.reject(new Error("request-info failed"));
+        }
+        return Promise.resolve(undefined);
+      },
+    );
+
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    renderDetail();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Copy info link" }),
+    );
+
+    // The failed request-info aborts the copy, so the link is never written to
+    // the clipboard (and no success toast can claim the party was marked).
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith(
+        "/admin/parties/p1/request-info",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(writeText).not.toHaveBeenCalled();
+  });
+});
+
 describe("AdminPartyDetail add guest", () => {
   it("creates a placeholder guest from the trailing add row", async () => {
     adminRequest.mockImplementation(

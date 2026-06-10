@@ -2,11 +2,13 @@ package parties
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
+	"github.com/uptrace/bun"
 )
 
 // This file holds the info-collection status transitions (ADR 0005). Each moves
@@ -30,14 +32,7 @@ func (s *Service) RequestInfo(ctx context.Context, id string) (*models.Party, er
 // MarkComplete is the admin "this party's info is done" action. It is gated on
 // required fields (422 if missing), then sets confirmed=true and requested=true.
 func (s *Service) MarkComplete(ctx context.Context, id string) (*models.Party, error) {
-	party, err := loadPartyWithGuests(ctx, s.db, id)
-	if err != nil {
-		return nil, err
-	}
-	if !party.RequiredFieldsPresent() {
-		return nil, errInfoIncomplete()
-	}
-	return s.applyCollectionFlags(ctx, party, true, true)
+	return s.confirmComplete(ctx, id)
 }
 
 // MarkIncomplete is the admin "re-open this party" action (requested=true,
@@ -50,34 +45,65 @@ func (s *Service) MarkIncomplete(ctx context.Context, id string) (*models.Party,
 // behind the guest-facing endpoint built later (#8); like MarkComplete it is
 // gated on required fields, since the form must collect exactly those.
 func (s *Service) SubmitInfoForm(ctx context.Context, id string) (*models.Party, error) {
-	party, err := loadPartyWithGuests(ctx, s.db, id)
+	return s.confirmComplete(ctx, id)
+}
+
+// confirmComplete is the gated transition shared by MarkComplete and
+// SubmitInfoForm: it checks RequiredFieldsPresent (422 if missing) and writes
+// requested=confirmed=true. Load, gate, and write run in one transaction with
+// the party row locked, so a concurrent party edit (say, clearing the address
+// the gate just approved) cannot slip between the gate and the flag write and
+// confirm a party whose required fields are missing (ADR 0005). FOR UPDATE
+// cannot ride on the guests join, so the party row is locked by a slim select
+// first and the guests the gate needs are loaded separately inside the
+// transaction.
+func (s *Service) confirmComplete(ctx context.Context, id string) (*models.Party, error) {
+	party := new(models.Party)
+	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		err := tx.NewSelect().Model(party).Where("p.id = ?", id).For("UPDATE").Scan(ctx)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errcodes.NotFound("party")
+			}
+			return errors.Wrap(err, "load party")
+		}
+		if err := tx.NewSelect().Model(&party.Guests).Where("g.party_id = ?", id).Scan(ctx); err != nil {
+			return errors.Wrap(err, "load guests")
+		}
+
+		if !party.RequiredFieldsPresent() {
+			return errInfoIncomplete()
+		}
+		_, err = applyCollectionFlags(ctx, tx, party, true, true)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	if !party.RequiredFieldsPresent() {
-		return nil, errInfoIncomplete()
-	}
-	return s.applyCollectionFlags(ctx, party, true, true)
+	return party, nil
 }
 
 // setCollectionFlags loads the party then writes the given flags. It is the
-// ungated path used by RequestInfo / MarkIncomplete.
+// ungated path used by RequestInfo / MarkIncomplete, so unlike confirmComplete
+// it needs no gate (and therefore no lock: the written values do not depend on
+// what was read).
 func (s *Service) setCollectionFlags(ctx context.Context, id string, requested, confirmed bool) (*models.Party, error) {
 	party, err := loadPartyWithGuests(ctx, s.db, id)
 	if err != nil {
 		return nil, err
 	}
-	return s.applyCollectionFlags(ctx, party, requested, confirmed)
+	return applyCollectionFlags(ctx, s.db, party, requested, confirmed)
 }
 
 // applyCollectionFlags persists the two collection flags (and updated_at) for a
-// loaded party, updating only those columns.
-func (s *Service) applyCollectionFlags(ctx context.Context, party *models.Party, requested, confirmed bool) (*models.Party, error) {
+// loaded party, updating only those columns. It takes a bun.IDB so it runs on
+// the pool (the ungated path) or inside confirmComplete's transaction.
+func applyCollectionFlags(ctx context.Context, db bun.IDB, party *models.Party, requested, confirmed bool) (*models.Party, error) {
 	party.InfoCollectionRequested = requested
 	party.InfoCollectionConfirmed = confirmed
 	party.UpdatedAt = time.Now()
 
-	_, err := s.db.NewUpdate().Model(party).
+	_, err := db.NewUpdate().Model(party).
 		Column("info_collection_requested", "info_collection_confirmed", "updated_at").
 		WherePK().Exec(ctx)
 	if err != nil {

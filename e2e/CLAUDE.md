@@ -18,7 +18,8 @@ e2e is for whole-journey coverage through the browser.
   the shared `tmp/api.port`, so the dev Vite proxy could momentarily target the
   e2e API.
 - CI runs the same thing in a dedicated `e2e` job (its own Postgres service); see
-  `.github/workflows/ci.yml`. `mise check:quiet` does not run e2e.
+  `.github/workflows/ci.yml`. Locally, both `mise check` and `mise check:quiet`
+  run e2e too (as the `e2e:chromium` step).
 
 ## How the harness works
 

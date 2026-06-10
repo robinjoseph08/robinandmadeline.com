@@ -55,8 +55,12 @@ func (s *Service) CreateGuest(ctx context.Context, partyID string, in CreateGues
 			}
 		}
 
+		// A concurrent promotion can commit between the demotion above and this
+		// insert, so the one-primary-per-party index can still fire; surface that
+		// as a 409 rather than a raw unique violation.
 		if _, err := tx.NewInsert().Model(guest).Exec(ctx); err != nil {
-			return errors.Wrap(err, "insert guest")
+			return errcodes.ConflictOnConstraint(errors.Wrap(err, "insert guest"),
+				"ux_guests_one_primary_per_party", "Another guest became this party's primary at the same time; try again.")
 		}
 		return nil
 	})

@@ -30,8 +30,8 @@ import {
   type Guest,
 } from "@/types/generated/models";
 import type {
-  CreateGuestPayload,
-  CreatePartyPayload,
+  UpdateGuestPayload,
+  UpdatePartyPayload,
 } from "@/types/generated/parties";
 
 /**
@@ -73,7 +73,7 @@ export default function AdminPartyDetail() {
   const party = partyQuery.data;
   const guests = party.guests ?? [];
 
-  const handleUpdateParty = async (payload: CreatePartyPayload) => {
+  const handleUpdateParty = async (payload: UpdatePartyPayload) => {
     if (!id) return;
     try {
       await updateParty.mutateAsync({ partyId: id, payload });
@@ -121,7 +121,7 @@ export default function AdminPartyDetail() {
     setEditGuestOpen(true);
   };
 
-  const handleEditGuest = async (payload: CreateGuestPayload) => {
+  const handleEditGuest = async (payload: UpdateGuestPayload) => {
     if (!id || !editGuest) return;
     try {
       await updateGuest.mutateAsync({
@@ -207,7 +207,13 @@ export default function AdminPartyDetail() {
         <div className="flex flex-wrap gap-2">
           <CopyButton
             label="Copy info link"
-            onCopy={handleRequestInfo}
+            // Let a request-info rejection propagate so CopyButton aborts the
+            // copy and shows one error toast (handleRequestInfo would swallow
+            // it and toast its own success message on top of the copy's).
+            onCopy={async () => {
+              if (!id) return;
+              await requestInfo.mutateAsync({ partyId: id });
+            }}
             successMessage="Info link copied; party marked as requested"
             value={infoLinkForToken(party.info_token)}
           />

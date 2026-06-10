@@ -9,5 +9,5 @@ The frontend is a React SPA (React Router, plain fetch). It consumes a Go API wh
 
 ## API access
 
-- All API calls go through `apiRequest` in `app/libraries/api.ts`, which attaches the admin bearer token and throws `ApiError` carrying the backend's `code` and `message` from the `{ error: { ... } }` envelope.
+- All API calls go through `apiRequest` in `app/libraries/api.ts`, which sends/parses JSON and throws `ApiError` carrying the backend's `code` (typed as the generated `ErrorCode` union) and `message` from the `{ error: { ... } }` envelope. Admin endpoints use `adminRequest` in `app/libraries/admin-api.ts`, which layers the stored admin bearer token and query-string serialization on top of `apiRequest`.
 - List endpoints return `{ items, total }`; type list consumers off the generated `List{Entities}Response`.

@@ -1,6 +1,7 @@
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 
+import { ChipsInput } from "@/components/library/ChipsInput";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -17,7 +18,17 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatPhone } from "@/libraries/phone";
 import type { Guest } from "@/types/generated/models";
-import type { CreateGuestPayload } from "@/types/generated/parties";
+import type {
+  CreateGuestPayload,
+  UpdateGuestPayload,
+} from "@/types/generated/parties";
+
+// The dialog serves both create (POST) and edit (PUT), and it always builds the
+// full field set, so the payload it emits satisfies both shapes. The
+// intersection keeps a caller honest either way: an edit handler typed against
+// UpdateGuestPayload and a create handler typed against CreateGuestPayload are
+// both assignable, and this stops compiling if the two shapes ever drift.
+export type GuestFormPayload = CreateGuestPayload & UpdateGuestPayload;
 
 interface GuestFormDialogProps {
   open: boolean;
@@ -25,7 +36,7 @@ interface GuestFormDialogProps {
   /** Present in edit mode; absent for create. */
   guest?: Guest;
   /** Receives the full guest payload (create and update share these fields). */
-  onSubmit: (payload: CreateGuestPayload) => Promise<void>;
+  onSubmit: (payload: GuestFormPayload) => Promise<void>;
   isPending: boolean;
 }
 
@@ -33,7 +44,7 @@ interface FormState {
   fullName: string;
   email: string;
   phone: string;
-  tags: string;
+  tags: string[];
   dietaryRestrictions: string;
   tableNumber: string;
   seatNumber: string;
@@ -47,7 +58,7 @@ const EMPTY_FORM: FormState = {
   fullName: "",
   email: "",
   phone: "",
-  tags: "",
+  tags: [],
   dietaryRestrictions: "",
   tableNumber: "",
   seatNumber: "",
@@ -62,7 +73,7 @@ function formFromGuest(guest: Guest): FormState {
     fullName: guest.full_name,
     email: guest.email ?? "",
     phone: formatPhone(guest.phone ?? ""),
-    tags: guest.tags.join(", "),
+    tags: guest.tags,
     dietaryRestrictions: guest.dietary_restrictions ?? "",
     tableNumber: guest.table_number?.toString() ?? "",
     seatNumber: guest.seat_number?.toString() ?? "",
@@ -85,15 +96,6 @@ function optionalInt(value: string): number | undefined {
   if (trimmed === "") return undefined;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-// Splits the comma-separated tags field into trimmed, non-empty tags. tags is
-// open-ended, so it is just a list of strings.
-function parseTags(value: string): string[] {
-  return value
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter((tag) => tag.length > 0);
 }
 
 /**
@@ -127,11 +129,11 @@ export function GuestFormDialog({
     setForm((prev) => ({ ...prev, [key]: value }));
 
   const handleSubmit = async () => {
-    const payload: CreateGuestPayload = {
+    const payload: GuestFormPayload = {
       full_name: form.fullName.trim(),
       email: optional(form.email),
       phone: optional(form.phone),
-      tags: parseTags(form.tags),
+      tags: form.tags,
       dietary_restrictions: optional(form.dietaryRestrictions),
       table_number: optionalInt(form.tableNumber),
       seat_number: optionalInt(form.seatNumber),
@@ -145,7 +147,10 @@ export function GuestFormDialog({
 
   const canSave = form.fullName.trim().length > 0;
 
-  const flags: { key: keyof FormState; label: string }[] = [
+  // Narrowing the keys to the boolean fields lets the generic update() accept
+  // `checked` directly: FormState[FlagKey] is boolean, so no cast is needed.
+  type FlagKey = "isPrimary" | "isChild" | "isDrinking" | "isPlaceholder";
+  const flags: { key: FlagKey; label: string }[] = [
     { key: "isPrimary", label: "Primary guest" },
     { key: "isChild", label: "Child" },
     { key: "isDrinking", label: "Drinking" },
@@ -198,10 +203,10 @@ export function GuestFormDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor="guest-tags">Tags</Label>
-            <Input
+            <ChipsInput
               id="guest-tags"
-              onChange={(e) => update("tags", e.target.value)}
-              placeholder="Comma-separated, e.g. Bridal Party, College"
+              onChange={(tags) => update("tags", tags)}
+              placeholder="Type a tag and press Enter, e.g. Sibling"
               value={form.tags}
             />
           </div>
@@ -259,10 +264,10 @@ export function GuestFormDialog({
                     }
                   >
                     <Checkbox
-                      checked={form[flag.key] as boolean}
+                      checked={form[flag.key]}
                       disabled={lockPrimary}
                       onCheckedChange={(checked) =>
-                        update(flag.key, (checked === true) as never)
+                        update(flag.key, checked === true)
                       }
                     />
                     {flag.label}

@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { TOKEN_STORAGE_KEY } from "@/libraries/admin-api";
 import { apiRequest } from "@/libraries/api";
 import { AuthContext, type AuthContextValue } from "@/libraries/auth-context";
+import type { LoginResponse } from "@/types/generated/auth";
 
 /**
  * Client-side admin authentication provider.
@@ -18,10 +19,6 @@ import { AuthContext, type AuthContextValue } from "@/libraries/auth-context";
  * shared with the admin API helper (admin-api.ts), the single reader of the
  * persisted token for authenticated requests.
  */
-
-interface LoginResponse {
-  token: string;
-}
 
 /** Reads the persisted token once at startup. */
 function readStoredToken(): string | null {

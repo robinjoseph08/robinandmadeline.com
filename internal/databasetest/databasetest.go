@@ -18,8 +18,10 @@
 // runs in parallel, a test must not make order-sensitive assertions against the
 // shared database unless it either only reads / runs idempotent statements or
 // uses its own dedicated database (as pkg/migrations does for its destructive
-// up/down round-trip). The migrator itself is idempotent, so a concurrent New
-// in another package cannot disturb an in-flight test.
+// up/down round-trip). Provisioning itself is concurrency-safe: EnsureExists
+// treats losing the create-database race as success, and New serializes
+// migration under a Postgres advisory lock, since bun's Migrator.Migrate takes
+// no lock of its own and two binaries migrating a fresh database would race.
 package databasetest
 
 import (
@@ -54,6 +56,11 @@ func testDatabaseURL() string {
 	return defaultTestDatabaseURL
 }
 
+// migrateLockID is the advisory lock key under which New runs the migrator.
+// The value is arbitrary; it only has to be the same for every harness user so
+// they serialize against each other.
+const migrateLockID = 824873
+
 // New returns a Bun DB connected to the (auto-provisioned, migrated) test
 // database. The connection is closed automatically via t.Cleanup.
 //
@@ -70,8 +77,25 @@ func New(t *testing.T) *bun.DB {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_, err := migrations.BringUpToDate(ctx, db)
+
+	// go test runs package binaries in parallel and bun's Migrator.Migrate takes
+	// no lock, so on a fresh database two binaries could both try to apply the
+	// first migration and one would fail. A session-level advisory lock, held on
+	// its own connection for the duration of the migrate, serializes them. The
+	// session releases the lock even on a failure path, since closing the
+	// connection (deferred, and run before require unwinds the test) ends it.
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err, "open advisory lock connection")
+	defer func() { _ = conn.Close() }()
+
+	_, err = conn.ExecContext(ctx, "SELECT pg_advisory_lock(?)", migrateLockID)
+	require.NoError(t, err, "acquire migrate advisory lock")
+
+	_, err = migrations.BringUpToDate(ctx, db)
 	require.NoError(t, err, "bring test database up to date")
+
+	_, err = conn.ExecContext(ctx, "SELECT pg_advisory_unlock(?)", migrateLockID)
+	require.NoError(t, err, "release migrate advisory lock")
 
 	return db
 }

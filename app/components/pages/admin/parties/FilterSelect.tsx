@@ -1,4 +1,4 @@
-import { Combobox } from "@/components/ui/combobox";
+import { Combobox } from "@/components/library/Combobox";
 
 import type { Option } from "./options";
 

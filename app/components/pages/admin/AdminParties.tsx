@@ -26,15 +26,17 @@ import type {
   Side,
 } from "@/types/generated/models";
 import type {
-  CreatePartyPayload,
   ListPartiesQuery,
   PartyResponse,
+  UpdatePartyPayload,
 } from "@/types/generated/parties";
 
 // Boolean party filters, listed so useFilterParams parses them back from the URL.
 const BOOL_FILTERS = ["info_collection_requested"] as const;
 
-// Filter keys, counted for the "Filters" badge.
+// Filter keys, counted for the "Filters" badge. They are also the only URL
+// params forwarded to the list API (an unknown query key is a 422 from the
+// binder, so a stray utm_ param must never reach it).
 const FILTER_KEYS = [
   "side",
   "relation",
@@ -53,8 +55,10 @@ const FILTER_KEYS = [
  * unchanged. The full edit dialog survives for the mailing address.
  */
 export default function AdminParties() {
-  const [filters, setFilter, clearAll] =
-    useFilterParams<ListPartiesQuery>(BOOL_FILTERS);
+  const [filters, setFilter, clearAll] = useFilterParams<ListPartiesQuery>(
+    FILTER_KEYS,
+    BOOL_FILTERS,
+  );
   const [editParty, setEditParty] = useState<PartyResponse | undefined>(
     undefined,
   );
@@ -78,7 +82,7 @@ export default function AdminParties() {
     setEditOpen(true);
   };
 
-  const handleEditSubmit = async (payload: CreatePartyPayload) => {
+  const handleEditSubmit = async (payload: UpdatePartyPayload) => {
     if (!editParty) return;
     try {
       await updateParty.mutateAsync({ partyId: editParty.id, payload });
@@ -150,8 +154,9 @@ export default function AdminParties() {
       ) : partiesQuery.isError ? (
         <p className="text-destructive">{partiesQuery.error.message}</p>
       ) : (
-        // The grid always renders so its add row stays available; a hint above it
-        // explains an empty result rather than leaving a lone, muted add row.
+        // The grid always renders (there is no add row here; parties are born
+        // from the guest list) so the header keeps the layout stable on an
+        // empty result, which the hint above it explains.
         <div className="space-y-2">
           {parties.length === 0 ? (
             <p className="text-sm text-muted-foreground">

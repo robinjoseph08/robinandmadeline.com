@@ -100,14 +100,14 @@ func TestBind_AppliesDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	type payload struct {
-		Tags  []string `json:"tags" default:"[]"`
+		Items []string `json:"items" default:"[]"`
 		Limit int      `json:"limit" default:"24" validate:"min=1,max=50"`
 	}
 	c := newContext(http.MethodPost, "/", `{}`, echo.MIMEApplicationJSON)
 	p := payload{}
 	require.NoError(t, b.Bind(&p, c))
-	assert.NotNil(t, p.Tags, "default:\"[]\" should initialize a nil slice")
-	assert.Empty(t, p.Tags)
+	assert.NotNil(t, p.Items, "default:\"[]\" should initialize a nil slice")
+	assert.Empty(t, p.Items)
 	assert.Equal(t, 24, p.Limit, "default scalar should be filled")
 }
 
@@ -245,6 +245,10 @@ func TestValidators(t *testing.T) {
 		{"valid date", `{"when":"2026-06-07"}`, true},
 		{"empty date allowed", `{"when":""}`, true},
 		{"bad date", `{"when":"06/07/2026"}`, false},
+		{"zero month rejected", `{"when":"2026-00-07"}`, false},
+		{"zero day rejected", `{"when":"2026-06-00"}`, false},
+		{"month 13 rejected", `{"when":"2026-13-07"}`, false},
+		{"day 32 rejected", `{"when":"2026-06-32"}`, false},
 		{"valid url", `{"site":"https://example.com"}`, true},
 		{"bad url", `{"site":"not a url"}`, false},
 		{"valid email", `{"mail":"pat@example.com"}`, true},

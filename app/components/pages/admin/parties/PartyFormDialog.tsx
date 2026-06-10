@@ -33,6 +33,7 @@ import {
 import type {
   CreatePartyPayload,
   PartyResponse,
+  UpdatePartyPayload,
 } from "@/types/generated/parties";
 
 import {
@@ -42,13 +43,20 @@ import {
   SIDE_OPTIONS,
 } from "./options";
 
+// The dialog serves both create (POST) and edit (PUT), and it always builds the
+// full field set, so the payload it emits satisfies both shapes. The
+// intersection keeps a caller honest either way: an edit handler typed against
+// UpdatePartyPayload and a create handler typed against CreatePartyPayload are
+// both assignable, and this stops compiling if the two shapes ever drift.
+export type PartyFormPayload = CreatePartyPayload & UpdatePartyPayload;
+
 interface PartyFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Present in edit mode; absent for create. */
   party?: PartyResponse;
   /** Receives the full party payload (create and update share these fields). */
-  onSubmit: (payload: CreatePartyPayload) => Promise<void>;
+  onSubmit: (payload: PartyFormPayload) => Promise<void>;
   isPending: boolean;
 }
 
@@ -145,7 +153,7 @@ export function PartyFormDialog({
     }));
 
   const handleSubmit = async () => {
-    const payload: CreatePartyPayload = {
+    const payload: PartyFormPayload = {
       name: form.name.trim(),
       side: form.side,
       relation: form.relation,

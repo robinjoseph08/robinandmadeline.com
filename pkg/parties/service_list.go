@@ -3,6 +3,7 @@ package parties
 import (
 	"context"
 	"regexp"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
@@ -12,6 +13,17 @@ import (
 // nonDigitRE strips formatting from a phone search term so it can match stored
 // E.164 numbers, which are digits only.
 var nonDigitRE = regexp.MustCompile(`\D`)
+
+// likeEscaper escapes the characters LIKE/ILIKE treat specially, backslash
+// first so the added escapes are not themselves escaped.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// escapeLike makes a user-supplied search term safe to embed in an ILIKE
+// pattern: without it "_" matches any character, "%" matches everything, and a
+// trailing "\" breaks the pattern outright.
+func escapeLike(term string) string {
+	return likeEscaper.Replace(term)
+}
 
 // ListParties returns parties matching the filter (each with guests loaded,
 // ordered by creation time) and the total count.
@@ -85,9 +97,10 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 	}
 	if f.Search != nil && *f.Search != "" {
 		// A single search box across the guest's own fields and the owning party's
-		// name, case-insensitive substring. The party name match is a correlated
-		// EXISTS so it stays a flat guest query.
-		pattern := "%" + *f.Search + "%"
+		// name, case-insensitive substring. The term is escaped so a literal "_" or
+		// "%" in it matches itself rather than acting as a wildcard. The party name
+		// match is a correlated EXISTS so it stays a flat guest query.
+		pattern := "%" + escapeLike(*f.Search) + "%"
 		partyNameMatch := s.db.NewSelect().Model((*models.Party)(nil)).Column("id").
 			Where("p.id = g.party_id").Where("p.name ILIKE ?", pattern)
 		clause := "g.full_name ILIKE ? OR g.email ILIKE ? OR EXISTS (?)"

@@ -151,11 +151,12 @@ jobs:
   e2e:
     name: E2E
     runs-on: ubuntu-latest
-    # check:quiet does not run e2e. This job builds and boots the API + Vite
-    # against a dedicated Postgres database (created and migrated by
-    # `mise e2e:setup`), then drives Chromium through the issue #4 flow. The
-    # credentials/db below match the e2e DATABASE_URL default in
-    # playwright.config.ts and mise's e2e:setup task.
+    # Locally e2e runs as part of `mise check` / `mise check:quiet`; in CI it
+    # gets this dedicated job. The job builds and boots the API + Vite against
+    # a dedicated Postgres database (created and migrated by `mise e2e:setup`),
+    # then drives Chromium through the issue #4 flow. The credentials/db below
+    # match the e2e DATABASE_URL default in playwright.config.ts and mise's
+    # e2e:setup task.
     services:
       postgres:
         image: postgres:17
@@ -209,3 +210,16 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm exec playwright install-deps chromium
       - run: mise e2e:chromium
+      # Playwright's failure evidence: the HTML report (playwright-report/) and
+      # the per-test traces/screenshots (test-results/), its default output
+      # directories (playwright.config.ts does not override them).
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
+          if-no-files-found: ignore

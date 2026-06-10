@@ -90,6 +90,9 @@ func (b *Binder) Bind(i interface{}, c echo.Context) error {
 		disallowEmptyBody = disallow
 	}
 
+	// ContentLength > 0 is the body-presence check, so a chunked request
+	// (ContentLength -1) is treated as bodyless; our clients always send
+	// Content-Length.
 	if req.ContentLength > 0 {
 		// request has a body
 		ctype := req.Header.Get(echo.HeaderContentType)

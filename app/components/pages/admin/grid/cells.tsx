@@ -18,8 +18,8 @@
 import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { Combobox, type ComboboxOption } from "@/components/library/Combobox";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import {
   Command,
   CommandEmpty,
@@ -104,9 +104,16 @@ function useCommittableValue<T>(
     setValue(serverValue);
   }
 
+  // Re-sync the baseline only on a value-level change. Parents may pass a fresh
+  // but equal object every render (the flags cell builds its value inline), and
+  // re-syncing on reference alone would reset the baseline mid-flight, so a
+  // quick toggle back to the old value would de-dup as a phantom no-op.
+  const lastServer = useRef<T>(serverValue);
   useEffect(() => {
+    if (isEqual(serverValue, lastServer.current)) return;
+    lastServer.current = serverValue;
     committed.current = serverValue;
-  }, [serverValue]);
+  }, [serverValue, isEqual]);
 
   const [status, setStatus] = useState<CellStatus>("idle");
 
@@ -121,17 +128,27 @@ function useCommittableValue<T>(
     return () => clearTimeout(timer);
   }, [status]);
 
+  // Identifies the latest send, so a superseded write that settles late cannot
+  // override the newer one's outcome.
+  const sendSeq = useRef(0);
+
   // Send `next`, holding it optimistically and tracking the save status. If the
   // write rejects (the grid surfaces the toast), roll the cell back to the last
-  // known-good value.
+  // known-good value. Only the latest send may roll back or change the status:
+  // a stale rejection arriving after a newer send would otherwise restore a
+  // value older than what the server now holds.
   const send = (next: T) => {
     if (isEqual(next, committed.current)) return;
     const previous = committed.current;
     committed.current = next;
+    const sendId = ++sendSeq.current;
     setStatus("saving");
     Promise.resolve(onCommit(next)).then(
-      () => setStatus("saved"),
       () => {
+        if (sendId === sendSeq.current) setStatus("saved");
+      },
+      () => {
+        if (sendId !== sendSeq.current) return;
         committed.current = previous;
         setValue(previous);
         setStatus("error");
@@ -194,12 +211,13 @@ export function GridTextCell({
 }: GridTextCellProps) {
   const cell = useCommittableValue(value, onCommit);
 
-  // Drive the field's intrinsic width off its content so the column grows to fit
-  // the longest value (see GRID_CONTROL_CLASS). The lower bound keeps an empty
-  // cell from collapsing under its placeholder; the upper bound stops a freak
-  // long value from blowing the column out (it scrolls within the field instead).
+  // Drive the field's intrinsic width off the live (possibly uncommitted) value
+  // so the column grows while you type, not only after a refetch (see
+  // GRID_CONTROL_CLASS). The lower bound keeps an empty cell from collapsing
+  // under its placeholder; the upper bound stops a freak long value from blowing
+  // the column out (it scrolls within the field instead).
   const fieldSize = Math.min(
-    Math.max(value.length, placeholder?.length ?? 0, 2),
+    Math.max(cell.value.length, placeholder?.length ?? 0, 2),
     40,
   );
 
@@ -362,9 +380,11 @@ export function GridBoolCell({
         {tooltip ? (
           <Tooltip>
             {/* A disabled checkbox emits no pointer events, so wrap it in a
-                focusable span so the tooltip still triggers on hover. */}
+                focusable span so the tooltip still triggers on hover. The span
+                is opted out of Enter-to-next-row traversal (data-grid-nav-skip):
+                it is focusable for the tooltip, not an editable control. */}
             <TooltipTrigger asChild>
-              <span className="inline-flex" tabIndex={0}>
+              <span className="inline-flex" data-grid-nav-skip tabIndex={0}>
                 {checkbox}
               </span>
             </TooltipTrigger>
@@ -417,7 +437,7 @@ export function GridChipsCell({
     );
 
   // Suggestions: the known options plus any already-selected values not among
-  // them (so existing tags always appear), de-duplicated case-insensitively.
+  // them (so already-selected values always appear), de-duplicated case-insensitively.
   const allOptions = useMemo(() => {
     const seen = new Set<string>();
     const merged: string[] = [];

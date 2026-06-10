@@ -22,9 +22,9 @@ import { useParties } from "@/hooks/queries/parties";
 import { useFilterParams } from "@/hooks/useFilterParams";
 import type { Circle, Relation, Side } from "@/types/generated/models";
 import type {
-  CreateGuestPayload,
   GuestListItem,
   ListGuestsQuery,
+  UpdateGuestPayload,
 } from "@/types/generated/parties";
 
 // Boolean guest filters, listed so useFilterParams parses them back from the URL.
@@ -42,6 +42,11 @@ const FILTER_KEYS = [
   "tags",
 ] as const;
 
+// Every URL param forwarded to the list API: the sheet filters plus the search
+// box. Unknown params (a utm_ tag on a shared link) stay in the URL but never
+// reach the API, whose binder 422s unknown query keys.
+const QUERY_KEYS = [...FILTER_KEYS, "search"] as const;
+
 /**
  * Admin flat guest list: every guest across all parties, edited like a
  * spreadsheet (each cell saves via PATCH on blur/Enter, with a tint confirming
@@ -52,8 +57,10 @@ const FILTER_KEYS = [
  * survives for dietary restrictions and table/seat.
  */
 export default function AdminGuests() {
-  const [filters, setFilter, clearAll] =
-    useFilterParams<ListGuestsQuery>(BOOL_FILTERS);
+  const [filters, setFilter, clearAll] = useFilterParams<ListGuestsQuery>(
+    QUERY_KEYS,
+    BOOL_FILTERS,
+  );
   const [editGuest, setEditGuest] = useState<GuestListItem | undefined>(
     undefined,
   );
@@ -135,7 +142,7 @@ export default function AdminGuests() {
     setEditOpen(true);
   };
 
-  const handleEditSubmit = async (payload: CreateGuestPayload) => {
+  const handleEditSubmit = async (payload: UpdateGuestPayload) => {
     if (!editGuest) return;
     try {
       await updateGuest.mutateAsync({

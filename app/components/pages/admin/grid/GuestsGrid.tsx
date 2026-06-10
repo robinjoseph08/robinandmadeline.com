@@ -240,8 +240,32 @@ export function GuestsGrid<TGuest extends Guest>({
         ? Boolean(draft.side) && Boolean(draft.relation)
         : draft.partyId !== undefined);
 
+  // Names the required add-row fields still missing, for the Enter feedback
+  // below (mirrors the canCreate conditions).
+  const missingForCreate = (): string[] => {
+    const missing: string[] = [];
+    if (draft.fullName.trim() === "") missing.push("name");
+    if (addPartyId === undefined) {
+      if (isNewParty) {
+        if (!draft.side) missing.push("side");
+        if (!draft.relation) missing.push("relation");
+      } else if (draft.partyId === undefined) {
+        missing.push("party");
+      }
+    }
+    return missing;
+  };
+
   const handleCreate = async () => {
-    if (!canCreate) return;
+    if (!canCreate) {
+      // Only Enter lands here (the Add button is disabled while !canCreate), so
+      // name what is missing instead of silently doing nothing.
+      const missing = missingForCreate();
+      toast.error(
+        `Missing required field${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`,
+      );
+      return;
+    }
     const guestFields = {
       full_name: draft.fullName.trim(),
       email: draft.email.trim() || undefined,

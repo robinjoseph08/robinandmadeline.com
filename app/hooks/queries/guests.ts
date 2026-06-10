@@ -12,6 +12,7 @@ import type {
   GuestResponse,
   ListGuestsQuery,
   ListGuestsResponse,
+  PartyResponse,
   PatchGuestPayload,
   UpdateGuestPayload,
 } from "@/types/generated/parties";
@@ -100,7 +101,11 @@ export const useUpdateGuest = () => {
 
 // usePatchGuest is the partial update behind the spreadsheet grid: it sends only
 // the fields the user changed (one cell, usually), via PATCH. partyId is carried
-// only to scope cache invalidation; it is not part of the request.
+// only to scope cache invalidation; it is not part of the request. The response
+// is written through to the cached guest rows before the invalidations, so
+// anything that snapshots a row in the gap before the refetch (the edit dialog
+// seeding its form) sees the patched values; the invalidations still run to
+// reconcile derived fields (party status, party_name on a move).
 export const usePatchGuest = () => {
   const queryClient = useQueryClient();
 
@@ -114,8 +119,41 @@ export const usePatchGuest = () => {
         method: "PATCH",
         body: payload,
       }),
-    onSuccess: (_data, variables) => {
+    onSuccess: (data, variables) => {
+      // Merge over the cached item so list-only extras (party_name) survive.
+      queryClient.setQueriesData<ListGuestsResponse>(
+        { queryKey: [QueryKey.ListGuests] },
+        (old) =>
+          old === undefined
+            ? undefined
+            : {
+                ...old,
+                items: old.items.map((item) =>
+                  item.id === data.id ? { ...item, ...data } : item,
+                ),
+              },
+      );
+      queryClient.setQueryData<PartyResponse>(
+        [PartiesQueryKey.RetrieveParty, variables.partyId],
+        (old) =>
+          old === undefined
+            ? undefined
+            : {
+                ...old,
+                guests: old.guests?.map((guest) =>
+                  guest.id === data.id ? { ...guest, ...data } : guest,
+                ),
+              },
+      );
       invalidateForGuestWrite(queryClient, variables.partyId);
+      // A party_id in the payload moved the guest between parties; the carried
+      // partyId only covers the source, so refresh every party detail to pick
+      // up the destination's new guest list too.
+      if (variables.payload.party_id !== undefined) {
+        queryClient.invalidateQueries({
+          queryKey: [PartiesQueryKey.RetrieveParty],
+        });
+      }
     },
   });
 };

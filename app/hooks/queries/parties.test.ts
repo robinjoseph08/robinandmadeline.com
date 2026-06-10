@@ -4,6 +4,10 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { adminRequest } from "@/libraries/admin-api";
+import type {
+  ListPartiesResponse,
+  PartyResponse,
+} from "@/types/generated/parties";
 
 import {
   QueryKey,
@@ -119,6 +123,10 @@ describe("usePatchParty", () => {
     client.setQueryData([QueryKey.ListParties, {}], { items: [], total: 0 });
     client.setQueryData([QueryKey.ListGuests, {}], { items: [], total: 0 });
     vi.mocked(adminRequest).mockClear();
+    vi.mocked(adminRequest).mockResolvedValueOnce({
+      id: "p1",
+      invitation_type: "physical",
+    });
 
     const { result } = renderHook(() => usePatchParty(), {
       wrapper: makeWrapper(client),
@@ -148,6 +156,49 @@ describe("usePatchParty", () => {
     expect(client.getQueryState([QueryKey.ListGuests, {}])?.isInvalidated).toBe(
       true,
     );
+  });
+
+  it("writes the response through the detail and list caches before any refetch", async () => {
+    const client = newClient();
+    const guests = [{ id: "g1", full_name: "Pat" }];
+    client.setQueryData([QueryKey.RetrieveParty, "p1"], {
+      id: "p1",
+      name: "Old Name",
+      guests,
+    });
+    client.setQueryData([QueryKey.ListParties, {}], {
+      items: [{ id: "p1", name: "Old Name", guests }],
+      total: 1,
+    });
+    vi.mocked(adminRequest).mockClear();
+    // The PATCH response carries the patched field but, here, no guests
+    // relation, exercising the merge that must not drop a cached guests array.
+    vi.mocked(adminRequest).mockResolvedValueOnce({
+      id: "p1",
+      name: "New Name",
+    });
+
+    const { result } = renderHook(() => usePatchParty(), {
+      wrapper: makeWrapper(client),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        partyId: "p1",
+        payload: { name: "New Name" },
+      });
+    });
+
+    // The cache holds the patched value immediately, so a dialog opened in the
+    // gap before the refetch seeds from fresh state rather than reverting it.
+    expect(
+      client.getQueryData<PartyResponse>([QueryKey.RetrieveParty, "p1"]),
+    ).toMatchObject({ name: "New Name", guests });
+    const list = client.getQueryData<ListPartiesResponse>([
+      QueryKey.ListParties,
+      {},
+    ]);
+    expect(list?.items[0]).toMatchObject({ name: "New Name", guests });
   });
 });
 
