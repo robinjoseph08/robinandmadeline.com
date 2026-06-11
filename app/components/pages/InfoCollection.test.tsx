@@ -125,14 +125,21 @@ describe("InfoCollection", () => {
     renderPage();
     await screen.findByRole("heading", { name: /^Hi / });
 
-    // The primary's email is required and marked with an asterisk that
-    // explains itself on hover; another guest's is optional and unmarked.
+    // Every guest's name carries the asterisk mark; a real guest's input is
+    // also HTML-required, while a placeholder's stays clearable (blank
+    // reverts the slot). The primary's email is required and marked; another
+    // guest's email is optional and unmarked.
     const alice = guestSection("Alice Smith");
+    expect(alice.getByLabelText(/^Name/)).toBeRequired();
     expect(alice.getByLabelText(/^Email/)).toBeRequired();
-    expect(alice.getByTitle("required")).toHaveTextContent("*");
+    expect(alice.getAllByTitle("required")).toHaveLength(2);
     const bob = guestSection("Bob Smith");
+    expect(bob.getByLabelText(/^Name/)).toBeRequired();
     expect(bob.getByLabelText(/^Email/)).not.toBeRequired();
-    expect(bob.queryByTitle("required")).not.toBeInTheDocument();
+    expect(bob.getAllByTitle("required")).toHaveLength(1);
+    const placeholder = guestSection("Guest of Alice");
+    expect(placeholder.getByLabelText(/^Name/)).not.toBeRequired();
+    expect(placeholder.getAllByTitle("required")).toHaveLength(1);
 
     // A physical party's address section is present, with everything but
     // line 2 required.

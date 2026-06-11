@@ -225,7 +225,9 @@ func removeGuest(ctx context.Context, tx bun.Tx, guest *models.Guest) error {
 // pointerutil.EmptyString so the columns never mix "" and NULL, matching the
 // admin PATCH path's cleared-cell convention).
 func applyGuestInfo(ctx context.Context, tx bun.Tx, guest *models.Guest, update GuestInfoUpdate, now time.Time) error {
-	applyName(guest, update.FullName)
+	if err := applyName(guest, update.FullName); err != nil {
+		return err
+	}
 
 	guest.Email = nil
 	if update.Email != nil {
@@ -250,10 +252,14 @@ func applyGuestInfo(ctx context.Context, tx bun.Tx, guest *models.Guest, update 
 // onto the guest. A placeholder follows the RSVP form's rule: non-blank names
 // the slot (never erasing the descriptor), present-but-blank reverts it to
 // unnamed (the descriptor is what remains), absent leaves it untouched. A
-// regular guest's name can only be corrected: blank or absent is ignored.
-func applyName(guest *models.Guest, fullName *string) {
+// regular guest's name is required: a non-blank value corrects it, an absent
+// one leaves it untouched, and a present-but-blank value is a 422 (the name
+// of a real person can be corrected, never cleared). The rule depends on the
+// loaded guest's placeholder state, so it lives here rather than in the
+// binder's tags.
+func applyName(guest *models.Guest, fullName *string) error {
 	if fullName == nil {
-		return
+		return nil
 	}
 	if guest.PlaceholderText != nil {
 		if *fullName == "" {
@@ -261,11 +267,13 @@ func applyName(guest *models.Guest, fullName *string) {
 		} else {
 			guest.FullName = *fullName
 		}
-		return
+		return nil
 	}
-	if *fullName != "" {
-		guest.FullName = *fullName
+	if *fullName == "" {
+		return errcodes.ValidationError("A guest's name cannot be blank.")
 	}
+	guest.FullName = *fullName
+	return nil
 }
 
 // applyPartyAddress writes the party-level address fields inside the caller's

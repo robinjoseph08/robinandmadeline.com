@@ -15,8 +15,8 @@ interface InfoStatusBadgeProps {
   requested: boolean;
   /**
    * The required fields the party still lacks (the backend's itemized
-   * counterpart of the incomplete status), listed in the Incomplete badge's
-   * hover tooltip.
+   * counterpart of the incomplete status), shown in the Requested and
+   * Incomplete badges' hover tooltip.
    */
   missingRequiredFields?: string[];
 }
@@ -25,11 +25,15 @@ interface InfoStatusBadgeProps {
  * Renders a party's info-collection state as one three-state badge:
  *
  * - "Completed": the derived status is complete (whether affirmed by the
- *   guest/admin or derived from the data alone).
+ *   guest/admin or derived from the data alone). No tooltip.
  * - "Requested": incomplete, but the info link has been sent, so the ball is
  *   in the guest's court.
- * - "Incomplete": incomplete and not yet requested; hovering explains which
- *   required pieces are missing.
+ * - "Incomplete": incomplete and not yet requested.
+ *
+ * Hovering Requested or Incomplete explains which required pieces are
+ * missing. A requested party can have every field present and still be
+ * unconfirmed (the link was sent to verify the data on file, ADR 0005), so an
+ * empty list reads "No missing fields" rather than rendering no tooltip.
  */
 export function InfoStatusBadge({
   status,
@@ -39,14 +43,6 @@ export function InfoStatusBadge({
   if (status === StatusComplete) {
     return <Badge variant="success">Completed</Badge>;
   }
-  if (requested) {
-    return <Badge variant="secondary">Requested</Badge>;
-  }
-  // A derived-incomplete party always has missing fields, but guard anyway so
-  // a bare badge renders rather than an empty tooltip.
-  if (missingRequiredFields.length === 0) {
-    return <Badge variant="outline">Incomplete</Badge>;
-  }
   return (
     <Tooltip>
       {/* The badge is not an interactive element, so make it focusable for
@@ -55,12 +51,18 @@ export function InfoStatusBadge({
           traversal, mirroring the disabled-checkbox tooltip in the grid
           cells. */}
       <TooltipTrigger asChild>
-        <Badge data-grid-nav-skip tabIndex={0} variant="outline">
-          Incomplete
+        <Badge
+          data-grid-nav-skip
+          tabIndex={0}
+          variant={requested ? "secondary" : "outline"}
+        >
+          {requested ? "Requested" : "Incomplete"}
         </Badge>
       </TooltipTrigger>
       <TooltipContent>
-        Missing: {missingRequiredFields.join(", ")}
+        {missingRequiredFields.length > 0
+          ? `Missing: ${missingRequiredFields.join(", ")}`
+          : "No missing fields"}
       </TooltipContent>
     </Tooltip>
   );

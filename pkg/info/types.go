@@ -61,12 +61,13 @@ type UpdatePartyInfoPayload struct {
 // GuestInfoUpdate carries one guest's submission.
 //
 // full_name corrects a regular guest's name (the import only had a best
-// approximation): a non-blank value is stored, while a blank or absent one is
-// ignored, so a name can be corrected but never removed. For a placeholder
-// guest (a non-null placeholder_text) it follows the RSVP form's rule: a
-// non-blank value names the slot without erasing the descriptor, a
-// present-but-blank value reverts the slot to unnamed (full_name back to the
-// descriptor), and an absent value leaves the name untouched.
+// approximation): a non-blank value is stored, an absent one leaves the name
+// untouched, and a present-but-blank value is rejected (422), so a name can
+// be corrected but never cleared. For a placeholder guest (a non-null
+// placeholder_text) it follows the RSVP form's rule instead: a non-blank
+// value names the slot without erasing the descriptor, a present-but-blank
+// value reverts the slot to unnamed (full_name back to the descriptor), and
+// an absent value leaves the name untouched.
 //
 // email and phone are full-state for an included guest: they are stored as
 // sent, with blank (or absent) clearing to SQL NULL. The completion gate is

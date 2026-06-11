@@ -21,7 +21,8 @@ describe("InfoStatusBadge", () => {
     expect(screen.queryByText("Requested")).not.toBeInTheDocument();
   });
 
-  it("shows Requested for an incomplete party whose link was sent", () => {
+  it("shows Requested with the same missing-fields tooltip", async () => {
+    const user = userEvent.setup();
     renderBadge(
       <InfoStatusBadge
         missingRequiredFields={["primary guest's email"]}
@@ -29,8 +30,29 @@ describe("InfoStatusBadge", () => {
         status="incomplete"
       />,
     );
-    expect(screen.getByText("Requested")).toBeInTheDocument();
+    const badge = screen.getByText("Requested");
     expect(screen.queryByText("Incomplete")).not.toBeInTheDocument();
+
+    await user.hover(badge);
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Missing: primary guest's email");
+  });
+
+  it("says No missing fields on a Requested party whose data is all present", async () => {
+    // A requested party can have every field on file and still be waiting on
+    // the guest: the link was sent to verify the data, not to collect it.
+    const user = userEvent.setup();
+    renderBadge(
+      <InfoStatusBadge
+        missingRequiredFields={[]}
+        requested
+        status="incomplete"
+      />,
+    );
+
+    await user.hover(screen.getByText("Requested"));
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("No missing fields");
   });
 
   it("shows Incomplete with a hover tooltip listing the missing fields", async () => {

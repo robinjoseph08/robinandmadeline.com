@@ -87,11 +87,18 @@ function greetingName(guests: Guest[]): string {
   return primary ? primary.full_name.split(" ")[0] : "";
 }
 
-/** The asterisk marking a required field, with a hover hint saying why. */
+/**
+ * The asterisk marking a required field, with a hover hint saying why. It is
+ * aria-hidden (a visual hint only; the input's own required attribute is what
+ * assistive tech reads) so it never leaks into labels' accessible names.
+ */
 function RequiredMark() {
   return (
-    <span className="text-destructive" title="required">
-      {" "}
+    <span
+      aria-hidden="true"
+      className="ml-0.5 text-destructive"
+      title="required"
+    >
       *
     </span>
   );
@@ -273,7 +280,14 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
             ) : (
               <>
                 <div className="mt-3 flex flex-col gap-1.5">
-                  <Label htmlFor={`name-${guest.id}`}>Name</Label>
+                  {/* Every name is marked, but only a real guest's input is
+                      HTML-required (the backend rejects clearing it, 422). A
+                      placeholder slot's blank name is a valid submission: it
+                      reverts the slot to its descriptor. */}
+                  <Label htmlFor={`name-${guest.id}`}>
+                    Name
+                    <RequiredMark />
+                  </Label>
                   <Input
                     id={`name-${guest.id}`}
                     onChange={(e) =>
@@ -282,6 +296,7 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                     placeholder={
                       isPlaceholder(guest) ? "Their full name" : undefined
                     }
+                    required={!isPlaceholder(guest)}
                     type="text"
                     value={names[guest.id] ?? ""}
                   />

@@ -277,18 +277,32 @@ func TestUpdatePartyInfo_DigitalPartyNeedsNoAddress(t *testing.T) {
 	assert.Nil(t, saved.AddressLine1, "an absent address field stays untouched")
 }
 
-func TestUpdatePartyInfo_BlankNameIgnoredForRegularGuest(t *testing.T) {
+func TestUpdatePartyInfo_BlankNameForRegularGuestIs422(t *testing.T) {
 	svc, partySvc, _, db := newServices(t)
 
 	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
 	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
 
-	// A name can be corrected, never removed: a blank edit is ignored.
+	// A real guest's name can be corrected, never cleared: a blank edit is
+	// rejected outright, and the rejection rolls back the whole submit.
 	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
 		Guests: []info.GuestInfoUpdate{{
 			GuestID:  alice.ID,
 			FullName: pointerutil.String(""),
 			Email:    pointerutil.String("alice@example.com"),
+		}},
+	})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+
+	saved := guestRow(t, db, alice.ID)
+	assert.Equal(t, "Alice Smith", saved.FullName)
+	assert.Nil(t, saved.Email, "a rejected submit persists nothing")
+
+	// An absent name is still fine: contact-only updates leave the name alone.
+	_, err = svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{
+			GuestID: alice.ID,
+			Email:   pointerutil.String("alice@example.com"),
 		}},
 	})
 	require.NoError(t, err)

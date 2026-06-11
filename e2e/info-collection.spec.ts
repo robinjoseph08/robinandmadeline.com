@@ -12,8 +12,8 @@ import { ADMIN_PASSWORD, ADMIN_USERNAME } from "./auth";
 // best-guess name, fills in contact details and (for a physical party) the
 // mailing address, names the placeholder slot, removes a guest who is no
 // longer part of the party, and submits. A revisit of the same link shows the
-// saved values, with the removed guest gone. A digital party's page hides the
-// address section behind a note instead of requiring it.
+// saved values, with the removed guest gone. A digital party's page omits the
+// address section entirely.
 //
 // Fixtures are seeded through the real admin API (no test-only endpoints).
 // Every entity carries a per-run unique suffix and all assertions are scoped
@@ -122,12 +122,10 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   await expect(page.getByText(physicalPartyName)).not.toBeVisible();
 
   const aliceCard = guestSection(page, bestGuessName);
-  await expect(aliceCard.getByLabel("Name", { exact: true })).toHaveValue(
-    bestGuessName,
-  );
+  await expect(aliceCard.getByLabel(/^Name/)).toHaveValue(bestGuessName);
 
   // A physical party's address section is present with required fields; the
-  // primary's email is required too.
+  // primary's email and every real guest's name are required too.
   const addressCard = guestSection(page, "Mailing address");
   await expect(addressCard.getByLabel(/Address line 1/)).toHaveJSProperty(
     "required",
@@ -141,17 +139,25 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
     "required",
     true,
   );
+  await expect(aliceCard.getByLabel(/^Name/)).toHaveJSProperty(
+    "required",
+    true,
+  );
 
   // --- Correct the best-guess name, fill contacts, name the placeholder -----
-  await aliceCard.getByLabel("Name", { exact: true }).fill(correctedName);
+  await aliceCard.getByLabel(/^Name/).fill(correctedName);
   await aliceCard.getByLabel(/Email/).fill("alice@example.com");
   await aliceCard.getByLabel("Phone").fill("(415) 555-2671");
 
+  // A placeholder slot's name is markable but never HTML-required: blank is a
+  // valid submission (it keeps the slot unnamed).
   const placeholderCard = guestSection(page, placeholder);
-  await expect(placeholderCard.getByLabel("Name", { exact: true })).toHaveValue(
-    "",
+  await expect(placeholderCard.getByLabel(/^Name/)).toHaveValue("");
+  await expect(placeholderCard.getByLabel(/^Name/)).toHaveJSProperty(
+    "required",
+    false,
   );
-  await placeholderCard.getByLabel("Name", { exact: true }).fill(danaName);
+  await placeholderCard.getByLabel(/^Name/).fill(danaName);
 
   // --- Remove Bob (no longer part of the party), with inline confirmation ---
   const bobCard = guestSection(page, bobName);
@@ -179,9 +185,7 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   await expect(page.getByText(bobName)).not.toBeVisible();
 
   const revisitedAlice = guestSection(page, correctedName);
-  await expect(revisitedAlice.getByLabel("Name", { exact: true })).toHaveValue(
-    correctedName,
-  );
+  await expect(revisitedAlice.getByLabel(/^Name/)).toHaveValue(correctedName);
   await expect(revisitedAlice.getByLabel(/Email/)).toHaveValue(
     "alice@example.com",
   );
@@ -191,9 +195,7 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   // The named placeholder keeps its descriptor visible under the new name.
   const revisitedDana = guestSection(page, danaName);
   await expect(revisitedDana.getByText(placeholder)).toBeVisible();
-  await expect(revisitedDana.getByLabel("Name", { exact: true })).toHaveValue(
-    danaName,
-  );
+  await expect(revisitedDana.getByLabel(/^Name/)).toHaveValue(danaName);
 
   const revisitedAddress = guestSection(page, "Mailing address");
   await expect(revisitedAddress.getByLabel(/Address line 1/)).toHaveValue(
