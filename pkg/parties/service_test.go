@@ -14,13 +14,15 @@ import (
 )
 
 // newService returns a parties.Service backed by the shared Postgres test
-// database, truncating parties (and via cascade, guests) before the test runs so
-// each test starts clean. Tests using it must not call t.Parallel() because they
-// share one database and rely on truncation for isolation.
+// database, truncating parties (and via cascade, guests and event_rsvps) plus
+// events before the test runs so each test starts clean: a leftover public
+// event would make every guest create backfill Event RSVP rows. Tests using it
+// must not call t.Parallel() because they share one database and rely on
+// truncation for isolation.
 func newService(t *testing.T) (*parties.Service, *bun.DB) {
 	t.Helper()
 	db := databasetest.New(t)
-	databasetest.Truncate(t, db, "parties")
+	databasetest.Truncate(t, db, "parties", "events")
 	return parties.NewService(db), db
 }
 

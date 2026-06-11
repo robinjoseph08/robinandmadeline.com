@@ -218,8 +218,10 @@ type PatchGuestPayload struct {
 // ListGuestsQuery is the set of flat guest-list filters, bound from the query
 // string by the custom binder (gorilla/schema via the `query` tag). Side /
 // Relation / Circle are party-level attributes, so those clauses join through
-// the guest's party. Event- and RSVP-status filters are absent: they depend on
-// the event model (#6) which does not exist yet.
+// the guest's party. EventID / RSVPStatus filter through the guest's Event
+// RSVP rows (a row is the invitation, ADR 0002): an event alone matches that
+// event's invited set, adding a status constrains within that event, and a
+// status alone matches guests holding a row in that status on any event.
 type ListGuestsQuery struct {
 	Search   *string `query:"search" json:"search"`                               // case-insensitive match on name, email, phone, or party name
 	PartyID  *string `query:"party_id" json:"party_id" validate:"omitempty,uuid"` // matches guests in this one party
@@ -233,6 +235,8 @@ type ListGuestsQuery struct {
 	IsDrinking    *bool   `query:"is_drinking" json:"is_drinking"`
 	IsChild       *bool   `query:"is_child" json:"is_child"`
 	IsPlaceholder *bool   `query:"is_placeholder" json:"is_placeholder"`
+	EventID       *string `query:"event_id" json:"event_id" validate:"omitempty,uuid"` // matches guests invited to this event
+	RSVPStatus    *string `query:"rsvp_status" json:"rsvp_status" validate:"omitempty,oneof=pending attending not_attending" tstype:"models.EventRSVPStatus"`
 }
 
 // PartyResponse is the API representation of a party: the stored model plus the

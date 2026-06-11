@@ -14,6 +14,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/uptrace/bun"
 )
@@ -66,9 +67,9 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 
 // registerAdmin mounts the admin API surface behind the admin auth middleware.
 // Every route on the returned group requires a valid admin token. GET
-// /api/admin/me confirms a stored token is still valid; the parties/guests
-// endpoints register their own routes on this same protected group via
-// parties.RegisterRoutes.
+// /api/admin/me confirms a stored token is still valid; the parties/guests and
+// events endpoints register their own routes on this same protected group via
+// their RegisterRoutes.
 //
 // The db may be nil (e.g. in wiring tests that only exercise auth): the
 // parties service is still constructed, but its handlers are only reachable
@@ -82,6 +83,7 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB) {
 	})
 
 	parties.RegisterRoutes(admin, parties.NewService(db))
+	events.RegisterRoutes(admin, events.NewService(db))
 }
 
 // registerHealth mounts the liveness endpoint. It reports database

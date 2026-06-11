@@ -13,14 +13,21 @@ import { GuestFormDialog } from "@/components/pages/admin/parties/GuestFormDialo
 import {
   CIRCLE_OPTIONS,
   RELATION_OPTIONS,
+  RSVP_STATUS_OPTIONS,
   SIDE_OPTIONS,
   type Option,
 } from "@/components/pages/admin/parties/options";
 import { Input } from "@/components/ui/input";
+import { useEvents } from "@/hooks/queries/events";
 import { useGuests, useUpdateGuest } from "@/hooks/queries/guests";
 import { useParties } from "@/hooks/queries/parties";
 import { useFilterParams } from "@/hooks/useFilterParams";
-import type { Circle, Relation, Side } from "@/types/generated/models";
+import type {
+  Circle,
+  EventRSVPStatus,
+  Relation,
+  Side,
+} from "@/types/generated/models";
 import type {
   GuestListItem,
   ListGuestsQuery,
@@ -40,6 +47,8 @@ const FILTER_KEYS = [
   "is_child",
   "is_placeholder",
   "tags",
+  "event_id",
+  "rsvp_status",
 ] as const;
 
 // Every URL param forwarded to the list API: the sheet filters plus the search
@@ -51,10 +60,12 @@ const QUERY_KEYS = [...FILTER_KEYS, "search"] as const;
  * Admin flat guest list: every guest across all parties, edited like a
  * spreadsheet (each cell saves via PATCH on blur/Enter, with a tint confirming
  * the save). Filters cover the party plus the party-level attributes (side,
- * relation, circle) and the guest-level ones (tag and the flags), and live in the
- * URL so a filtered view can be shared and bookmarked. Guests are added inline
- * from the trailing row (which can also create a party); the full edit dialog
- * survives for dietary restrictions and table/seat.
+ * relation, circle), the guest-level ones (tag and the flags), and the guest's
+ * Event RSVPs (pick an event to see its invited set, add an RSVP status to
+ * narrow within it; status alone matches the status on any event), and live in
+ * the URL so a filtered view can be shared and bookmarked. Guests are added
+ * inline from the trailing row (which can also create a party); the full edit
+ * dialog survives for dietary restrictions and table/seat.
  */
 export default function AdminGuests() {
   const [filters, setFilter, clearAll] = useFilterParams<ListGuestsQuery>(
@@ -115,6 +126,19 @@ export default function AdminGuests() {
   const partyFilterOptions = useMemo<Option<string>[]>(
     () => partyOptions.map((party) => ({ value: party.id, label: party.name })),
     [partyOptions],
+  );
+
+  // Events as filter options (by id), for the Event filter: picking one narrows
+  // the list to that event's invited guests; adding an RSVP status narrows it
+  // within that event (status alone matches the status on any event).
+  const eventsQuery = useEvents();
+  const eventFilterOptions = useMemo<Option<string>[]>(
+    () =>
+      (eventsQuery.data?.items ?? []).map((event) => ({
+        value: event.id,
+        label: event.name,
+      })),
+    [eventsQuery.data],
   );
 
   // Distinct tags across all guests, offered as the tag filter's options. The
@@ -236,6 +260,18 @@ export default function AdminGuests() {
             onChange={(v) => setFilter("tags", v)}
             options={tagOptions}
             value={filters.tags}
+          />
+          <FilterSelect<string>
+            label="Event"
+            onChange={(v) => setFilter("event_id", v)}
+            options={eventFilterOptions}
+            value={filters.event_id}
+          />
+          <FilterSelect<EventRSVPStatus>
+            label="RSVP status"
+            onChange={(v) => setFilter("rsvp_status", v)}
+            options={RSVP_STATUS_OPTIONS}
+            value={filters.rsvp_status as EventRSVPStatus | undefined}
           />
         </FilterSheet>
       </div>

@@ -15,11 +15,15 @@ import {
   InvitationPhysical,
   RelationFamily,
   RelationFriend,
+  RSVPAttending,
+  RSVPNotAttending,
+  RSVPPending,
   SideMadeline,
   SideRobin,
   StatusComplete,
   StatusIncomplete,
   type Circle,
+  type EventRSVPStatus,
   type InfoCollectionStatus,
   type InvitationType,
   type Relation,
@@ -58,6 +62,12 @@ export const CIRCLE_OPTIONS: Option<Circle>[] = [
 export const INFO_STATUS_OPTIONS: Option<InfoCollectionStatus>[] = [
   { value: StatusComplete, label: "Complete" },
   { value: StatusIncomplete, label: "Incomplete" },
+];
+
+export const RSVP_STATUS_OPTIONS: Option<EventRSVPStatus>[] = [
+  { value: RSVPPending, label: "Pending" },
+  { value: RSVPAttending, label: "Attending" },
+  { value: RSVPNotAttending, label: "Not attending" },
 ];
 
 /** Looks up the display label for a wire value, falling back to the raw value. */

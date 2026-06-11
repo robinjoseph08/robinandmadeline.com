@@ -8,16 +8,18 @@ import (
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/uptrace/bun"
 )
 
 // CreateGuest adds a guest to an existing party (404 if the party is missing).
 // When IsPrimary is requested, the previous primary (if any) is demoted in the
-// same transaction so a party never has two primaries. The payload is already
-// bound, trimmed, defaulted, and validated by the binder, so the fields are
-// assigned directly; tags arrives as a non-nil slice (defaulted to []) so it
-// stores '{}', not NULL.
+// same transaction so a party never has two primaries. The new guest is born
+// invited (a pending Event RSVP) to every public event, in the same
+// transaction (ADR 0002). The payload is already bound, trimmed, defaulted,
+// and validated by the binder, so the fields are assigned directly; tags
+// arrives as a non-nil slice (defaulted to []) so it stores '{}', not NULL.
 func (s *Service) CreateGuest(ctx context.Context, partyID string, in CreateGuestPayload) (*models.Guest, error) {
 	now := time.Now()
 	guest := &models.Guest{
@@ -62,7 +64,11 @@ func (s *Service) CreateGuest(ctx context.Context, partyID string, in CreateGues
 			return errcodes.ConflictOnConstraint(errors.Wrap(err, "insert guest"),
 				"ux_guests_one_primary_per_party", "Another guest became this party's primary at the same time; try again.")
 		}
-		return nil
+
+		// A new guest is born invited to every public event (ADR 0002): the
+		// backfill shares this transaction so the guest and their pending Event
+		// RSVPs appear atomically.
+		return events.BackfillPublicEventRSVPs(ctx, tx, guest.ID)
 	})
 	if err != nil {
 		return nil, err

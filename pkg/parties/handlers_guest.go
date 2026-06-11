@@ -8,9 +8,9 @@ import (
 )
 
 // listGuests handles GET /api/admin/guests, the flat guest list with filters:
-// side, relation, circle, tags, is_drinking, is_child, is_placeholder. Event
-// and RSVP-status filters are out of scope (they depend on #6). It returns the
-// uniform {items, total} envelope.
+// side, relation, circle, tags, is_drinking, is_child, is_placeholder, plus
+// event_id and rsvp_status (which filter through the guest's Event RSVP rows).
+// It returns the uniform {items, total} envelope.
 func (h *handler) listGuests(c echo.Context) error {
 	var q ListGuestsQuery
 	if err := c.Bind(&q); err != nil {

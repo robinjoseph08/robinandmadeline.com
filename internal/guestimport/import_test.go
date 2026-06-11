@@ -12,12 +12,17 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// newDB returns the shared Postgres test database, truncated so each test
-// starts clean. Tests using it must not call t.Parallel() (see databasetest).
+// newDB returns this package's own isolated Postgres test database (see
+// databasetest.NewIsolated): the import truncates and writes parties and
+// events, which the concurrently running pkg/parties binary uses in the shared
+// database, and two binaries truncating the same tables wipe each other's
+// fixtures mid-test. Truncating parties (cascading to guests and event_rsvps)
+// plus events gives each test a clean slate. Tests using it must not call
+// t.Parallel() (see databasetest).
 func newDB(t *testing.T) *bun.DB {
 	t.Helper()
-	db := databasetest.New(t)
-	databasetest.Truncate(t, db, "parties")
+	db := databasetest.NewIsolated(t, "robinandmadeline_guestimport_test")
+	databasetest.Truncate(t, db, "parties", "events")
 	return db
 }
 
@@ -225,4 +230,42 @@ func TestImport_EmptyPlanImportsNothing(t *testing.T) {
 	require.Zero(t, summary.PartiesCreated)
 	require.Zero(t, summary.GuestsCreated)
 	require.Empty(t, loadParties(t, db))
+}
+
+func TestImport_BackfillsPublicEventRSVPs(t *testing.T) {
+	db := newDB(t)
+
+	public := &models.Event{
+		ID:       "0197fc00-0000-7000-8000-0000000000e1",
+		Name:     "Reception",
+		Date:     "2026-10-17",
+		IsPublic: true,
+	}
+	private := &models.Event{
+		ID:       "0197fc00-0000-7000-8000-0000000000e2",
+		Name:     "Rehearsal Dinner",
+		Date:     "2026-10-16",
+		IsPublic: false,
+	}
+	_, err := db.NewInsert().Model(&[]*models.Event{public, private}).Exec(ctx())
+	require.NoError(t, err)
+
+	plan := parseT(t,
+		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,2,,,,,No,Yes,,,,`,
+	)
+	summary, err := guestimport.Import(ctx(), db, plan, guestimport.Options{})
+	require.NoError(t, err)
+	require.Equal(t, 2, summary.GuestsCreated)
+
+	// Every imported guest (including the placeholder) is born invited to the
+	// public event, pending; the private event gets nothing (ADR 0002).
+	count, err := db.NewSelect().Model((*models.EventRSVP)(nil)).
+		Where("event_id = ?", public.ID).Where("status = ?", models.RSVPPending).Count(ctx())
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+
+	count, err = db.NewSelect().Model((*models.EventRSVP)(nil)).
+		Where("event_id = ?", private.ID).Count(ctx())
+	require.NoError(t, err)
+	require.Zero(t, count)
 }

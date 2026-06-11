@@ -134,6 +134,22 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 		q = q.Where("EXISTS (?)", partyScopeSubquery(s.db, f))
 	}
 
+	// Event / RSVP-status filters constrain through the guest's Event RSVP
+	// rows with one correlated EXISTS (a row is the invitation, ADR 0002): an
+	// event alone matches its invited set, event+status constrains within that
+	// event, and status alone matches a row in that status on any event.
+	if f.EventID != nil || f.RSVPStatus != nil {
+		sub := s.db.NewSelect().Model((*models.EventRSVP)(nil)).Column("id").
+			Where("er.guest_id = g.id")
+		if f.EventID != nil {
+			sub = sub.Where("er.event_id = ?", *f.EventID)
+		}
+		if f.RSVPStatus != nil {
+			sub = sub.Where("er.status = ?", *f.RSVPStatus)
+		}
+		q = q.Where("EXISTS (?)", sub)
+	}
+
 	total, err := q.ScanAndCount(ctx)
 	if err != nil {
 		return nil, 0, errors.Wrap(err, "list guests")

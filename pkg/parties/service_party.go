@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/uptrace/bun"
 )
@@ -91,7 +92,10 @@ func (s *Service) CreatePartyWithGuest(ctx context.Context, in CreatePartyWithGu
 		if _, err := tx.NewInsert().Model(guest).Exec(ctx); err != nil {
 			return errors.Wrap(err, "insert first guest")
 		}
-		return nil
+		// The first guest is born invited to every public event (ADR 0002): the
+		// backfill shares this transaction so the party, its guest, and their
+		// pending Event RSVPs appear atomically.
+		return events.BackfillPublicEventRSVPs(ctx, tx, guest.ID)
 	})
 	if err != nil {
 		return nil, err

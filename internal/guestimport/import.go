@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/golib/pointerutil"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/uptrace/bun"
@@ -15,10 +16,12 @@ import (
 
 // Options controls how Import treats existing data.
 type Options struct {
-	// Truncate wipes the parties and guests tables (inside the import's own
-	// transaction) before inserting, supporting iterate-and-re-run during
-	// setup. Without it, Import refuses to run against a database that already
-	// has parties, so running the script twice cannot create duplicates.
+	// Truncate wipes the parties and guests tables, along with the guests'
+	// event_rsvps rows (inside the import's own transaction), before
+	// inserting, supporting iterate-and-re-run during setup. Events themselves
+	// are kept. Without it, Import refuses to run against a database that
+	// already has parties, so running the script twice cannot create
+	// duplicates.
 	Truncate bool
 }
 
@@ -56,11 +59,12 @@ func Import(ctx context.Context, db *bun.DB, plan *Plan, opts Options) (*Summary
 			if len(plan.Parties) == 0 {
 				return errors.New("refusing to truncate: the parsed plan has no parties to import")
 			}
-			// Both tables are named explicitly (rather than CASCADE) so that if a
+			// Every table is named explicitly (rather than CASCADE) so that if a
 			// future table ever references parties, this stale script fails loudly
-			// instead of silently wiping it.
-			if _, err := tx.ExecContext(ctx, "TRUNCATE TABLE parties, guests"); err != nil {
-				return errors.Wrap(err, "truncate parties and guests")
+			// instead of silently wiping it. event_rsvps goes with the guests that
+			// own the rows; events themselves survive a re-import.
+			if _, err := tx.ExecContext(ctx, "TRUNCATE TABLE parties, guests, event_rsvps"); err != nil {
+				return errors.Wrap(err, "truncate parties, guests, and event rsvps")
 			}
 		} else {
 			count, err := tx.NewSelect().Model((*models.Party)(nil)).Count(ctx)
@@ -85,6 +89,17 @@ func Import(ctx context.Context, db *bun.DB, plan *Plan, opts Options) (*Summary
 		}
 		if _, err := tx.NewInsert().Model(&guestRecords).Exec(ctx); err != nil {
 			return errors.Wrap(err, "insert guests")
+		}
+
+		// Imported guests are born invited to every public event, the same ADR
+		// 0002 backfill the guest-create paths run, so an import never leaves a
+		// public event missing rows. It shares the import transaction.
+		guestIDs := make([]string, 0, len(guestRecords))
+		for _, guest := range guestRecords {
+			guestIDs = append(guestIDs, guest.ID)
+		}
+		if err := events.BackfillPublicEventRSVPs(ctx, tx, guestIDs...); err != nil {
+			return err
 		}
 
 		summary.PartiesCreated = len(partyRecords)
