@@ -18,9 +18,10 @@ import type {
  * The pre-invitation info-collection page behind the personalized /i/:token
  * URL: every guest in the party with editable name and contact fields, a
  * remove action for non-primary guests, and the party's mailing address
- * (required for physical parties, hidden with a note for digital ones). The
- * whole form submits at once; a success confirmation follows, and revisiting
- * the same link re-opens the form pre-filled with the saved values.
+ * (required for physical parties; omitted entirely for digital ones, without
+ * calling attention to the difference). The whole form submits at once; a
+ * success confirmation follows, and revisiting the same link re-opens the
+ * form pre-filled with the saved values.
  */
 export default function InfoCollection() {
   const { token = "" } = useParams();
@@ -75,10 +76,25 @@ export default function InfoCollection() {
   return <InfoForm data={data} onSaved={() => setSaved(true)} token={token} />;
 }
 
-/** "A", "A & B", or "A, B & C": the greeting's name list. */
-function joinNames(names: string[]): string {
-  if (names.length <= 1) return names.join("");
-  return `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
+/**
+ * The greeting's name: the primary guest's first name ("Hi Amanda!"). Listing
+ * every member gets unwieldy for big parties; the cards below name them all.
+ * Falls back to the first guest if no primary is flagged (defensive; every
+ * party has one).
+ */
+function greetingName(guests: Guest[]): string {
+  const primary = guests.find((g) => g.is_primary) ?? guests[0];
+  return primary ? primary.full_name.split(" ")[0] : "";
+}
+
+/** The asterisk marking a required field, with a hover hint saying why. */
+function RequiredMark() {
+  return (
+    <span className="text-destructive" title="required">
+      {" "}
+      *
+    </span>
+  );
 }
 
 /**
@@ -215,9 +231,7 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
 
   return (
     <section className="mx-auto max-w-2xl py-8">
-      <h1 className="text-3xl font-bold">
-        Hi {joinNames(data.guests.map((g) => g.full_name))}!
-      </h1>
+      <h1 className="text-3xl font-bold">Hi {greetingName(data.guests)}!</h1>
       <p className="mt-3 text-muted-foreground">
         Before invitations go out, please confirm your party's details below and
         correct anything we got wrong.
@@ -231,9 +245,6 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
             key={guest.id}
           >
             <h2 className="text-xl font-semibold">{guest.full_name}</h2>
-            {guest.is_primary ? (
-              <p className="text-sm text-muted-foreground">Primary contact</p>
-            ) : null}
             {/* A named placeholder keeps its descriptor visible so a
                 returning party sees what the slot is for when changing or
                 clearing the name. An unnamed slot's heading already IS the
@@ -277,7 +288,8 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                 </div>
                 <div className="mt-3 flex flex-col gap-1.5">
                   <Label htmlFor={`email-${guest.id}`}>
-                    Email{guest.is_primary ? " (required)" : ""}
+                    Email
+                    {guest.is_primary ? <RequiredMark /> : null}
                   </Label>
                   <Input
                     id={`email-${guest.id}`}
@@ -358,7 +370,7 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                 <div className="flex flex-col gap-1.5" key={field.key}>
                   <Label htmlFor={`address-${field.key}`}>
                     {field.label}
-                    {field.required ? " (required)" : ""}
+                    {field.required ? <RequiredMark /> : null}
                   </Label>
                   <Input
                     id={`address-${field.key}`}
@@ -376,12 +388,7 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
               ))}
             </div>
           </section>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            You'll receive your invitation digitally, so there's no need for a
-            mailing address.
-          </p>
-        )}
+        ) : null}
 
         {submitError ? (
           <p className="text-sm text-destructive" role="alert">

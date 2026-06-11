@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"math/big"
 
 	"github.com/google/uuid"
@@ -22,9 +21,16 @@ import (
 // unlikely) event a freshly generated token collides with an existing one.
 const maxTokenAttempts = 5
 
-// infoTokenBytes is the entropy (in bytes) behind a generated info token. 24
-// bytes is 192 bits and base64url-encodes to a compact, URL-safe string.
-const infoTokenBytes = 24
+// infoTokenLength is the length of a generated info token. 30 characters from
+// the 36-character alphabet is ~155 bits of entropy: the token is the sole
+// authentication for the info-collection link (ADR 0003), so it stays
+// unguessable while reading cleanly in a URL.
+const infoTokenLength = 30
+
+// infoTokenAlphabet is the character set for generated info tokens: lowercase
+// letters and digits only, so a token never mixes cases or carries symbols
+// (the old base64url tokens did both, which read poorly in a shared link).
+const infoTokenAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 // rsvpCodeLength is the length of a generated RSVP code. Five letters from the
 // 20-letter alphabet is 3.2 million combinations: short enough to copy from a
@@ -61,17 +67,22 @@ func newID() string {
 	return uuid.Must(uuid.NewV7()).String()
 }
 
-// GenerateInfoToken returns a random, opaque, URL-safe token for a party's
-// info-collection link. Tokens use crypto/rand; the service retries on the
-// astronomically unlikely unique-index collision. Exported so operational
-// tooling (the CSV guest import) mints tokens with the same shape and entropy
-// as the create paths.
+// GenerateInfoToken returns a random, opaque token for a party's
+// info-collection link: infoTokenLength characters drawn uniformly
+// (crypto/rand) from infoTokenAlphabet, so it is URL-safe lowercase
+// alphanumerics only. The service retries on the astronomically unlikely
+// unique-index collision. Exported so operational tooling (the CSV guest
+// import) mints tokens with the same shape and entropy as the create paths.
 func GenerateInfoToken() (string, error) {
-	b := make([]byte, infoTokenBytes)
-	if _, err := rand.Read(b); err != nil {
-		return "", errors.Wrap(err, "generate info token")
+	token := make([]byte, infoTokenLength)
+	for i := range token {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(infoTokenAlphabet))))
+		if err != nil {
+			return "", errors.Wrap(err, "generate info token")
+		}
+		token[i] = infoTokenAlphabet[n.Int64()]
 	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	return string(token), nil
 }
 
 // GenerateRSVPCode returns a random RSVP code: rsvpCodeLength characters drawn

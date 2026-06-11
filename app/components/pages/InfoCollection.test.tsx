@@ -96,16 +96,17 @@ describe("InfoCollection", () => {
     apiRequest.mockReset();
   });
 
-  it("greets the party and pre-fills every guest's details", async () => {
+  it("greets the primary guest by first name and pre-fills every guest's details", async () => {
     apiRequest.mockResolvedValue(makeData());
     renderPage();
 
+    // Only the primary's first name: a full member list gets unwieldy for big
+    // parties (the cards below name everyone).
     expect(
-      await screen.findByRole("heading", {
-        name: "Hi Alice Smith, Bob Smith & Guest of Alice!",
-      }),
+      await screen.findByRole("heading", { name: "Hi Alice!" }),
     ).toBeInTheDocument();
     expect(apiRequest).toHaveBeenCalledWith("/info/tok-123");
+    expect(screen.queryByText("Primary contact")).not.toBeInTheDocument();
 
     // Pre-filled, editable name and contact fields.
     const alice = guestSection("Alice Smith");
@@ -124,11 +125,14 @@ describe("InfoCollection", () => {
     renderPage();
     await screen.findByRole("heading", { name: /^Hi / });
 
-    // The primary's email is required; another guest's is optional.
-    expect(guestSection("Alice Smith").getByLabelText(/^Email/)).toBeRequired();
-    expect(
-      guestSection("Bob Smith").getByLabelText(/^Email/),
-    ).not.toBeRequired();
+    // The primary's email is required and marked with an asterisk that
+    // explains itself on hover; another guest's is optional and unmarked.
+    const alice = guestSection("Alice Smith");
+    expect(alice.getByLabelText(/^Email/)).toBeRequired();
+    expect(alice.getByTitle("required")).toHaveTextContent("*");
+    const bob = guestSection("Bob Smith");
+    expect(bob.getByLabelText(/^Email/)).not.toBeRequired();
+    expect(bob.queryByTitle("required")).not.toBeInTheDocument();
 
     // A physical party's address section is present, with everything but
     // line 2 required.
@@ -141,15 +145,18 @@ describe("InfoCollection", () => {
     expect(address.getByLabelText(/Country/)).toBeRequired();
   });
 
-  it("hides the address fields for a digital party and explains why", async () => {
+  it("hides the address section for a digital party, with no note about it", async () => {
     apiRequest.mockResolvedValue(makeData({ invitation_type: "digital" }));
     renderPage();
     await screen.findByRole("heading", { name: /^Hi / });
 
+    // No address fields, and deliberately no explanation either: the page
+    // never draws attention to a party not getting a physical invitation.
     expect(screen.queryByLabelText(/Address line 1/)).not.toBeInTheDocument();
     expect(
-      screen.getByText(/no need for a mailing address/i),
-    ).toBeInTheDocument();
+      screen.queryByRole("region", { name: /address/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/mailing address/i)).not.toBeInTheDocument();
   });
 
   it("submits corrections and shows the success confirmation", async () => {

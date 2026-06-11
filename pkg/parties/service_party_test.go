@@ -18,6 +18,9 @@ func TestCreateParty_GeneratesInfoToken(t *testing.T) {
 
 	assert.NotEmpty(t, p.ID)
 	assert.NotEmpty(t, p.InfoToken, "info token should be auto-generated")
+	// The token is lowercase alphanumerics only (no symbols, no mixed case), at
+	// a length that keeps it unguessable: it is the link's sole authentication.
+	assert.Regexp(t, "^[a-z0-9]{30}$", p.InfoToken)
 	assert.False(t, p.InfoCollectionRequested)
 	assert.False(t, p.InfoCollectionConfirmed)
 	// Distinct parties get distinct tokens.

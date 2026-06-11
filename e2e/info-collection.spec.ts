@@ -116,12 +116,8 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
 
   await page.goto(`/i/${infoToken}`, { waitUntil: "domcontentloaded" });
 
-  // --- The greeting names every party member; fields are pre-filled ---------
-  await expect(
-    page.getByRole("heading", {
-      name: `Hi ${bestGuessName}, ${bobName} & ${placeholder}!`,
-    }),
-  ).toBeVisible();
+  // --- The greeting uses the primary's first name; fields are pre-filled ----
+  await expect(page.getByRole("heading", { name: "Hi Allice!" })).toBeVisible();
   // The party's internal admin label is never shown to guests.
   await expect(page.getByText(physicalPartyName)).not.toBeVisible();
 
@@ -177,9 +173,8 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
 
   // --- Revisiting the same link shows the saved values ----------------------
   await page.goto(`/i/${infoToken}`, { waitUntil: "domcontentloaded" });
-  await expect(
-    page.getByRole("heading", { name: `Hi ${correctedName} & ${danaName}!` }),
-  ).toBeVisible();
+  // The greeting picks up the corrected primary name.
+  await expect(page.getByRole("heading", { name: "Hi Alice!" })).toBeVisible();
   // The removed guest is gone for good.
   await expect(page.getByText(bobName)).not.toBeVisible();
 
@@ -207,22 +202,18 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   await expect(revisitedAddress.getByLabel(/Postal code/)).toHaveValue("62701");
 });
 
-test("a digital party's page hides the address section behind a note", async ({
+test("a digital party's page hides the address section entirely", async ({
   page,
 }) => {
   const infoToken = await seedDigitalParty(page.request);
 
   await page.goto(`/i/${infoToken}`, { waitUntil: "domcontentloaded" });
-  await expect(
-    page.getByRole("heading", { name: `Hi ${carolName}!` }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Hi Carol!" })).toBeVisible();
 
-  // No address fields at all, just the explanation; the primary's email is
-  // still required.
+  // No address fields, and no note calling attention to the digital-only
+  // invitation either; the primary's email is still required.
   await expect(page.getByLabel(/Address line 1/)).not.toBeVisible();
-  await expect(
-    page.getByText(/receive your invitation digitally/),
-  ).toBeVisible();
+  await expect(page.getByText(/mailing address/i)).not.toBeVisible();
   await expect(
     guestSection(page, carolName).getByLabel(/Email/),
   ).toHaveJSProperty("required", true);

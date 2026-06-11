@@ -99,6 +99,31 @@ func TestRequiredFieldsPresent_Physical(t *testing.T) {
 	}
 }
 
+func TestMissingRequiredFields_ItemizesWhatTheGateChecks(t *testing.T) {
+	t.Parallel()
+
+	// A digital party misses only the primary email; the address never appears.
+	digital := &models.Party{InvitationType: models.InvitationDigital}
+	assert.Equal(t, []string{"primary guest's email"}, digital.MissingRequiredFields())
+
+	// A physical party itemizes each absent address field too (line 2 is
+	// optional and never listed).
+	physical := &models.Party{InvitationType: models.InvitationPhysical}
+	physical.Guests = withPrimaryEmail(pointerutil.String("a@b.com"))
+	physical.AddressLine1 = pointerutil.String("123 Main St")
+	physical.PostalCode = pointerutil.String("   ") // blank counts as absent
+	assert.Equal(t,
+		[]string{"city", "state or province", "postal code", "country"},
+		physical.MissingRequiredFields())
+
+	// A complete party misses nothing: the list is empty (and non-nil, so it
+	// serializes as []), which is exactly RequiredFieldsPresent.
+	fullAddress(physical)
+	assert.NotNil(t, physical.MissingRequiredFields())
+	assert.Empty(t, physical.MissingRequiredFields())
+	assert.True(t, physical.RequiredFieldsPresent())
+}
+
 func TestInfoCollectionStatus_NotRequested_DerivedFromFields(t *testing.T) {
 	t.Parallel()
 

@@ -145,16 +145,43 @@ func (p *Party) InfoCollectionStatus() string {
 // RequiredFieldsPresent reports whether the party has every field required to be
 // markable complete: the primary guest's email always, plus a full mailing
 // address for physical parties (the address is irrelevant for digital). This is
-// the single completion gate; confirmed may be set true only when it holds.
-// Requires the Guests relation to be loaded.
+// the single completion gate; confirmed may be set true only when it holds. It
+// is defined as MissingRequiredFields being empty, so the gate and the admin
+// UI's "what's missing" hint can never disagree. Requires the Guests relation
+// to be loaded.
 func (p *Party) RequiredFieldsPresent() bool {
+	return len(p.MissingRequiredFields()) == 0
+}
+
+// MissingRequiredFields lists, as human-readable labels, the required fields
+// the party still lacks: the primary guest's email always, plus each absent
+// mailing-address field for physical parties (address line 2 is optional).
+// The itemized counterpart of RequiredFieldsPresent. The result is never nil,
+// so it serializes as [] rather than null. Requires the Guests relation to be
+// loaded.
+func (p *Party) MissingRequiredFields() []string {
+	missing := []string{}
 	if !p.primaryEmailPresent() {
-		return false
+		missing = append(missing, "primary guest's email")
 	}
-	if p.InvitationType == InvitationPhysical {
-		return p.requiredAddressPresent()
+	if p.InvitationType != InvitationPhysical {
+		return missing
 	}
-	return true
+	for _, field := range []struct {
+		value *string
+		label string
+	}{
+		{p.AddressLine1, "address line 1"},
+		{p.City, "city"},
+		{p.StateOrProvince, "state or province"},
+		{p.PostalCode, "postal code"},
+		{p.Country, "country"},
+	} {
+		if !nonBlank(field.value) {
+			missing = append(missing, field.label)
+		}
+	}
+	return missing
 }
 
 // primaryEmailPresent reports whether the loaded primary guest has a non-blank
@@ -162,16 +189,6 @@ func (p *Party) RequiredFieldsPresent() bool {
 func (p *Party) primaryEmailPresent() bool {
 	primary := p.PrimaryGuest()
 	return primary != nil && primary.Email != nil && strings.TrimSpace(*primary.Email) != ""
-}
-
-// requiredAddressPresent reports whether a full mailing address is set.
-// address_line_2 is optional; every other address field must be non-blank.
-func (p *Party) requiredAddressPresent() bool {
-	return nonBlank(p.AddressLine1) &&
-		nonBlank(p.City) &&
-		nonBlank(p.StateOrProvince) &&
-		nonBlank(p.PostalCode) &&
-		nonBlank(p.Country)
 }
 
 // nonBlank reports whether a nullable string is present and not just whitespace.
