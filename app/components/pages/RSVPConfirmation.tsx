@@ -3,14 +3,46 @@ import { Link, Navigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { usePartyRSVPs } from "@/hooks/queries/rsvp";
 import { clearGuestToken, readGuestToken } from "@/libraries/guest-api";
-import type { RSVPEventGroup, RSVPGuest } from "@/types/generated/rsvps";
+import type { EventRSVPStatus } from "@/types/generated/models";
+import type {
+  PartyRSVPsResponse,
+  RSVPEventGroup,
+  RSVPGuest,
+} from "@/types/generated/rsvps";
+
+/** Human label for a stored status. */
+function statusLabel(status: EventRSVPStatus): string {
+  switch (status) {
+    case "attending":
+      return "Attending";
+    case "not_attending":
+      return "Not attending";
+    default:
+      return "No response";
+  }
+}
 
 /**
- * RSVP confirmation: a summary of the party's submitted responses (who is
- * attending what), a link to the schedule, and a way back to the form for
- * changes (allowed until the deadline). It reads the same query the form
- * uses, which the submit mutation refreshed, so it renders what was just
- * saved.
+ * A guest's invited events with their status for each: the groups holding an
+ * Event RSVP row for them (the row is the invitation).
+ */
+function guestEntries(
+  data: PartyRSVPsResponse,
+  guest: RSVPGuest,
+): { event: RSVPEventGroup; status: EventRSVPStatus }[] {
+  return data.events.flatMap((event) => {
+    const entry = event.rsvps.find((rsvp) => rsvp.guest_id === guest.id);
+    return entry ? [{ event, status: entry.status }] : [];
+  });
+}
+
+/**
+ * RSVP confirmation: one card per guest (mirroring the form) summarizing
+ * their submitted response to each event plus their dietary restrictions, a
+ * link to the schedule, and a way back to the form for changes (allowed until
+ * the deadline; after it, a "contact us" message replaces the edit button).
+ * It reads the same query the form uses, which the submit mutation refreshed,
+ * so it renders what was just saved.
  */
 export default function RSVPConfirmation() {
   const hasToken = readGuestToken() !== null;
@@ -40,73 +72,72 @@ export default function RSVPConfirmation() {
     );
   }
 
-  const guestNames = new Map(
-    data.guests.map((guest: RSVPGuest) => [guest.id, guest.full_name]),
-  );
+  const deadline = data.rsvp_deadline
+    ? new Intl.DateTimeFormat("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      }).format(new Date(data.rsvp_deadline))
+    : null;
 
   return (
     <section className="mx-auto max-w-2xl py-8">
       <h1 className="text-3xl font-bold">Thank you!</h1>
       <p className="mt-3 text-muted-foreground">
-        Here is what we have for {data.party_name}.
-        {!data.closed
-          ? " You can come back and change your responses any time before the deadline."
-          : null}
+        Here is what we have for your party.{" "}
+        {data.closed ? (
+          <>
+            The RSVP deadline has passed, so responses can no longer be changed
+            online.{" "}
+            {data.contact_email ? (
+              <>
+                Need to make a change? Contact us at{" "}
+                <a
+                  className="underline underline-offset-2"
+                  href={`mailto:${data.contact_email}`}
+                >
+                  {data.contact_email}
+                </a>
+                .
+              </>
+            ) : (
+              "Need to make a change? Please reach out to us directly."
+            )}
+          </>
+        ) : deadline ? (
+          `You can come back and change your responses any time before ${deadline}.`
+        ) : (
+          "You can come back and change your responses any time before the deadline."
+        )}
       </p>
 
       <div className="mt-6 flex flex-col gap-6">
-        {data.events.map((eventGroup: RSVPEventGroup) => {
-          const attending = eventGroup.rsvps.filter(
-            (entry) => entry.status === "attending",
-          );
-          const notAttending = eventGroup.rsvps.filter(
-            (entry) => entry.status === "not_attending",
-          );
-          const pending = eventGroup.rsvps.filter(
-            (entry) => entry.status === "pending",
-          );
-          return (
-            <section
-              aria-label={eventGroup.name}
-              className="rounded-lg border border-ink/10 bg-cream p-5"
-              key={eventGroup.id}
-            >
-              <h2 className="text-xl font-semibold">{eventGroup.name}</h2>
-              <dl className="mt-3 flex flex-col gap-1 text-sm">
-                <div className="flex gap-2">
-                  <dt className="font-medium">Attending:</dt>
-                  <dd>
-                    {attending.length > 0
-                      ? attending
-                          .map((entry) => guestNames.get(entry.guest_id))
-                          .join(", ")
-                      : "Nobody yet"}
-                  </dd>
-                </div>
-                {notAttending.length > 0 ? (
-                  <div className="flex gap-2">
-                    <dt className="font-medium">Not attending:</dt>
-                    <dd>
-                      {notAttending
-                        .map((entry) => guestNames.get(entry.guest_id))
-                        .join(", ")}
-                    </dd>
-                  </div>
-                ) : null}
-                {pending.length > 0 ? (
-                  <div className="flex gap-2">
-                    <dt className="font-medium">No response:</dt>
-                    <dd>
-                      {pending
-                        .map((entry) => guestNames.get(entry.guest_id))
-                        .join(", ")}
-                    </dd>
-                  </div>
-                ) : null}
-              </dl>
-            </section>
-          );
-        })}
+        {data.guests.map((guest: RSVPGuest) => (
+          <section
+            aria-label={guest.full_name}
+            className="rounded-lg border border-ink/10 bg-cream p-5"
+            key={guest.id}
+          >
+            <h2 className="text-xl font-semibold">{guest.full_name}</h2>
+            <ul className="mt-3 flex flex-col gap-1">
+              {guestEntries(data, guest).map(({ event, status }) => (
+                <li
+                  className="flex flex-wrap items-center justify-between gap-2"
+                  key={event.id}
+                >
+                  <span className="font-medium">{event.name}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {statusLabel(status)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-sm">
+              <span className="font-medium">Dietary restrictions:</span>{" "}
+              {guest.dietary_restrictions || "None"}
+            </p>
+          </section>
+        ))}
       </div>
 
       <div className="mt-8 flex gap-3">

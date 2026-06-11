@@ -63,11 +63,11 @@ const (
 	// CHANGE THESE IN PRODUCTION by setting ADMIN_PASSWORD and JWT_SECRET.
 	defaultAdminPassword = "changeme"
 	defaultJWTSecret     = "dev-secret-change-me-in-production"
-	// Admin sessions are short for safety; guest sessions are long so guests
-	// stay logged in across the whole RSVP window without re-entering their
-	// code (issue #7 specifies a 30-60 day guest expiry).
+	// Admin sessions are short for safety; guest sessions last a full year so
+	// guests stay logged in across the whole RSVP window without ever
+	// re-entering their code.
 	defaultAdminSessionDuration = 7 * 24 * time.Hour
-	defaultGuestSessionDuration = 60 * 24 * time.Hour
+	defaultGuestSessionDuration = 365 * 24 * time.Hour
 	// A handful of login attempts per minute per IP, with a small burst
 	// (ADR 0006). The e2e harness raises the rate so specs never trip it.
 	defaultLoginRatePerMinute = 5.0

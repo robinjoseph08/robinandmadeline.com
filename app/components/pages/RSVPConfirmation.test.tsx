@@ -16,9 +16,10 @@ vi.mock("@/libraries/guest-api", async () => {
   };
 });
 
-function makeData(): PartyRSVPsResponse {
+function makeData(
+  overrides: Partial<PartyRSVPsResponse> = {},
+): PartyRSVPsResponse {
   return {
-    party_name: "The Smiths",
     guests: [
       {
         id: "g1",
@@ -50,10 +51,25 @@ function makeData(): PartyRSVPsResponse {
           { guest_id: "g2", status: "not_attending" },
         ],
       },
+      {
+        id: "e2",
+        name: "Reception",
+        description: undefined,
+        location: undefined,
+        date: "2026-10-17",
+        start_time: undefined,
+        end_time: undefined,
+        is_public: true,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        rsvps: [{ guest_id: "g1", status: "pending" }],
+      },
     ],
+    responded: true,
     closed: false,
     rsvp_deadline: undefined,
     contact_email: undefined,
+    ...overrides,
   };
 }
 
@@ -90,15 +106,33 @@ describe("RSVPConfirmation", () => {
     expect(await screen.findByText("Code Entry Page")).toBeInTheDocument();
   });
 
-  it("summarizes who is attending what, with schedule and edit links", async () => {
+  it("summarizes each guest's responses and dietary restrictions", async () => {
     guestRequest.mockResolvedValue(makeData());
     renderConfirmation();
 
-    const ceremony = await screen.findByRole("region", { name: "Ceremony" });
-    expect(within(ceremony).getByText("Alice Smith")).toBeInTheDocument();
-    expect(within(ceremony).getByText("Dana Lee")).toBeInTheDocument();
-    expect(within(ceremony).getByText("Attending:")).toBeInTheDocument();
-    expect(within(ceremony).getByText("Not attending:")).toBeInTheDocument();
+    // One card per guest, mirroring the form: their status for every event
+    // they are invited to, then what they told us about dietary restrictions.
+    const alice = await screen.findByRole("region", { name: "Alice Smith" });
+    expect(within(alice).getByText("Ceremony")).toBeInTheDocument();
+    expect(
+      within(alice).getByText("Attending", { exact: true }),
+    ).toBeInTheDocument();
+    expect(within(alice).getByText("Reception")).toBeInTheDocument();
+    expect(within(alice).getByText("No response")).toBeInTheDocument();
+    expect(within(alice).getByText("None")).toBeInTheDocument();
+
+    // Dana is only invited to the ceremony, so her card never lists the
+    // reception.
+    const dana = screen.getByRole("region", { name: "Dana Lee" });
+    expect(within(dana).getByText("Ceremony")).toBeInTheDocument();
+    expect(within(dana).getByText("Not attending")).toBeInTheDocument();
+    expect(within(dana).queryByText("Reception")).not.toBeInTheDocument();
+    expect(within(dana).getByText("no nuts")).toBeInTheDocument();
+
+    // The copy never exposes the party's internal admin label.
+    expect(
+      screen.getByText(/here is what we have for your party/i),
+    ).toBeInTheDocument();
 
     expect(
       screen.getByRole("link", { name: /view the schedule/i }),
@@ -107,5 +141,54 @@ describe("RSVPConfirmation", () => {
     expect(
       screen.getByRole("link", { name: /edit your rsvp/i }),
     ).toHaveAttribute("href", "/rsvp/form");
+  });
+
+  it("includes the deadline date in the change-your-responses note", async () => {
+    guestRequest.mockResolvedValue(
+      makeData({ rsvp_deadline: "2026-08-01T12:00:00Z" }),
+    );
+    renderConfirmation();
+
+    expect(
+      await screen.findByText(/any time before August 1, 2026\./),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to a generic note when no deadline is configured", async () => {
+    guestRequest.mockResolvedValue(makeData());
+    renderConfirmation();
+
+    expect(
+      await screen.findByText(/any time before the deadline\./),
+    ).toBeInTheDocument();
+  });
+
+  it("explains how to reach the couple once the deadline has passed", async () => {
+    guestRequest.mockResolvedValue(
+      makeData({ closed: true, contact_email: "couple@example.com" }),
+    );
+    renderConfirmation();
+
+    expect(
+      await screen.findByText(/the rsvp deadline has passed/i),
+    ).toBeInTheDocument();
+    const mailto = screen.getByRole("link", { name: "couple@example.com" });
+    expect(mailto).toHaveAttribute("href", "mailto:couple@example.com");
+
+    // Responses can no longer be changed online, so there is no way back to
+    // the form.
+    expect(
+      screen.queryByRole("link", { name: /edit your rsvp/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("falls back to generic contact copy when no email is configured", async () => {
+    guestRequest.mockResolvedValue(makeData({ closed: true }));
+    renderConfirmation();
+
+    expect(
+      await screen.findByText(/reach out to us directly/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /@/ })).not.toBeInTheDocument();
   });
 });

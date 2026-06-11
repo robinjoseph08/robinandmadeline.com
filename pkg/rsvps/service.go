@@ -91,13 +91,12 @@ func (s *Service) PartyRSVPs(ctx context.Context, partyID string) (*PartyRSVPsRe
 // return the refreshed view from inside its own transaction (reading its
 // still-uncommitted writes).
 func partyRSVPs(ctx context.Context, db bun.IDB, partyID string) (*PartyRSVPsResponse, error) {
-	party := new(models.Party)
-	err := db.NewSelect().Model(party).Where("p.id = ?", partyID).Scan(ctx)
+	exists, err := db.NewSelect().Model((*models.Party)(nil)).Where("id = ?", partyID).Exists(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errcodes.NotFound("party")
-		}
-		return nil, errors.Wrap(err, "load party")
+		return nil, errors.Wrap(err, "check party exists")
+	}
+	if !exists {
+		return nil, errcodes.NotFound("party")
 	}
 
 	guests, err := partyGuests(ctx, db, partyID)
@@ -111,7 +110,6 @@ func partyRSVPs(ctx context.Context, db bun.IDB, partyID string) (*PartyRSVPsRes
 	}
 
 	resp := &PartyRSVPsResponse{
-		PartyName:    party.Name,
 		Guests:       make([]RSVPGuest, 0, len(guests)),
 		Events:       []RSVPEventGroup{},
 		Closed:       cfg.closed(time.Now()),
@@ -143,6 +141,15 @@ func partyRSVPs(ctx context.Context, db bun.IDB, partyID string) (*PartyRSVPsRes
 		Scan(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "list party event rsvps")
+	}
+
+	// One answered row (a stamped rsvped_at) is enough to count the party as
+	// having responded; withdrawing every answer back to pending clears it.
+	for _, row := range rows {
+		if row.RSVPedAt != nil {
+			resp.Responded = true
+			break
+		}
 	}
 
 	resp.Events = groupByEvent(rows, guestIDs)

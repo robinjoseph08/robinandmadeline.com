@@ -21,7 +21,6 @@ function makeData(
   overrides: Partial<PartyRSVPsResponse> = {},
 ): PartyRSVPsResponse {
   return {
-    party_name: "The Smiths",
     guests: [
       {
         id: "g1",
@@ -70,6 +69,7 @@ function makeData(
         ],
       },
     ],
+    responded: false,
     closed: false,
     rsvp_deadline: undefined,
     contact_email: undefined,
@@ -121,6 +121,11 @@ describe("RSVPForm", () => {
 
     const alice = await screen.findByRole("region", { name: "Alice Smith" });
     const plusOne = screen.getByRole("region", { name: "Guest of Alice" });
+
+    // The header never exposes the party's internal admin label.
+    expect(
+      screen.getByText(/please respond for each member of your party/i),
+    ).toBeInTheDocument();
 
     // Each guest section lists both events with attending / not attending
     // toggles.
@@ -214,41 +219,45 @@ describe("RSVPForm", () => {
     expect(await screen.findByText("Confirmation Page")).toBeInTheDocument();
   });
 
-  it("renders read-only with a contact message after the deadline", async () => {
-    guestRequest.mockResolvedValue(
-      makeData({
-        closed: true,
-        contact_email: "couple@example.com",
-        events: [
-          {
-            ...makeData().events[0],
-            rsvps: [
-              { guest_id: "g1", status: "attending" },
-              { guest_id: "g2", status: "not_attending" },
-            ],
-          },
-        ],
-      }),
-    );
+  it("shows each event's date and time when times are set", async () => {
+    const data = makeData();
+    data.events[0].start_time = "17:00";
+    data.events[1].start_time = "17:30";
+    data.events[1].end_time = "22:00";
+    guestRequest.mockResolvedValue(data);
     renderForm();
 
-    // The current responses show read-only.
-    const ceremony = await screen.findByRole("region", { name: "Ceremony" });
-    expect(within(ceremony).getByText("Alice Smith")).toBeInTheDocument();
-    expect(within(ceremony).getByText("Attending")).toBeInTheDocument();
-    expect(within(ceremony).getByText("Not attending")).toBeInTheDocument();
+    const alice = await screen.findByRole("region", { name: "Alice Smith" });
 
-    // No editable controls remain.
+    // A start time alone renders next to the date; a start and end render as
+    // a range. The 24-hour stored values display in 12-hour time.
     expect(
-      screen.queryByRole("button", { name: /submit rsvp/i }),
-    ).not.toBeInTheDocument();
+      within(alice).getByText("Saturday, October 17, 2026 · 5:00 PM"),
+    ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Ceremony: attending" }),
-    ).not.toBeInTheDocument();
+      within(alice).getByText(
+        "Saturday, October 17, 2026 · 5:30 PM to 10:00 PM",
+      ),
+    ).toBeInTheDocument();
+  });
 
-    // The contact-us message links to the configured contact email.
-    const mailto = screen.getByRole("link", { name: "couple@example.com" });
-    expect(mailto).toHaveAttribute("href", "mailto:couple@example.com");
+  it("shows only the date when an event has no start time", async () => {
+    guestRequest.mockResolvedValue(makeData());
+    renderForm();
+
+    const alice = await screen.findByRole("region", { name: "Alice Smith" });
+    expect(
+      within(alice).getAllByText("Saturday, October 17, 2026"),
+    ).toHaveLength(2);
+  });
+
+  it("redirects to the confirmation after the deadline", async () => {
+    guestRequest.mockResolvedValue(makeData({ closed: true }));
+    renderForm();
+
+    // After the deadline there is no form (read-only or otherwise): the
+    // confirmation page owns the post-deadline summary and messaging.
+    expect(await screen.findByText("Confirmation Page")).toBeInTheDocument();
   });
 
   it("clears the token and redirects when the API rejects it", async () => {

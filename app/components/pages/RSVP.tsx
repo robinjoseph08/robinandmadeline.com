@@ -11,13 +11,24 @@ import {
   guestRequest,
   readGuestToken,
 } from "@/libraries/guest-api";
+import type { PartyRSVPsResponse } from "@/types/generated/rsvps";
+
+/**
+ * Where an authenticated visitor lands: a party that has already responded
+ * (or arrives after the deadline) goes straight to the confirmation summary;
+ * everyone else gets the form.
+ */
+function rsvpDestination(data: PartyRSVPsResponse): string {
+  return data.closed || data.responded ? "/rsvp/confirmation" : "/rsvp/form";
+}
 
 /**
  * RSVP code entry. The party code from the printed invitation is exchanged for
- * a long-lived guest JWT, then the visitor continues to the form. Returning
- * visitors whose stored token is still valid skip code entry entirely: the
- * mount effect probes the RSVP endpoint and forwards them; an invalid/expired
- * token is cleared so the code field shows instead.
+ * a long-lived guest JWT, then the visitor continues to the form (or, once the
+ * party has responded or the deadline has passed, the confirmation summary).
+ * Returning visitors whose stored token is still valid skip code entry
+ * entirely: the mount effect probes the RSVP endpoint and forwards them; an
+ * invalid/expired token is cleared so the code field shows instead.
  */
 export default function RSVP() {
   const navigate = useNavigate();
@@ -34,9 +45,9 @@ export default function RSVP() {
   useEffect(() => {
     if (readGuestToken() === null) return;
     let cancelled = false;
-    guestRequest("/guest/rsvp")
-      .then(() => {
-        if (!cancelled) navigate("/rsvp/form", { replace: true });
+    guestRequest<PartyRSVPsResponse>("/guest/rsvp")
+      .then((data) => {
+        if (!cancelled) navigate(rsvpDestination(data), { replace: true });
       })
       .catch(() => {
         // Expired or invalid token (or a transient failure): fall back to code
@@ -55,7 +66,8 @@ export default function RSVP() {
     setSubmitting(true);
     try {
       await guestLogin(code.trim());
-      navigate("/rsvp/form");
+      const data = await guestRequest<PartyRSVPsResponse>("/guest/rsvp");
+      navigate(rsvpDestination(data));
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError(

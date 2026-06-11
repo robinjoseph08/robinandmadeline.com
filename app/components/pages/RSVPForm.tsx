@@ -23,8 +23,9 @@ import type {
  * The RSVP form: every guest in the authenticated party, with an
  * attending/not-attending toggle per event they are invited to, an editable
  * name for placeholder guests, and a dietary restrictions field per guest. The
- * whole form submits at once. After the RSVP deadline the same data renders
- * read-only with a "contact us" message instead.
+ * whole form submits at once. After the RSVP deadline there is no form at all:
+ * the visitor is sent to the confirmation page, which shows the read-only
+ * summary and the "contact us" message.
  */
 export default function RSVPForm() {
   const hasToken = readGuestToken() !== null;
@@ -55,11 +56,10 @@ export default function RSVPForm() {
     );
   }
 
-  return data.closed ? (
-    <ClosedRSVPView data={data} />
-  ) : (
-    <EditableRSVPForm data={data} />
-  );
+  if (data.closed) {
+    return <Navigate replace to="/rsvp/confirmation" />;
+  }
+  return <EditableRSVPForm data={data} />;
 }
 
 /** A guest's invited events: the groups holding an Event RSVP row for them. */
@@ -77,18 +77,6 @@ function entryKey(eventId: string, guestId: string): string {
   return `${eventId}:${guestId}`;
 }
 
-/** Human label for a stored status, for the read-only views. */
-function statusLabel(status: EventRSVPStatus): string {
-  switch (status) {
-    case "attending":
-      return "Attending";
-    case "not_attending":
-      return "Not attending";
-    default:
-      return "No response";
-  }
-}
-
 /** Friendly display for an event's date (falls back to the raw string). */
 function formatEventDate(date: string): string {
   const parsed = new Date(`${date}T12:00:00`);
@@ -99,6 +87,35 @@ function formatEventDate(date: string): string {
     day: "numeric",
     year: "numeric",
   }).format(parsed);
+}
+
+/**
+ * Converts a stored "HH:MM" wall-clock string to a 12-hour display value
+ * ("17:00" becomes "5:00 PM"). Returns the input unchanged if it does not
+ * parse, so a bad value is visible rather than hidden.
+ */
+function formatEventTime(time: string): string {
+  const match = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!match) return time;
+  const hours = Number(match[1]);
+  if (hours > 23) return time;
+  const period = hours < 12 ? "AM" : "PM";
+  const displayHours = hours % 12 === 0 ? 12 : hours % 12;
+  return `${displayHours}:${match[2]} ${period}`;
+}
+
+/**
+ * One line saying when an event happens: "Saturday, June 13, 2026 · 5:00 PM"
+ * when a start time is set, with "5:00 PM to 10:00 PM" when an end time is
+ * too, and just the date when the event has no start time.
+ */
+function formatEventWhen(eventGroup: RSVPEventGroup): string {
+  const date = formatEventDate(eventGroup.date);
+  if (!eventGroup.start_time) return date;
+  const time = eventGroup.end_time
+    ? `${formatEventTime(eventGroup.start_time)} to ${formatEventTime(eventGroup.end_time)}`
+    : formatEventTime(eventGroup.start_time);
+  return `${date} · ${time}`;
 }
 
 interface RSVPViewProps {
@@ -193,7 +210,7 @@ function EditableRSVPForm({ data }: RSVPViewProps) {
     <section className="mx-auto max-w-2xl py-8">
       <h1 className="text-3xl font-bold">RSVP</h1>
       <p className="mt-3 text-muted-foreground">
-        Responding for {data.party_name}.
+        Please respond for each member of your party.
         {data.rsvp_deadline
           ? ` Please respond by ${new Intl.DateTimeFormat("en-US", {
               month: "long",
@@ -248,7 +265,7 @@ function EditableRSVPForm({ data }: RSVPViewProps) {
                       <div>
                         <p className="font-medium">{eventGroup.name}</p>
                         <p className="text-sm text-muted-foreground">
-                          {formatEventDate(eventGroup.date)}
+                          {formatEventWhen(eventGroup)}
                         </p>
                       </div>
                       <div className="flex gap-2">
@@ -320,68 +337,6 @@ function EditableRSVPForm({ data }: RSVPViewProps) {
           </Button>
         </form>
       )}
-    </section>
-  );
-}
-
-/**
- * The post-deadline view: the party's current responses, read-only, plus a
- * "contact us" message (with the configured contact email when one is set).
- */
-function ClosedRSVPView({ data }: RSVPViewProps) {
-  const guestNames = new Map(
-    data.guests.map((guest) => [guest.id, guest.full_name]),
-  );
-
-  return (
-    <section className="mx-auto max-w-2xl py-8">
-      <h1 className="text-3xl font-bold">RSVP</h1>
-      <p className="mt-3 text-muted-foreground" role="status">
-        The RSVP deadline has passed, so responses can no longer be changed
-        online.{" "}
-        {data.contact_email ? (
-          <>
-            Need to make a change? Contact us at{" "}
-            <a
-              className="underline underline-offset-2"
-              href={`mailto:${data.contact_email}`}
-            >
-              {data.contact_email}
-            </a>
-            .
-          </>
-        ) : (
-          "Need to make a change? Please reach out to us directly."
-        )}
-      </p>
-
-      <div className="mt-6 flex flex-col gap-6">
-        {data.events.map((eventGroup) => (
-          <section
-            aria-label={eventGroup.name}
-            className="rounded-lg border border-ink/10 bg-cream p-5"
-            key={eventGroup.id}
-          >
-            <h2 className="text-xl font-semibold">{eventGroup.name}</h2>
-            <p className="text-sm text-muted-foreground">
-              {formatEventDate(eventGroup.date)}
-            </p>
-            <ul className="mt-3 flex flex-col gap-1">
-              {eventGroup.rsvps.map((entry) => (
-                <li
-                  className="flex items-center justify-between"
-                  key={entry.guest_id}
-                >
-                  <span>{guestNames.get(entry.guest_id)}</span>
-                  <span className="text-sm text-muted-foreground">
-                    {statusLabel(entry.status)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-      </div>
     </section>
   );
 }

@@ -153,7 +153,6 @@ func TestPartyRSVPs_GroupsThePartysRSVPsByEvent(t *testing.T) {
 	resp, err := svc.PartyRSVPs(ctx(), smiths.ID)
 	require.NoError(t, err)
 
-	assert.Equal(t, "The Smiths", resp.PartyName)
 	require.Len(t, resp.Guests, 2, "only the authenticated party's guests appear")
 	assert.Equal(t, alice.ID, resp.Guests[0].ID, "guests come back in creation order")
 	assert.Equal(t, bob.ID, resp.Guests[1].ID)
@@ -221,6 +220,35 @@ func TestPartyRSVPs_ClosedAfterDeadlineWithContactEmail(t *testing.T) {
 	assert.True(t, resp.Closed, "a past deadline closes RSVPs")
 	require.NotNil(t, resp.ContactEmail)
 	assert.Equal(t, "couple@example.com", *resp.ContactEmail)
+}
+
+func TestPartyRSVPs_RespondedReflectsAnyAnsweredRSVP(t *testing.T) {
+	svc, partySvc, eventSvc, _ := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths")
+	alice := addGuestT(t, partySvc, p.ID, "Alice")
+	addGuestT(t, partySvc, p.ID, "Bob")
+	event := createPublicEventT(t, eventSvc)
+
+	// Every row pending: the party has not responded yet.
+	resp, err := svc.PartyRSVPs(ctx(), p.ID)
+	require.NoError(t, err)
+	assert.False(t, resp.Responded, "an all-pending party has not responded")
+
+	// A single guest answering (even "not attending") counts as a response.
+	resp, err = svc.UpdatePartyRSVPs(ctx(), p.ID, statusUpdate(alice.ID, event.ID, models.RSVPNotAttending))
+	require.NoError(t, err)
+	assert.True(t, resp.Responded, "one answered RSVP marks the party as responded")
+
+	resp, err = svc.PartyRSVPs(ctx(), p.ID)
+	require.NoError(t, err)
+	assert.True(t, resp.Responded, "a fresh read sees the same responded state")
+
+	// Withdrawing the only answer back to pending clears rsvped_at, so the
+	// party reads as unresponded again.
+	resp, err = svc.UpdatePartyRSVPs(ctx(), p.ID, statusUpdate(alice.ID, event.ID, models.RSVPPending))
+	require.NoError(t, err)
+	assert.False(t, resp.Responded, "withdrawing every answer clears responded")
 }
 
 func TestPartyRSVPs_MissingPartyIs404(t *testing.T) {

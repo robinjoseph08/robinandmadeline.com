@@ -20,9 +20,9 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, "changeme", cfg.AdminPassword)
 		assert.NotEmpty(t, cfg.JWTSecret)
 		assert.Equal(t, 7*24*time.Hour, cfg.AdminSessionDuration)
-		// Guest sessions are long-lived so guests stay logged in across the RSVP
-		// window, but bounded to the issue's 30-60 day range.
-		assert.Equal(t, 60*24*time.Hour, cfg.GuestSessionDuration)
+		// Guest sessions last a full year so guests stay logged in across the
+		// whole RSVP window without ever re-entering their code.
+		assert.Equal(t, 365*24*time.Hour, cfg.GuestSessionDuration)
 		assert.InDelta(t, 5.0, cfg.LoginRatePerMinute, 0)
 		assert.Equal(t, 5, cfg.LoginRateBurst)
 	})

@@ -12,9 +12,48 @@ function renderRSVP() {
       <Routes>
         <Route element={<RSVP />} path="/rsvp" />
         <Route element={<div>RSVP Form Page</div>} path="/rsvp/form" />
+        <Route
+          element={<div>Confirmation Page</div>}
+          path="/rsvp/confirmation"
+        />
       </Routes>
     </MemoryRouter>,
   );
+}
+
+/** A minimal GET /api/guest/rsvp body with the routing-relevant flags. */
+function rsvpBody(overrides: { responded?: boolean; closed?: boolean } = {}) {
+  return {
+    guests: [],
+    events: [],
+    responded: false,
+    closed: false,
+    rsvp_deadline: null,
+    contact_email: null,
+    ...overrides,
+  };
+}
+
+/**
+ * Mocks fetch for the login flow: POST /api/auth/guest/login returns a token,
+ * then GET /api/guest/rsvp returns the given body (whose responded/closed
+ * flags drive where the visitor lands).
+ */
+function mockLoginFetch(body: Record<string, unknown>) {
+  const fetchMock = vi
+    .fn()
+    .mockImplementation((url: string) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify(
+            url === "/api/auth/guest/login" ? { token: "a.guest.jwt" } : body,
+          ),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 describe("RSVP", () => {
@@ -28,13 +67,7 @@ describe("RSVP", () => {
   });
 
   it("exchanges a valid code for a token and continues to the form", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ token: "a.guest.jwt" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = mockLoginFetch(rsvpBody());
 
     const user = userEvent.setup();
     renderRSVP();
@@ -55,7 +88,32 @@ describe("RSVP", () => {
     const [, init] = fetchMock.mock.calls[0];
     expect(JSON.parse(init.body)).toEqual({ code: "KALEL" });
 
+    // An unresponded party lands on the form.
     expect(await screen.findByText("RSVP Form Page")).toBeInTheDocument();
+  });
+
+  it("continues to the confirmation when the party has already responded", async () => {
+    mockLoginFetch(rsvpBody({ responded: true }));
+
+    const user = userEvent.setup();
+    renderRSVP();
+
+    await user.type(screen.getByLabelText(/party code/i), "kalel");
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByText("Confirmation Page")).toBeInTheDocument();
+  });
+
+  it("continues to the confirmation after the deadline", async () => {
+    mockLoginFetch(rsvpBody({ closed: true }));
+
+    const user = userEvent.setup();
+    renderRSVP();
+
+    await user.type(screen.getByLabelText(/party code/i), "kalel");
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByText("Confirmation Page")).toBeInTheDocument();
   });
 
   it("shows an error and stores no token for an unknown code", async () => {
@@ -115,7 +173,7 @@ describe("RSVP", () => {
     localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, "still.valid.jwt");
     // The mount probe (GET /api/guest/rsvp) succeeding proves the token works.
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({}), {
+      new Response(JSON.stringify(rsvpBody()), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
@@ -133,6 +191,36 @@ describe("RSVP", () => {
         }),
       }),
     );
+  });
+
+  it("sends a returning visitor who already responded to the confirmation", async () => {
+    localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, "still.valid.jwt");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(rsvpBody({ responded: true })), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderRSVP();
+
+    expect(await screen.findByText("Confirmation Page")).toBeInTheDocument();
+  });
+
+  it("sends a returning visitor to the confirmation after the deadline", async () => {
+    localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, "still.valid.jwt");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(rsvpBody({ closed: true })), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderRSVP();
+
+    expect(await screen.findByText("Confirmation Page")).toBeInTheDocument();
   });
 
   it("clears an expired stored token and falls back to code entry", async () => {

@@ -9,8 +9,10 @@ import { ADMIN_PASSWORD, ADMIN_USERNAME } from "./auth";
 
 // Issue #7's critical E2E flow: a guest enters their party's RSVP code, fills
 // in the form (statuses for every guest, a placeholder's real name, dietary
-// restrictions), submits, sees the confirmation summary, then returns (the
-// stored token skips code entry) and modifies their response.
+// restrictions), submits, and sees the per-guest confirmation summary. A
+// return visit for a party that has already responded lands straight on the
+// confirmation page (the stored token skips code entry), and the form stays
+// reachable through "Edit your RSVP" until the deadline.
 //
 // Fixtures are seeded through the real admin API (no test-only endpoints): a
 // party with a primary guest and a placeholder, plus a private event the party
@@ -55,8 +57,8 @@ async function adminPost(
 }
 
 /**
- * Seeds the party (primary guest + placeholder) and a private event the party
- * is invited to, returning the party's RSVP code.
+ * Seeds the party (primary guest + placeholder) and a private timed event the
+ * party is invited to, returning the party's RSVP code.
  */
 async function seedFixtures(request: APIRequestContext): Promise<string> {
   const token = await adminToken(request);
@@ -79,6 +81,8 @@ async function seedFixtures(request: APIRequestContext): Promise<string> {
   const event = await adminPost(request, token, "/api/admin/events", {
     name: eventName,
     date: "2026-10-17",
+    start_time: "17:00",
+    end_time: "22:00",
     is_public: false,
   });
   await adminPost(request, token, `/api/admin/events/${event.id}/invite`, {
@@ -88,7 +92,7 @@ async function seedFixtures(request: APIRequestContext): Promise<string> {
   return rsvpCode;
 }
 
-/** The form section (card) for one guest, located by its accessible name. */
+/** The section (card) for one guest, located by its accessible name. */
 function guestSection(page: Page, name: string) {
   return page.getByRole("region", { name });
 }
@@ -104,11 +108,20 @@ test("guest RSVPs end to end: code entry, form, confirmation, return visit", asy
   await page.getByRole("button", { name: "Continue" }).click();
 
   // --- The form shows every guest x their invited events --------------------
-  await expect(page.getByText(`Responding for ${partyName}`)).toBeVisible();
+  // The header never exposes the party's internal admin label.
+  await expect(
+    page.getByText("Please respond for each member of your party."),
+  ).toBeVisible();
+  await expect(page.getByText(partyName)).not.toBeVisible();
   const aliceCard = guestSection(page, alice);
   const placeholderCard = guestSection(page, placeholder);
   await expect(aliceCard.getByText(eventName)).toBeVisible();
   await expect(placeholderCard.getByText(eventName)).toBeVisible();
+
+  // The event row shows its date and 12-hour time range.
+  await expect(
+    aliceCard.getByText("Saturday, October 17, 2026 · 5:00 PM to 10:00 PM"),
+  ).toBeVisible();
 
   // Alice attends; the placeholder gets a real name, attends too, and notes a
   // dietary restriction.
@@ -125,18 +138,28 @@ test("guest RSVPs end to end: code entry, form, confirmation, return visit", asy
 
   await page.getByRole("button", { name: "Submit RSVP" }).click();
 
-  // --- Confirmation summarizes who's attending what -------------------------
+  // --- Confirmation summarizes each guest's responses ------------------------
   await expect(page.getByRole("heading", { name: "Thank you!" })).toBeVisible();
-  const confirmationCard = page.getByRole("region", { name: eventName });
-  await expect(confirmationCard.getByText(alice)).toBeVisible();
-  await expect(confirmationCard.getByText(danaName)).toBeVisible();
+  const aliceSummary = guestSection(page, alice);
+  await expect(aliceSummary.getByText(eventName)).toBeVisible();
+  await expect(
+    aliceSummary.getByText("Attending", { exact: true }),
+  ).toBeVisible();
+  const danaSummary = guestSection(page, danaName);
+  await expect(
+    danaSummary.getByText("Attending", { exact: true }),
+  ).toBeVisible();
+  await expect(danaSummary.getByText("no nuts please")).toBeVisible();
   await expect(
     page.getByRole("link", { name: "View the schedule" }),
   ).toBeVisible();
 
-  // --- Returning visitor: /rsvp skips code entry straight to the form -------
+  // --- Returning visitor: a responded party lands on the confirmation -------
   await page.goto("/rsvp", { waitUntil: "domcontentloaded" });
-  await expect(page.getByText(`Responding for ${partyName}`)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Thank you!" })).toBeVisible();
+
+  // --- The form stays reachable through "Edit your RSVP" --------------------
+  await page.getByRole("link", { name: "Edit your RSVP" }).click();
 
   // The placeholder now shows its filled-in real name, and the earlier
   // answers are preselected.
@@ -156,9 +179,11 @@ test("guest RSVPs end to end: code entry, form, confirmation, return visit", asy
   await page.getByRole("button", { name: "Submit RSVP" }).click();
 
   await expect(page.getByRole("heading", { name: "Thank you!" })).toBeVisible();
-  const updatedCard = page.getByRole("region", { name: eventName });
   // Alice moved from attending to not attending; Dana still attends.
-  await expect(updatedCard.getByText("Not attending:")).toBeVisible();
-  await expect(updatedCard.getByText(alice)).toBeVisible();
-  await expect(updatedCard.getByText(danaName)).toBeVisible();
+  await expect(
+    guestSection(page, alice).getByText("Not attending", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    guestSection(page, danaName).getByText("Attending", { exact: true }),
+  ).toBeVisible();
 });

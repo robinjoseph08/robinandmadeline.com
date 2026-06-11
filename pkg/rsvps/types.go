@@ -44,15 +44,21 @@ type RSVPEventGroup struct {
 // PartyRSVPsResponse is the body of GET /api/guest/rsvp (and of a successful
 // PUT, which returns the refreshed state): the authenticated party's guests,
 // its Event RSVPs grouped by event in schedule order, and the deadline state.
-// Closed signals the form to render read-only; ContactEmail (the app setting,
-// nil when unset) feeds the post-deadline "contact us" message.
+// The party's name is deliberately absent: it is an internal admin label for
+// identifying groups, not something guests should see. Closed sends the form
+// page to the read-only confirmation; ContactEmail (the app setting, nil when
+// unset) feeds the post-deadline "contact us" message.
 type PartyRSVPsResponse struct {
-	PartyName    string           `json:"party_name"`
-	Guests       []RSVPGuest      `json:"guests"`
-	Events       []RSVPEventGroup `json:"events"`
-	Closed       bool             `json:"closed"`
-	RSVPDeadline *time.Time       `json:"rsvp_deadline"`
-	ContactEmail *string          `json:"contact_email"`
+	Guests []RSVPGuest      `json:"guests"`
+	Events []RSVPEventGroup `json:"events"`
+	// Responded reports whether the party has answered at all: true once any
+	// of its Event RSVP rows carries a response (a non-nil rsvped_at), false
+	// while every row is still pending. The code-entry page uses it to route a
+	// returning party to the confirmation summary instead of the form.
+	Responded    bool       `json:"responded"`
+	Closed       bool       `json:"closed"`
+	RSVPDeadline *time.Time `json:"rsvp_deadline"`
+	ContactEmail *string    `json:"contact_email"`
 }
 
 // UpdatePartyRSVPsPayload is the body of PUT /api/guest/rsvp: the whole form

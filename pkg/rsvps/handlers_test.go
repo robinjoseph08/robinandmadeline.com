@@ -93,7 +93,6 @@ func TestGetGuestRSVP_ReturnsTheTokenPartysData(t *testing.T) {
 
 	var resp rsvps.PartyRSVPsResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	assert.Equal(t, "The Smiths", resp.PartyName)
 	require.Len(t, resp.Guests, 1, "the token's party_id claim scopes the data")
 	assert.Equal(t, alice.ID, resp.Guests[0].ID)
 	assert.False(t, resp.Closed)
