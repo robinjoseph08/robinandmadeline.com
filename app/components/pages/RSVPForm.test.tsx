@@ -152,6 +152,10 @@ describe("RSVPForm", () => {
     // already shows "Guest of Alice", which is not a name to erase.
     expect(within(plusOne).getByLabelText("Name")).toHaveValue("");
     expect(within(alice).queryByLabelText("Name")).not.toBeInTheDocument();
+
+    // An unnamed placeholder's heading already IS the descriptor, so no
+    // subtitle duplicates it.
+    expect(within(plusOne).getAllByText("Guest of Alice")).toHaveLength(1);
   });
 
   it("prefills a named placeholder's name field with the submitted name", async () => {
@@ -165,6 +169,10 @@ describe("RSVPForm", () => {
 
     const plusOne = await screen.findByRole("region", { name: "Dana Lee" });
     expect(within(plusOne).getByLabelText("Name")).toHaveValue("Dana Lee");
+
+    // The descriptor stays visible as a subtitle, so the party sees what the
+    // slot is for when changing or clearing the name.
+    expect(within(plusOne).getByText("Guest of Alice")).toBeInTheDocument();
   });
 
   it("submits the whole form and navigates to the confirmation", async () => {
@@ -233,6 +241,93 @@ describe("RSVPForm", () => {
     });
 
     expect(await screen.findByText("Confirmation Page")).toBeInTheDocument();
+  });
+
+  it("submits a blank name when a named placeholder's input is cleared", async () => {
+    // The breakup scenario: the named +1 is no longer coming and nobody
+    // replaces them, so the party clears the name. Blank tells the backend to
+    // revert the slot to unnamed (full_name back to the descriptor).
+    const data = makeData();
+    data.guests[1].full_name = "Dana Lee";
+    guestRequest.mockImplementation(
+      (_path: string, options?: { method?: string }) => {
+        if (options?.method === "PUT") return Promise.resolve(makeData());
+        return Promise.resolve(data);
+      },
+    );
+
+    const user = userEvent.setup();
+    renderForm();
+
+    const plusOne = await screen.findByRole("region", { name: "Dana Lee" });
+    await user.clear(within(plusOne).getByLabelText("Name"));
+    await user.click(screen.getByRole("button", { name: /submit rsvp/i }));
+
+    await waitFor(() => {
+      expect(guestRequest).toHaveBeenCalledWith(
+        "/guest/rsvp",
+        expect.objectContaining({
+          method: "PUT",
+          body: {
+            guests: [
+              {
+                guest_id: "g1",
+                full_name: undefined,
+                dietary_restrictions: undefined,
+                rsvps: [
+                  { event_id: "e1", status: "pending" },
+                  { event_id: "e2", status: "pending" },
+                ],
+              },
+              {
+                guest_id: "g2",
+                full_name: "",
+                dietary_restrictions: undefined,
+                rsvps: [
+                  { event_id: "e1", status: "pending" },
+                  { event_id: "e2", status: "pending" },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+    });
+  });
+
+  it("sends no name for an untouched unnamed placeholder", async () => {
+    // An unnamed slot whose input was never filled has nothing to revert:
+    // the submission omits full_name entirely, staying a no-op.
+    guestRequest.mockImplementation(
+      (_path: string, options?: { method?: string }) => {
+        if (options?.method === "PUT") return Promise.resolve(makeData());
+        return Promise.resolve(makeData());
+      },
+    );
+
+    const user = userEvent.setup();
+    renderForm();
+
+    await screen.findByRole("region", { name: "Guest of Alice" });
+    await user.click(screen.getByRole("button", { name: /submit rsvp/i }));
+
+    await waitFor(() => {
+      expect(guestRequest).toHaveBeenCalledWith(
+        "/guest/rsvp",
+        expect.objectContaining({
+          method: "PUT",
+          body: expect.objectContaining({
+            guests: [
+              expect.objectContaining({ guest_id: "g1" }),
+              expect.objectContaining({
+                guest_id: "g2",
+                full_name: undefined,
+              }),
+            ],
+          }),
+        }),
+      );
+    });
   });
 
   it("shows each event's date and time when times are set", async () => {

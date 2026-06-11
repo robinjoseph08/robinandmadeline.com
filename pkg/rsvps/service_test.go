@@ -337,6 +337,51 @@ func TestUpdatePartyRSVPs_PersistsPlaceholderNameAndDietary(t *testing.T) {
 	assert.Equal(t, pointerutil.String("Guest of Alice"), renamed.PlaceholderText)
 }
 
+func TestUpdatePartyRSVPs_BlankNameRevertsPlaceholderToUnnamed(t *testing.T) {
+	svc, partySvc, eventSvc, db := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths")
+	addGuestT(t, partySvc, p.ID, "Alice")
+	plusOne := addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
+	createPublicEventT(t, eventSvc)
+
+	_, err := svc.UpdatePartyRSVPs(ctx(), p.ID, rsvps.UpdatePartyRSVPsPayload{
+		Guests: []rsvps.GuestRSVPUpdate{{GuestID: plusOne.ID, FullName: pointerutil.String("Dana Lee")}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "Dana Lee", guestRow(t, db, plusOne.ID).FullName)
+
+	// An absent full_name leaves the name on file untouched: only the fields a
+	// submission carries change.
+	_, err = svc.UpdatePartyRSVPs(ctx(), p.ID, rsvps.UpdatePartyRSVPsPayload{
+		Guests: []rsvps.GuestRSVPUpdate{{GuestID: plusOne.ID}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Dana Lee", guestRow(t, db, plusOne.ID).FullName,
+		"an absent name is a no-op for a named placeholder")
+
+	// The breakup scenario: the named +1 is no longer coming and nobody
+	// replaces them. A present-but-blank name reverts the slot to unnamed: the
+	// descriptor becomes the name again.
+	_, err = svc.UpdatePartyRSVPs(ctx(), p.ID, rsvps.UpdatePartyRSVPsPayload{
+		Guests: []rsvps.GuestRSVPUpdate{{GuestID: plusOne.ID, FullName: pointerutil.String("")}},
+	})
+	require.NoError(t, err)
+	reverted := guestRow(t, db, plusOne.ID)
+	assert.Equal(t, "Guest of Alice", reverted.FullName,
+		"a blank name reverts a named placeholder to its descriptor")
+	assert.Equal(t, pointerutil.String("Guest of Alice"), reverted.PlaceholderText,
+		"clearing the name never touches the descriptor")
+
+	// Clearing an already-unnamed slot is a harmless no-op (the form may send
+	// blank for an untouched empty input).
+	_, err = svc.UpdatePartyRSVPs(ctx(), p.ID, rsvps.UpdatePartyRSVPsPayload{
+		Guests: []rsvps.GuestRSVPUpdate{{GuestID: plusOne.ID, FullName: pointerutil.String("")}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Guest of Alice", guestRow(t, db, plusOne.ID).FullName)
+}
+
 func TestUpdatePartyRSVPs_IgnoresNameForNonPlaceholderGuests(t *testing.T) {
 	svc, partySvc, eventSvc, db := newServices(t)
 
@@ -348,6 +393,14 @@ func TestUpdatePartyRSVPs_IgnoresNameForNonPlaceholderGuests(t *testing.T) {
 	// placeholders.
 	_, err := svc.UpdatePartyRSVPs(ctx(), p.ID, rsvps.UpdatePartyRSVPsPayload{
 		Guests: []rsvps.GuestRSVPUpdate{{GuestID: alice.ID, FullName: pointerutil.String("Mallory")}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Alice", guestRow(t, db, alice.ID).FullName)
+
+	// A blank name is just as ignored: revert-to-unnamed only means something
+	// for placeholders, so a regular guest can never be blanked out.
+	_, err = svc.UpdatePartyRSVPs(ctx(), p.ID, rsvps.UpdatePartyRSVPsPayload{
+		Guests: []rsvps.GuestRSVPUpdate{{GuestID: alice.ID, FullName: pointerutil.String("")}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "Alice", guestRow(t, db, alice.ID).FullName)

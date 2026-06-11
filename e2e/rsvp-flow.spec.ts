@@ -12,7 +12,8 @@ import { ADMIN_PASSWORD, ADMIN_USERNAME } from "./auth";
 // restrictions), submits, and sees the per-guest confirmation summary. A
 // return visit for a party that has already responded lands straight on the
 // confirmation page (the stored token skips code entry), and the form stays
-// reachable through "Edit your RSVP" until the deadline.
+// reachable through "Edit your RSVP" until the deadline, where answers can
+// change and a named placeholder can be cleared back to its descriptor.
 //
 // Fixtures are seeded through the real admin API (no test-only endpoints): a
 // party with a primary guest and a placeholder, plus a private event the party
@@ -152,6 +153,8 @@ test("guest RSVPs end to end: code entry, form, confirmation, return visit", asy
     danaSummary.getByText("Attending", { exact: true }),
   ).toBeVisible();
   await expect(danaSummary.getByText("no nuts please")).toBeVisible();
+  // The named placeholder's card keeps its descriptor as a subtitle.
+  await expect(danaSummary.getByText(placeholder)).toBeVisible();
   await expect(
     page.getByRole("link", { name: "View the schedule" }),
   ).toBeVisible();
@@ -165,11 +168,13 @@ test("guest RSVPs end to end: code entry, form, confirmation, return visit", asy
 
   // The placeholder now shows its filled-in real name, prefilled in the name
   // input too (the site remembers the submitted name, editable for swaps),
+  // with the descriptor as a subtitle so the slot's intention stays legible,
   // and the earlier answers are preselected.
   const danaCard = guestSection(page, danaName);
   await expect(danaCard.getByLabel("Name", { exact: true })).toHaveValue(
     danaName,
   );
+  await expect(danaCard.getByText(placeholder)).toBeVisible();
   await expect(
     danaCard.getByRole("button", { name: `${eventName}: attending` }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -177,20 +182,25 @@ test("guest RSVPs end to end: code entry, form, confirmation, return visit", asy
     "no nuts please",
   );
 
-  // --- Modify before the deadline: Alice can no longer make it --------------
+  // --- Modify before the deadline: Alice can no longer make it, and Dana ----
+  // --- broke up with Alice, so the slot's name is cleared -------------------
   const aliceReturnCard = guestSection(page, alice);
   await aliceReturnCard
     .getByRole("button", { name: `${eventName}: not attending` })
     .click();
+  // Clearing the name reverts the slot to unnamed: the descriptor is what
+  // remains.
+  await danaCard.getByLabel("Name", { exact: true }).fill("");
   await page.getByRole("button", { name: "Submit RSVP" }).click();
 
   await expect(page.getByRole("heading", { name: "Thank you!" })).toBeVisible();
-  // Alice moved from attending to not attending; Dana still attends.
+  // Alice moved from attending to not attending; the cleared slot, identified
+  // by its descriptor again, keeps its attending answer.
   await expect(
     guestSection(page, alice).getByText("Not attending", { exact: true }),
   ).toBeVisible();
   await expect(
-    guestSection(page, danaName).getByText("Attending", { exact: true }),
+    guestSection(page, placeholder).getByText("Attending", { exact: true }),
   ).toBeVisible();
 
   // --- "Not your party?" clears the stored token, back to code entry --------

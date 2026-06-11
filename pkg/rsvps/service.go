@@ -287,11 +287,18 @@ func (s *Service) UpdatePartyRSVPs(ctx context.Context, partyID string, in Updat
 // event_rsvps row per status entry.
 func applyGuestUpdate(ctx context.Context, tx bun.Tx, guest *models.Guest, update GuestRSVPUpdate, now time.Time) error {
 	// full_name only fills in placeholders (a non-null placeholder_text; real
-	// guests' names are admin-managed), and a blank value never erases the name
-	// already on file. The descriptor itself is never touched, so an
-	// already-named placeholder stays renameable until the deadline.
-	if guest.PlaceholderText != nil && update.FullName != nil && *update.FullName != "" {
-		guest.FullName = *update.FullName
+	// guests' names are admin-managed). A present-but-blank value (blank after
+	// the binder's trim) reverts the slot to unnamed by restoring the
+	// descriptor as the name (the +1 broke up with the guest and nobody
+	// replaces them); an absent value leaves the name untouched. The descriptor
+	// itself is never touched, so until the deadline an already-named
+	// placeholder stays renameable and clearable.
+	if guest.PlaceholderText != nil && update.FullName != nil {
+		if *update.FullName == "" {
+			guest.FullName = *guest.PlaceholderText
+		} else {
+			guest.FullName = *update.FullName
+		}
 	}
 	// Dietary restrictions are full-state: an absent (or blank, after trim)
 	// value clears them. Blank normalizes to NULL via pointerutil.EmptyString

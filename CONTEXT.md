@@ -17,7 +17,7 @@ The guest who is the main point of contact for their party.
 _Avoid_: Head of household, owner
 
 **Placeholder Guest**:
-An unnamed plus-one slot: a guest record that carries Placeholder Text (its permanent descriptor, e.g. "Guest of John Doe"). Naming it during RSVP sets the guest's name without erasing the descriptor, and the name stays editable until the RSVP deadline so a party can swap who fills the slot. A person whose name is only approximately known is a real guest with a best-guess name (corrected during info collection), not a placeholder.
+An unnamed plus-one slot: a guest record that carries Placeholder Text (its permanent descriptor, e.g. "Guest of John Doe"). Naming it during RSVP sets the guest's name without erasing the descriptor, and the name stays editable until the RSVP deadline so a party can swap who fills the slot, or clear the name to revert the slot to unnamed (the descriptor is what remains). A person whose name is only approximately known is a real guest with a best-guess name (corrected during info collection), not a placeholder.
 _Avoid_: Plus-one (the slot, not the person who eventually fills it); any guest whose name is uncertain (that is a real guest with a best-guess name)
 
 **Placeholder Text**:

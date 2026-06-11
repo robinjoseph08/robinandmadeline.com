@@ -116,6 +116,34 @@ func TestPutGuestRSVP_UpdatesAndReturnsRefreshedState(t *testing.T) {
 	assert.Equal(t, models.RSVPAttending, rsvpRow(t, db, event.ID, g.ID).Status)
 }
 
+func TestPutGuestRSVP_BlankNameRevertsPlaceholderThroughTheBinder(t *testing.T) {
+	svc, partySvc, eventSvc, db := newServices(t)
+	e, authSvc := newGuestEcho(t, svc)
+
+	p := createPartyT(t, partySvc, "The Smiths")
+	plusOne := addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
+	createPublicEventT(t, eventSvc)
+
+	token, err := authSvc.GenerateGuestToken(p.ID)
+	require.NoError(t, err)
+
+	body := `{"guests":[{"guest_id":"` + plusOne.ID + `","full_name":"Dana Lee"}]}`
+	rec := doGuestRequest(t, e, http.MethodPut, token, body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// A whitespace-only name trims to blank in the binder, passes omitempty
+	// validation, and reverts the slot to its descriptor.
+	body = `{"guests":[{"guest_id":"` + plusOne.ID + `","full_name":"   "}]}`
+	rec = doGuestRequest(t, e, http.MethodPut, token, body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp rsvps.PartyRSVPsResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Guests, 1)
+	assert.Equal(t, "Guest of Alice", resp.Guests[0].FullName)
+	assert.Equal(t, "Guest of Alice", guestRow(t, db, plusOne.ID).FullName)
+}
+
 func TestPutGuestRSVP_Returns403AfterDeadline(t *testing.T) {
 	svc, partySvc, eventSvc, db := newServices(t)
 	e, authSvc := newGuestEcho(t, svc)

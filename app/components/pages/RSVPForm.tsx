@@ -82,6 +82,14 @@ function isPlaceholder(guest: RSVPGuest): boolean {
 }
 
 /**
+ * Whether a placeholder has been named: the party filled in a real name, so
+ * full_name no longer equals the permanent descriptor.
+ */
+function isNamedPlaceholder(guest: RSVPGuest): boolean {
+  return isPlaceholder(guest) && guest.full_name !== guest.placeholder_text;
+}
+
+/**
  * The initial value of a placeholder's name input. An unnamed slot (full_name
  * still equals the descriptor, which the heading already shows) starts blank;
  * once the party has named it, the submitted name prefills so a return visit
@@ -89,7 +97,22 @@ function isPlaceholder(guest: RSVPGuest): boolean {
  * and swaps.
  */
 function initialPlaceholderName(guest: RSVPGuest): string {
-  return guest.full_name === guest.placeholder_text ? "" : guest.full_name;
+  return isNamedPlaceholder(guest) ? guest.full_name : "";
+}
+
+/**
+ * The full_name one guest's submission carries. Only placeholders send one
+ * (real guests' names are admin-managed; the backend ignores them anyway). A
+ * non-blank input names or renames the slot. A cleared input on a named
+ * placeholder sends blank, which the backend reads as "revert to unnamed"
+ * (the name goes back to the descriptor); an untouched unnamed slot sends
+ * nothing, staying a no-op.
+ */
+function submittedName(guest: RSVPGuest, input: string): string | undefined {
+  if (!isPlaceholder(guest)) return undefined;
+  const trimmed = input.trim();
+  if (trimmed !== "") return trimmed;
+  return isNamedPlaceholder(guest) ? "" : undefined;
 }
 
 /** The composite key the form's status state is indexed by. */
@@ -186,10 +209,7 @@ function EditableRSVPForm({ data }: RSVPViewProps) {
     const payload: UpdatePartyRSVPsPayload = {
       guests: data.guests.map((guest) => ({
         guest_id: guest.id,
-        full_name:
-          isPlaceholder(guest) && names[guest.id]?.trim()
-            ? names[guest.id].trim()
-            : undefined,
+        full_name: submittedName(guest, names[guest.id] ?? ""),
         dietary_restrictions: dietary[guest.id]?.trim() || undefined,
         rsvps: invitedEvents(data, guest).map((eventGroup) => ({
           event_id: eventGroup.id,
@@ -238,6 +258,15 @@ function EditableRSVPForm({ data }: RSVPViewProps) {
               key={guest.id}
             >
               <h2 className="text-xl font-semibold">{guest.full_name}</h2>
+              {/* A named placeholder keeps its descriptor visible so a
+                  returning party sees what the slot is for when changing or
+                  clearing the name. An unnamed slot's heading already IS the
+                  descriptor, so no subtitle. */}
+              {isNamedPlaceholder(guest) ? (
+                <p className="text-sm text-muted-foreground">
+                  {guest.placeholder_text}
+                </p>
+              ) : null}
 
               {isPlaceholder(guest) ? (
                 <div className="mt-3 flex flex-col gap-1.5">

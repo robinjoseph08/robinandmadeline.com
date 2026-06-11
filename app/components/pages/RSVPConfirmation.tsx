@@ -12,6 +12,17 @@ import type {
   RSVPGuest,
 } from "@/types/generated/rsvps";
 
+/**
+ * Whether a guest is a named placeholder: a plus-one slot (non-null
+ * placeholder_text) whose name the party has filled in, so full_name no
+ * longer equals the permanent descriptor.
+ */
+function isNamedPlaceholder(guest: RSVPGuest): boolean {
+  return (
+    guest.placeholder_text != null && guest.full_name !== guest.placeholder_text
+  );
+}
+
 /** Human label for a stored status. */
 function statusLabel(status: EventRSVPStatus): string {
   switch (status) {
@@ -133,6 +144,14 @@ export default function RSVPConfirmation() {
             key={guest.id}
           >
             <h2 className="text-xl font-semibold">{guest.full_name}</h2>
+            {/* A named placeholder keeps its descriptor visible, mirroring
+                the form card. An unnamed slot's heading already IS the
+                descriptor, so no subtitle. */}
+            {isNamedPlaceholder(guest) ? (
+              <p className="text-sm text-muted-foreground">
+                {guest.placeholder_text}
+              </p>
+            ) : null}
             <ul className="mt-3 flex flex-col gap-1">
               {guestEntries(data, guest).map(({ event, status }) => (
                 <li

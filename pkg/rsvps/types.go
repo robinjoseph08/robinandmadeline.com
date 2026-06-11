@@ -73,13 +73,16 @@ type UpdatePartyRSVPsPayload struct {
 
 // GuestRSVPUpdate carries one guest's submission. full_name fills in a
 // placeholder guest's real name (a guest with a non-null placeholder_text)
-// and is ignored for regular guests (real names are admin-managed); a blank
-// value is also ignored, so a placeholder is never blanked back out. Naming
-// never erases the descriptor, so an already-named placeholder can be renamed
-// until the deadline (a party swapping who fills the slot). rsvps may name
-// only events the guest holds an Event RSVP row for (the row is the
-// invitation, ADR 0002). dietary_restrictions is full-state: it is stored as
-// sent, so null (or blank) clears it.
+// and is ignored for regular guests (real names are admin-managed). For a
+// placeholder, a present-but-blank value (blank after the binder's trim)
+// reverts the slot to unnamed by setting full_name back to placeholder_text
+// (the +1 is no longer coming and nobody replaces them); an absent
+// (null/omitted) value leaves the name untouched. Naming never erases the
+// descriptor, so until the deadline a party can rename the slot (swapping who
+// fills it) or clear it back to unnamed. rsvps may name only events the guest
+// holds an Event RSVP row for (the row is the invitation, ADR 0002).
+// dietary_restrictions is full-state: it is stored as sent, so null (or
+// blank) clears it.
 type GuestRSVPUpdate struct {
 	GuestID             string            `json:"guest_id" validate:"required,uuid"`
 	FullName            *string           `json:"full_name" mod:"trim" validate:"omitempty,max=200"`

@@ -133,6 +133,10 @@ describe("RSVPConfirmation", () => {
     expect(within(dana).queryByText("Reception")).not.toBeInTheDocument();
     expect(within(dana).getByText("no nuts")).toBeInTheDocument();
 
+    // A named placeholder's card keeps its descriptor visible as a subtitle,
+    // mirroring the form, so the slot's intention stays legible.
+    expect(within(dana).getByText("Guest of Alice")).toBeInTheDocument();
+
     // The copy never exposes the party's internal admin label.
     expect(
       screen.getByText(/here is what we have for your party/i),
@@ -145,6 +149,18 @@ describe("RSVPConfirmation", () => {
     expect(
       screen.getByRole("link", { name: /edit your rsvp/i }),
     ).toHaveAttribute("href", "/rsvp/form");
+  });
+
+  it("shows no descriptor subtitle for an unnamed placeholder", async () => {
+    // An unnamed slot's heading already IS the descriptor (full_name still
+    // equals placeholder_text), so a subtitle would just duplicate it.
+    const data = makeData();
+    data.guests[1].full_name = "Guest of Alice";
+    guestRequest.mockResolvedValue(data);
+    renderConfirmation();
+
+    const card = await screen.findByRole("region", { name: "Guest of Alice" });
+    expect(within(card).getAllByText("Guest of Alice")).toHaveLength(1);
   });
 
   it("includes the deadline date in the change-your-responses note", async () => {

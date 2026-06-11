@@ -107,7 +107,7 @@ export default function RSVP() {
             className="uppercase tracking-widest"
             id="rsvp-code"
             onChange={(e) => setCode(e.target.value.toUpperCase())}
-            placeholder="e.g. KALEL"
+            placeholder="XXXXX"
             required
             type="text"
             value={code}
