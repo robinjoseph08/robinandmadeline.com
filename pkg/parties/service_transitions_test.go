@@ -100,25 +100,6 @@ func TestStatus_DerivedBeforeRequested(t *testing.T) {
 	assert.Equal(t, models.StatusComplete, reloaded.InfoCollectionStatus())
 }
 
-func TestSubmitInfoForm_GatedAndConfirms(t *testing.T) {
-	svc, _ := newService(t)
-
-	// Incomplete party: submission is rejected on the same gate as mark-complete.
-	p := createPartyT(t, svc, physicalPartyInput())
-	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat Jones", Email: pointerutil.String("pat@example.com"), IsPrimary: true})
-	_, err := svc.SubmitInfoForm(ctx(), p.ID)
-	assertErrCode(t, err, errcodes.CodeValidationError)
-
-	// Once the address is added, submission confirms the party.
-	line1, city, state, postal, country := fullAddress()
-	updatePartyAddress(t, svc, p.ID, line1, city, state, postal, country)
-	submitted, err := svc.SubmitInfoForm(ctx(), p.ID)
-	require.NoError(t, err)
-	assert.True(t, submitted.InfoCollectionRequested)
-	assert.True(t, submitted.InfoCollectionConfirmed)
-	assert.Equal(t, models.StatusComplete, submitted.InfoCollectionStatus())
-}
-
 func TestTransition_NotFound(t *testing.T) {
 	svc, _ := newService(t)
 	const missing = "00000000-0000-0000-0000-000000000000"

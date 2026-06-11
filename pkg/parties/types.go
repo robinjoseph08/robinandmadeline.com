@@ -262,6 +262,11 @@ type ListGuestsQuery struct {
 type PartyResponse struct {
 	models.Party         `tstype:",extends"`
 	InfoCollectionStatus string `json:"info_collection_status" tstype:"models.InfoCollectionStatus"`
+	// MissingRequiredFields itemizes the required fields the party still lacks
+	// (the human-readable labels from models.Party.MissingRequiredFields), so
+	// the admin UI can explain an incomplete status on hover. Empty (never
+	// null) when nothing is missing.
+	MissingRequiredFields []string `json:"missing_required_fields"`
 }
 
 // ListPartiesResponse is the uniform list envelope for parties.
@@ -297,11 +302,16 @@ type ListGuestsResponse struct {
 	Total int             `json:"total"`
 }
 
-// newPartyResponse wraps a loaded party (with guests) for the API, computing its
-// status. Guests must be loaded for the status to be accurate. The status is
-// computed before the model is copied into the response by value.
+// newPartyResponse wraps a loaded party (with guests) for the API, computing
+// its status and the itemized missing required fields. Guests must be loaded
+// for both to be accurate. The derived values are computed before the model is
+// copied into the response by value.
 func newPartyResponse(p *models.Party) PartyResponse {
-	return PartyResponse{Party: *p, InfoCollectionStatus: p.InfoCollectionStatus()}
+	return PartyResponse{
+		Party:                 *p,
+		InfoCollectionStatus:  p.InfoCollectionStatus(),
+		MissingRequiredFields: p.MissingRequiredFields(),
+	}
 }
 
 // newGuestResponse wraps a guest for the API.

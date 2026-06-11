@@ -169,6 +169,7 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
             <GridReadOnlyCell className="p-0">
               <div className="flex h-8 items-center px-3">
                 <InfoStatusBadge
+                  missingRequiredFields={party.missing_required_fields}
                   requested={party.info_collection_requested}
                   status={party.info_collection_status}
                 />

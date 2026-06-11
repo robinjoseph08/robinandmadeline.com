@@ -173,6 +173,7 @@ export default function AdminPartyDetail() {
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">Info collection:</span>
             <InfoStatusBadge
+              missingRequiredFields={party.missing_required_fields}
               requested={party.info_collection_requested}
               status={party.info_collection_status}
             />

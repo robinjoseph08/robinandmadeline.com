@@ -30,6 +30,7 @@ function makeParty(overrides: Partial<PartyResponse>): PartyResponse {
     info_collection_requested: false,
     info_collection_confirmed: false,
     info_collection_status: "incomplete",
+    missing_required_fields: ["primary guest's email"],
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     guests: [],
