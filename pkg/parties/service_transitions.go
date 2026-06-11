@@ -41,22 +41,17 @@ func (s *Service) MarkIncomplete(ctx context.Context, id string) (*models.Party,
 	return s.setCollectionFlags(ctx, id, true, false)
 }
 
-// SubmitInfoForm records a guest's submission of the info form. It is the method
-// behind the guest-facing endpoint built later (#8); like MarkComplete it is
-// gated on required fields, since the form must collect exactly those.
-func (s *Service) SubmitInfoForm(ctx context.Context, id string) (*models.Party, error) {
-	return s.confirmComplete(ctx, id)
-}
-
-// confirmComplete is the gated transition shared by MarkComplete and
-// SubmitInfoForm: it checks RequiredFieldsPresent (422 if missing) and writes
-// requested=confirmed=true. Load, gate, and write run in one transaction with
-// the party row locked, so a concurrent party edit (say, clearing the address
-// the gate just approved) cannot slip between the gate and the flag write and
-// confirm a party whose required fields are missing (ADR 0005). FOR UPDATE
-// cannot ride on the guests join, so the party row is locked by a slim select
-// first and the guests the gate needs are loaded separately inside the
-// transaction.
+// confirmComplete is the gated transition behind MarkComplete: it checks
+// RequiredFieldsPresent (422 if missing) and writes requested=confirmed=true.
+// Load, gate, and write run in one transaction with the party row locked, so a
+// concurrent party edit (say, clearing the address the gate just approved)
+// cannot slip between the gate and the flag write and confirm a party whose
+// required fields are missing (ADR 0005). FOR UPDATE cannot ride on the guests
+// join, so the party row is locked by a slim select first and the guests the
+// gate needs are loaded separately inside the transaction. The guest-facing
+// counterpart (the info form submit, #8) lives in pkg/info, which inlines this
+// same gated transition inside its form-write transaction so a rejected submit
+// rolls the form's writes back too.
 func (s *Service) confirmComplete(ctx context.Context, id string) (*models.Party, error) {
 	party := new(models.Party)
 	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
