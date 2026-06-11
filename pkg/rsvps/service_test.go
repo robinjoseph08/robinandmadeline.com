@@ -328,6 +328,18 @@ func TestUpdatePartyRSVPs_BlankDietaryClearsToNull(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Nil(t, guestRow(t, db, alice.ID).DietaryRestrictions)
+
+	// A present-but-blank value (a raw API caller; the form omits blanks) also
+	// stores NULL, so the column never mixes "" and NULL.
+	_, err = svc.UpdatePartyRSVPs(ctx(), p.ID, rsvps.UpdatePartyRSVPsPayload{
+		Guests: []rsvps.GuestRSVPUpdate{{GuestID: alice.ID, DietaryRestrictions: pointerutil.String("vegetarian")}},
+	})
+	require.NoError(t, err)
+	_, err = svc.UpdatePartyRSVPs(ctx(), p.ID, rsvps.UpdatePartyRSVPsPayload{
+		Guests: []rsvps.GuestRSVPUpdate{{GuestID: alice.ID, DietaryRestrictions: pointerutil.String("")}},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, guestRow(t, db, alice.ID).DietaryRestrictions)
 }
 
 func TestUpdatePartyRSVPs_RejectedAfterDeadline(t *testing.T) {

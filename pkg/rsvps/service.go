@@ -284,9 +284,14 @@ func applyGuestUpdate(ctx context.Context, tx bun.Tx, guest *models.Guest, updat
 	if guest.IsPlaceholder && update.FullName != nil && *update.FullName != "" {
 		guest.FullName = *update.FullName
 	}
-	// Dietary restrictions are full-state: stored as sent, so an absent (or
-	// blank, after trim) value clears them.
-	guest.DietaryRestrictions = update.DietaryRestrictions
+	// Dietary restrictions are full-state: an absent (or blank, after trim)
+	// value clears them. Blank normalizes to NULL via pointerutil.EmptyString
+	// so the column never mixes "" and NULL, matching the admin PATCH path's
+	// cleared-cell convention.
+	guest.DietaryRestrictions = nil
+	if update.DietaryRestrictions != nil {
+		guest.DietaryRestrictions = pointerutil.EmptyString(*update.DietaryRestrictions)
+	}
 	guest.UpdatedAt = now
 
 	_, err := tx.NewUpdate().Model(guest).

@@ -19,7 +19,7 @@ import (
 const (
 	// RoleAdmin authenticates the single site administrator.
 	RoleAdmin = "admin"
-	// RoleGuest authenticates a party via the RSVP flow (built in a later issue).
+	// RoleGuest authenticates a party via the RSVP flow.
 	RoleGuest = "guest"
 )
 
