@@ -68,7 +68,7 @@ _Avoid_: Password, info token
 Whether a party receives a physical mailed invitation or a digital-only one.
 
 **Info Collection**:
-The pre-invitation phase in which a party confirms its contact details and, for physical parties, its mailing address, and corrects guest details the couple has wrong (e.g. an approximate name). The party can also remove a member who is no longer part of it (an ex, or a +1 it gives up), though never its Primary Guest.
+The pre-invitation phase in which a party confirms its contact details and, for physical parties, its mailing address, and corrects guest details the couple has wrong (e.g. an approximate name). The party can also remove a member who is no longer part of it (an ex, or a placeholder slot it gives up), though never its Primary Guest.
 _Avoid_: Onboarding, signup
 
 **Info Collection Requested**:
