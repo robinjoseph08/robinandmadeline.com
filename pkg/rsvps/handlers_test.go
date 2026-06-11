@@ -41,13 +41,7 @@ func newGuestEcho(t *testing.T, svc *rsvps.Service) (*echo.Echo, *auth.Service) 
 
 func doGuestRequest(t *testing.T, e *echo.Echo, method, token, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	var reader *strings.Reader
-	if body == "" {
-		reader = strings.NewReader("")
-	} else {
-		reader = strings.NewReader(body)
-	}
-	req := httptest.NewRequestWithContext(context.Background(), method, "/api/guest/rsvp", reader)
+	req := httptest.NewRequestWithContext(context.Background(), method, "/api/guest/rsvp", strings.NewReader(body))
 	if body != "" {
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	}

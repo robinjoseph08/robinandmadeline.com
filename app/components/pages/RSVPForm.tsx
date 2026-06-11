@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { usePartyRSVPs, useUpdatePartyRSVPs } from "@/hooks/queries/rsvp";
+import { formatLongDate, formatTime } from "@/libraries/format";
 import {
   ApiError,
   clearGuestToken,
@@ -90,21 +91,6 @@ function formatEventDate(date: string): string {
 }
 
 /**
- * Converts a stored "HH:MM" wall-clock string to a 12-hour display value
- * ("17:00" becomes "5:00 PM"). Returns the input unchanged if it does not
- * parse, so a bad value is visible rather than hidden.
- */
-function formatEventTime(time: string): string {
-  const match = /^(\d{2}):(\d{2})$/.exec(time);
-  if (!match) return time;
-  const hours = Number(match[1]);
-  if (hours > 23) return time;
-  const period = hours < 12 ? "AM" : "PM";
-  const displayHours = hours % 12 === 0 ? 12 : hours % 12;
-  return `${displayHours}:${match[2]} ${period}`;
-}
-
-/**
  * One line saying when an event happens: "Saturday, June 13, 2026 · 5:00 PM"
  * when a start time is set, with "5:00 PM to 10:00 PM" when an end time is
  * too, and just the date when the event has no start time.
@@ -113,8 +99,8 @@ function formatEventWhen(eventGroup: RSVPEventGroup): string {
   const date = formatEventDate(eventGroup.date);
   if (!eventGroup.start_time) return date;
   const time = eventGroup.end_time
-    ? `${formatEventTime(eventGroup.start_time)} to ${formatEventTime(eventGroup.end_time)}`
-    : formatEventTime(eventGroup.start_time);
+    ? `${formatTime(eventGroup.start_time)} to ${formatTime(eventGroup.end_time)}`
+    : formatTime(eventGroup.start_time);
   return `${date} · ${time}`;
 }
 
@@ -212,11 +198,7 @@ function EditableRSVPForm({ data }: RSVPViewProps) {
       <p className="mt-3 text-muted-foreground">
         Please respond for each member of your party.
         {data.rsvp_deadline
-          ? ` Please respond by ${new Intl.DateTimeFormat("en-US", {
-              month: "long",
-              day: "numeric",
-              year: "numeric",
-            }).format(new Date(data.rsvp_deadline))}.`
+          ? ` Please respond by ${formatLongDate(data.rsvp_deadline)}.`
           : null}
       </p>
 

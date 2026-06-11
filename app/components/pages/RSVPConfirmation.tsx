@@ -2,6 +2,7 @@ import { Link, Navigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { usePartyRSVPs } from "@/hooks/queries/rsvp";
+import { formatLongDate } from "@/libraries/format";
 import { clearGuestToken, readGuestToken } from "@/libraries/guest-api";
 import type { EventRSVPStatus } from "@/types/generated/models";
 import type {
@@ -73,11 +74,7 @@ export default function RSVPConfirmation() {
   }
 
   const deadline = data.rsvp_deadline
-    ? new Intl.DateTimeFormat("en-US", {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      }).format(new Date(data.rsvp_deadline))
+    ? formatLongDate(data.rsvp_deadline)
     : null;
 
   return (
