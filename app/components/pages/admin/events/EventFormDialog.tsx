@@ -44,7 +44,6 @@ interface FormState {
   startTime: string;
   endTime: string;
   isPublic: boolean;
-  sortOrder: string;
 }
 
 const EMPTY_FORM: FormState = {
@@ -55,7 +54,6 @@ const EMPTY_FORM: FormState = {
   startTime: "",
   endTime: "",
   isPublic: false,
-  sortOrder: "0",
 };
 
 function formFromEvent(event: EventResponse): FormState {
@@ -67,7 +65,6 @@ function formFromEvent(event: EventResponse): FormState {
     startTime: event.start_time ?? "",
     endTime: event.end_time ?? "",
     isPublic: event.is_public,
-    sortOrder: String(event.sort_order),
   };
 }
 
@@ -110,7 +107,6 @@ export function EventFormDialog({
     setForm((prev) => ({ ...prev, [key]: value }));
 
   const handleSubmit = async () => {
-    const sortOrder = Number.parseInt(form.sortOrder, 10);
     const payload: EventFormPayload = {
       name: form.name.trim(),
       description: optional(form.description),
@@ -119,7 +115,6 @@ export function EventFormDialog({
       start_time: optional(form.startTime),
       end_time: optional(form.endTime),
       is_public: form.isPublic,
-      sort_order: Number.isNaN(sortOrder) ? 0 : sortOrder,
     };
     await onSubmit(payload);
   };
@@ -199,20 +194,6 @@ export function EventFormDialog({
                 value={form.endTime}
               />
             </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="event-sort-order">Sort order</Label>
-            <Input
-              id="event-sort-order"
-              min={0}
-              onChange={(e) => update("sortOrder", e.target.value)}
-              type="number"
-              value={form.sortOrder}
-            />
-            <p className="text-xs text-muted-foreground">
-              Lower numbers appear first on the schedule.
-            </p>
           </div>
 
           <label className="flex items-start gap-2 text-sm">

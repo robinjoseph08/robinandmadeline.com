@@ -13,12 +13,12 @@ func init() {
 		//
 		// date is a calendar date (DATE, no timezone games); start_time/end_time
 		// are nullable "HH:MM" strings rather than TIME columns because they are
-		// display values the couple types in, validated at the API boundary.
-		// is_public decides invitation semantics (ADR 0002): a public event is
-		// visible to everyone and every guest gets an Event RSVP row; a private
-		// event only gets rows for explicitly invited parties. sort_order drives
-		// the schedule's display order (date alone cannot order two events on the
-		// same day).
+		// venue wall-clock values the couple types in, validated at the API
+		// boundary; zero-padded 24-hour strings sort lexically in chronological
+		// order, so date plus start_time also drives the schedule's display
+		// order. is_public decides invitation semantics (ADR 0002): a public
+		// event is visible to everyone and every guest gets an Event RSVP row; a
+		// private event only gets rows for explicitly invited parties.
 		_, err := db.ExecContext(ctx, `
 			CREATE TABLE events (
 				id UUID PRIMARY KEY,
@@ -29,7 +29,6 @@ func init() {
 				start_time TEXT,
 				end_time TEXT,
 				is_public BOOLEAN NOT NULL DEFAULT FALSE,
-				sort_order INTEGER NOT NULL DEFAULT 0,
 				created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 				updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 			)

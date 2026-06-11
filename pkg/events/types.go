@@ -11,8 +11,7 @@ import "github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 // blank). start_time/end_time are optional "HH:MM" 24-hour strings
 // (validator's datetime layout check). is_public decides invitation semantics
 // (ADR 0002): creating a public event backfills a pending Event RSVP for every
-// existing guest in the same transaction. sort_order positions the event on
-// the schedule; it is optional and defaults to 0.
+// existing guest in the same transaction.
 type CreateEventPayload struct {
 	Name        string  `json:"name" mod:"trim" validate:"required,max=200"`
 	Description *string `json:"description" mod:"trim" validate:"omitempty,max=2000"`
@@ -21,7 +20,6 @@ type CreateEventPayload struct {
 	StartTime   *string `json:"start_time" mod:"trim" validate:"omitempty,datetime=15:04"`
 	EndTime     *string `json:"end_time" mod:"trim" validate:"omitempty,datetime=15:04"`
 	IsPublic    bool    `json:"is_public"`
-	SortOrder   int     `json:"sort_order" validate:"omitempty,min=0"`
 }
 
 // UpdateEventPayload is the full desired state of an event's editable fields
@@ -37,7 +35,6 @@ type UpdateEventPayload struct {
 	StartTime   *string `json:"start_time" mod:"trim" validate:"omitempty,datetime=15:04"`
 	EndTime     *string `json:"end_time" mod:"trim" validate:"omitempty,datetime=15:04"`
 	IsPublic    bool    `json:"is_public"`
-	SortOrder   int     `json:"sort_order" validate:"omitempty,min=0"`
 }
 
 // InvitePartiesPayload is the body for POST /events/:id/invite: the parties to

@@ -40,7 +40,6 @@ const EVENT_PAYLOAD = {
   name: "Reception",
   date: "2026-10-17",
   is_public: true,
-  sort_order: 0,
 };
 
 describe("useCreateEvent", () => {

@@ -28,7 +28,6 @@ func (s *Service) CreateEvent(ctx context.Context, in CreateEventPayload) (*mode
 		StartTime:   in.StartTime,
 		EndTime:     in.EndTime,
 		IsPublic:    in.IsPublic,
-		SortOrder:   in.SortOrder,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -53,14 +52,15 @@ func (s *Service) GetEvent(ctx context.Context, id string) (*models.Event, error
 	return loadEvent(ctx, s.db, id)
 }
 
-// ListEvents returns every event and the total count, ordered for the
-// schedule: sort_order first (the couple's explicit ordering), then date, then
-// id as a stable tiebreak. There are at most a handful of events, so the list
-// takes no filters.
+// ListEvents returns every event and the total count, in schedule order: date
+// first, then start_time (zero-padded "HH:MM" strings sort lexically in
+// chronological order, and Postgres puts NULLs last under ASC, so untimed
+// events trail their day's timed ones), then id as a stable tiebreak. There
+// are at most a handful of events, so the list takes no filters.
 func (s *Service) ListEvents(ctx context.Context) ([]*models.Event, int, error) {
 	var list []*models.Event
 	total, err := s.db.NewSelect().Model(&list).
-		Order("e.sort_order ASC", "e.date ASC", "e.id ASC").
+		Order("e.date ASC", "e.start_time ASC", "e.id ASC").
 		ScanAndCount(ctx)
 	if err != nil {
 		return nil, 0, errors.Wrap(err, "list events")
@@ -95,12 +95,11 @@ func (s *Service) UpdateEvent(ctx context.Context, id string, in UpdateEventPayl
 		event.StartTime = in.StartTime
 		event.EndTime = in.EndTime
 		event.IsPublic = in.IsPublic
-		event.SortOrder = in.SortOrder
 		event.UpdatedAt = time.Now()
 
 		if _, err := tx.NewUpdate().Model(event).
 			Column("name", "description", "location", "date", "start_time",
-				"end_time", "is_public", "sort_order", "updated_at").
+				"end_time", "is_public", "updated_at").
 			WherePK().Exec(ctx); err != nil {
 			return errors.Wrap(err, "update event")
 		}

@@ -13,8 +13,8 @@ import (
 // to everyone on the schedule and every guest holds an Event RSVP row for it; a
 // private event is visible only to guests whose parties were explicitly
 // invited. Date travels as a "YYYY-MM-DD" string (the column is a Postgres
-// DATE); StartTime/EndTime are nullable "HH:MM" strings. SortOrder drives the
-// schedule's display order.
+// DATE); StartTime/EndTime are nullable "HH:MM" strings, which sort lexically
+// in chronological order and so double as the schedule's display order.
 type Event struct {
 	bun.BaseModel `bun:"table:events,alias:e" tstype:"-"`
 
@@ -26,7 +26,6 @@ type Event struct {
 	StartTime   *string `bun:"start_time" json:"start_time"`
 	EndTime     *string `bun:"end_time" json:"end_time"`
 	IsPublic    bool    `bun:"is_public" json:"is_public"`
-	SortOrder   int     `bun:"sort_order" json:"sort_order"`
 
 	CreatedAt time.Time `bun:"created_at,nullzero" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero" json:"updated_at"`

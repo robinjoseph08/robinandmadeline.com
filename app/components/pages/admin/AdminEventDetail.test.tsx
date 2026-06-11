@@ -31,7 +31,6 @@ function makeEvent(overrides: Partial<EventResponse>): EventResponse {
     start_time: undefined,
     end_time: undefined,
     is_public: false,
-    sort_order: 0,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     rsvp_breakdown: { pending: 0, attending: 0, not_attending: 0, total: 0 },

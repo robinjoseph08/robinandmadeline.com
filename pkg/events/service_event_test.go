@@ -22,7 +22,6 @@ func TestCreateEvent_PersistsFields(t *testing.T) {
 		StartTime:   pointerutil.String("16:00"),
 		EndTime:     pointerutil.String("17:00"),
 		IsPublic:    true,
-		SortOrder:   2,
 	})
 
 	reloaded, err := svc.GetEvent(ctx(), created.ID)
@@ -35,7 +34,6 @@ func TestCreateEvent_PersistsFields(t *testing.T) {
 	assert.Equal(t, pointerutil.String("16:00"), reloaded.StartTime)
 	assert.Equal(t, pointerutil.String("17:00"), reloaded.EndTime)
 	assert.True(t, reloaded.IsPublic)
-	assert.Equal(t, 2, reloaded.SortOrder)
 }
 
 func TestCreateEvent_PublicBackfillsPendingRSVPsForAllGuests(t *testing.T) {
@@ -77,35 +75,38 @@ func TestGetEvent_MissingIs404(t *testing.T) {
 	assertErrCode(t, err, errcodes.CodeNotFound)
 }
 
-func TestListEvents_OrdersBySortOrderThenDate(t *testing.T) {
+func TestListEvents_OrdersByDateThenStartTime(t *testing.T) {
 	svc, _, _ := newServices(t)
 
 	reception := publicEventInput()
 	reception.Name = "Reception"
-	reception.SortOrder = 2
+	reception.StartTime = pointerutil.String("18:00")
 	createEventT(t, svc, reception)
 
 	ceremony := publicEventInput()
 	ceremony.Name = "Ceremony"
-	ceremony.SortOrder = 1
+	ceremony.StartTime = pointerutil.String("16:00")
 	createEventT(t, svc, ceremony)
+
+	brunch := publicEventInput()
+	brunch.Name = "Brunch"
+	createEventT(t, svc, brunch)
 
 	rehearsal := privateEventInput()
 	rehearsal.Name = "Rehearsal Dinner"
-	rehearsal.SortOrder = 1
 	rehearsal.Date = "2026-10-16"
 	createEventT(t, svc, rehearsal)
 
 	listed, total, err := svc.ListEvents(ctx())
 	require.NoError(t, err)
-	assert.Equal(t, 3, total)
+	assert.Equal(t, 4, total)
 	names := make([]string, 0, len(listed))
 	for _, e := range listed {
 		names = append(names, e.Name)
 	}
-	// sort_order first, then date breaks the tie between the two sort_order=1
-	// events.
-	assert.Equal(t, []string{"Rehearsal Dinner", "Ceremony", "Reception"}, names)
+	// Date first, then start_time orders the same-day events chronologically,
+	// with the untimed Brunch trailing its day (NULL start_time sorts last).
+	assert.Equal(t, []string{"Rehearsal Dinner", "Ceremony", "Reception", "Brunch"}, names)
 }
 
 func TestUpdateEvent_AppliesFields(t *testing.T) {
@@ -118,7 +119,6 @@ func TestUpdateEvent_AppliesFields(t *testing.T) {
 		Date:      "2026-10-15",
 		StartTime: pointerutil.String("18:30"),
 		IsPublic:  false,
-		SortOrder: 5,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "Madhuram Veppu", updated.Name)
@@ -131,7 +131,6 @@ func TestUpdateEvent_AppliesFields(t *testing.T) {
 	assert.Equal(t, "2026-10-15", reloaded.Date)
 	assert.Equal(t, pointerutil.String("18:30"), reloaded.StartTime)
 	assert.Nil(t, reloaded.EndTime)
-	assert.Equal(t, 5, reloaded.SortOrder)
 }
 
 func TestUpdateEvent_MissingIs404(t *testing.T) {
