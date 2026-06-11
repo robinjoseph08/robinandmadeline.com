@@ -5,23 +5,13 @@ import { Button } from "@/components/ui/button";
 import { QueryKey, usePartyRSVPs } from "@/hooks/queries/rsvp";
 import { formatLongDate } from "@/libraries/format";
 import { clearGuestToken, readGuestToken } from "@/libraries/guest-api";
+import { isNamedPlaceholder } from "@/libraries/placeholders";
 import type { EventRSVPStatus } from "@/types/generated/models";
 import type {
   PartyRSVPsResponse,
   RSVPEventGroup,
   RSVPGuest,
 } from "@/types/generated/rsvps";
-
-/**
- * Whether a guest is a named placeholder: a plus-one slot (non-null
- * placeholder_text) whose name the party has filled in, so full_name no
- * longer equals the permanent descriptor.
- */
-function isNamedPlaceholder(guest: RSVPGuest): boolean {
-  return (
-    guest.placeholder_text != null && guest.full_name !== guest.placeholder_text
-  );
-}
 
 /** Human label for a stored status. */
 function statusLabel(status: EventRSVPStatus): string {

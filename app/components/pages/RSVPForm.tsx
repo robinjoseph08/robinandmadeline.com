@@ -12,6 +12,7 @@ import {
   clearGuestToken,
   readGuestToken,
 } from "@/libraries/guest-api";
+import { isNamedPlaceholder, isPlaceholder } from "@/libraries/placeholders";
 import type { EventRSVPStatus } from "@/types/generated/models";
 import type {
   PartyRSVPsResponse,
@@ -71,22 +72,6 @@ function invitedEvents(
   return data.events.filter((event) =>
     event.rsvps.some((entry) => entry.guest_id === guest.id),
   );
-}
-
-/**
- * Whether a guest is a placeholder (an unnamed plus-one slot): exactly the
- * guests carrying a placeholder_text descriptor.
- */
-function isPlaceholder(guest: RSVPGuest): boolean {
-  return guest.placeholder_text != null;
-}
-
-/**
- * Whether a placeholder has been named: the party filled in a real name, so
- * full_name no longer equals the permanent descriptor.
- */
-function isNamedPlaceholder(guest: RSVPGuest): boolean {
-  return isPlaceholder(guest) && guest.full_name !== guest.placeholder_text;
 }
 
 /**
