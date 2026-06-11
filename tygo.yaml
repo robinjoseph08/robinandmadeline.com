@@ -38,6 +38,16 @@ packages:
     include_files:
       - types.go
 
+  # The guest info-collection flow's payload and response types. Only types.go
+  # is emitted; the response references the InvitationType enum, imported from
+  # the generated models module.
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/info"
+    output_path: "app/types/generated/info.ts"
+    frontmatter: |
+      import * as models from "@/types/generated/models";
+    include_files:
+      - types.go
+
   # The ErrorCode union shared by the API error envelope.
   - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
     output_path: "app/types/generated/errcodes.ts"

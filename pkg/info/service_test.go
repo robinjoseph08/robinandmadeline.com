@@ -1,0 +1,447 @@
+package info_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/robinjoseph08/golib/pointerutil"
+	"github.com/robinjoseph08/robinandmadeline.com/internal/databasetest"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/info"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
+)
+
+// newServices returns an info.Service plus the parties and events services used
+// for fixtures, backed by a dedicated Postgres test database (these tests
+// truncate parties and events, which other package binaries own in the shared
+// database). Truncating parties/events cascades to guests and event_rsvps.
+// Tests using it must not call t.Parallel() because the package shares this one
+// database and relies on truncation for isolation.
+func newServices(t *testing.T) (*info.Service, *parties.Service, *events.Service, *bun.DB) {
+	t.Helper()
+	db := newDB(t)
+	return info.NewService(db), parties.NewService(db), events.NewService(db), db
+}
+
+// newInfoService is newServices for tests that need no fixtures (e.g. the
+// unknown-token 404s).
+func newInfoService(t *testing.T) *info.Service {
+	t.Helper()
+	return info.NewService(newDB(t))
+}
+
+// newDB provisions (and truncates) the package's dedicated test database.
+func newDB(t *testing.T) *bun.DB {
+	t.Helper()
+	db := databasetest.NewIsolated(t, "robinandmadeline_info_test")
+	databasetest.Truncate(t, db, "parties", "events")
+	return db
+}
+
+func ctx() context.Context { return context.Background() }
+
+// assertErrCode asserts that err resolves to an *errcodes.Error with the given
+// code.
+func assertErrCode(t *testing.T, err error, code errcodes.Code) {
+	t.Helper()
+	require.Error(t, err)
+	var e *errcodes.Error
+	require.ErrorAs(t, err, &e)
+	require.Equal(t, string(code), e.Code)
+}
+
+// createPartyT creates a party fixture via the parties service.
+func createPartyT(t *testing.T, svc *parties.Service, name, invitationType string) *models.Party {
+	t.Helper()
+	p, err := svc.CreateParty(ctx(), parties.CreatePartyPayload{
+		Name:           name,
+		Side:           models.SideRobin,
+		Relation:       models.RelationFriend,
+		InvitationType: invitationType,
+	})
+	require.NoError(t, err)
+	return p
+}
+
+// addGuestT adds a guest fixture to a party via the parties service.
+func addGuestT(t *testing.T, svc *parties.Service, partyID string, in parties.CreateGuestPayload) *models.Guest {
+	t.Helper()
+	g, err := svc.CreateGuest(ctx(), partyID, in)
+	require.NoError(t, err)
+	return g
+}
+
+// addPrimaryT adds the party's primary guest fixture.
+func addPrimaryT(t *testing.T, svc *parties.Service, partyID, name string) *models.Guest {
+	t.Helper()
+	return addGuestT(t, svc, partyID, parties.CreateGuestPayload{FullName: name, IsPrimary: true})
+}
+
+// addPlaceholderT adds a placeholder guest fixture (an unnamed plus-one slot).
+// Like the CSV import, full_name and placeholder_text both start as the
+// descriptor.
+func addPlaceholderT(t *testing.T, svc *parties.Service, partyID, descriptor string) *models.Guest {
+	t.Helper()
+	return addGuestT(t, svc, partyID, parties.CreateGuestPayload{
+		FullName:        descriptor,
+		PlaceholderText: pointerutil.String(descriptor),
+	})
+}
+
+// fullAddress returns an UpdatePartyInfoPayload pre-filled with a complete
+// mailing address (line 2 deliberately absent: it is optional).
+func fullAddress() info.UpdatePartyInfoPayload {
+	return info.UpdatePartyInfoPayload{
+		AddressLine1:    pointerutil.String("123 Main St"),
+		City:            pointerutil.String("Springfield"),
+		StateOrProvince: pointerutil.String("IL"),
+		PostalCode:      pointerutil.String("62701"),
+		Country:         pointerutil.String("USA"),
+	}
+}
+
+// partyRow reads one parties row straight from the DB.
+func partyRow(t *testing.T, db *bun.DB, id string) *models.Party {
+	t.Helper()
+	row := new(models.Party)
+	require.NoError(t, db.NewSelect().Model(row).Where("p.id = ?", id).Scan(ctx()))
+	return row
+}
+
+// guestRow reads one guests row straight from the DB.
+func guestRow(t *testing.T, db *bun.DB, id string) *models.Guest {
+	t.Helper()
+	row := new(models.Guest)
+	require.NoError(t, db.NewSelect().Model(row).Where("g.id = ?", id).Scan(ctx()))
+	return row
+}
+
+func TestPartyInfo_ReturnsPartyAndGuestDetails(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationPhysical)
+	alice := addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{
+		FullName:  "Alice Smith",
+		Email:     pointerutil.String("alice@example.com"),
+		Phone:     pointerutil.String("+14155552671"),
+		IsPrimary: true,
+	})
+	bob := addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Bob Smith"})
+	plusOne := addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
+
+	// An unrelated party never leaks into the token's view.
+	other := createPartyT(t, partySvc, "The Joneses", models.InvitationDigital)
+	addPrimaryT(t, partySvc, other.ID, "Carol Jones")
+
+	resp, err := svc.PartyInfo(ctx(), p.InfoToken)
+	require.NoError(t, err)
+
+	assert.Equal(t, models.InvitationPhysical, resp.InvitationType)
+	require.Len(t, resp.Guests, 3, "only the token's party's guests")
+
+	assert.Equal(t, alice.ID, resp.Guests[0].ID)
+	assert.Equal(t, "Alice Smith", resp.Guests[0].FullName)
+	assert.True(t, resp.Guests[0].IsPrimary)
+	assert.Equal(t, pointerutil.String("alice@example.com"), resp.Guests[0].Email)
+	assert.Equal(t, pointerutil.String("+14155552671"), resp.Guests[0].Phone)
+	assert.Nil(t, resp.Guests[0].PlaceholderText)
+
+	assert.Equal(t, bob.ID, resp.Guests[1].ID)
+	assert.False(t, resp.Guests[1].IsPrimary)
+	assert.Nil(t, resp.Guests[1].Email)
+
+	assert.Equal(t, plusOne.ID, resp.Guests[2].ID)
+	assert.Equal(t, pointerutil.String("Guest of Alice"), resp.Guests[2].PlaceholderText)
+}
+
+func TestPartyInfo_UnknownTokenIs404(t *testing.T) {
+	svc := newInfoService(t)
+
+	_, err := svc.PartyInfo(ctx(), "no-such-token")
+	assertErrCode(t, err, errcodes.CodeNotFound)
+}
+
+func TestUpdatePartyInfo_SavesAddressContactsAndConfirms(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationPhysical)
+	// The imported name is a best approximation; the form corrects it.
+	alice := addPrimaryT(t, partySvc, p.ID, "Allice Smith")
+
+	payload := fullAddress()
+	payload.AddressLine2 = pointerutil.String("Apt 4")
+	payload.Guests = []info.GuestInfoUpdate{{
+		GuestID:  alice.ID,
+		FullName: pointerutil.String("Alice Smith"),
+		Email:    pointerutil.String("alice@example.com"),
+		Phone:    pointerutil.String("+14155552671"),
+	}}
+
+	resp, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, payload)
+	require.NoError(t, err)
+
+	// The response reflects the refreshed state.
+	assert.Equal(t, pointerutil.String("123 Main St"), resp.AddressLine1)
+	assert.Equal(t, pointerutil.String("Apt 4"), resp.AddressLine2)
+	require.Len(t, resp.Guests, 1)
+	assert.Equal(t, "Alice Smith", resp.Guests[0].FullName)
+	assert.Equal(t, pointerutil.String("alice@example.com"), resp.Guests[0].Email)
+
+	// The corrected name and contacts persist; a successful submit confirms the
+	// party (ADR 0005): requested+confirmed, so the status reads complete.
+	g := guestRow(t, db, alice.ID)
+	assert.Equal(t, "Alice Smith", g.FullName)
+	assert.Equal(t, pointerutil.String("+14155552671"), g.Phone)
+
+	saved := partyRow(t, db, p.ID)
+	assert.Equal(t, pointerutil.String("Springfield"), saved.City)
+	assert.True(t, saved.InfoCollectionRequested)
+	assert.True(t, saved.InfoCollectionConfirmed)
+	saved.Guests = []*models.Guest{g}
+	assert.Equal(t, models.StatusComplete, saved.InfoCollectionStatus())
+}
+
+func TestUpdatePartyInfo_CompletesARequestedParty(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+
+	// The couple sent the link: the party waits on the guest (ADR 0005).
+	_, err := partySvc.RequestInfo(ctx(), p.ID)
+	require.NoError(t, err)
+	assert.False(t, partyRow(t, db, p.ID).InfoCollectionConfirmed)
+
+	// The guest's form submission is what completes it.
+	_, err = svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{GuestID: alice.ID, Email: pointerutil.String("alice@example.com")}},
+	})
+	require.NoError(t, err)
+
+	saved := partyRow(t, db, p.ID)
+	assert.True(t, saved.InfoCollectionRequested)
+	assert.True(t, saved.InfoCollectionConfirmed)
+}
+
+func TestUpdatePartyInfo_MissingRequiredFieldsIs422AndRollsBack(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	// A physical party needs a full mailing address; an email alone is rejected,
+	// and the rejection saves nothing (the whole submit is one transaction).
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationPhysical)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+
+	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{GuestID: alice.ID, Email: pointerutil.String("alice@example.com")}},
+	})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+
+	assert.Nil(t, guestRow(t, db, alice.ID).Email, "a rejected submit persists nothing")
+	saved := partyRow(t, db, p.ID)
+	assert.False(t, saved.InfoCollectionRequested)
+	assert.False(t, saved.InfoCollectionConfirmed)
+}
+
+func TestUpdatePartyInfo_MissingPrimaryEmailIs422(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	// Even a digital party (no address needed) requires the primary's email; a
+	// blank submit clears it, so the gate rejects the form.
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+
+	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{GuestID: alice.ID, Email: pointerutil.String("")}},
+	})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+}
+
+func TestUpdatePartyInfo_DigitalPartyNeedsNoAddress(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+
+	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{GuestID: alice.ID, Email: pointerutil.String("alice@example.com")}},
+	})
+	require.NoError(t, err)
+
+	saved := partyRow(t, db, p.ID)
+	assert.True(t, saved.InfoCollectionConfirmed)
+	assert.Nil(t, saved.AddressLine1, "an absent address field stays untouched")
+}
+
+func TestUpdatePartyInfo_BlankNameIgnoredForRegularGuest(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+
+	// A name can be corrected, never removed: a blank edit is ignored.
+	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{
+			GuestID:  alice.ID,
+			FullName: pointerutil.String(""),
+			Email:    pointerutil.String("alice@example.com"),
+		}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Alice Smith", guestRow(t, db, alice.ID).FullName)
+}
+
+func TestUpdatePartyInfo_PlaceholderNamingAndClearing(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+	plusOne := addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
+
+	primaryEmail := info.GuestInfoUpdate{GuestID: alice.ID, Email: pointerutil.String("alice@example.com")}
+
+	// A submitted name names the slot without erasing the descriptor.
+	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{primaryEmail, {GuestID: plusOne.ID, FullName: pointerutil.String("Dana Lee")}},
+	})
+	require.NoError(t, err)
+	named := guestRow(t, db, plusOne.ID)
+	assert.Equal(t, "Dana Lee", named.FullName)
+	assert.Equal(t, pointerutil.String("Guest of Alice"), named.PlaceholderText)
+
+	// Clearing the name reverts the slot to unnamed (the descriptor remains).
+	_, err = svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{primaryEmail, {GuestID: plusOne.ID, FullName: pointerutil.String("")}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Guest of Alice", guestRow(t, db, plusOne.ID).FullName)
+}
+
+func TestUpdatePartyInfo_RemovesGuestAndTheirEventRSVPs(t *testing.T) {
+	svc, partySvc, eventSvc, db := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+	ex := addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Ex Partner"})
+
+	// A public event backfills a pending Event RSVP for both guests (ADR 0002).
+	event, err := eventSvc.CreateEvent(ctx(), events.CreateEventPayload{
+		Name: "Reception", Date: "2026-10-17", IsPublic: true,
+	})
+	require.NoError(t, err)
+
+	resp, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{
+			{GuestID: alice.ID, Email: pointerutil.String("alice@example.com")},
+			{GuestID: ex.ID, Remove: true},
+		},
+	})
+	require.NoError(t, err)
+
+	// Gone from the response, the guests table, and the event's RSVPs.
+	require.Len(t, resp.Guests, 1)
+	assert.Equal(t, alice.ID, resp.Guests[0].ID)
+
+	exists, err := db.NewSelect().Model((*models.Guest)(nil)).Where("id = ?", ex.ID).Exists(ctx())
+	require.NoError(t, err)
+	assert.False(t, exists, "the removed guest is deleted")
+
+	rsvpCount, err := db.NewSelect().Model((*models.EventRSVP)(nil)).
+		Where("event_id = ?", event.ID).Where("guest_id = ?", ex.ID).Count(ctx())
+	require.NoError(t, err)
+	assert.Zero(t, rsvpCount, "the removed guest's Event RSVPs are deleted")
+}
+
+func TestUpdatePartyInfo_RemovesAPlaceholderSlot(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	// The party gives up its +1 entirely: the unnamed slot is removable too.
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+	plusOne := addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
+
+	resp, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{
+			{GuestID: alice.ID, Email: pointerutil.String("alice@example.com")},
+			{GuestID: plusOne.ID, Remove: true},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Guests, 1)
+
+	exists, err := db.NewSelect().Model((*models.Guest)(nil)).Where("id = ?", plusOne.ID).Exists(ctx())
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
+func TestUpdatePartyInfo_PrimaryRemovalIs422(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+	addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Bob Smith"})
+
+	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{GuestID: alice.ID, Remove: true}},
+	})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+
+	exists, err := db.NewSelect().Model((*models.Guest)(nil)).Where("id = ?", alice.ID).Exists(ctx())
+	require.NoError(t, err)
+	assert.True(t, exists, "the primary guest is never removed")
+}
+
+func TestUpdatePartyInfo_GuestOutsidePartyIs422(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+	other := createPartyT(t, partySvc, "The Joneses", models.InvitationDigital)
+	carol := addPrimaryT(t, partySvc, other.ID, "Carol Jones")
+
+	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{GuestID: carol.ID, Email: pointerutil.String("x@example.com")}},
+	})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+}
+
+func TestUpdatePartyInfo_UnknownTokenIs404(t *testing.T) {
+	svc := newInfoService(t)
+
+	_, err := svc.UpdatePartyInfo(ctx(), "no-such-token", info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{GuestID: "00000000-0000-0000-0000-000000000000"}},
+	})
+	assertErrCode(t, err, errcodes.CodeNotFound)
+}
+
+func TestUpdatePartyInfo_RevisitUpdatesValues(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+
+	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{GuestID: alice.ID, Email: pointerutil.String("old@example.com")}},
+	})
+	require.NoError(t, err)
+
+	// The same link keeps working: a second submit updates the saved values and
+	// the party stays confirmed.
+	_, err = svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{
+			GuestID: alice.ID,
+			Email:   pointerutil.String("new@example.com"),
+			Phone:   pointerutil.String("+14155552671"),
+		}},
+	})
+	require.NoError(t, err)
+
+	g := guestRow(t, db, alice.ID)
+	assert.Equal(t, pointerutil.String("new@example.com"), g.Email)
+	assert.Equal(t, pointerutil.String("+14155552671"), g.Phone)
+	assert.True(t, partyRow(t, db, p.ID).InfoCollectionConfirmed)
+}

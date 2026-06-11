@@ -15,6 +15,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/info"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/rsvps"
 	"github.com/uptrace/bun"
@@ -64,6 +65,10 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	})
 	registerAdmin(api, authMiddleware, db)
 	registerGuest(api, authMiddleware, db)
+	// The info-collection flow mounts on the open group: there is no JWT, the
+	// opaque high-entropy per-party info token in the URL is the authentication
+	// (ADR 0003), so unlike the guessable RSVP codes it needs no rate limiter.
+	info.RegisterRoutes(api, info.NewService(db))
 
 	return &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.ServerPort),
