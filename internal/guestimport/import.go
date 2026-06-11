@@ -27,7 +27,7 @@ type Options struct {
 
 // Summary reports what an Import wrote. GuestsCreated counts every guest row,
 // named and placeholder alike; PlaceholdersCreated is the subset expanded from
-// Size cells (unnamed plus-ones with is_placeholder set).
+// Size cells (unnamed plus-ones with placeholder_text set).
 type Summary struct {
 	PartiesCreated      int
 	GuestsCreated       int
@@ -105,7 +105,7 @@ func Import(ctx context.Context, db *bun.DB, plan *Plan, opts Options) (*Summary
 		summary.PartiesCreated = len(partyRecords)
 		summary.GuestsCreated = len(guestRecords)
 		for _, guest := range guestRecords {
-			if guest.IsPlaceholder {
+			if guest.PlaceholderText != nil {
 				summary.PlaceholdersCreated++
 			}
 		}

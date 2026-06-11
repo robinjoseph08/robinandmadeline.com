@@ -5,7 +5,7 @@ The domain language for robinandmadeline.com: a custom wedding site that manages
 ## Language
 
 **Party**:
-A group of guests who receive a single invitation and share one mailing address and one RSVP code.
+A group of guests who receive a single invitation and share one mailing address and one RSVP code. The party's name is an internal label the couple uses to identify groups; it is never shown to guests.
 _Avoid_: Household, group, family (a party isn't always a family)
 
 **Guest**:
@@ -17,8 +17,12 @@ The guest who is the main point of contact for their party.
 _Avoid_: Head of household, owner
 
 **Placeholder Guest**:
-A stub guest record (e.g. an unnamed plus-one or child) whose real details the party fills in during RSVP.
-_Avoid_: Plus-one (a placeholder may be a child, not a plus-one)
+An unnamed plus-one slot: a guest record that carries Placeholder Text (its permanent descriptor, e.g. "Guest of John Doe"). Naming it during RSVP sets the guest's name without erasing the descriptor, and the name stays editable until the RSVP deadline so a party can swap who fills the slot, or clear the name to revert the slot to unnamed (the descriptor is what remains). A person whose name is only approximately known is a real guest with a best-guess name (corrected during info collection), not a placeholder.
+_Avoid_: Plus-one (the slot, not the person who eventually fills it); any guest whose name is uncertain (that is a real guest with a best-guess name)
+
+**Placeholder Text**:
+The permanent descriptor of a Placeholder Guest (e.g. "Guest of John Doe"). A guest is a placeholder exactly when it has Placeholder Text; clearing it turns the record into a regular guest. Naming the slot never erases it.
+_Avoid_: Placeholder flag (there is no boolean; the text is the marker)
 
 **Side**:
 Whether a party is Robin's or Madeline's. A party-level attribute with exactly one value.
@@ -64,7 +68,7 @@ _Avoid_: Password, info token
 Whether a party receives a physical mailed invitation or a digital-only one.
 
 **Info Collection**:
-The pre-invitation phase in which a party confirms its contact details and, for physical parties, its mailing address.
+The pre-invitation phase in which a party confirms its contact details and, for physical parties, its mailing address, and corrects guest details the couple has wrong (e.g. an approximate name).
 _Avoid_: Onboarding, signup
 
 **Info Collection Requested**:
@@ -85,6 +89,7 @@ _Avoid_: Photo shoot, album (the photo gallery is unrelated)
 - When the **Primary Guest** leaves a **Party** (deleted, or moved to another party), the oldest remaining **Guest** is promoted; unsetting the sole primary is refused.
 - A **Party** has one **Side**, one **Relation**, and one or more **Circles**.
 - A **Guest** has zero or more **Tags**.
+- A **Placeholder Guest** carries **Placeholder Text**; naming the slot (during RSVP, until the deadline) never erases the descriptor, so the slot stays identifiable and re-nameable.
 - A **Party** has one **Info Token** and one **RSVP Code**.
 - A **Guest** has one **Event RSVP** per **Event** they are invited to.
 - A **Photo Group** belongs to one **Event** and contains one or more **Guests**.
@@ -108,3 +113,4 @@ _Avoid_: Photo shoot, album (the photo gallery is unrelated)
 - The PRD and issue #4 called the guest attribute "roles". Resolved: the attribute is **Tags** (a deliberate rename during implementation); "roles" is reserved for auth role claims (admin, guest) and should not be used for the guest attribute.
 - "Address" was assumed to be per-guest. Resolved: the mailing address is party-level (one envelope per party); only email and phone are per-guest.
 - "Complete" was overloaded between "has all required fields" (a data condition) and **Info Collection Status** = complete (a tracked state). Resolved: all-fields-present is necessary for complete, but once a party is **Info Collection Requested** the guest must submit the form (or the couple must mark it complete): data presence alone no longer completes it.
+- "Placeholder" had drifted toward "any guest whose name is uncertain". Resolved: a **Placeholder Guest** is strictly an unnamed plus-one slot, identified by its **Placeholder Text**; a guest whose name is only approximately known is a real guest with a best-guess name, corrected during **Info Collection**.

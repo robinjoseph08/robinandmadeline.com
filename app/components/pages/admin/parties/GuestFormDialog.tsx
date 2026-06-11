@@ -45,13 +45,13 @@ interface FormState {
   email: string;
   phone: string;
   tags: string[];
+  placeholderText: string;
   dietaryRestrictions: string;
   tableNumber: string;
   seatNumber: string;
   isPrimary: boolean;
   isChild: boolean;
   isDrinking: boolean;
-  isPlaceholder: boolean;
 }
 
 const EMPTY_FORM: FormState = {
@@ -59,13 +59,13 @@ const EMPTY_FORM: FormState = {
   email: "",
   phone: "",
   tags: [],
+  placeholderText: "",
   dietaryRestrictions: "",
   tableNumber: "",
   seatNumber: "",
   isPrimary: false,
   isChild: false,
   isDrinking: false,
-  isPlaceholder: false,
 };
 
 function formFromGuest(guest: Guest): FormState {
@@ -74,13 +74,13 @@ function formFromGuest(guest: Guest): FormState {
     email: guest.email ?? "",
     phone: formatPhone(guest.phone ?? ""),
     tags: guest.tags,
+    placeholderText: guest.placeholder_text ?? "",
     dietaryRestrictions: guest.dietary_restrictions ?? "",
     tableNumber: guest.table_number?.toString() ?? "",
     seatNumber: guest.seat_number?.toString() ?? "",
     isPrimary: guest.is_primary,
     isChild: guest.is_child,
     isDrinking: guest.is_drinking,
-    isPlaceholder: guest.is_placeholder,
   };
 }
 
@@ -134,13 +134,15 @@ export function GuestFormDialog({
       email: optional(form.email),
       phone: optional(form.phone),
       tags: form.tags,
+      // A blanked field drops the key, so the PUT stores NULL and the guest
+      // becomes (or stays) a regular one.
+      placeholder_text: optional(form.placeholderText),
       dietary_restrictions: optional(form.dietaryRestrictions),
       table_number: optionalInt(form.tableNumber),
       seat_number: optionalInt(form.seatNumber),
       is_primary: form.isPrimary,
       is_child: form.isChild,
       is_drinking: form.isDrinking,
-      is_placeholder: form.isPlaceholder,
     };
     await onSubmit(payload);
   };
@@ -149,12 +151,11 @@ export function GuestFormDialog({
 
   // Narrowing the keys to the boolean fields lets the generic update() accept
   // `checked` directly: FormState[FlagKey] is boolean, so no cast is needed.
-  type FlagKey = "isPrimary" | "isChild" | "isDrinking" | "isPlaceholder";
+  type FlagKey = "isPrimary" | "isChild" | "isDrinking";
   const flags: { key: FlagKey; label: string }[] = [
     { key: "isPrimary", label: "Primary guest" },
     { key: "isChild", label: "Child" },
     { key: "isDrinking", label: "Drinking" },
-    { key: "isPlaceholder", label: "Placeholder" },
   ];
 
   return (
@@ -209,6 +210,21 @@ export function GuestFormDialog({
               placeholder="Type a tag and press Enter, e.g. Sibling"
               value={form.tags}
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="guest-placeholder-text">Placeholder text</Label>
+            <Input
+              id="guest-placeholder-text"
+              onChange={(e) => update("placeholderText", e.target.value)}
+              placeholder='e.g. "Guest of Jane Smith" (blank for a regular guest)'
+              value={form.placeholderText}
+            />
+            <p className="text-xs text-muted-foreground">
+              Set for an unnamed plus-one slot. The descriptor is permanent:
+              naming the guest never erases it. Clear it to make this a regular
+              guest.
+            </p>
           </div>
 
           <div className="space-y-1.5">

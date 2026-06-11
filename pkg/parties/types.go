@@ -65,13 +65,13 @@ type CreatePartyWithGuestPayload struct {
 // binder recurses into this nested struct, so its mod/default/validate tags fire
 // exactly as a top-level payload's would.
 type FirstGuestPayload struct {
-	FullName      string   `json:"full_name" mod:"trim" validate:"required,max=200"`
-	Email         *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
-	Phone         *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
-	Tags          []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
-	IsChild       bool     `json:"is_child"`
-	IsDrinking    bool     `json:"is_drinking"`
-	IsPlaceholder bool     `json:"is_placeholder"`
+	FullName        string   `json:"full_name" mod:"trim" validate:"required,max=200"`
+	Email           *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
+	Phone           *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
+	Tags            []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
+	IsChild         bool     `json:"is_child"`
+	IsDrinking      bool     `json:"is_drinking"`
+	PlaceholderText *string  `json:"placeholder_text" mod:"trim" validate:"omitempty,min=1,max=200"`
 }
 
 // UpdatePartyPayload is the full desired state of a party's editable fields
@@ -154,6 +154,11 @@ type ListPartiesQuery struct {
 // primary in the same transaction. Validation is tag-driven through the custom
 // binder. tags is open-ended (no closed union) so it only bounds element
 // length; it defaults to [] so a nil slice stores '{}', not NULL.
+//
+// placeholder_text marks the guest as an unnamed plus-one slot and stores its
+// permanent descriptor; like rsvp_code it uses min=1 so a present-but-blank
+// value is a 422 (a guest either has a descriptor or arrives as JSON null, a
+// regular guest).
 type CreateGuestPayload struct {
 	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
 	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
@@ -162,7 +167,7 @@ type CreateGuestPayload struct {
 	IsPrimary           bool     `json:"is_primary"`
 	IsChild             bool     `json:"is_child"`
 	IsDrinking          bool     `json:"is_drinking"`
-	IsPlaceholder       bool     `json:"is_placeholder"`
+	PlaceholderText     *string  `json:"placeholder_text" mod:"trim" validate:"omitempty,min=1,max=200"`
 	DietaryRestrictions *string  `json:"dietary_restrictions" mod:"trim" validate:"omitempty,max=1000"`
 	TableNumber         *int     `json:"table_number" validate:"omitempty,min=1"`
 	SeatNumber          *int     `json:"seat_number" validate:"omitempty,min=1"`
@@ -172,6 +177,9 @@ type CreateGuestPayload struct {
 // (PUT-style). Setting IsPrimary=true promotes this guest and demotes the
 // party's previous primary transactionally. Validation mirrors
 // CreateGuestPayload and is tag-driven through the custom binder.
+// placeholder_text follows rsvp_code's convention: a present-but-blank value
+// is a 422 (min=1), and an omitted key (the dialog's blanked-field behavior)
+// stores NULL, turning the row into a regular guest.
 type UpdateGuestPayload struct {
 	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
 	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
@@ -180,7 +188,7 @@ type UpdateGuestPayload struct {
 	IsPrimary           bool     `json:"is_primary"`
 	IsChild             bool     `json:"is_child"`
 	IsDrinking          bool     `json:"is_drinking"`
-	IsPlaceholder       bool     `json:"is_placeholder"`
+	PlaceholderText     *string  `json:"placeholder_text" mod:"trim" validate:"omitempty,min=1,max=200"`
 	DietaryRestrictions *string  `json:"dietary_restrictions" mod:"trim" validate:"omitempty,max=1000"`
 	TableNumber         *int     `json:"table_number" validate:"omitempty,min=1"`
 	SeatNumber          *int     `json:"seat_number" validate:"omitempty,min=1"`
@@ -196,10 +204,13 @@ type UpdateGuestPayload struct {
 // Validation is uniformly omitempty: an absent field is skipped, full_name keeps
 // min=1 so blanking the name cell is a 422, and email uses emailblank so a
 // provided blank clears it (the service stores NULL) while a present value is
-// still format-checked. tags is a plain slice: nil leaves it unchanged, a
-// present array (including []) replaces it. party_id moves the guest to another
-// party (the flat guest list edits it inline); the service checks the target
-// party exists and keeps the single-primary invariant in the destination.
+// still format-checked. placeholder_text permits blank (max-only) because a
+// provided blank is the grid's "clear this cell" gesture, stored as SQL NULL,
+// which turns the row back into a regular guest. tags is a plain slice: nil
+// leaves it unchanged, a present array (including []) replaces it. party_id
+// moves the guest to another party (the flat guest list edits it inline); the
+// service checks the target party exists and keeps the single-primary
+// invariant in the destination.
 type PatchGuestPayload struct {
 	PartyID             *string  `json:"party_id,omitempty" validate:"omitempty,uuid"`
 	FullName            *string  `json:"full_name,omitempty" mod:"trim" validate:"omitempty,min=1,max=200"`
@@ -209,7 +220,7 @@ type PatchGuestPayload struct {
 	IsPrimary           *bool    `json:"is_primary,omitempty"`
 	IsChild             *bool    `json:"is_child,omitempty"`
 	IsDrinking          *bool    `json:"is_drinking,omitempty"`
-	IsPlaceholder       *bool    `json:"is_placeholder,omitempty"`
+	PlaceholderText     *string  `json:"placeholder_text,omitempty" mod:"trim" validate:"omitempty,max=200"`
 	DietaryRestrictions *string  `json:"dietary_restrictions,omitempty" mod:"trim" validate:"omitempty,max=1000"`
 	TableNumber         *int     `json:"table_number,omitempty" validate:"omitempty,min=1"`
 	SeatNumber          *int     `json:"seat_number,omitempty" validate:"omitempty,min=1"`
@@ -231,9 +242,12 @@ type ListGuestsQuery struct {
 	// Tags is intentionally unvalidated: tags are an open set (no closed
 	// union), so any value is a legal filter that simply may match nothing. It
 	// matches guests whose tags array contains this value.
-	Tags          *string `query:"tags" json:"tags"`
-	IsDrinking    *bool   `query:"is_drinking" json:"is_drinking"`
-	IsChild       *bool   `query:"is_child" json:"is_child"`
+	Tags       *string `query:"tags" json:"tags"`
+	IsDrinking *bool   `query:"is_drinking" json:"is_drinking"`
+	IsChild    *bool   `query:"is_child" json:"is_child"`
+	// IsPlaceholder filters on the derived placeholder condition (true matches
+	// guests whose placeholder_text is set, false those where it is NULL);
+	// there is no stored boolean.
 	IsPlaceholder *bool   `query:"is_placeholder" json:"is_placeholder"`
 	EventID       *string `query:"event_id" json:"event_id" validate:"omitempty,uuid"` // matches guests invited to this event
 	RSVPStatus    *string `query:"rsvp_status" json:"rsvp_status" validate:"omitempty,oneof=pending attending not_attending" tstype:"models.EventRSVPStatus"`

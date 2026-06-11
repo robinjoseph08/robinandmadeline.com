@@ -21,7 +21,8 @@ import (
 // service holding a known admin credential. It wires the shared errcodes error
 // handler AND the custom binder so requests flow through the real
 // bind/validate pipeline (required-field checks included), matching the real
-// server.
+// server. The db is nil (the admin login never touches it) and the rate limit
+// is generous so these tests observe pure credential behavior.
 func newAuthEcho(t *testing.T) (*echo.Echo, *auth.Service) {
 	t.Helper()
 	svc := auth.NewService(testSecret, time.Hour, time.Hour, testUsername, testPassword)
@@ -32,7 +33,7 @@ func newAuthEcho(t *testing.T) (*echo.Echo, *auth.Service) {
 	e.Binder = b
 	e.HTTPErrorHandler = errcodes.NewHandler().Handle
 	api := e.Group("/api")
-	auth.RegisterRoutes(api, svc)
+	auth.RegisterRoutes(api, svc, nil, generousRateLimit())
 	return e, svc
 }
 

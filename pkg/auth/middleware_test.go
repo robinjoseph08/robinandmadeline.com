@@ -99,6 +99,87 @@ func TestRequireAdmin_BlocksGuestRole(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, status)
 }
 
+// runRequireGuest runs the RequireGuest middleware against a request carrying
+// the given Authorization header, reporting whether the wrapped handler ran,
+// the party id it observed via PartyIDFromContext, and the HTTP status.
+func runRequireGuest(t *testing.T, svc *auth.Service, authHeader string) (nextCalled bool, partyID string, status int) {
+	t.Helper()
+
+	e := echo.New()
+	e.HTTPErrorHandler = errcodes.NewHandler().Handle
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/guest/rsvp", http.NoBody)
+	if authHeader != "" {
+		req.Header.Set(echo.HeaderAuthorization, authHeader)
+	}
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	mw := auth.NewMiddleware(svc)
+	handler := mw.RequireGuest(func(c echo.Context) error {
+		nextCalled = true
+		id, err := auth.PartyIDFromContext(c)
+		if err != nil {
+			return err
+		}
+		partyID = id
+		return c.NoContent(http.StatusOK)
+	})
+
+	err := handler(c)
+	if err != nil {
+		e.HTTPErrorHandler(err, c)
+	}
+	return nextCalled, partyID, rec.Code
+}
+
+func TestRequireGuest_AllowsValidGuestTokenAndExposesPartyID(t *testing.T) {
+	t.Parallel()
+	svc := newTestService(t)
+	const wantPartyID = "0190b8e0-0000-7000-8000-000000000001"
+	token, err := svc.GenerateGuestToken(wantPartyID)
+	require.NoError(t, err)
+
+	called, partyID, status := runRequireGuest(t, svc, "Bearer "+token)
+	assert.True(t, called)
+	assert.Equal(t, wantPartyID, partyID)
+	assert.Equal(t, http.StatusOK, status)
+}
+
+func TestRequireGuest_BlocksMissingHeader(t *testing.T) {
+	t.Parallel()
+	svc := newTestService(t)
+
+	called, _, status := runRequireGuest(t, svc, "")
+	assert.False(t, called)
+	assert.Equal(t, http.StatusUnauthorized, status)
+}
+
+func TestRequireGuest_BlocksAdminRole(t *testing.T) {
+	t.Parallel()
+	svc := newTestService(t)
+	// A valid token, but for the admin role: guest routes are scoped to one
+	// party, which an admin token does not carry.
+	token, err := svc.GenerateAdminToken()
+	require.NoError(t, err)
+
+	called, _, status := runRequireGuest(t, svc, "Bearer "+token)
+	assert.False(t, called)
+	assert.Equal(t, http.StatusUnauthorized, status)
+}
+
+func TestRequireGuest_BlocksExpiredToken(t *testing.T) {
+	t.Parallel()
+	// A service with a negative guest duration mints an already-expired token.
+	svc := auth.NewService(testSecret, time.Hour, -time.Hour, testUsername, "")
+	token, err := svc.GenerateGuestToken("0190b8e0-0000-7000-8000-000000000001")
+	require.NoError(t, err)
+
+	verifier := auth.NewService(testSecret, time.Hour, time.Hour, testUsername, "")
+	called, _, status := runRequireGuest(t, verifier, "Bearer "+token)
+	assert.False(t, called)
+	assert.Equal(t, http.StatusUnauthorized, status)
+}
+
 func TestRequireAdmin_BlocksExpiredToken(t *testing.T) {
 	t.Parallel()
 	// A service with a negative admin duration mints an already-expired token.

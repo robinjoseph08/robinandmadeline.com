@@ -2,11 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { EventResponse } from "@/types/generated/events";
 
-import {
-  formatEventWhen,
-  formatTime,
-  venueTimeZoneAbbreviation,
-} from "./format";
+import { formatEventWhen, venueTimeZoneAbbreviation } from "./format";
 
 function makeEvent(overrides: Partial<EventResponse>): EventResponse {
   return {
@@ -24,21 +20,6 @@ function makeEvent(overrides: Partial<EventResponse>): EventResponse {
     ...overrides,
   };
 }
-
-describe("formatTime", () => {
-  it("converts stored 24-hour values to 12-hour display", () => {
-    expect(formatTime("00:15")).toBe("12:15 AM");
-    expect(formatTime("09:30")).toBe("9:30 AM");
-    expect(formatTime("12:00")).toBe("12:00 PM");
-    expect(formatTime("18:00")).toBe("6:00 PM");
-    expect(formatTime("23:59")).toBe("11:59 PM");
-  });
-
-  it("returns an unparseable value unchanged", () => {
-    expect(formatTime("6pm")).toBe("6pm");
-    expect(formatTime("25:00")).toBe("25:00");
-  });
-});
 
 describe("formatEventWhen", () => {
   // The expected zone label comes from the same venue constant the formatter

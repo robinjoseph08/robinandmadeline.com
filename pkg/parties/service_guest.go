@@ -32,7 +32,7 @@ func (s *Service) CreateGuest(ctx context.Context, partyID string, in CreateGues
 		IsPrimary:           in.IsPrimary,
 		IsChild:             in.IsChild,
 		IsDrinking:          in.IsDrinking,
-		IsPlaceholder:       in.IsPlaceholder,
+		PlaceholderText:     in.PlaceholderText,
 		DietaryRestrictions: in.DietaryRestrictions,
 		TableNumber:         in.TableNumber,
 		SeatNumber:          in.SeatNumber,
@@ -128,7 +128,7 @@ func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayl
 		guest.IsPrimary = in.IsPrimary
 		guest.IsChild = in.IsChild
 		guest.IsDrinking = in.IsDrinking
-		guest.IsPlaceholder = in.IsPlaceholder
+		guest.PlaceholderText = in.PlaceholderText
 		guest.DietaryRestrictions = in.DietaryRestrictions
 		guest.TableNumber = in.TableNumber
 		guest.SeatNumber = in.SeatNumber
@@ -140,7 +140,7 @@ func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayl
 		// rather than a raw unique violation.
 		_, err := tx.NewUpdate().Model(guest).
 			Column("full_name", "email", "phone", "tags", "is_primary",
-				"is_child", "is_drinking", "is_placeholder", "dietary_restrictions",
+				"is_child", "is_drinking", "placeholder_text", "dietary_restrictions",
 				"table_number", "seat_number", "updated_at").
 			WherePK().Exec(ctx)
 		if err != nil {
@@ -232,9 +232,11 @@ func (s *Service) PatchGuest(ctx context.Context, id string, in PatchGuestPayloa
 			guest.IsDrinking = *in.IsDrinking
 			cols = append(cols, "is_drinking")
 		}
-		if in.IsPlaceholder != nil {
-			guest.IsPlaceholder = *in.IsPlaceholder
-			cols = append(cols, "is_placeholder")
+		if in.PlaceholderText != nil {
+			// A provided blank is the "clear this cell" gesture: NULL turns the
+			// row back into a regular guest.
+			guest.PlaceholderText = pointerutil.EmptyString(*in.PlaceholderText)
+			cols = append(cols, "placeholder_text")
 		}
 		if in.DietaryRestrictions != nil {
 			guest.DietaryRestrictions = pointerutil.EmptyString(*in.DietaryRestrictions)

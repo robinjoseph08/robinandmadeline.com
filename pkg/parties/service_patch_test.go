@@ -165,6 +165,33 @@ func TestPatchGuest_ClearsEmailToNull(t *testing.T) {
 	assert.Nil(t, reloaded.Email)
 }
 
+func TestPatchGuest_SetsAndClearsPlaceholderText(t *testing.T) {
+	svc, _ := newService(t)
+	p := createPartyT(t, svc, digitalPartyInput())
+	g := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat"})
+
+	// Setting placeholder_text turns a regular guest into a placeholder (an
+	// unnamed plus-one slot); the name is untouched.
+	updated, err := svc.PatchGuest(ctx(), g.ID, parties.PatchGuestPayload{
+		PlaceholderText: pointerutil.String("Guest of Pat"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, pointerutil.String("Guest of Pat"), updated.PlaceholderText)
+	assert.Equal(t, "Pat", updated.FullName, "full_name must be untouched")
+
+	// A provided blank is the grid's "erase the cell" gesture: NULL turns the
+	// row back into a regular guest.
+	updated, err = svc.PatchGuest(ctx(), g.ID, parties.PatchGuestPayload{
+		PlaceholderText: pointerutil.String(""),
+	})
+	require.NoError(t, err)
+	assert.Nil(t, updated.PlaceholderText, "a blank placeholder_text patch must clear to NULL")
+
+	reloaded, err := svc.GetGuest(ctx(), g.ID)
+	require.NoError(t, err)
+	assert.Nil(t, reloaded.PlaceholderText)
+}
+
 func TestPatchGuest_NotFound(t *testing.T) {
 	svc, _ := newService(t)
 	_, err := svc.PatchGuest(ctx(), "00000000-0000-0000-0000-000000000000", parties.PatchGuestPayload{

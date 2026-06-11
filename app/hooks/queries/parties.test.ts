@@ -62,7 +62,6 @@ describe("useCreatePartyWithGuest", () => {
           tags: [],
           is_child: false,
           is_drinking: false,
-          is_placeholder: false,
         },
       });
     });

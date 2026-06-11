@@ -1,9 +1,10 @@
 # E2E conventions (e2e/)
 
-Playwright end-to-end tests that drive the real admin SPA against a real API and
-Postgres. They cover the critical flows from the issue tracker (today: issue #4's
-party and guest management). Unit-level behavior stays in Go tests and vitest;
-e2e is for whole-journey coverage through the browser.
+Playwright end-to-end tests that drive the real SPA against a real API and
+Postgres. They cover the critical flows from the issue tracker (today: issue
+#4's party and guest management, and issue #7's guest RSVP flow). Unit-level
+behavior stays in Go tests and vitest; e2e is for whole-journey coverage
+through the browser.
 
 ## Running
 

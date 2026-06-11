@@ -1,20 +1,6 @@
+import { formatTime } from "@/libraries/format";
 import { VENUE_TIME_ZONE } from "@/libraries/venue";
 import type { EventResponse } from "@/types/generated/events";
-
-/**
- * Converts a stored "HH:MM" wall-clock string to a 12-hour display value
- * ("18:00" becomes "6:00 PM"). Returns the input unchanged if it does not
- * parse, so a bad value is visible rather than hidden.
- */
-export function formatTime(time: string): string {
-  const match = /^(\d{2}):(\d{2})$/.exec(time);
-  if (!match) return time;
-  const hours = Number(match[1]);
-  if (hours > 23) return time;
-  const period = hours < 12 ? "AM" : "PM";
-  const displayHours = hours % 12 === 0 ? 12 : hours % 12;
-  return `${displayHours}:${match[2]} ${period}`;
-}
 
 /**
  * The venue timezone's abbreviation on a given calendar date ("PST" or "PDT"

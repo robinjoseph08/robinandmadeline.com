@@ -15,7 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTestConfig builds a Config with a known admin credential for wiring tests.
+// newTestConfig builds a Config with a known admin credential for wiring
+// tests. The login rate limit is generous so these tests observe pure auth
+// behavior (the limiter itself is covered in pkg/auth).
 func newTestConfig(t *testing.T) *config.Config {
 	t.Helper()
 	return &config.Config{
@@ -25,6 +27,8 @@ func newTestConfig(t *testing.T) *config.Config {
 		JWTSecret:            "test-secret",
 		AdminSessionDuration: time.Hour,
 		GuestSessionDuration: time.Hour,
+		LoginRatePerMinute:   6000,
+		LoginRateBurst:       1000,
 	}
 }
 
@@ -93,6 +97,30 @@ func TestProtectedAdminRoute_RequiresToken(t *testing.T) {
 	authedRec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(authedRec, authedReq)
 	assert.Equal(t, http.StatusOK, authedRec.Code)
+}
+
+func TestGuestRoute_RequiresGuestToken(t *testing.T) {
+	srv := server.New(newTestConfig(t), nil)
+
+	// Without a token the guest RSVP route is rejected, proving the rsvps
+	// routes mounted behind the guest middleware, not beside it.
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/guest/rsvp", http.NoBody)
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestGuestLoginRoute_Wired(t *testing.T) {
+	srv := server.New(newTestConfig(t), nil)
+
+	// A missing code is rejected by the binder (422) before any database
+	// access, which both proves the route is mounted and keeps this wiring test
+	// db-free (full guest login behavior is covered in pkg/auth).
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/guest/login", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
 func TestHealthEndpoint(t *testing.T) {

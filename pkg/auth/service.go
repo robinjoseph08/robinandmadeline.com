@@ -1,7 +1,9 @@
-// Package auth provides JWT-based authentication for the admin and (later)
-// guest roles. Tokens carry a role claim; guest tokens additionally carry the
+// Package auth provides JWT-based authentication for the admin and guest
+// roles. Tokens carry a role claim; guest tokens additionally carry the
 // party they authenticate. The admin credential is a single username and
-// password, both sourced from configuration.
+// password, both sourced from configuration; guests authenticate with their
+// party's RSVP code, defended by a shared per-IP login rate limiter
+// (ADR 0006).
 package auth
 
 import (
@@ -17,7 +19,7 @@ import (
 const (
 	// RoleAdmin authenticates the single site administrator.
 	RoleAdmin = "admin"
-	// RoleGuest authenticates a party via the RSVP flow (built in a later issue).
+	// RoleGuest authenticates a party via the RSVP flow.
 	RoleGuest = "guest"
 )
 
@@ -66,8 +68,8 @@ func (s *Service) GenerateAdminToken() (string, error) {
 }
 
 // GenerateGuestToken issues a signed JWT carrying the guest role and the party
-// it authenticates. The guest login flow that calls this lands in a later
-// issue; the method exists now so token plumbing is exercised generically.
+// it authenticates. The guest login handler calls it after resolving an RSVP
+// code to its party.
 func (s *Service) GenerateGuestToken(partyID string) (string, error) {
 	return s.generateToken(RoleGuest, partyID, s.guestSessionDuration)
 }

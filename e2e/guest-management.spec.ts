@@ -54,10 +54,12 @@ test("admin manages parties and guests end to end", async ({ page }) => {
   ).toBeVisible();
 
   // --- Add more guests, including a placeholder ----------------------------
+  // A placeholder is a guest with placeholder text (its slot descriptor),
+  // entered in the editable Placeholder column.
   await startAddGuest(page, bob);
-  await page.getByRole("button", { name: "New guest flags" }).click();
-  await page.getByRole("option", { name: "Placeholder" }).click();
-  await page.keyboard.press("Escape"); // close the flags popover, committing it
+  await page
+    .getByRole("textbox", { name: "New guest placeholder text" })
+    .fill(`Guest of ${alice}`);
   await page.getByRole("combobox", { name: "New guest party" }).click();
   await page.getByPlaceholder("Search or add...").fill(partyName);
   await page.getByRole("option", { name: partyName, exact: true }).click();

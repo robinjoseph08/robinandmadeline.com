@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/internal/guestimport"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/stretchr/testify/require"
@@ -134,10 +135,12 @@ func TestParse_SizeTwoCreatesAPlaceholderPlusOne(t *testing.T) {
 	require.Equal(t, "Eli Cole", guests[2].FullName)
 
 	require.True(t, guests[0].IsPrimary, "the named host guest keeps primary")
-	require.False(t, guests[0].IsPlaceholder)
+	require.Nil(t, guests[0].PlaceholderText)
 
 	placeholder := guests[1]
-	require.True(t, placeholder.IsPlaceholder)
+	require.NotNil(t, placeholder.PlaceholderText)
+	require.Equal(t, "Guest of Dana Cole", *placeholder.PlaceholderText,
+		"the descriptor is stored permanently alongside the initial full_name")
 	require.False(t, placeholder.IsPrimary)
 	require.False(t, placeholder.IsChild)
 	require.False(t, placeholder.IsDrinking)
@@ -155,8 +158,8 @@ func TestParse_SizeAboveTwoNumbersItsPlaceholders(t *testing.T) {
 	require.Equal(t, "Dana Cole", guests[0].FullName)
 	require.Equal(t, "Guest 1 of Dana Cole", guests[1].FullName)
 	require.Equal(t, "Guest 2 of Dana Cole", guests[2].FullName)
-	require.True(t, guests[1].IsPlaceholder)
-	require.True(t, guests[2].IsPlaceholder)
+	require.Equal(t, pointerutil.String("Guest 1 of Dana Cole"), guests[1].PlaceholderText)
+	require.Equal(t, pointerutil.String("Guest 2 of Dana Cole"), guests[2].PlaceholderText)
 }
 
 func TestParse_BlankSizeMeansOneWithoutWarning(t *testing.T) {

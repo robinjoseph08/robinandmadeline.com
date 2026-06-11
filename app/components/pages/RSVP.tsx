@@ -1,22 +1,129 @@
-import { Link } from "react-router-dom";
+import { useEffect, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 
-import PagePlaceholder from "@/components/library/PagePlaceholder";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  ApiError,
+  clearGuestToken,
+  guestLogin,
+  guestRequest,
+  readGuestToken,
+} from "@/libraries/guest-api";
+import type { PartyRSVPsResponse } from "@/types/generated/rsvps";
 
+/**
+ * Where an authenticated visitor lands: a party that has already responded
+ * (or arrives after the deadline) goes straight to the confirmation summary;
+ * everyone else gets the form.
+ */
+function rsvpDestination(data: PartyRSVPsResponse): string {
+  return data.closed || data.responded ? "/rsvp/confirmation" : "/rsvp/form";
+}
+
+/**
+ * RSVP code entry. The party code from the printed invitation is exchanged for
+ * a long-lived guest JWT, then the visitor continues to the form (or, once the
+ * party has responded or the deadline has passed, the confirmation summary).
+ * Returning visitors whose stored token is still valid skip code entry
+ * entirely: the mount effect probes the RSVP endpoint and forwards them; an
+ * invalid/expired token is cleared so the code field shows instead.
+ */
 export default function RSVP() {
+  const navigate = useNavigate();
+
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  // While a stored token is being probed, render nothing interactive so the
+  // visitor never sees a code field that is about to disappear.
+  const [checkingToken, setCheckingToken] = useState(
+    () => readGuestToken() !== null,
+  );
+
+  useEffect(() => {
+    if (readGuestToken() === null) return;
+    let cancelled = false;
+    guestRequest<PartyRSVPsResponse>("/guest/rsvp")
+      .then((data) => {
+        if (!cancelled) navigate(rsvpDestination(data), { replace: true });
+      })
+      .catch(() => {
+        // Expired or invalid token (or a transient failure): fall back to code
+        // entry. Clearing the token keeps the next probe from looping.
+        clearGuestToken();
+        if (!cancelled) setCheckingToken(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await guestLogin(code.trim());
+      const data = await guestRequest<PartyRSVPsResponse>("/guest/rsvp");
+      navigate(rsvpDestination(data));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setError(
+          "We couldn't find that code. Double-check your invitation and try again.",
+        );
+      } else if (err instanceof ApiError && err.status === 429) {
+        setError("Too many attempts. Please wait a minute and try again.");
+      } else {
+        setError("Something went wrong. Please try again.");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (checkingToken) {
+    return (
+      <section className="mx-auto max-w-md py-8">
+        <p className="text-muted-foreground">Loading your RSVP...</p>
+      </section>
+    );
+  }
+
   return (
-    <PagePlaceholder
-      description="Enter the code from your invitation to RSVP. (Coming soon.)"
-      title="RSVP"
-    >
-      <div className="flex gap-3">
-        <Button asChild>
-          <Link to="/rsvp/form">Continue to RSVP form</Link>
+    <section className="mx-auto max-w-md py-8">
+      <h1 className="text-3xl font-bold">RSVP</h1>
+      <p className="mt-3 text-muted-foreground">
+        Enter the code from your invitation to respond for your party.
+      </p>
+
+      <form className="mt-6 flex flex-col gap-4" onSubmit={handleSubmit}>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="rsvp-code">Party code</Label>
+          <Input
+            autoComplete="off"
+            autoFocus
+            className="uppercase tracking-widest"
+            id="rsvp-code"
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            placeholder="XXXXX"
+            required
+            type="text"
+            value={code}
+          />
+        </div>
+
+        {error ? (
+          <p className="text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        <Button disabled={submitting} type="submit">
+          {submitting ? "Checking..." : "Continue"}
         </Button>
-        <Button asChild variant="outline">
-          <Link to="/rsvp/confirmation">View confirmation</Link>
-        </Button>
-      </div>
-    </PagePlaceholder>
+      </form>
+    </section>
   );
 }

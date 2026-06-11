@@ -134,11 +134,12 @@ func TestImport_PersistsPlaceholdersAfterTheirHostGuest(t *testing.T) {
 
 	require.Equal(t, "Alice Adams", guests[0].FullName)
 	require.True(t, guests[0].IsPrimary)
-	require.False(t, guests[0].IsPlaceholder)
+	require.Nil(t, guests[0].PlaceholderText)
 
 	require.Equal(t, "Guest of Alice Adams", guests[1].FullName,
 		"the placeholder sorts right after its host under the created_at/id order the API uses")
-	require.True(t, guests[1].IsPlaceholder)
+	require.Equal(t, pointerutil.String("Guest of Alice Adams"), guests[1].PlaceholderText,
+		"the descriptor persists alongside the initial full_name")
 	require.False(t, guests[1].IsPrimary)
 	require.False(t, guests[1].IsChild)
 	require.False(t, guests[1].IsDrinking)
@@ -147,7 +148,7 @@ func TestImport_PersistsPlaceholdersAfterTheirHostGuest(t *testing.T) {
 	require.Nil(t, guests[1].Phone)
 
 	require.Equal(t, "Bob Adams", guests[2].FullName)
-	require.False(t, guests[2].IsPlaceholder)
+	require.Nil(t, guests[2].PlaceholderText)
 }
 
 func TestImport_FailsCleanlyWhenPartiesAlreadyExist(t *testing.T) {

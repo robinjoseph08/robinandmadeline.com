@@ -33,7 +33,7 @@ function makeGuestItem(overrides: Partial<GuestListItem>): GuestListItem {
     is_primary: false,
     is_child: false,
     is_drinking: false,
-    is_placeholder: false,
+    placeholder_text: undefined,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -173,8 +173,8 @@ describe("AdminGuests flat list", () => {
     const user = userEvent.setup();
     renderGuests();
 
-    // The child/drinking/placeholder flags live in one chip cell now; toggling
-    // Drinking and closing the popover commits the whole flag set.
+    // The child/drinking flags live in one chip cell now; toggling Drinking
+    // and closing the popover commits the whole flag set.
     const row = (await screen.findByDisplayValue("Alice")).closest("tr")!;
     await user.click(within(row).getByRole("button", { name: "Flags" }));
     await user.click(await screen.findByRole("option", { name: /Drinking/ }));
@@ -183,7 +183,52 @@ describe("AdminGuests flat list", () => {
     await waitFor(() => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/guests/alice", {
         method: "PATCH",
-        body: { is_child: false, is_drinking: true, is_placeholder: false },
+        body: { is_child: false, is_drinking: true },
+      });
+    });
+  });
+
+  it("edits the placeholder text cell, and clearing it patches a blank", async () => {
+    setMock({
+      guests: [
+        makeGuestItem({
+          id: "dana",
+          full_name: "Dana Lee",
+          placeholder_text: "Guest of Alice",
+        }),
+      ],
+    });
+
+    const user = userEvent.setup();
+    renderGuests();
+
+    // The placeholder descriptor is an editable text cell (the slot stays
+    // retargetable after a swap)...
+    const row = (await screen.findByDisplayValue("Dana Lee")).closest("tr")!;
+    const cell = within(row).getByRole("textbox", {
+      name: "Placeholder text",
+    });
+    expect(cell).toHaveValue("Guest of Alice");
+    await user.clear(cell);
+    await user.type(cell, "Guest of Bob");
+    await user.tab();
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/guests/dana", {
+        method: "PATCH",
+        body: { placeholder_text: "Guest of Bob" },
+      });
+    });
+
+    // ...and clearing the cell sends a blank, which the API stores as NULL,
+    // turning the row into a regular guest.
+    await user.clear(cell);
+    await user.tab();
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/guests/dana", {
+        method: "PATCH",
+        body: { placeholder_text: "" },
       });
     });
   });
