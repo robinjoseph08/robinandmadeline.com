@@ -38,7 +38,7 @@ const (
 	// *echo.HTTPError (e.g. a 405) is rendered by the handler with its reason
 	// snake-cased, which can fall outside the union; the frontend's envelope
 	// parse stays defensive for that reason, and such codes are display-only.
-	//tygo:emit export type ErrorCode = "not_found" | "bad_request" | "validation_error" | "unknown_parameter" | "validation_type_error" | "malformed_payload" | "empty_request_body" | "unsupported_media_type" | "conflict" | "unauthorized" | "forbidden" | "internal_server_error";
+	//tygo:emit export type ErrorCode = "not_found" | "bad_request" | "validation_error" | "unknown_parameter" | "validation_type_error" | "malformed_payload" | "empty_request_body" | "unsupported_media_type" | "conflict" | "unauthorized" | "forbidden" | "too_many_requests" | "internal_server_error";
 	CodeNotFound             Code = "not_found"
 	CodeBadRequest           Code = "bad_request"
 	CodeValidationError      Code = "validation_error"
@@ -50,6 +50,7 @@ const (
 	CodeConflict             Code = "conflict"
 	CodeUnauthorized         Code = "unauthorized"
 	CodeForbidden            Code = "forbidden"
+	CodeTooManyRequests      Code = "too_many_requests"
 	CodeInternal             Code = "internal_server_error"
 )
 
@@ -141,6 +142,12 @@ func Unauthorized(msg string) error {
 // Forbidden returns a 403 with the given message.
 func Forbidden(msg string) error {
 	return &Error{http.StatusForbidden, msg, string(CodeForbidden)}
+}
+
+// TooManyRequests returns a 429 with the given message. The login rate limiter
+// (ADR 0006) returns it when a client exceeds its per-IP attempt budget.
+func TooManyRequests(msg string) error {
+	return &Error{http.StatusTooManyRequests, msg, string(CodeTooManyRequests)}
 }
 
 // Internal returns a 500 with the given message. The message is for logs only;

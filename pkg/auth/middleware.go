@@ -42,6 +42,35 @@ func (m *Middleware) RequireAdmin(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
+// RequireGuest rejects any request that does not carry a valid, unexpired JWT
+// with the guest role and a party id. On success it stores the claims on the
+// context (PartyIDFromContext reads them back) and calls the next handler.
+func (m *Middleware) RequireGuest(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		claims, err := m.authenticate(c)
+		if err != nil {
+			return err
+		}
+		if claims.Role != RoleGuest || claims.PartyID == "" {
+			return errcodes.Unauthorized("Guest access is required.")
+		}
+		c.Set(ContextKeyClaims, claims)
+		return next(c)
+	}
+}
+
+// PartyIDFromContext returns the party id of the authenticated guest, stashed
+// on the context by RequireGuest. Handlers behind RequireGuest can rely on it;
+// a missing or party-less claim (a route mounted outside the middleware, a
+// programming error) reads as unauthorized rather than panicking.
+func PartyIDFromContext(c echo.Context) (string, error) {
+	claims, ok := c.Get(ContextKeyClaims).(*JWTClaims)
+	if !ok || claims.PartyID == "" {
+		return "", errcodes.Unauthorized("Guest access is required.")
+	}
+	return claims.PartyID, nil
+}
+
 // authenticate extracts the bearer token from the Authorization header and
 // validates it, returning an unauthorized HTTP error on any failure.
 func (m *Middleware) authenticate(c echo.Context) (*JWTClaims, error) {

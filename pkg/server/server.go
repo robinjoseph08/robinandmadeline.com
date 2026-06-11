@@ -16,6 +16,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/rsvps"
 	"github.com/uptrace/bun"
 )
 
@@ -55,8 +56,14 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 
 	api := e.Group("/api")
 	registerHealth(api, db)
-	auth.RegisterRoutes(api, authService)
+	// Both login endpoints share one per-IP rate limiter (ADR 0006), the
+	// compensating control for the low-entropy RSVP codes.
+	auth.RegisterRoutes(api, authService, db, auth.RateLimit{
+		PerMinute: cfg.LoginRatePerMinute,
+		Burst:     cfg.LoginRateBurst,
+	})
 	registerAdmin(api, authMiddleware, db)
+	registerGuest(api, authMiddleware, db)
 
 	return &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.ServerPort),
@@ -84,6 +91,18 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB) {
 
 	parties.RegisterRoutes(admin, parties.NewService(db))
 	events.RegisterRoutes(admin, events.NewService(db))
+}
+
+// registerGuest mounts the guest API surface behind the guest auth middleware.
+// Every route on the group requires a valid guest token, whose party_id claim
+// scopes all reads and writes to that one party. Like registerAdmin, the db
+// may be nil in wiring tests: the middleware rejects tokenless requests before
+// any handler touches it.
+func registerGuest(g *echo.Group, mw *auth.Middleware, db *bun.DB) {
+	guest := g.Group("/guest")
+	guest.Use(mw.RequireGuest)
+
+	rsvps.RegisterRoutes(guest, rsvps.NewService(db))
 }
 
 // registerHealth mounts the liveness endpoint. It reports database

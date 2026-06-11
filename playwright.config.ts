@@ -48,6 +48,12 @@ export default defineConfig({
         // deterministic regardless of the surrounding shell environment.
         ADMIN_USERNAME: "admin",
         ADMIN_PASSWORD: "changeme",
+        // The per-IP login rate limiter (ADR 0006) would throttle a retried
+        // run (every spec's logins come from localhost); raise it well past
+        // anything the specs can hit. The limiter's own behavior is covered by
+        // Go tests in pkg/auth.
+        LOGIN_RATE_PER_MINUTE: "600",
+        LOGIN_RATE_BURST: "100",
       },
     },
     {

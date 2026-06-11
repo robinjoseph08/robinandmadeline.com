@@ -41,6 +41,16 @@ type Config struct {
 	// authenticate once with their RSVP code and should stay logged in across
 	// visits without re-entering it, so this is long-lived.
 	GuestSessionDuration time.Duration
+
+	// LoginRatePerMinute is how many login attempts per minute one IP can
+	// sustain across both login endpoints, the compensating control for the
+	// low-entropy RSVP codes (ADR 0006).
+	LoginRatePerMinute float64
+
+	// LoginRateBurst is how many login attempts one IP may make back to back
+	// before the per-minute rate applies, absorbing a fumbled code or two
+	// without throttling a legitimate guest.
+	LoginRateBurst int
 }
 
 // Default values used for local development when an env var is unset.
@@ -54,9 +64,14 @@ const (
 	defaultAdminPassword = "changeme"
 	defaultJWTSecret     = "dev-secret-change-me-in-production"
 	// Admin sessions are short for safety; guest sessions are long so guests
-	// stay logged in across the whole RSVP window without re-entering their code.
+	// stay logged in across the whole RSVP window without re-entering their
+	// code (issue #7 specifies a 30-60 day guest expiry).
 	defaultAdminSessionDuration = 7 * 24 * time.Hour
-	defaultGuestSessionDuration = 365 * 24 * time.Hour
+	defaultGuestSessionDuration = 60 * 24 * time.Hour
+	// A handful of login attempts per minute per IP, with a small burst
+	// (ADR 0006). The e2e harness raises the rate so specs never trip it.
+	defaultLoginRatePerMinute = 5.0
+	defaultLoginRateBurst     = 5
 )
 
 // New builds a Config from the environment, applying defaults for any unset
@@ -78,6 +93,16 @@ func New() (*Config, error) {
 		return nil, err
 	}
 
+	loginRatePerMinute, err := envFloat("LOGIN_RATE_PER_MINUTE", defaultLoginRatePerMinute)
+	if err != nil {
+		return nil, err
+	}
+
+	loginRateBurst, err := envInt("LOGIN_RATE_BURST", defaultLoginRateBurst)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		DatabaseURL:          envStr("DATABASE_URL", defaultDatabaseURL),
 		ServerPort:           port,
@@ -86,6 +111,8 @@ func New() (*Config, error) {
 		JWTSecret:            envStr("JWT_SECRET", defaultJWTSecret),
 		AdminSessionDuration: adminSessionDuration,
 		GuestSessionDuration: guestSessionDuration,
+		LoginRatePerMinute:   loginRatePerMinute,
+		LoginRateBurst:       loginRateBurst,
 	}, nil
 }
 
@@ -109,6 +136,20 @@ func envInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("invalid %s: %q is not a valid integer: %w", key, v, err)
 	}
 	return n, nil
+}
+
+// envFloat returns the environment variable parsed as a float64 or a fallback
+// when unset/empty. A malformed value is a configuration error.
+func envFloat(key string, fallback float64) (float64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %q is not a valid number: %w", key, v, err)
+	}
+	return f, nil
 }
 
 // envDuration returns the environment variable parsed as a Go duration (e.g.
