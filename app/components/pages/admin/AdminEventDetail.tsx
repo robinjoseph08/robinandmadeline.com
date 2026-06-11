@@ -100,12 +100,8 @@ export default function AdminEventDetail() {
             )}
             <span className="text-sm text-muted-foreground">
               {formatEventWhen(event)}
+              {event.location ? ` at ${event.location}` : ""}
             </span>
-            {event.location ? (
-              <span className="text-sm text-muted-foreground">
-                at {event.location}
-              </span>
-            ) : null}
           </div>
           {event.description ? (
             <p className="max-w-prose text-sm text-muted-foreground">
