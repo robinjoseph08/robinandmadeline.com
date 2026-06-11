@@ -205,7 +205,7 @@ func TestListGuests_FlatFilters(t *testing.T) {
 	})
 	t.Run("is_placeholder", func(t *testing.T) {
 		// The filter is derived from placeholder_text: true matches guests whose
-		// descriptor is set, false those whose is NULL.
+		// descriptor is set, false those where it is NULL.
 		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{IsPlaceholder: pointerutil.Bool(true)})
 		require.NoError(t, err)
 		ids := guestIDs(got)

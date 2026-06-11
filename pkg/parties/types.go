@@ -246,8 +246,8 @@ type ListGuestsQuery struct {
 	IsDrinking *bool   `query:"is_drinking" json:"is_drinking"`
 	IsChild    *bool   `query:"is_child" json:"is_child"`
 	// IsPlaceholder filters on the derived placeholder condition (true matches
-	// guests whose placeholder_text is set, false those whose is NULL); there
-	// is no stored boolean.
+	// guests whose placeholder_text is set, false those where it is NULL);
+	// there is no stored boolean.
 	IsPlaceholder *bool   `query:"is_placeholder" json:"is_placeholder"`
 	EventID       *string `query:"event_id" json:"event_id" validate:"omitempty,uuid"` // matches guests invited to this event
 	RSVPStatus    *string `query:"rsvp_status" json:"rsvp_status" validate:"omitempty,oneof=pending attending not_attending" tstype:"models.EventRSVPStatus"`

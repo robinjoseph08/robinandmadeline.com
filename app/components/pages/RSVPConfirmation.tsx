@@ -1,7 +1,8 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
-import { usePartyRSVPs } from "@/hooks/queries/rsvp";
+import { QueryKey, usePartyRSVPs } from "@/hooks/queries/rsvp";
 import { formatLongDate } from "@/libraries/format";
 import { clearGuestToken, readGuestToken } from "@/libraries/guest-api";
 import type { EventRSVPStatus } from "@/types/generated/models";
@@ -44,19 +45,24 @@ function guestEntries(
  * the deadline; after it, a "contact us" message replaces the edit button).
  * It reads the same query the form uses, which the submit mutation refreshed,
  * so it renders what was just saved. "Not your party?" clears the stored
- * guest token and returns to code entry, for a visitor the token landed on
- * someone else's party.
+ * guest token and returns to code entry, for a visitor whose stored token
+ * landed them on someone else's party.
  */
 export default function RSVPConfirmation() {
   const hasToken = readGuestToken() !== null;
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data, error, isPending } = usePartyRSVPs({ enabled: hasToken });
 
   // The escape hatch for a visitor looking at someone else's party (a shared
   // device, or a mistyped code remembered by the stored token): forget the
-  // token and land back on code entry.
+  // token and land back on code entry. The cached RSVP data goes with the
+  // token: it belongs to the abandoned party, and leaving it behind would
+  // flash (and mis-seed) that party's answers if a different code logs in
+  // next.
   const handleNotYourParty = () => {
     clearGuestToken();
+    queryClient.removeQueries({ queryKey: [QueryKey.PartyRSVPs] });
     navigate("/rsvp");
   };
 

@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import RSVPConfirmation from "@/components/pages/RSVPConfirmation";
+import { QueryKey } from "@/hooks/queries/rsvp";
 import { GUEST_TOKEN_STORAGE_KEY } from "@/libraries/guest-api";
 import type { PartyRSVPsResponse } from "@/types/generated/rsvps";
 
@@ -79,7 +80,7 @@ function renderConfirmation() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/rsvp/confirmation"]}>
         <Routes>
@@ -89,6 +90,7 @@ function renderConfirmation() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 describe("RSVPConfirmation", () => {
@@ -199,7 +201,7 @@ describe("RSVPConfirmation", () => {
     // else's party: forget the token and go back to code entry.
     guestRequest.mockResolvedValue(makeData());
     const user = userEvent.setup();
-    renderConfirmation();
+    const queryClient = renderConfirmation();
 
     await user.click(
       await screen.findByRole("button", { name: /not your party\?/i }),
@@ -207,5 +209,9 @@ describe("RSVPConfirmation", () => {
 
     expect(await screen.findByText("Code Entry Page")).toBeInTheDocument();
     expect(localStorage.getItem(GUEST_TOKEN_STORAGE_KEY)).toBeNull();
+    // The abandoned party's cached RSVP data goes with the token; otherwise a
+    // different code logging in next would briefly see (and the form would
+    // seed from) the wrong party's answers.
+    expect(queryClient.getQueryData([QueryKey.PartyRSVPs])).toBeUndefined();
   });
 });
