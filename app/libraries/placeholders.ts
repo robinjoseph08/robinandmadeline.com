@@ -1,13 +1,15 @@
 /**
- * Placeholder Guest identity rules (CONTEXT.md), shared by the RSVP form,
- * confirmation, and info-collection pages so the surfaces can never disagree
- * about what makes a guest a placeholder or when it counts as named.
+ * Placeholder Guest identity rules (CONTEXT.md), shared by the RSVP form and
+ * confirmation pages so the two surfaces can never disagree about what makes
+ * a guest a placeholder or when it counts as named. The info-collection page
+ * has no use for these: placeholders are excluded from that flow entirely
+ * (they first surface during RSVP).
  */
 
 /**
  * The minimal guest shape the placeholder rules read. It is a structural
  * constraint, not a hand-written API mirror: the generated RSVPGuest (rsvps)
- * and Guest (info) both satisfy it.
+ * satisfies it.
  */
 interface PlaceholderIdentity {
   full_name: string;

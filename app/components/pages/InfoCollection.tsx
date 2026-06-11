@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePartyInfo, useUpdatePartyInfo } from "@/hooks/queries/info";
 import { ApiError } from "@/libraries/api";
-import { isNamedPlaceholder, isPlaceholder } from "@/libraries/placeholders";
 import type {
   Guest,
   GuestInfoUpdate,
@@ -16,12 +15,14 @@ import type {
 
 /**
  * The pre-invitation info-collection page behind the personalized /i/:token
- * URL: every guest in the party with editable name and contact fields, a
- * remove action for non-primary guests, and the party's mailing address
+ * URL: every known guest in the party with editable name and contact fields,
+ * a remove action for non-primary guests, and the party's mailing address
  * (required for physical parties; omitted entirely for digital ones, without
- * calling attention to the difference). The whole form submits at once; a
- * success confirmation follows, and revisiting the same link re-opens the
- * form pre-filled with the saved values.
+ * calling attention to the difference). Plus-one placeholder slots never
+ * appear here (the API excludes them); they first surface in the RSVP flow.
+ * The whole form submits at once; a success confirmation follows, and
+ * revisiting the same link re-opens the form pre-filled with the saved
+ * values.
  */
 export default function InfoCollection() {
   const { token = "" } = useParams();
@@ -105,30 +106,17 @@ function RequiredMark() {
 }
 
 /**
- * The initial value of a guest's name input. A real guest's (possibly
- * best-guess) name prefills for correction. An unnamed placeholder starts
- * blank (its heading already shows the descriptor); a named one prefills with
- * the submitted name.
+ * The full_name one guest's submission carries. A non-blank input corrects
+ * the guest's (possibly best-guess) name; a blank input sends nothing, since
+ * a name can be corrected but never cleared (the required input keeps that
+ * from happening in practice; this is the belt to its suspenders). Plus-one
+ * placeholder slots never appear on this page (the backend excludes them;
+ * they surface in the RSVP flow), so there are no placeholder naming rules
+ * here.
  */
-function initialName(guest: Guest): string {
-  if (isPlaceholder(guest)) {
-    return isNamedPlaceholder(guest) ? guest.full_name : "";
-  }
-  return guest.full_name;
-}
-
-/**
- * The full_name one guest's submission carries. A non-blank input corrects a
- * real guest's name or names a placeholder slot. A blank input sends nothing
- * for a real guest (a name can be corrected, never removed) and for an
- * untouched unnamed slot; on a named placeholder it sends blank, which the
- * backend reads as "revert to unnamed" (the name goes back to the
- * descriptor).
- */
-function submittedName(guest: Guest, input: string): string | undefined {
+function submittedName(input: string): string | undefined {
   const trimmed = input.trim();
-  if (trimmed !== "") return trimmed;
-  return isNamedPlaceholder(guest) ? "" : undefined;
+  return trimmed !== "" ? trimmed : undefined;
 }
 
 /** The party-level address fields, in display order. */
@@ -159,7 +147,7 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
   // only renders with data in hand). Names/emails/phones are keyed by guest;
   // the address is party-level (one envelope per party, CONTEXT.md).
   const [names, setNames] = useState<Record<string, string>>(() =>
-    Object.fromEntries(data.guests.map((g) => [g.id, initialName(g)])),
+    Object.fromEntries(data.guests.map((g) => [g.id, g.full_name])),
   );
   const [emails, setEmails] = useState<Record<string, string>>(() =>
     Object.fromEntries(data.guests.map((g) => [g.id, g.email ?? ""])),
@@ -206,7 +194,7 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
         // sent, so clearing a field clears the saved value.
         return {
           guest_id: guest.id,
-          full_name: submittedName(guest, names[guest.id] ?? ""),
+          full_name: submittedName(names[guest.id] ?? ""),
           email: (emails[guest.id] ?? "").trim(),
           phone: (phones[guest.id] ?? "").trim(),
           remove: false,
@@ -252,15 +240,6 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
             key={guest.id}
           >
             <h2 className="text-xl font-semibold">{guest.full_name}</h2>
-            {/* A named placeholder keeps its descriptor visible so a
-                returning party sees what the slot is for when changing or
-                clearing the name. An unnamed slot's heading already IS the
-                descriptor, so no subtitle. */}
-            {isNamedPlaceholder(guest) ? (
-              <p className="text-sm text-muted-foreground">
-                {guest.placeholder_text}
-              </p>
-            ) : null}
 
             {removed[guest.id] ? (
               <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -280,10 +259,8 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
             ) : (
               <>
                 <div className="mt-3 flex flex-col gap-1.5">
-                  {/* Every name is marked, but only a real guest's input is
-                      HTML-required (the backend rejects clearing it, 422). A
-                      placeholder slot's blank name is a valid submission: it
-                      reverts the slot to its descriptor. */}
+                  {/* Required: every guest here is a known person, and the
+                      backend rejects clearing a name (422). */}
                   <Label htmlFor={`name-${guest.id}`}>
                     Name
                     <RequiredMark />
@@ -293,10 +270,7 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                     onChange={(e) =>
                       setKeyed(setNames, guest.id, e.target.value)
                     }
-                    placeholder={
-                      isPlaceholder(guest) ? "Their full name" : undefined
-                    }
-                    required={!isPlaceholder(guest)}
+                    required
                     type="text"
                     value={names[guest.id] ?? ""}
                   />

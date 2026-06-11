@@ -10,10 +10,11 @@ import { ADMIN_PASSWORD, ADMIN_USERNAME } from "./auth";
 // Issue #8's critical E2E flow: a guest opens their party's personalized
 // /i/:token link, sees their party members' names pre-filled, corrects a
 // best-guess name, fills in contact details and (for a physical party) the
-// mailing address, names the placeholder slot, removes a guest who is no
-// longer part of the party, and submits. A revisit of the same link shows the
-// saved values, with the removed guest gone. A digital party's page omits the
-// address section entirely.
+// mailing address, removes a guest who is no longer part of the party, and
+// submits. A revisit of the same link shows the saved values, with the
+// removed guest gone. Placeholder guests (plus-one slots) never appear in
+// this flow at all (they first surface during RSVP), and a digital party's
+// page omits the address section entirely.
 //
 // Fixtures are seeded through the real admin API (no test-only endpoints).
 // Every entity carries a per-run unique suffix and all assertions are scoped
@@ -26,7 +27,6 @@ const bestGuessName = `Allice R ${stamp}`;
 const correctedName = `Alice R ${stamp}`;
 const bobName = `Bob R ${stamp}`;
 const placeholder = `Guest of Alice ${stamp}`;
-const danaName = `Dana Lee ${stamp}`;
 const digitalPartyName = `E2E Info Digital Party ${stamp}`;
 const carolName = `Carol D ${stamp}`;
 
@@ -61,7 +61,8 @@ async function adminPost(
 
 /**
  * Seeds a physical party with a best-guess-named primary, a second guest, and
- * a placeholder slot, returning its info token.
+ * a placeholder slot (which the info page must never show), returning its
+ * info token.
  */
 async function seedPhysicalParty(request: APIRequestContext): Promise<string> {
   const token = await adminToken(request);
@@ -124,6 +125,12 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   const aliceCard = guestSection(page, bestGuessName);
   await expect(aliceCard.getByLabel(/^Name/)).toHaveValue(bestGuessName);
 
+  // The party's +1 slot exists in the database but never surfaces here:
+  // placeholders are an RSVP concern, and info collection only covers the
+  // people the couple already knows.
+  await expect(guestSection(page, bobName)).toBeVisible();
+  await expect(page.getByText(placeholder)).not.toBeVisible();
+
   // A physical party's address section is present with required fields; the
   // primary's email and every real guest's name are required too.
   const addressCard = guestSection(page, "Mailing address");
@@ -144,20 +151,10 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
     true,
   );
 
-  // --- Correct the best-guess name, fill contacts, name the placeholder -----
+  // --- Correct the best-guess name and fill contacts -------------------------
   await aliceCard.getByLabel(/^Name/).fill(correctedName);
   await aliceCard.getByLabel(/Email/).fill("alice@example.com");
   await aliceCard.getByLabel("Phone").fill("(415) 555-2671");
-
-  // A placeholder slot's name is markable but never HTML-required: blank is a
-  // valid submission (it keeps the slot unnamed).
-  const placeholderCard = guestSection(page, placeholder);
-  await expect(placeholderCard.getByLabel(/^Name/)).toHaveValue("");
-  await expect(placeholderCard.getByLabel(/^Name/)).toHaveJSProperty(
-    "required",
-    false,
-  );
-  await placeholderCard.getByLabel(/^Name/).fill(danaName);
 
   // --- Remove Bob (no longer part of the party), with inline confirmation ---
   const bobCard = guestSection(page, bobName);
@@ -192,10 +189,9 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   // The backend normalized the phone to E.164.
   await expect(revisitedAlice.getByLabel("Phone")).toHaveValue("+14155552671");
 
-  // The named placeholder keeps its descriptor visible under the new name.
-  const revisitedDana = guestSection(page, danaName);
-  await expect(revisitedDana.getByText(placeholder)).toBeVisible();
-  await expect(revisitedDana.getByLabel(/^Name/)).toHaveValue(danaName);
+  // The +1 slot still belongs to the party (it was never removable here), but
+  // stays invisible on the revisit too.
+  await expect(page.getByText(placeholder)).not.toBeVisible();
 
   const revisitedAddress = guestSection(page, "Mailing address");
   await expect(revisitedAddress.getByLabel(/Address line 1/)).toHaveValue(

@@ -132,7 +132,9 @@ func TestPartyInfo_ReturnsPartyAndGuestDetails(t *testing.T) {
 		IsPrimary: true,
 	})
 	bob := addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Bob Smith"})
-	plusOne := addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
+	// The party's +1 slot exists but never surfaces here: placeholders are an
+	// RSVP-flow concern, and info collection only covers known people.
+	addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
 
 	// An unrelated party never leaks into the token's view.
 	other := createPartyT(t, partySvc, "The Joneses", models.InvitationDigital)
@@ -142,21 +144,17 @@ func TestPartyInfo_ReturnsPartyAndGuestDetails(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, models.InvitationPhysical, resp.InvitationType)
-	require.Len(t, resp.Guests, 3, "only the token's party's guests")
+	require.Len(t, resp.Guests, 2, "only the token's party's known guests; the placeholder is excluded")
 
 	assert.Equal(t, alice.ID, resp.Guests[0].ID)
 	assert.Equal(t, "Alice Smith", resp.Guests[0].FullName)
 	assert.True(t, resp.Guests[0].IsPrimary)
 	assert.Equal(t, pointerutil.String("alice@example.com"), resp.Guests[0].Email)
 	assert.Equal(t, pointerutil.String("+14155552671"), resp.Guests[0].Phone)
-	assert.Nil(t, resp.Guests[0].PlaceholderText)
 
 	assert.Equal(t, bob.ID, resp.Guests[1].ID)
 	assert.False(t, resp.Guests[1].IsPrimary)
 	assert.Nil(t, resp.Guests[1].Email)
-
-	assert.Equal(t, plusOne.ID, resp.Guests[2].ID)
-	assert.Equal(t, pointerutil.String("Guest of Alice"), resp.Guests[2].PlaceholderText)
 }
 
 func TestPartyInfo_UnknownTokenIs404(t *testing.T) {
@@ -309,30 +307,33 @@ func TestUpdatePartyInfo_BlankNameForRegularGuestIs422(t *testing.T) {
 	assert.Equal(t, "Alice Smith", guestRow(t, db, alice.ID).FullName)
 }
 
-func TestUpdatePartyInfo_PlaceholderNamingAndClearing(t *testing.T) {
+func TestUpdatePartyInfo_PlaceholderGuestIs422(t *testing.T) {
 	svc, partySvc, _, db := newServices(t)
 
+	// Placeholder slots are invisible to the info flow (naming them is the
+	// RSVP form's job), so addressing one is rejected exactly like a guest
+	// from another party, whether the entry is an update or a removal.
 	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
 	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
 	plusOne := addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
 
 	primaryEmail := info.GuestInfoUpdate{GuestID: alice.ID, Email: pointerutil.String("alice@example.com")}
 
-	// A submitted name names the slot without erasing the descriptor.
 	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
 		Guests: []info.GuestInfoUpdate{primaryEmail, {GuestID: plusOne.ID, FullName: pointerutil.String("Dana Lee")}},
 	})
-	require.NoError(t, err)
-	named := guestRow(t, db, plusOne.ID)
-	assert.Equal(t, "Dana Lee", named.FullName)
-	assert.Equal(t, pointerutil.String("Guest of Alice"), named.PlaceholderText)
+	assertErrCode(t, err, errcodes.CodeValidationError)
+	assert.Equal(t, "Guest of Alice", guestRow(t, db, plusOne.ID).FullName,
+		"the slot stays unnamed; nothing from the rejected submit persists")
 
-	// Clearing the name reverts the slot to unnamed (the descriptor remains).
 	_, err = svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
-		Guests: []info.GuestInfoUpdate{primaryEmail, {GuestID: plusOne.ID, FullName: pointerutil.String("")}},
+		Guests: []info.GuestInfoUpdate{primaryEmail, {GuestID: plusOne.ID, Remove: true}},
 	})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+
+	exists, err := db.NewSelect().Model((*models.Guest)(nil)).Where("id = ?", plusOne.ID).Exists(ctx())
 	require.NoError(t, err)
-	assert.Equal(t, "Guest of Alice", guestRow(t, db, plusOne.ID).FullName)
+	assert.True(t, exists, "the slot survives; giving up a +1 is not an info-flow action")
 }
 
 func TestUpdatePartyInfo_RemovesGuestAndTheirEventRSVPs(t *testing.T) {
@@ -368,28 +369,6 @@ func TestUpdatePartyInfo_RemovesGuestAndTheirEventRSVPs(t *testing.T) {
 		Where("event_id = ?", event.ID).Where("guest_id = ?", ex.ID).Count(ctx())
 	require.NoError(t, err)
 	assert.Zero(t, rsvpCount, "the removed guest's Event RSVPs are deleted")
-}
-
-func TestUpdatePartyInfo_RemovesAPlaceholderSlot(t *testing.T) {
-	svc, partySvc, _, db := newServices(t)
-
-	// The party gives up its +1 entirely: the unnamed slot is removable too.
-	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
-	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
-	plusOne := addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
-
-	resp, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
-		Guests: []info.GuestInfoUpdate{
-			{GuestID: alice.ID, Email: pointerutil.String("alice@example.com")},
-			{GuestID: plusOne.ID, Remove: true},
-		},
-	})
-	require.NoError(t, err)
-	require.Len(t, resp.Guests, 1)
-
-	exists, err := db.NewSelect().Model((*models.Guest)(nil)).Where("id = ?", plusOne.ID).Exists(ctx())
-	require.NoError(t, err)
-	assert.False(t, exists)
 }
 
 func TestUpdatePartyInfo_PrimaryRemovalIs422(t *testing.T) {

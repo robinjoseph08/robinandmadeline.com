@@ -31,12 +31,13 @@ function makeData(
     state_or_province: undefined,
     postal_code: undefined,
     country: undefined,
+    // Placeholder guests never appear: the API excludes them server-side, so
+    // the page only ever receives the party's known people.
     guests: [
       {
         id: "g1",
         full_name: "Alice Smith",
         is_primary: true,
-        placeholder_text: undefined,
         email: "alice@example.com",
         phone: undefined,
       },
@@ -44,16 +45,6 @@ function makeData(
         id: "g2",
         full_name: "Bob Smith",
         is_primary: false,
-        placeholder_text: undefined,
-        email: undefined,
-        phone: undefined,
-      },
-      {
-        // An unnamed placeholder: full_name still equals the descriptor.
-        id: "g3",
-        full_name: "Guest of Alice",
-        is_primary: false,
-        placeholder_text: "Guest of Alice",
         email: undefined,
         phone: undefined,
       },
@@ -113,11 +104,9 @@ describe("InfoCollection", () => {
     expect(alice.getByLabelText(/^Name/)).toHaveValue("Alice Smith");
     expect(alice.getByLabelText(/^Email/)).toHaveValue("alice@example.com");
     expect(alice.getByLabelText(/^Phone/)).toHaveValue("");
-
-    // An unnamed placeholder keeps its descriptor as the heading and starts
-    // with a blank name field.
-    const placeholder = guestSection("Guest of Alice");
-    expect(placeholder.getByLabelText(/^Name/)).toHaveValue("");
+    expect(guestSection("Bob Smith").getByLabelText(/^Name/)).toHaveValue(
+      "Bob Smith",
+    );
   });
 
   it("requires the primary email and the address fields for a physical party", async () => {
@@ -125,10 +114,9 @@ describe("InfoCollection", () => {
     renderPage();
     await screen.findByRole("heading", { name: /^Hi / });
 
-    // Every guest's name carries the asterisk mark; a real guest's input is
-    // also HTML-required, while a placeholder's stays clearable (blank
-    // reverts the slot). The primary's email is required and marked; another
-    // guest's email is optional and unmarked.
+    // Every guest's name is required and carries the asterisk mark. The
+    // primary's email is required and marked; another guest's email is
+    // optional and unmarked.
     const alice = guestSection("Alice Smith");
     expect(alice.getByLabelText(/^Name/)).toBeRequired();
     expect(alice.getByLabelText(/^Email/)).toBeRequired();
@@ -137,9 +125,6 @@ describe("InfoCollection", () => {
     expect(bob.getByLabelText(/^Name/)).toBeRequired();
     expect(bob.getByLabelText(/^Email/)).not.toBeRequired();
     expect(bob.getAllByTitle("required")).toHaveLength(1);
-    const placeholder = guestSection("Guest of Alice");
-    expect(placeholder.getByLabelText(/^Name/)).not.toBeRequired();
-    expect(placeholder.getAllByTitle("required")).toHaveLength(1);
 
     // A physical party's address section is present, with everything but
     // line 2 required.
@@ -179,16 +164,11 @@ describe("InfoCollection", () => {
     renderPage();
     await screen.findByRole("heading", { name: /^Hi / });
 
-    // Correct the primary's best-guess name and add a phone; name the
-    // placeholder slot.
+    // Correct the primary's best-guess name and add a phone.
     const alice = guestSection("Alice Smith");
     await user.clear(alice.getByLabelText(/^Name/));
     await user.type(alice.getByLabelText(/^Name/), "Alicia Smith");
     await user.type(alice.getByLabelText(/^Phone/), "+14155552671");
-    await user.type(
-      guestSection("Guest of Alice").getByLabelText(/^Name/),
-      "Dana Lee",
-    );
 
     // Fill the required mailing address.
     const address = within(screen.getByRole("region", { name: /address/i }));
@@ -217,13 +197,6 @@ describe("InfoCollection", () => {
         // An untouched prefilled name is sent back as-is (a no-op correction).
         guest_id: "g2",
         full_name: "Bob Smith",
-        email: "",
-        phone: "",
-        remove: false,
-      },
-      {
-        guest_id: "g3",
-        full_name: "Dana Lee",
         email: "",
         phone: "",
         remove: false,

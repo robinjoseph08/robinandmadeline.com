@@ -2,13 +2,17 @@
 // API behind the personalized /i/:token URL a party uses to confirm and
 // correct its contact details before invitations go out. There is no JWT; the
 // party's opaque info token (ADR 0003) is the authentication, so the routes
-// mount on the open API group. Reads return the party's address and guests
-// with their contact details; writes apply the whole form at once (per-guest
-// name corrections, email/phone, per-guest removal, and the party-level
-// address), gated on the invitation type's required fields, and a successful
-// submit confirms the party's info collection (ADR 0005). The admin-facing
-// status transitions live in pkg/parties; the persistent models live in
-// pkg/models.
+// mount on the open API group. Reads return the party's address and its known
+// guests with their contact details; writes apply the whole form at once
+// (per-guest name corrections, email/phone, per-guest removal, and the
+// party-level address), gated on the invitation type's required fields, and a
+// successful submit confirms the party's info collection (ADR 0005).
+//
+// Placeholder guests (unnamed plus-one slots) are invisible to this flow on
+// both read and write: info collection is about the people the couple already
+// knows, and the slots first surface in the RSVP flow (pkg/rsvps), where they
+// are named. The admin-facing status transitions live in pkg/parties; the
+// persistent models live in pkg/models.
 package info
 
 import (
@@ -37,8 +41,9 @@ func NewService(db *bun.DB) *Service {
 }
 
 // PartyInfo assembles the GET /api/info/:token view: the token's party (its
-// invitation type and mailing address) and its guests in creation order with
-// their contact details. An unknown token is a 404.
+// invitation type and mailing address) and its known guests in creation order
+// with their contact details. Placeholder guests are excluded server-side. An
+// unknown token is a 404.
 func (s *Service) PartyInfo(ctx context.Context, token string) (*PartyInfoResponse, error) {
 	return partyInfo(ctx, s.db, token)
 }
@@ -97,12 +102,17 @@ func partyByToken(ctx context.Context, db bun.IDB, token string, forUpdate bool)
 	return party, nil
 }
 
-// partyGuests lists a party's guests in creation order (the stable order the
-// form and the admin views share).
+// partyGuests lists a party's known guests in creation order (the stable
+// order the form and the admin views share). Placeholder guests (a non-null
+// placeholder_text) are excluded at the query, which makes them invisible to
+// the whole flow: they never appear in a response, and because the submit
+// path resolves guest ids against this list, an update or removal addressing
+// one is rejected exactly like a guest from another party.
 func partyGuests(ctx context.Context, db bun.IDB, partyID string) ([]*models.Guest, error) {
 	var guests []*models.Guest
 	err := db.NewSelect().Model(&guests).
 		Where("g.party_id = ?", partyID).
+		Where("g.placeholder_text IS NULL").
 		Order("g.created_at ASC", "g.id ASC").
 		Scan(ctx)
 	if err != nil {
@@ -142,8 +152,9 @@ func (s *Service) UpdatePartyInfo(ctx context.Context, token string, in UpdatePa
 		for _, update := range in.Guests {
 			guest, ok := byID[update.GuestID]
 			if !ok {
-				// Never reveal whether the id exists in some other party; either way
-				// it is not one of this party's guests.
+				// Never reveal whether the id exists in some other party, or names
+				// one of this party's placeholder slots (invisible to this flow);
+				// either way it is not addressable here.
 				return errcodes.ValidationError("One or more guests do not belong to your party.")
 			}
 			if update.Remove {
@@ -249,24 +260,13 @@ func applyGuestInfo(ctx context.Context, tx bun.Tx, guest *models.Guest, update 
 }
 
 // applyName resolves a submitted full_name (already trimmed by the binder)
-// onto the guest. A placeholder follows the RSVP form's rule: non-blank names
-// the slot (never erasing the descriptor), present-but-blank reverts it to
-// unnamed (the descriptor is what remains), absent leaves it untouched. A
-// regular guest's name is required: a non-blank value corrects it, an absent
-// one leaves it untouched, and a present-but-blank value is a 422 (the name
-// of a real person can be corrected, never cleared). The rule depends on the
-// loaded guest's placeholder state, so it lives here rather than in the
-// binder's tags.
+// onto the guest: a non-blank value corrects it, an absent one leaves it
+// untouched, and a present-but-blank value is a 422 (the name of a known
+// person can be corrected, never cleared). Only known guests reach here:
+// placeholder slots, whose naming rules belong to the RSVP flow, are filtered
+// out before ids are resolved.
 func applyName(guest *models.Guest, fullName *string) error {
 	if fullName == nil {
-		return nil
-	}
-	if guest.PlaceholderText != nil {
-		if *fullName == "" {
-			guest.FullName = *guest.PlaceholderText
-		} else {
-			guest.FullName = *fullName
-		}
 		return nil
 	}
 	if *fullName == "" {

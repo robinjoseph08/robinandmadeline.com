@@ -13,24 +13,26 @@ import "github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 // is an internal admin label for identifying groups, never shown to guests
 // (CONTEXT.md); the page greets the party by its members' names instead.
 
-// Guest is the guest-facing view of one party member for the info form:
-// the editable identity (name, with the placeholder descriptor for plus-one
-// slots) and the contact details being collected. is_primary tells the form
-// which guest's email is required and which guests carry a remove action (the
-// primary cannot be removed).
+// Guest is the guest-facing view of one party member for the info form: the
+// editable name and the contact details being collected. Placeholder guests
+// (unnamed plus-one slots) never appear here: info collection is about people
+// the couple already knows, and the slots only surface later, in the RSVP
+// flow, so the view carries no placeholder descriptor at all. is_primary
+// tells the form which guest's email is required and which guests carry a
+// remove action (the primary cannot be removed).
 type Guest struct {
-	ID              string  `json:"id"`
-	FullName        string  `json:"full_name"`
-	IsPrimary       bool    `json:"is_primary"`
-	PlaceholderText *string `json:"placeholder_text"`
-	Email           *string `json:"email"`
-	Phone           *string `json:"phone"`
+	ID        string  `json:"id"`
+	FullName  string  `json:"full_name"`
+	IsPrimary bool    `json:"is_primary"`
+	Email     *string `json:"email"`
+	Phone     *string `json:"phone"`
 }
 
 // PartyInfoResponse is the body of GET /api/info/:token (and of a successful
 // PUT, which returns the refreshed state): the party's invitation type (which
 // decides whether the address section is required or hidden), its mailing
-// address, and every guest with their current contact details.
+// address, and every known (non-placeholder) guest with their current contact
+// details.
 type PartyInfoResponse struct {
 	InvitationType  string  `json:"invitation_type" tstype:"models.InvitationType"`
 	AddressLine1    *string `json:"address_line_1"`
@@ -47,7 +49,9 @@ type PartyInfoResponse struct {
 // a present field is stored (blank clears to NULL), an absent field is left
 // untouched, so a digital party's form, which never renders the address
 // section, cannot wipe an address the couple entered by hand. Only the guests
-// included are touched; every included guest must belong to the token's party.
+// included are touched; every included guest must be one of the token's
+// party's known (non-placeholder) guests, since the info flow never exposes
+// placeholder slots.
 type UpdatePartyInfoPayload struct {
 	AddressLine1    *string           `json:"address_line_1" mod:"trim" validate:"omitempty,max=200"`
 	AddressLine2    *string           `json:"address_line_2" mod:"trim" validate:"omitempty,max=200"`
@@ -60,24 +64,22 @@ type UpdatePartyInfoPayload struct {
 
 // GuestInfoUpdate carries one guest's submission.
 //
-// full_name corrects a regular guest's name (the import only had a best
+// full_name corrects the guest's name (the import only had a best
 // approximation): a non-blank value is stored, an absent one leaves the name
 // untouched, and a present-but-blank value is rejected (422), so a name can
-// be corrected but never cleared. For a placeholder guest (a non-null
-// placeholder_text) it follows the RSVP form's rule instead: a non-blank
-// value names the slot without erasing the descriptor, a present-but-blank
-// value reverts the slot to unnamed (full_name back to the descriptor), and
-// an absent value leaves the name untouched.
+// be corrected but never cleared. Placeholder naming is an RSVP-flow concern;
+// a placeholder guest cannot be addressed here at all (422, the same
+// rejection as a guest from another party).
 //
 // email and phone are full-state for an included guest: they are stored as
 // sent, with blank (or absent) clearing to SQL NULL. The completion gate is
 // what keeps the primary's email from being cleared away (the submit would be
 // a 422).
 //
-// remove drops the guest from the party entirely (an ex significant other, a
-// child who definitely won't come, or a +1 the party gives up): the guest and
-// their Event RSVPs are deleted. The primary guest cannot be removed (422).
-// When remove is set the other fields are ignored.
+// remove drops the guest from the party entirely (an ex significant other, or
+// a child who definitely won't come): the guest and their Event RSVPs are
+// deleted. The primary guest cannot be removed (422). When remove is set the
+// other fields are ignored.
 type GuestInfoUpdate struct {
 	GuestID  string  `json:"guest_id" validate:"required,uuid"`
 	FullName *string `json:"full_name" mod:"trim" validate:"omitempty,max=200"`
@@ -89,11 +91,10 @@ type GuestInfoUpdate struct {
 // newGuestView projects a loaded guest model onto its guest-facing view.
 func newGuestView(g *models.Guest) Guest {
 	return Guest{
-		ID:              g.ID,
-		FullName:        g.FullName,
-		IsPrimary:       g.IsPrimary,
-		PlaceholderText: g.PlaceholderText,
-		Email:           g.Email,
-		Phone:           g.Phone,
+		ID:        g.ID,
+		FullName:  g.FullName,
+		IsPrimary: g.IsPrimary,
+		Email:     g.Email,
+		Phone:     g.Phone,
 	}
 }
