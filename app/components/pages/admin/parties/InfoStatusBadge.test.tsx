@@ -45,6 +45,10 @@ describe("InfoStatusBadge", () => {
 
     const badge = screen.getByText("Incomplete");
     expect(badge).toBeInTheDocument();
+    // Focusable (but skipped by the grid's Enter traversal) so keyboard users
+    // can reach the tooltip, which is the only place the list surfaces.
+    expect(badge).toHaveAttribute("tabindex", "0");
+    expect(badge).toHaveAttribute("data-grid-nav-skip");
 
     await user.hover(badge);
     const tooltip = await screen.findByRole("tooltip");

@@ -49,8 +49,15 @@ export function InfoStatusBadge({
   }
   return (
     <Tooltip>
+      {/* The badge is not an interactive element, so make it focusable for
+          keyboard users (the tooltip is the only place the missing list
+          surfaces) while opting it out of the grid's Enter-to-next-row
+          traversal, mirroring the disabled-checkbox tooltip in the grid
+          cells. */}
       <TooltipTrigger asChild>
-        <Badge variant="outline">Incomplete</Badge>
+        <Badge data-grid-nav-skip tabIndex={0} variant="outline">
+          Incomplete
+        </Badge>
       </TooltipTrigger>
       <TooltipContent>
         Missing: {missingRequiredFields.join(", ")}
