@@ -12,9 +12,11 @@
 // twice cannot create duplicates; --truncate wipes parties and guests (plus
 // the guests' event_rsvps rows; events themselves are kept) inside the same
 // transaction first, for iterating during setup. A row whose Size is
-// N imports as the named guest plus N-1 placeholder guests. On success it
-// prints a summary plus any warnings (blank cells, conflicting addresses) to
-// fix in the admin afterward. See internal/guestimport for the column mapping.
+// N imports as the named guest plus N-1 placeholder guests. Named rows whose
+// "Family (Party)" cell is still blank (a draft of the sheet) are skipped and
+// counted rather than imported. On success it prints a summary plus any
+// warnings (blank cells, address values off the primary row) to fix in the
+// admin afterward. See internal/guestimport for the column mapping.
 package main
 
 import (
@@ -77,9 +79,10 @@ func run(ctx context.Context, path string, truncate bool) error {
 		return err
 	}
 
-	fmt.Printf("parties created:    %d\n", summary.PartiesCreated)
-	fmt.Printf("guests created:     %d (%d placeholders)\n", summary.GuestsCreated, summary.PlaceholdersCreated)
-	fmt.Printf("blank rows skipped: %d\n", plan.SkippedBlankRows)
+	fmt.Printf("parties created:       %d\n", summary.PartiesCreated)
+	fmt.Printf("guests created:        %d (%d placeholders)\n", summary.GuestsCreated, summary.PlaceholdersCreated)
+	fmt.Printf("blank rows skipped:    %d\n", plan.SkippedBlankRows)
+	fmt.Printf("no-party rows skipped: %d\n", plan.SkippedNoPartyRows)
 	if len(plan.Warnings) > 0 {
 		fmt.Printf("\n%d warning(s):\n", len(plan.Warnings))
 		for _, w := range plan.Warnings {
