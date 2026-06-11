@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,13 +25,14 @@ function makeData(
       {
         id: "g1",
         full_name: "Alice Smith",
-        is_placeholder: false,
+        placeholder_text: undefined,
         dietary_restrictions: undefined,
       },
       {
+        // A named placeholder: the descriptor persists alongside the name.
         id: "g2",
         full_name: "Dana Lee",
-        is_placeholder: true,
+        placeholder_text: "Guest of Alice",
         dietary_restrictions: "no nuts",
       },
     ],
@@ -190,5 +192,20 @@ describe("RSVPConfirmation", () => {
       await screen.findByText(/reach out to us directly/i),
     ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /@/ })).not.toBeInTheDocument();
+  });
+
+  it("clears the token and returns to code entry via Not your party?", async () => {
+    // The escape hatch for a visitor whose stored token landed them on someone
+    // else's party: forget the token and go back to code entry.
+    guestRequest.mockResolvedValue(makeData());
+    const user = userEvent.setup();
+    renderConfirmation();
+
+    await user.click(
+      await screen.findByRole("button", { name: /not your party\?/i }),
+    );
+
+    expect(await screen.findByText("Code Entry Page")).toBeInTheDocument();
+    expect(localStorage.getItem(GUEST_TOKEN_STORAGE_KEY)).toBeNull();
   });
 });

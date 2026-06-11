@@ -192,4 +192,12 @@ test("guest RSVPs end to end: code entry, form, confirmation, return visit", asy
   await expect(
     guestSection(page, danaName).getByText("Attending", { exact: true }),
   ).toBeVisible();
+
+  // --- "Not your party?" clears the stored token, back to code entry --------
+  await page.getByRole("button", { name: "Not your party?" }).click();
+  await expect(page.getByLabel("Party code")).toBeVisible();
+  // The token is gone, so a fresh visit also lands on code entry rather than
+  // the remembered confirmation.
+  await page.goto("/rsvp", { waitUntil: "domcontentloaded" });
+  await expect(page.getByLabel("Party code")).toBeVisible();
 });

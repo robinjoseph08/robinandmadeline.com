@@ -1,4 +1,4 @@
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { usePartyRSVPs } from "@/hooks/queries/rsvp";
@@ -43,11 +43,22 @@ function guestEntries(
  * link to the schedule, and a way back to the form for changes (allowed until
  * the deadline; after it, a "contact us" message replaces the edit button).
  * It reads the same query the form uses, which the submit mutation refreshed,
- * so it renders what was just saved.
+ * so it renders what was just saved. "Not your party?" clears the stored
+ * guest token and returns to code entry, for a visitor the token landed on
+ * someone else's party.
  */
 export default function RSVPConfirmation() {
   const hasToken = readGuestToken() !== null;
+  const navigate = useNavigate();
   const { data, error, isPending } = usePartyRSVPs({ enabled: hasToken });
+
+  // The escape hatch for a visitor looking at someone else's party (a shared
+  // device, or a mistyped code remembered by the stored token): forget the
+  // token and land back on code entry.
+  const handleNotYourParty = () => {
+    clearGuestToken();
+    navigate("/rsvp");
+  };
 
   if (!hasToken) {
     return <Navigate replace to="/rsvp" />;
@@ -137,7 +148,7 @@ export default function RSVPConfirmation() {
         ))}
       </div>
 
-      <div className="mt-8 flex gap-3">
+      <div className="mt-8 flex flex-wrap items-center gap-3">
         <Button asChild>
           <Link to="/schedule">View the schedule</Link>
         </Button>
@@ -146,6 +157,9 @@ export default function RSVPConfirmation() {
             <Link to="/rsvp/form">Edit your RSVP</Link>
           </Button>
         ) : null}
+        <Button onClick={handleNotYourParty} type="button" variant="ghost">
+          Not your party?
+        </Button>
       </div>
     </section>
   );
