@@ -73,6 +73,25 @@ function invitedEvents(
   );
 }
 
+/**
+ * Whether a guest is a placeholder (an unnamed plus-one slot): exactly the
+ * guests carrying a placeholder_text descriptor.
+ */
+function isPlaceholder(guest: RSVPGuest): boolean {
+  return guest.placeholder_text != null;
+}
+
+/**
+ * The initial value of a placeholder's name input. An unnamed slot (full_name
+ * still equals the descriptor, which the heading already shows) starts blank;
+ * once the party has named it, the submitted name prefills so a return visit
+ * never looks like the site forgot it, while staying editable for corrections
+ * and swaps.
+ */
+function initialPlaceholderName(guest: RSVPGuest): string {
+  return guest.full_name === guest.placeholder_text ? "" : guest.full_name;
+}
+
 /** The composite key the form's status state is indexed by. */
 function entryKey(eventId: string, guestId: string): string {
   return `${eventId}:${guestId}`;
@@ -130,9 +149,12 @@ function EditableRSVPForm({ data }: RSVPViewProps) {
   const [names, setNames] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
     for (const guest of data.guests) {
-      // Placeholder name fields start blank: "Guest of Alice" is the admin's
-      // stand-in label, not a prefill the party should have to erase.
-      initial[guest.id] = guest.is_placeholder ? "" : guest.full_name;
+      // An unnamed placeholder's name field starts blank ("Guest of Alice" is
+      // the slot's descriptor, not a prefill the party should have to erase);
+      // a named one prefills with the submitted name.
+      initial[guest.id] = isPlaceholder(guest)
+        ? initialPlaceholderName(guest)
+        : guest.full_name;
     }
     return initial;
   });
@@ -165,7 +187,7 @@ function EditableRSVPForm({ data }: RSVPViewProps) {
       guests: data.guests.map((guest) => ({
         guest_id: guest.id,
         full_name:
-          guest.is_placeholder && names[guest.id]?.trim()
+          isPlaceholder(guest) && names[guest.id]?.trim()
             ? names[guest.id].trim()
             : undefined,
         dietary_restrictions: dietary[guest.id]?.trim() || undefined,
@@ -217,7 +239,7 @@ function EditableRSVPForm({ data }: RSVPViewProps) {
             >
               <h2 className="text-xl font-semibold">{guest.full_name}</h2>
 
-              {guest.is_placeholder ? (
+              {isPlaceholder(guest) ? (
                 <div className="mt-3 flex flex-col gap-1.5">
                   <Label htmlFor={`name-${guest.id}`}>Name</Label>
                   <Input

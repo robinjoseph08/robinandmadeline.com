@@ -75,6 +75,11 @@ func init() {
 		// a text[] of relationship tags. The is_* booleans are NOT NULL with
 		// sensible defaults; is_primary in particular is constrained to at most
 		// one true per party by a partial unique index below.
+		//
+		// placeholder_text is the permanent descriptor of an unnamed plus-one
+		// slot ("Guest of John Doe"); a guest is a placeholder iff it is
+		// non-NULL. There is no stored boolean: clearing the text turns the row
+		// back into a regular guest.
 		_, err = db.ExecContext(ctx, `
 			CREATE TABLE guests (
 				id UUID PRIMARY KEY,
@@ -86,7 +91,7 @@ func init() {
 				is_primary BOOLEAN NOT NULL DEFAULT FALSE,
 				is_child BOOLEAN NOT NULL DEFAULT FALSE,
 				is_drinking BOOLEAN NOT NULL DEFAULT FALSE,
-				is_placeholder BOOLEAN NOT NULL DEFAULT FALSE,
+				placeholder_text TEXT,
 				dietary_restrictions TEXT,
 				table_number INTEGER,
 				seat_number INTEGER,

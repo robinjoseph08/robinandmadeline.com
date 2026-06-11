@@ -71,18 +71,18 @@ func (s *Service) CreatePartyWithGuest(ctx context.Context, in CreatePartyWithGu
 		UpdatedAt:      now,
 	}
 	guest := &models.Guest{
-		ID:            newID(),
-		PartyID:       party.ID,
-		FullName:      in.Guest.FullName,
-		Email:         in.Guest.Email,
-		Phone:         in.Guest.Phone,
-		Tags:          in.Guest.Tags,
-		IsPrimary:     true, // the first guest is always the party's primary
-		IsChild:       in.Guest.IsChild,
-		IsDrinking:    in.Guest.IsDrinking,
-		IsPlaceholder: in.Guest.IsPlaceholder,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:              newID(),
+		PartyID:         party.ID,
+		FullName:        in.Guest.FullName,
+		Email:           in.Guest.Email,
+		Phone:           in.Guest.Phone,
+		Tags:            in.Guest.Tags,
+		IsPrimary:       true, // the first guest is always the party's primary
+		IsChild:         in.Guest.IsChild,
+		IsDrinking:      in.Guest.IsDrinking,
+		PlaceholderText: in.Guest.PlaceholderText,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 
 	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {

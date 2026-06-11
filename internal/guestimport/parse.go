@@ -434,12 +434,14 @@ func (p *parser) buildParty(name string, rows []parsedRow, codeOwners map[string
 }
 
 // placeholderGuests builds a row's Size-1 placeholder guests: the unnamed
-// plus-ones the named guest brings, stubbed with is_placeholder until the
-// party fills in real details during RSVP (CONTEXT.md). A single plus-one is
-// "Guest of <host>"; several are numbered "Guest 1 of <host>", "Guest 2 of
-// <host>". Placeholders are never the party's primary, carry no contact info
-// or tags, and default is_child/is_drinking to false; their blank-by-design
-// fields are not tallied into the blank-cell warnings, which count real rows.
+// plus-ones the named guest brings, each carrying its permanent descriptor in
+// placeholder_text until the party fills in a real name during RSVP
+// (CONTEXT.md). A single plus-one is "Guest of <host>"; several are numbered
+// "Guest 1 of <host>", "Guest 2 of <host>". full_name starts as the same
+// descriptor (naming during RSVP overwrites full_name, never the descriptor).
+// Placeholders are never the party's primary, carry no contact info or tags,
+// and default is_child/is_drinking to false; their blank-by-design fields are
+// not tallied into the blank-cell warnings, which count real rows.
 func placeholderGuests(row parsedRow) []*models.Guest {
 	extras := row.size - 1
 	guests := make([]*models.Guest, 0, extras)
@@ -449,9 +451,9 @@ func placeholderGuests(row parsedRow) []*models.Guest {
 			name = fmt.Sprintf("Guest %d of %s", n, row.fullName)
 		}
 		guests = append(guests, &models.Guest{
-			FullName:      name,
-			Tags:          []string{},
-			IsPlaceholder: true,
+			FullName:        name,
+			Tags:            []string{},
+			PlaceholderText: pointerutil.String(name),
 		})
 	}
 	return guests

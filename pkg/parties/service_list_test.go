@@ -158,7 +158,7 @@ func TestListGuests_FlatFilters(t *testing.T) {
 	})
 	// Guest in B: a child placeholder, not drinking.
 	gb := addGuestT(t, svc, b.ID, parties.CreateGuestPayload{
-		FullName: "Child B", IsChild: true, IsPlaceholder: true, IsPrimary: true,
+		FullName: "Child B", IsChild: true, PlaceholderText: pointerutil.String("Child B"), IsPrimary: true,
 	})
 
 	t.Run("side (party-level)", func(t *testing.T) {
@@ -204,11 +204,19 @@ func TestListGuests_FlatFilters(t *testing.T) {
 		assert.False(t, ids[ga.ID])
 	})
 	t.Run("is_placeholder", func(t *testing.T) {
+		// The filter is derived from placeholder_text: true matches guests whose
+		// descriptor is set, false those whose is NULL.
 		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{IsPlaceholder: pointerutil.Bool(true)})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[gb.ID])
 		assert.False(t, ids[ga.ID])
+
+		got, _, err = svc.ListGuests(ctx(), parties.ListGuestsQuery{IsPlaceholder: pointerutil.Bool(false)})
+		require.NoError(t, err)
+		ids = guestIDs(got)
+		assert.True(t, ids[ga.ID])
+		assert.False(t, ids[gb.ID])
 	})
 	t.Run("combined party + guest predicates", func(t *testing.T) {
 		// madeline side AND is_child should match only the child in B.

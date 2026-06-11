@@ -73,9 +73,11 @@ async function seedFixtures(request: APIRequestContext): Promise<string> {
   const rsvpCode = party.rsvp_code as string;
   expect(rsvpCode).toBeTruthy();
 
+  // A placeholder (an unnamed plus-one slot) starts with full_name equal to
+  // its permanent descriptor, like the CSV import seeds them.
   await adminPost(request, token, `/api/admin/parties/${partyId}/guests`, {
     full_name: placeholder,
-    is_placeholder: true,
+    placeholder_text: placeholder,
   });
 
   const event = await adminPost(request, token, "/api/admin/events", {
@@ -161,9 +163,13 @@ test("guest RSVPs end to end: code entry, form, confirmation, return visit", asy
   // --- The form stays reachable through "Edit your RSVP" --------------------
   await page.getByRole("link", { name: "Edit your RSVP" }).click();
 
-  // The placeholder now shows its filled-in real name, and the earlier
-  // answers are preselected.
+  // The placeholder now shows its filled-in real name, prefilled in the name
+  // input too (the site remembers the submitted name, editable for swaps),
+  // and the earlier answers are preselected.
   const danaCard = guestSection(page, danaName);
+  await expect(danaCard.getByLabel("Name", { exact: true })).toHaveValue(
+    danaName,
+  );
   await expect(
     danaCard.getByRole("button", { name: `${eventName}: attending` }),
   ).toHaveAttribute("aria-pressed", "true");

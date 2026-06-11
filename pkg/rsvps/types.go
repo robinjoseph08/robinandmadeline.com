@@ -18,12 +18,15 @@ import (
 // still embeds models.Event by value (a plain `extends models.Event`).
 
 // RSVPGuest is the guest-facing view of one party member: enough to render an
-// RSVP form row (name, the editable-name placeholder flag, and dietary
-// restrictions) and nothing more.
+// RSVP form row (name, the placeholder descriptor, and dietary restrictions)
+// and nothing more. placeholder_text is non-null exactly for placeholder
+// guests (unnamed plus-one slots), carrying the slot's permanent descriptor;
+// the form derives "has been named" as full_name != placeholder_text and
+// prefills the editable name input accordingly.
 type RSVPGuest struct {
 	ID                  string  `json:"id"`
 	FullName            string  `json:"full_name"`
-	IsPlaceholder       bool    `json:"is_placeholder"`
+	PlaceholderText     *string `json:"placeholder_text"`
 	DietaryRestrictions *string `json:"dietary_restrictions"`
 }
 
@@ -69,11 +72,14 @@ type UpdatePartyRSVPsPayload struct {
 }
 
 // GuestRSVPUpdate carries one guest's submission. full_name fills in a
-// placeholder guest's real name and is ignored for non-placeholders (real
-// names are admin-managed); a blank value is also ignored, so a placeholder is
-// never blanked back out. dietary_restrictions is full-state: it is stored as
-// sent, so null (or blank) clears it. rsvps may name only events the guest
-// holds an Event RSVP row for (the row is the invitation, ADR 0002).
+// placeholder guest's real name (a guest with a non-null placeholder_text)
+// and is ignored for regular guests (real names are admin-managed); a blank
+// value is also ignored, so a placeholder is never blanked back out. Naming
+// never erases the descriptor, so an already-named placeholder can be renamed
+// until the deadline (a party swapping who fills the slot). rsvps may name
+// only events the guest holds an Event RSVP row for (the row is the
+// invitation, ADR 0002). dietary_restrictions is full-state: it is stored as
+// sent, so null (or blank) clears it.
 type GuestRSVPUpdate struct {
 	GuestID             string            `json:"guest_id" validate:"required,uuid"`
 	FullName            *string           `json:"full_name" mod:"trim" validate:"omitempty,max=200"`

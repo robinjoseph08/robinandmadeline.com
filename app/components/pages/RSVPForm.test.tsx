@@ -25,13 +25,14 @@ function makeData(
       {
         id: "g1",
         full_name: "Alice Smith",
-        is_placeholder: false,
+        placeholder_text: undefined,
         dietary_restrictions: undefined,
       },
       {
+        // An unnamed placeholder: full_name still equals the descriptor.
         id: "g2",
         full_name: "Guest of Alice",
-        is_placeholder: true,
+        placeholder_text: "Guest of Alice",
         dietary_restrictions: undefined,
       },
     ],
@@ -146,9 +147,24 @@ describe("RSVPForm", () => {
       ).toBeInTheDocument();
     }
 
-    // Only the placeholder guest gets an editable name field.
-    expect(within(plusOne).getByLabelText("Name")).toBeInTheDocument();
+    // Only the placeholder guest gets an editable name field. An unnamed slot
+    // (full_name still equals the descriptor) starts blank: the heading
+    // already shows "Guest of Alice", which is not a name to erase.
+    expect(within(plusOne).getByLabelText("Name")).toHaveValue("");
     expect(within(alice).queryByLabelText("Name")).not.toBeInTheDocument();
+  });
+
+  it("prefills a named placeholder's name field with the submitted name", async () => {
+    // A return visit after the placeholder was named: full_name no longer
+    // equals the descriptor, so the input shows the name on file (editable
+    // for corrections and swaps) instead of looking forgotten.
+    const data = makeData();
+    data.guests[1].full_name = "Dana Lee";
+    guestRequest.mockResolvedValue(data);
+    renderForm();
+
+    const plusOne = await screen.findByRole("region", { name: "Dana Lee" });
+    expect(within(plusOne).getByLabelText("Name")).toHaveValue("Dana Lee");
   });
 
   it("submits the whole form and navigates to the confirmation", async () => {

@@ -123,7 +123,7 @@ func partyRSVPs(ctx context.Context, db bun.IDB, partyID string) (*PartyRSVPsRes
 		resp.Guests = append(resp.Guests, RSVPGuest{
 			ID:                  g.ID,
 			FullName:            g.FullName,
-			IsPlaceholder:       g.IsPlaceholder,
+			PlaceholderText:     g.PlaceholderText,
 			DietaryRestrictions: g.DietaryRestrictions,
 		})
 	}
@@ -286,9 +286,11 @@ func (s *Service) UpdatePartyRSVPs(ctx context.Context, partyID string, in Updat
 // transaction: the guest row (placeholder name, dietary restrictions) and one
 // event_rsvps row per status entry.
 func applyGuestUpdate(ctx context.Context, tx bun.Tx, guest *models.Guest, update GuestRSVPUpdate, now time.Time) error {
-	// full_name only fills in placeholders (real names are admin-managed), and
-	// a blank value never erases the name already on file.
-	if guest.IsPlaceholder && update.FullName != nil && *update.FullName != "" {
+	// full_name only fills in placeholders (a non-null placeholder_text; real
+	// guests' names are admin-managed), and a blank value never erases the name
+	// already on file. The descriptor itself is never touched, so an
+	// already-named placeholder stays renameable until the deadline.
+	if guest.PlaceholderText != nil && update.FullName != nil && *update.FullName != "" {
 		guest.FullName = *update.FullName
 	}
 	// Dietary restrictions are full-state: an absent (or blank, after trim)

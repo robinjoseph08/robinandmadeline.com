@@ -28,7 +28,7 @@ function makeGuest(overrides: Partial<Guest>): Guest {
     is_primary: false,
     is_child: false,
     is_drinking: false,
-    is_placeholder: false,
+    placeholder_text: undefined,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -237,23 +237,24 @@ describe("AdminPartyDetail add guest", () => {
           return Promise.resolve(makeParty([ALICE_PRIMARY]));
         }
         // The create POST (and any refetch) resolve to a guest.
-        return Promise.resolve(makeGuest({ id: "new", is_placeholder: true }));
+        return Promise.resolve(
+          makeGuest({ id: "new", placeholder_text: "Guest of Alice" }),
+        );
       },
     );
 
     const user = userEvent.setup();
     renderDetail();
 
-    // Open the add row, fill the name, mark it a placeholder via the flags cell,
-    // submit with Add.
+    // Open the add row, fill the name, give it a placeholder descriptor via
+    // the placeholder text cell, submit with Add.
     await user.click(await screen.findByRole("button", { name: "Add guest" }));
     const addName = screen.getByRole("textbox", { name: "New guest name" });
-    await user.type(addName, "Plus One");
-    await user.click(screen.getByRole("button", { name: "New guest flags" }));
-    await user.click(
-      await screen.findByRole("option", { name: /Placeholder/ }),
+    await user.type(addName, "Guest of Alice");
+    await user.type(
+      screen.getByRole("textbox", { name: "New guest placeholder text" }),
+      "Guest of Alice",
     );
-    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Add" }));
 
     await waitFor(() => {
@@ -262,8 +263,8 @@ describe("AdminPartyDetail add guest", () => {
         expect.objectContaining({
           method: "POST",
           body: expect.objectContaining({
-            full_name: "Plus One",
-            is_placeholder: true,
+            full_name: "Guest of Alice",
+            placeholder_text: "Guest of Alice",
           }),
         }),
       );

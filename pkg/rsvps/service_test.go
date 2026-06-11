@@ -63,11 +63,15 @@ func addGuestT(t *testing.T, svc *parties.Service, partyID, name string) *models
 	return g
 }
 
-// addPlaceholderT adds a placeholder guest fixture (an unnamed plus-one whose
-// real details the party fills in during RSVP).
+// addPlaceholderT adds a placeholder guest fixture (an unnamed plus-one slot
+// the party names during RSVP). Like the CSV import, full_name and
+// placeholder_text both start as the descriptor.
 func addPlaceholderT(t *testing.T, svc *parties.Service, partyID, name string) *models.Guest {
 	t.Helper()
-	g, err := svc.CreateGuest(ctx(), partyID, parties.CreateGuestPayload{FullName: name, IsPlaceholder: true})
+	g, err := svc.CreateGuest(ctx(), partyID, parties.CreateGuestPayload{
+		FullName:        name,
+		PlaceholderText: pointerutil.String(name),
+	})
 	require.NoError(t, err)
 	return g
 }
@@ -313,13 +317,24 @@ func TestUpdatePartyRSVPs_PersistsPlaceholderNameAndDietary(t *testing.T) {
 
 	updatedPlusOne := guestRow(t, db, plusOne.ID)
 	assert.Equal(t, "Dana Lee", updatedPlusOne.FullName, "the placeholder's real name is filled in")
-	assert.True(t, updatedPlusOne.IsPlaceholder, "naming a placeholder does not clear the flag, so the name stays editable for corrections")
+	assert.Equal(t, pointerutil.String("Guest of Alice"), updatedPlusOne.PlaceholderText,
+		"naming a placeholder never erases the descriptor, so the name stays editable for corrections and swaps")
 	require.NotNil(t, updatedPlusOne.DietaryRestrictions)
 	assert.Equal(t, "no nuts", *updatedPlusOne.DietaryRestrictions)
 
 	updatedAlice := guestRow(t, db, alice.ID)
 	require.NotNil(t, updatedAlice.DietaryRestrictions)
 	assert.Equal(t, "vegetarian", *updatedAlice.DietaryRestrictions)
+
+	// The swap scenario: a named +1 cancels and the party brings someone else.
+	// Renaming an already-named placeholder stays allowed until the deadline.
+	_, err = svc.UpdatePartyRSVPs(ctx(), p.ID, rsvps.UpdatePartyRSVPsPayload{
+		Guests: []rsvps.GuestRSVPUpdate{{GuestID: plusOne.ID, FullName: pointerutil.String("Evan Park")}},
+	})
+	require.NoError(t, err)
+	renamed := guestRow(t, db, plusOne.ID)
+	assert.Equal(t, "Evan Park", renamed.FullName, "an already-named placeholder can be renamed before the deadline")
+	assert.Equal(t, pointerutil.String("Guest of Alice"), renamed.PlaceholderText)
 }
 
 func TestUpdatePartyRSVPs_IgnoresNameForNonPlaceholderGuests(t *testing.T) {

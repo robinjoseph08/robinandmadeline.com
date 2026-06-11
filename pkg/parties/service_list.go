@@ -122,7 +122,13 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 		q = q.Where("g.is_child = ?", *f.IsChild)
 	}
 	if f.IsPlaceholder != nil {
-		q = q.Where("g.is_placeholder = ?", *f.IsPlaceholder)
+		// "Is a placeholder" is derived: a guest is one iff placeholder_text is
+		// set (there is no stored boolean).
+		if *f.IsPlaceholder {
+			q = q.Where("g.placeholder_text IS NOT NULL")
+		} else {
+			q = q.Where("g.placeholder_text IS NULL")
+		}
 	}
 	if f.Tags != nil {
 		q = q.Where("? = ANY(g.tags)", *f.Tags)

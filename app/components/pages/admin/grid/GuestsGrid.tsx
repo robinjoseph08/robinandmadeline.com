@@ -41,16 +41,20 @@ import {
 } from "./cells";
 import { InfoHint, TooltipIconButton } from "./grid-buttons";
 
-// Tooltip copy for the guest flags. Primary keeps its own header hint; the other
-// three are surfaced on the chips inside the Flags cell.
+// Tooltip copy for the guest flags. Primary keeps its own header hint; the
+// other two are surfaced on the chips inside the Flags cell.
 const FLAG_HINTS = {
   primary:
     "The party's main contact (one per party). Their email is required to mark the party's info complete.",
   child: "Guest is a child, for meal and seating planning.",
   drinking: "Guest drinks alcohol, for bar and beverage counts.",
-  placeholder:
-    "A stand-in for an unnamed guest or an unconfirmed plus-one (e.g. a +1 whose name you do not have yet).",
 };
+
+// Header hint for the editable Placeholder column (the descriptor of an
+// unnamed plus-one slot, e.g. "Guest of John Doe"). Clearing the cell turns
+// the guest back into a regular guest.
+const PLACEHOLDER_TEXT_HINT =
+  'The descriptor of an unnamed plus-one slot (e.g. "Guest of John Doe"). It is permanent: naming the guest never erases it. Clear it to make this a regular guest.';
 
 const NEW_PARTY_PRIMARY_HINT =
   "The first guest of a new party is automatically its primary.";
@@ -58,12 +62,11 @@ const NEW_PARTY_PRIMARY_HINT =
 const PRIMARY_LOCK_HINT =
   "The party's primary. Check another guest to make them the primary instead.";
 
-// The three boolean flags collapsed into one chip multi-select, each chip
+// The two boolean flags collapsed into one chip multi-select, each chip
 // carrying its own tooltip in the dropdown.
 const GUEST_FLAG_OPTIONS: FlagOption[] = [
   { key: "is_child", label: "Child", hint: FLAG_HINTS.child },
   { key: "is_drinking", label: "Drinking", hint: FLAG_HINTS.drinking },
-  { key: "is_placeholder", label: "Placeholder", hint: FLAG_HINTS.placeholder },
 ];
 
 interface PartyOption {
@@ -110,7 +113,7 @@ interface GuestDraft {
   isPrimary: boolean;
   isChild: boolean;
   isDrinking: boolean;
-  isPlaceholder: boolean;
+  placeholderText: string;
 }
 
 const EMPTY_DRAFT: GuestDraft = {
@@ -121,7 +124,7 @@ const EMPTY_DRAFT: GuestDraft = {
   isPrimary: false,
   isChild: false,
   isDrinking: false,
-  isPlaceholder: false,
+  placeholderText: "",
 };
 
 /**
@@ -138,7 +141,7 @@ function isDraftPristine(draft: GuestDraft): boolean {
     !draft.isPrimary &&
     !draft.isChild &&
     !draft.isDrinking &&
-    !draft.isPlaceholder &&
+    draft.placeholderText === "" &&
     draft.partyId === undefined &&
     draft.newPartyName === undefined &&
     draft.side === undefined &&
@@ -149,11 +152,12 @@ function isDraftPristine(draft: GuestDraft): boolean {
 /**
  * The guest list as an editable spreadsheet, shared by the flat guest list and a
  * party's detail page. Each cell saves itself via PATCH on blur/Enter (a brief
- * tint confirms the save); the child/drinking/placeholder flags collapse into one
- * chip cell, tags is a creatable colored-chip multi-select, and Primary follows
- * Flags. The single primary is enforced by the API: the current primary's
- * checkbox is locked (promote another guest to move it), and deleting it promotes
- * the next guest.
+ * tint confirms the save); the child/drinking flags collapse into one chip cell,
+ * tags is a creatable colored-chip multi-select, and the Placeholder column is
+ * the editable descriptor of an unnamed plus-one slot (clearing it makes the
+ * guest a regular one). The single primary is enforced by the API: the current
+ * primary's checkbox is locked (promote another guest to move it), and deleting
+ * it promotes the next guest.
  *
  * In flat-list mode (parties given) the add row's Party picker is creatable:
  * choose an existing party and its Side/Relation show read-only, or type a new
@@ -188,9 +192,9 @@ export function GuestsGrid<TGuest extends Guest>({
     for (const party of parties ?? []) map.set(party.id, party);
     return map;
   }, [parties]);
-  // Base columns: Name, Email, Phone, Tags, Flags, Primary, Actions. The flat
-  // list adds Party, Side, Relation.
-  const columnCount = 7 + (showPartyColumn ? 3 : 0);
+  // Base columns: Name, Email, Phone, Tags, Flags, Placeholder, Primary,
+  // Actions. The flat list adds Party, Side, Relation.
+  const columnCount = 8 + (showPartyColumn ? 3 : 0);
 
   // Existing tags across the loaded guests, to suggest in every tag cell.
   const tagSuggestions = useMemo(() => {
@@ -279,7 +283,9 @@ export function GuestsGrid<TGuest extends Guest>({
       tags: draft.tags,
       is_child: draft.isChild,
       is_drinking: draft.isDrinking,
-      is_placeholder: draft.isPlaceholder,
+      // A blank cell means a regular guest; the key is dropped so the API
+      // stores NULL rather than rejecting a blank descriptor.
+      placeholder_text: draft.placeholderText.trim() || undefined,
     };
     try {
       if (isNewParty && draft.newPartyName) {
@@ -351,6 +357,9 @@ export function GuestsGrid<TGuest extends Guest>({
           <TableHead className="min-w-36">Phone</TableHead>
           <TableHead className="min-w-40">Tags</TableHead>
           <TableHead className="min-w-40">Flags</TableHead>
+          <TableHead className="min-w-40">
+            <HeaderWithHint hint={PLACEHOLDER_TEXT_HINT} label="Placeholder" />
+          </TableHead>
           <TableHead className="w-24 text-center">
             <HeaderWithHint hint={FLAG_HINTS.primary} label="Primary" />
           </TableHead>
@@ -411,15 +420,24 @@ export function GuestsGrid<TGuest extends Guest>({
                   patchField(guest.id, partyId, {
                     is_child: value.is_child,
                     is_drinking: value.is_drinking,
-                    is_placeholder: value.is_placeholder,
                   })
                 }
                 options={GUEST_FLAG_OPTIONS}
                 value={{
                   is_child: guest.is_child,
                   is_drinking: guest.is_drinking,
-                  is_placeholder: guest.is_placeholder,
                 }}
+              />
+              <GridTextCell
+                ariaLabel="Placeholder text"
+                // Clearing the cell stores NULL, turning the row back into a
+                // regular guest; the descriptor itself stays admin-editable
+                // (e.g. retargeting a slot after a swap).
+                onCommit={(value) =>
+                  patchField(guest.id, partyId, { placeholder_text: value })
+                }
+                placeholder="None"
+                value={guest.placeholder_text ?? ""}
               />
               <GridBoolCell
                 ariaLabel="Primary"
@@ -521,7 +539,6 @@ export function GuestsGrid<TGuest extends Guest>({
               onCommit={(value) => {
                 setDraftField("isChild", value.is_child);
                 setDraftField("isDrinking", value.is_drinking);
-                setDraftField("isPlaceholder", value.is_placeholder);
               }}
               options={GUEST_FLAG_OPTIONS}
               placeholder="Optional"
@@ -529,8 +546,17 @@ export function GuestsGrid<TGuest extends Guest>({
               value={{
                 is_child: draft.isChild,
                 is_drinking: draft.isDrinking,
-                is_placeholder: draft.isPlaceholder,
               }}
+            />
+            <GridTextCell
+              ariaLabel="New guest placeholder text"
+              commitOnChange
+              onCommit={(value) => setDraftField("placeholderText", value)}
+              onEnter={handleCreate}
+              onEscape={handleAddRowEscape}
+              placeholder="Optional"
+              showStatus={false}
+              value={draft.placeholderText}
             />
             <GridBoolCell
               ariaLabel="New guest primary"

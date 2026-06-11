@@ -18,6 +18,13 @@ var _ bun.BeforeAppendModelHook = (*Guest)(nil)
 // table_number / seat_number are nullable ints set during seating. is_primary is
 // constrained to at most one true per party by a partial unique index and
 // enforced transactionally by the service.
+//
+// placeholder_text marks an unnamed plus-one slot: a guest is a placeholder
+// iff it is non-NULL, and its value is the slot's permanent descriptor (e.g.
+// "Guest of John Doe"). Naming the slot during RSVP overwrites full_name but
+// never the descriptor, so "has been named" is derived as full_name !=
+// placeholder_text. Clearing the text (admin PATCH) turns the row back into a
+// regular guest.
 type Guest struct {
 	bun.BaseModel `bun:"table:guests,alias:g" tstype:"-"`
 
@@ -28,11 +35,11 @@ type Guest struct {
 	Phone    *string  `bun:"phone" json:"phone"`
 	Tags     []string `bun:"tags,array" json:"tags"`
 
-	IsPrimary     bool `bun:"is_primary" json:"is_primary"`
-	IsChild       bool `bun:"is_child" json:"is_child"`
-	IsDrinking    bool `bun:"is_drinking" json:"is_drinking"`
-	IsPlaceholder bool `bun:"is_placeholder" json:"is_placeholder"`
+	IsPrimary  bool `bun:"is_primary" json:"is_primary"`
+	IsChild    bool `bun:"is_child" json:"is_child"`
+	IsDrinking bool `bun:"is_drinking" json:"is_drinking"`
 
+	PlaceholderText     *string `bun:"placeholder_text" json:"placeholder_text"`
 	DietaryRestrictions *string `bun:"dietary_restrictions" json:"dietary_restrictions"`
 	TableNumber         *int    `bun:"table_number" json:"table_number"`
 	SeatNumber          *int    `bun:"seat_number" json:"seat_number"`
