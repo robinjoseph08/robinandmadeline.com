@@ -1,8 +1,19 @@
 import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
-import { HOME_CTA_CARDS, WEDDING } from "@/components/pages/home-content";
+import {
+  HERO_IMAGE,
+  HOME_CTA_CARDS,
+  WEDDING,
+} from "@/components/pages/home-content";
 import { cn } from "@/libraries/utils";
+
+/**
+ * How wide the hero photo renders, for the browser's srcset selection:
+ * the full viewport minus Root's px-4 gutters, capped by its max-w-5xl
+ * (64rem) container. Keep in sync with the Root layout if it changes.
+ */
+const HERO_IMAGE_SIZES = "(min-width: 64rem) 62rem, calc(100vw - 2rem)";
 
 /**
  * The public landing page: an invitation-style hero (names, date, venue)
@@ -33,6 +44,27 @@ export default function Home() {
 
         <p className="mt-8 text-lg text-ink/80">{WEDDING.dateText}</p>
         <p className="mt-1 text-ink/60">{WEDDING.venueText}</p>
+
+        <picture>
+          <source
+            sizes={HERO_IMAGE_SIZES}
+            srcSet={HERO_IMAGE.avifSrcSet}
+            type="image/avif"
+          />
+          <source
+            sizes={HERO_IMAGE_SIZES}
+            srcSet={HERO_IMAGE.webpSrcSet}
+            type="image/webp"
+          />
+          <img
+            alt={HERO_IMAGE.alt}
+            className="mt-10 w-full rounded-2xl shadow-sm"
+            fetchPriority="high"
+            height={HERO_IMAGE.height}
+            src={HERO_IMAGE.fallbackSrc}
+            width={HERO_IMAGE.width}
+          />
+        </picture>
       </section>
 
       <section

@@ -3,7 +3,11 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import Home from "@/components/pages/Home";
-import { HOME_CTA_CARDS, WEDDING } from "@/components/pages/home-content";
+import {
+  HERO_IMAGE,
+  HOME_CTA_CARDS,
+  WEDDING,
+} from "@/components/pages/home-content";
 
 function renderHome() {
   return render(
@@ -23,6 +27,17 @@ describe("Home", () => {
     expect(screen.getByText(WEDDING.tagline)).toBeInTheDocument();
     expect(screen.getByText(WEDDING.dateText)).toBeInTheDocument();
     expect(screen.getByText(WEDDING.venueText)).toBeInTheDocument();
+  });
+
+  it("renders the hero photo with descriptive alt text", () => {
+    renderHome();
+
+    const photo = screen.getByRole("img", { name: HERO_IMAGE.alt });
+    expect(photo).toHaveAttribute("src", HERO_IMAGE.fallbackSrc);
+    // Intrinsic dimensions so the layout reserves space before the photo
+    // loads instead of shifting the CTA cards down.
+    expect(photo).toHaveAttribute("width", String(HERO_IMAGE.width));
+    expect(photo).toHaveAttribute("height", String(HERO_IMAGE.height));
   });
 
   it("renders a CTA card linking to each destination", () => {
