@@ -397,6 +397,13 @@ func TestParse_DuplicateRequiredColumnIsError(t *testing.T) {
 	_, err := guestimport.Parse(strings.NewReader(csvHeader + ",City\nDana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,,Austin\n"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "csv has duplicate column(s): City")
+
+	// Missing and duplicated columns are reported together in one pass, so the
+	// operator fixes the sheet once.
+	_, err = guestimport.Parse(strings.NewReader(strings.Replace(csvHeader, "Kingdom", "Bogus", 1) + ",City\n"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "is missing expected column(s): Kingdom")
+	require.Contains(t, err.Error(), "has duplicate column(s): City")
 }
 
 func TestParse_UnknownExtraColumnsAreIgnored(t *testing.T) {

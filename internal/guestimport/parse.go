@@ -235,10 +235,10 @@ func Parse(r io.Reader) (*Plan, error) {
 }
 
 // headerIndex maps each required column name to its position in the header
-// row, failing with the full list of missing columns when the file does not
-// look like the guest-list export. A required column appearing more than once
-// (a stale copy left in the sheet) is also an error, since the mapping would
-// silently bind to whichever copy comes last.
+// row, failing when the file does not look like the guest-list export. Missing
+// columns and duplicated ones (a stale copy left in the sheet would silently
+// bind the mapping to whichever copy comes last) are all reported in one
+// error, so the operator fixes the sheet once.
 func headerIndex(header []string) (map[string]int, error) {
 	idx := make(map[string]int, len(header))
 	seen := make(map[string]int, len(header))
@@ -256,11 +256,15 @@ func headerIndex(header []string) (map[string]int, error) {
 			duplicated = append(duplicated, name)
 		}
 	}
+	var parts []string
 	if len(missing) > 0 {
-		return nil, errors.Errorf("csv is missing expected column(s): %s", strings.Join(missing, ", "))
+		parts = append(parts, "is missing expected column(s): "+strings.Join(missing, ", "))
 	}
 	if len(duplicated) > 0 {
-		return nil, errors.Errorf("csv has duplicate column(s): %s", strings.Join(duplicated, ", "))
+		parts = append(parts, "has duplicate column(s): "+strings.Join(duplicated, ", "))
+	}
+	if len(parts) > 0 {
+		return nil, errors.Errorf("csv %s", strings.Join(parts, "; "))
 	}
 	return idx, nil
 }
