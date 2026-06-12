@@ -12,13 +12,16 @@ globalThis.ResizeObserver = class ResizeObserver {
 };
 
 // jsdom omits these Element methods that Radix UI (Select, Dialog) calls during
-// pointer interactions and focus management. Stub them so those components are
-// testable; they are no-ops that only need to exist.
+// pointer interactions and focus management, and that the shared Combobox's
+// scroll reset calls on search changes. Stub them so those components are
+// testable; they are no-ops that only need to exist (jsdom performs no
+// layout, so there is nothing to scroll).
 if (typeof Element !== "undefined") {
   Element.prototype.hasPointerCapture ??= () => false;
   Element.prototype.setPointerCapture ??= () => {};
   Element.prototype.releasePointerCapture ??= () => {};
   Element.prototype.scrollIntoView ??= () => {};
+  Element.prototype.scrollTo ??= () => {};
 }
 
 afterEach(() => {
