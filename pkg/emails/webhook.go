@@ -150,17 +150,20 @@ func (w *Webhook) handle(c echo.Context) error {
 // would only make Mailgun retry into the same outcome.
 func (w *Webhook) applyByRecipientID(c echo.Context, payload webhookPayload, applyEvent func(*bun.UpdateQuery) *bun.UpdateQuery, messageID string) {
 	log := logger.FromContext(c.Request().Context())
-	recipientID := payload.EventData.UserVariables.RecipientID
 	// A missing variable is not an error (e.g. an event for a message sent
 	// outside this system), and a malformed one can never name a row, so
-	// neither should reach Postgres as a failing text-to-uuid cast.
-	if _, err := uuid.Parse(recipientID); err != nil {
+	// neither should reach Postgres as a failing text-to-uuid cast. The
+	// parsed canonical form is what gets bound: uuid.Parse accepts variants
+	// (urn:uuid:, braces) that Postgres's uuid input does not.
+	parsed, err := uuid.Parse(payload.EventData.UserVariables.RecipientID)
+	if err != nil {
 		log.Warn("mailgun webhook matched no recipient", logger.Data{
 			"mailgun_message_id": messageID,
 			"event":              payload.EventData.Event,
 		})
 		return
 	}
+	recipientID := parsed.String()
 	res, err := applyEvent(w.db.NewUpdate().Model((*models.EmailRecipient)(nil)).
 		Set("mailgun_message_id = ?", messageID).
 		Where("id = ?", recipientID)).

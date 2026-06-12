@@ -21,13 +21,16 @@ import { useEmailSend } from "@/hooks/queries/emails";
  * One send's detail: the copy as sent, its delivery stats, and the
  * per-recipient delivery breakdown. Polls while any recipient is still in
  * flight (queued or sending) so statuses progress live, and stops once the
- * worker has dispatched everything; the webhook's later sent -> delivered or
- * bounced upgrades arrive on the next focus refetch (polling on `sent` rows
- * would never stop, since a delivery event is not guaranteed).
+ * worker has dispatched everything (polling on `sent` rows would never stop,
+ * since a delivery event is not guaranteed). The webhook's later sent ->
+ * delivered or bounced upgrades arrive on window focus instead, overriding
+ * the app-wide refetchOnWindowFocus: false, so returning to the tab shows
+ * current statuses.
  */
 export default function AdminEmailSendDetail() {
   const { id } = useParams<{ id: string }>();
   const sendQuery = useEmailSend(id, {
+    refetchOnWindowFocus: true,
     refetchInterval: (query) => {
       const stats = query.state.data?.stats;
       return stats === undefined || stats.queued + stats.sending > 0
