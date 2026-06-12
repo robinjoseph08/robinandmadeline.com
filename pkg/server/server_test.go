@@ -136,6 +136,28 @@ func TestScheduleRoute_WiredBehindOptionalGuestAuth(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
+func TestGamesRoutes_Wired(t *testing.T) {
+	srv := server.New(newTestConfig(t), nil)
+
+	// An invalid bearer token is rejected by the optional-guest middleware
+	// (401, not 404), which both proves POST /api/games/sessions is mounted
+	// behind it and keeps this wiring test db-free (games behavior is covered
+	// in pkg/games).
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/games/sessions", strings.NewReader(`{"puzzle_id":"wedding-mini-v1","difficulty":"easy"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer not-a-real-jwt")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	// A missing puzzle_id is rejected by the binder (422) before any database
+	// access, proving the public leaderboard read is mounted too.
+	boardReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/games/leaderboard", http.NoBody)
+	boardRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(boardRec, boardReq)
+	require.Equal(t, http.StatusUnprocessableEntity, boardRec.Code)
+}
+
 func TestGuestLoginRoute_Wired(t *testing.T) {
 	srv := server.New(newTestConfig(t), nil)
 

@@ -36,6 +36,13 @@ interface UseSolveSessionOptions {
   initiallyStarted: boolean;
   /** The difficulty in play at mount (from saved progress, or the default). */
   initialDifficulty: Difficulty;
+  /**
+   * Whether the solve is already finished at mount even without a completed
+   * session record. A solve that predates session tracking (or whose session
+   * record was cleared) has no honest time, so the clock must not run and no
+   * report may be sent for it.
+   */
+  initiallyFinished?: boolean;
 }
 
 export interface SolveSession {
@@ -77,6 +84,7 @@ export function useSolveSession({
   puzzleId,
   initiallyStarted,
   initialDifficulty,
+  initiallyFinished = false,
 }: UseSolveSessionOptions): SolveSession {
   // The persisted record is read once; from then on the refs are the source
   // of truth and persist() writes them back at every meaningful moment.
@@ -87,9 +95,10 @@ export function useSolveSession({
   const runningSinceRef = useRef<number | null>(null);
   const lastSentElapsedRef = useRef(0);
   const completedRef = useRef(initialRecord?.completed ?? false);
-  const finishedRef = useRef(initialRecord?.completed ?? false);
+  const finishedRef = useRef(
+    (initialRecord?.completed ?? false) || initiallyFinished,
+  );
   const startedRef = useRef(initiallyStarted);
-  const difficultyRef = useRef(initialDifficulty);
   const easiestRef = useRef<Difficulty>(
     initialRecord?.difficulty ?? initialDifficulty,
   );
@@ -98,10 +107,17 @@ export function useSolveSession({
   const queueRef = useRef<Promise<void>>(Promise.resolve());
 
   const [started, setStarted] = useState(initiallyStarted);
-  const [finished, setFinished] = useState(initialRecord?.completed ?? false);
+  const [finished, setFinished] = useState(
+    (initialRecord?.completed ?? false) || initiallyFinished,
+  );
   const [paused, setPaused] = useState(false);
   const [uiPaused, setUiPausedState] = useState(false);
-  const [hidden, setHidden] = useState(false);
+  // Read the real visibility at mount: a page opened in a background tab
+  // (cmd+click, session restore) must not accrue active time before its
+  // first focus.
+  const [hidden, setHidden] = useState(
+    () => document.visibilityState === "hidden",
+  );
   const [elapsedMs, setElapsedMs] = useState(initialRecord?.elapsedMs ?? 0);
   const [recordedDifficulty, setRecordedDifficulty] = useState<Difficulty>(
     initialRecord?.difficulty ?? initialDifficulty,
@@ -142,7 +158,7 @@ export function useSolveSession({
     try {
       const session = await createGameSession({
         puzzle_id: puzzleId,
-        difficulty: difficultyRef.current,
+        difficulty: easiestRef.current,
       });
       sessionIdRef.current = session.id;
       applyServerDifficulty(session.difficulty);
@@ -176,9 +192,12 @@ export function useSolveSession({
         Math.max(Math.round(totalElapsed()), lastSentElapsedRef.current),
         MAX_ELAPSED_MS,
       );
+      // Every payload carries the easiest difficulty used so far: the server
+      // folds min() across delivered reports, so resending the easiest keeps
+      // it converging even when an earlier easy report was lost.
       const payload: UpdateGameSessionPayload = {
         elapsed_ms: elapsed,
-        difficulty: difficultyRef.current,
+        difficulty: easiestRef.current,
         completed: options.completed === true,
       };
       const applyResponse = (session: { difficulty: Difficulty }) => {
@@ -259,10 +278,15 @@ export function useSolveSession({
   // Flush for the page going away. A keepalive fetch survives navigation
   // where the queued reports would be aborted.
   const flushOnHide = useCallback(() => {
-    persist();
     if (!startedRef.current || finishedRef.current || completedRef.current) {
       return;
     }
+    // Persist only live solves. A finished solve already persisted its final
+    // state when the clock stopped, and writing a record for a visit that
+    // never started, or for an unreportable restore (initiallyFinished),
+    // would mint the very session record whose absence marks the solve as
+    // having no honest time.
+    persist();
     const id = sessionIdRef.current;
     if (!id) {
       return;
@@ -274,7 +298,7 @@ export function useSolveSession({
     lastSentElapsedRef.current = elapsed;
     flushGameSession(id, {
       elapsed_ms: elapsed,
-      difficulty: difficultyRef.current,
+      difficulty: easiestRef.current,
       completed: false,
     });
   }, [persist, totalElapsed]);
@@ -303,7 +327,6 @@ export function useSolveSession({
         return;
       }
       startedRef.current = true;
-      difficultyRef.current = difficulty;
       easiestRef.current = difficulty;
       setRecordedDifficulty(difficulty);
       setStarted(true);
@@ -337,7 +360,6 @@ export function useSolveSession({
 
   const reportDifficulty = useCallback(
     (difficulty: Difficulty) => {
-      difficultyRef.current = difficulty;
       easiestRef.current = easierDifficulty(easiestRef.current, difficulty);
       setRecordedDifficulty(easiestRef.current);
       persist();

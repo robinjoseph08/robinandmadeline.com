@@ -127,6 +127,23 @@ func TestPostGameSession_ValidGuestTokenAttachesParty(t *testing.T) {
 	assert.Equal(t, p.ID, *resp.PartyID)
 }
 
+func TestPostGameSession_DeletedPartyTokenCreatesAnonymousSession(t *testing.T) {
+	svc, partySvc, db := newServices(t)
+	e, authSvc := newGamesEcho(t, svc)
+	p := createPartyT(t, partySvc, "The Smiths")
+	token, err := authSvc.GenerateGuestToken(p.ID)
+	require.NoError(t, err)
+	// The party vanishes (a guest re-import or an admin delete) while the
+	// token, valid for months, lives on in the guest's browser. The token is
+	// still cryptographically valid, so the request passes OptionalGuest; the
+	// stale claim must then degrade to an anonymous session instead of failing
+	// the party FK with a 500.
+	require.NoError(t, partySvc.DeleteParty(ctx(), p.ID))
+
+	resp := createSessionHTTP(t, e, token, nil)
+	assert.Nil(t, sessionRow(t, db, resp.ID).PartyID, "the stale claim degrades to an anonymous session")
+}
+
 func TestPostGameSession_InvalidTokenIs401(t *testing.T) {
 	// OptionalGuest lets tokenless requests through but rejects a presented
 	// bad credential, so a stale stored token surfaces instead of silently
@@ -182,6 +199,23 @@ func TestPostGameSession_CapturesFlyClientIPFirst(t *testing.T) {
 	// stamps 192.0.2.1:1234 on every request).
 	resp = createSessionHTTP(t, e, "", nil)
 	assert.Equal(t, "192.0.2.1", sessionRow(t, db, resp.ID).IPAddress)
+
+	// Anywhere the app is reached without Fly's proxy the headers are
+	// client-controlled text, so a Fly header that does not parse as an IP is
+	// skipped, never stored.
+	resp = createSessionHTTP(t, e, "", map[string]string{
+		"Fly-Client-IP":   "not-an-ip",
+		"X-Forwarded-For": "203.0.113.50",
+	})
+	assert.Equal(t, "203.0.113.50", sessionRow(t, db, resp.ID).IPAddress)
+
+	// Garbage in both headers falls back to the socket's address rather than
+	// persisting attacker-chosen text as the "IP".
+	resp = createSessionHTTP(t, e, "", map[string]string{
+		"Fly-Client-IP":   "not-an-ip",
+		"X-Forwarded-For": "also-not-an-ip",
+	})
+	assert.Equal(t, "192.0.2.1", sessionRow(t, db, resp.ID).IPAddress)
 }
 
 func TestPatchGameSession_UpdatesAndCompletes(t *testing.T) {
@@ -209,6 +243,45 @@ func TestPatchGameSession_UpdatesAndCompletes(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.NotNil(t, resp.CompletedAt)
 	require.NotNil(t, sessionRow(t, db, created.ID).CompletedAt)
+}
+
+func TestPatchGameSession_ValidGuestTokenAttachesParty(t *testing.T) {
+	svc, partySvc, db := newServices(t)
+	e, authSvc := newGamesEcho(t, svc)
+	p := createPartyT(t, partySvc, "The Smiths")
+	token, err := authSvc.GenerateGuestToken(p.ID)
+	require.NoError(t, err)
+	created := createSessionHTTP(t, e, "", nil)
+
+	// The guest signed in mid-solve: a report carrying their token affiliates
+	// the previously anonymous session, proving OptionalGuest feeds the PATCH
+	// handler over real HTTP, not just the service call.
+	rec := doGamesRequest(t, e, gamesRequest{
+		method: http.MethodPatch,
+		path:   "/api/games/sessions/" + created.ID,
+		body:   `{"elapsed_ms":1000}`,
+		token:  token,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	row := sessionRow(t, db, created.ID)
+	require.NotNil(t, row.PartyID)
+	assert.Equal(t, p.ID, *row.PartyID)
+}
+
+func TestPatchGameSession_InvalidTokenIs401(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+	created := createSessionHTTP(t, e, "", nil)
+
+	// As on create, OptionalGuest rejects a presented-but-invalid credential
+	// instead of silently downgrading the report to anonymous.
+	rec := doGamesRequest(t, e, gamesRequest{
+		method: http.MethodPatch,
+		path:   "/api/games/sessions/" + created.ID,
+		body:   `{"elapsed_ms":1000}`,
+		token:  "not-a-real-token",
+	})
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
 func TestPatchGameSession_BinderAndGuardFailures(t *testing.T) {
@@ -321,6 +394,52 @@ func TestPostLeaderboard_ValidatesDisplayName(t *testing.T) {
 		rec := doGamesRequest(t, e, gamesRequest{method: http.MethodPost, path: path, body: body})
 		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "%s: %s", name, rec.Body.String())
 	}
+}
+
+func TestPostLeaderboard_MalformedIDIs404(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+
+	// pathID guards this route the same way it guards the PATCH: a malformed
+	// id can never name a row, so it is a 404 before any query.
+	rec := doGamesRequest(t, e, gamesRequest{
+		method: http.MethodPost,
+		path:   "/api/games/sessions/not-a-uuid/leaderboard",
+		body:   `{"display_name":"Alice"}`,
+	})
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestGamesPayloads_AcceptBoundaryValues(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+
+	// The validator maxes are inclusive, so each limit value itself must pass:
+	// a puzzle_id of exactly 100 characters is accepted on create...
+	rec := doGamesRequest(t, e, gamesRequest{
+		method: http.MethodPost,
+		path:   "/api/games/sessions",
+		body:   `{"puzzle_id":"` + strings.Repeat("x", 100) + `","difficulty":"easy"}`,
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var created games.GameSessionResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+
+	// ...an elapsed_ms of exactly the 24-hour cap is accepted on update...
+	rec = doGamesRequest(t, e, gamesRequest{
+		method: http.MethodPatch,
+		path:   "/api/games/sessions/" + created.ID,
+		body:   `{"elapsed_ms":86400000,"completed":true}`,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// ...and a display name of exactly 50 characters is accepted on the post.
+	rec = doGamesRequest(t, e, gamesRequest{
+		method: http.MethodPost,
+		path:   "/api/games/sessions/" + created.ID + "/leaderboard",
+		body:   `{"display_name":"` + strings.Repeat("n", 50) + `"}`,
+	})
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
 func TestGetLeaderboard_RequiresPuzzleID(t *testing.T) {

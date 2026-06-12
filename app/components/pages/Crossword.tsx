@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import {
   MoreHorizontal,
   Pause,
@@ -29,6 +30,7 @@ import {
   gridFromEntries,
 } from "@/components/library/crossword/puzzle";
 import { getPuzzleBySlug } from "@/components/library/crossword/puzzles";
+import { loadSessionRecord } from "@/components/library/crossword/session";
 import {
   CrosswordSettings,
   loadSettings,
@@ -52,7 +54,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { useLeaderboard } from "@/hooks/queries/games";
+import { QueryKey, useLeaderboard } from "@/hooks/queries/games";
 import { usePartyRSVPs } from "@/hooks/queries/rsvp";
 import { formatDuration } from "@/libraries/format";
 import { readGuestToken } from "@/libraries/guest-api";
@@ -101,11 +103,16 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   const [initial] = useState(() => {
     const saved = loadProgress(puzzle.id);
     const grid = gridFromEntries(puzzle, saved?.entries);
+    const solved =
+      isPuzzleComplete(grid) && validateSolution(grid, puzzle.solution);
     return {
       grid,
       difficulty: saved?.difficulty ?? ("easy" as Difficulty),
       hasProgress: saved !== null,
-      solved: isPuzzleComplete(grid) && validateSolution(grid, puzzle.solution),
+      solved,
+      // A solve that predates session tracking (or whose session record was
+      // cleared) has no honest time, so it must not be reported or posted.
+      unreportable: solved && loadSessionRecord(puzzle.id) === null,
     };
   });
   const [settings, setSettings] = useState<CrosswordSettings>(loadSettings);
@@ -123,6 +130,9 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     puzzleId: puzzle.id,
     initiallyStarted: initial.hasProgress,
     initialDifficulty: initial.difficulty,
+    // An unreportable solve mounts finished so the clock never runs and the
+    // heartbeat never mints a fresh session for it.
+    initiallyFinished: initial.unreportable,
   });
   const {
     complete: completeSession,
@@ -151,12 +161,18 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     if (!solved || !sessionStarted) {
       return;
     }
+    // A solve that predates session tracking (or whose session record was
+    // cleared) has no honest time: completing it would mint a fresh server
+    // session with a near-zero elapsed, so it must not be reported.
+    if (initial.unreportable) {
+      return;
+    }
     completeSession();
     if (!completionCelebratedRef.current) {
       completionCelebratedRef.current = true;
       setCompletionOpen(true);
     }
-  }, [solved, sessionStarted, completeSession]);
+  }, [solved, sessionStarted, completeSession, initial.unreportable]);
 
   const updateSettings = useCallback((patch: Partial<CrosswordSettings>) => {
     setSettings((prev) => {
@@ -174,6 +190,14 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
 
   const handleSettingsOpenChange = (open: boolean) => {
     setSettingsOpen(open);
+    setUiPaused(open);
+  };
+
+  // The leaderboard modal covers the grid just like the settings dialog, so
+  // it pauses the clock the same way (setUiPaused is a no-op for a solve
+  // that is finished or not yet started).
+  const handleLeaderboardOpenChange = (open: boolean) => {
+    setLeaderboardOpen(open);
     setUiPaused(open);
   };
 
@@ -198,6 +222,17 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   // Warm the leaderboard while the completion dialog is up, so "View
   // leaderboard" opens populated.
   useLeaderboard(puzzle.id, { enabled: completionOpen });
+
+  // The warm-up fetch above runs before the guest posts, so after a
+  // successful post the cached leaderboard is missing their entry; refetch
+  // it so "View leaderboard" shows them.
+  const queryClient = useQueryClient();
+  const handlePost = async (displayName: string) => {
+    await session.postToLeaderboard(displayName);
+    await queryClient.invalidateQueries({
+      queryKey: [QueryKey.GameLeaderboard, puzzle.id],
+    });
+  };
 
   const clues = puzzle.clues[difficulty];
   const completedWords = getCompletedWords(grid);
@@ -257,7 +292,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
         </div>
         <div className="flex items-center gap-1">
           <Button
-            onClick={() => setLeaderboardOpen(true)}
+            onClick={() => handleLeaderboardOpenChange(true)}
             size="sm"
             type="button"
             variant="ghost"
@@ -329,7 +364,9 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
               : ""}
             ! See you on the dance floor.
           </p>
-          {!session.posted && (
+          {/* An unreportable solve has no honest time to post (see
+              initial.unreportable). */}
+          {!session.posted && !initial.unreportable && (
             <Button
               className="mt-2"
               onClick={() => setCompletionOpen(true)}
@@ -424,10 +461,10 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
         elapsedMs={session.elapsedMs}
         isSignedIn={isSignedIn}
         onOpenChange={setCompletionOpen}
-        onPost={session.postToLeaderboard}
+        onPost={handlePost}
         onViewLeaderboard={() => {
           setCompletionOpen(false);
-          setLeaderboardOpen(true);
+          handleLeaderboardOpenChange(true);
         }}
         open={completionOpen}
         posted={session.posted}
@@ -435,7 +472,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
         puzzleTitle={puzzle.title}
       />
       <LeaderboardDialog
-        onOpenChange={setLeaderboardOpen}
+        onOpenChange={handleLeaderboardOpenChange}
         open={leaderboardOpen}
         puzzleId={puzzle.id}
         puzzleTitle={puzzle.title}

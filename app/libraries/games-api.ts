@@ -22,6 +22,8 @@ import type {
 interface GameRequestOptions {
   method?: string;
   body?: unknown;
+  /** Forwarded through apiRequest to fetch; see flushGameSession. */
+  keepalive?: boolean;
 }
 
 /**
@@ -87,7 +89,8 @@ export function fetchLeaderboard(
 /**
  * Fire-and-forget progress report for the moments the page is going away
  * (visibilitychange to hidden, pagehide). A keepalive fetch survives the
- * navigation, where a normal fetch would be aborted; the result is
+ * navigation, where a normal fetch would be aborted; the flag rides through
+ * gameRequest, so the 401 clear-and-retry inherits it too. The result is
  * deliberately ignored because there is nobody left to react to it.
  */
 export function flushGameSession(
@@ -95,17 +98,9 @@ export function flushGameSession(
   payload: UpdateGameSessionPayload,
 ): void {
   try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    const token = readGuestToken();
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    void fetch(`/api/games/sessions/${id}`, {
+    void gameRequest(`/games/sessions/${id}`, {
       method: "PATCH",
-      headers,
-      body: JSON.stringify(payload),
+      body: payload,
       keepalive: true,
     }).catch(() => {
       // Telemetry only; the next regular report retries.

@@ -129,6 +129,34 @@ func TestCreateSession_AttachesPartyWhenAuthed(t *testing.T) {
 	assert.Equal(t, p.ID, *row.PartyID)
 }
 
+func TestCreateSession_StalePartyClaimDegradesToAnonymous(t *testing.T) {
+	svc, _, db := newServices(t)
+
+	// A guest token outlives its party row (the import recreates every party
+	// with fresh ids, an admin can delete one), so a claim naming a vanished
+	// party must create an anonymous session, not fail the party FK.
+	session, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
+		PuzzleID:   "wedding-mini-v1",
+		Difficulty: models.GameDifficultyEasy,
+	}, "00000000-0000-0000-0000-000000000000", "203.0.113.7")
+	require.NoError(t, err)
+	assert.Nil(t, sessionRow(t, db, session.ID).PartyID, "the stale claim degrades to an anonymous session")
+}
+
+func TestUpdateSession_StalePartyClaimLeavesSessionAnonymous(t *testing.T) {
+	svc, _, db := newServices(t)
+	session := startSessionT(t, svc, models.GameDifficultyMedium)
+
+	// The same stale-token degradation applies mid-solve: the report succeeds
+	// and the session simply stays unaffiliated.
+	updated, err := svc.UpdateSession(ctx(), session.ID, games.UpdateGameSessionPayload{
+		ElapsedMS: pointerutil.Int(1000),
+	}, "00000000-0000-0000-0000-000000000000")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1000, updated.ElapsedMS)
+	assert.Nil(t, sessionRow(t, db, session.ID).PartyID)
+}
+
 func TestUpdateSession_ElapsedAccumulatesAndDecreasesAreRejected(t *testing.T) {
 	svc, _, db := newServices(t)
 	session := startSessionT(t, svc, models.GameDifficultyMedium)
