@@ -1,12 +1,33 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatDuration,
   formatEventDate,
   formatEventWhen,
   formatGuestFirstNames,
   formatLongDate,
   formatTime,
 } from "./format";
+
+describe("formatDuration", () => {
+  it("renders minutes and zero-padded seconds", () => {
+    expect(formatDuration(0)).toBe("0:00");
+    expect(formatDuration(7_000)).toBe("0:07");
+    expect(formatDuration(65_000)).toBe("1:05");
+    expect(formatDuration(725_000)).toBe("12:05");
+  });
+
+  it("adds an hours segment past an hour", () => {
+    expect(formatDuration(3_600_000)).toBe("1:00:00");
+    expect(formatDuration(3_723_000)).toBe("1:02:03");
+  });
+
+  it("truncates sub-second remainders and clamps negatives", () => {
+    expect(formatDuration(999)).toBe("0:00");
+    expect(formatDuration(61_900)).toBe("1:01");
+    expect(formatDuration(-5)).toBe("0:00");
+  });
+});
 
 describe("formatTime", () => {
   it("converts stored 24-hour values to 12-hour display", () => {

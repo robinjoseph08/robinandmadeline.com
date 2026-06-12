@@ -1,0 +1,116 @@
+/**
+ * Crossword solve-session API helpers, layered on the bare `apiRequest`
+ * (api.ts) like guest-api.ts and admin-api.ts.
+ *
+ * Sessions need no authentication: a session's UUID id doubles as its bearer
+ * token, so holding the id is what authorizes writes to it. When a guest JWT
+ * is stored (the RSVP login), it is attached so the solve is affiliated with
+ * the party; a 401 means that stored token went stale, so it is cleared and
+ * the request retried anonymously rather than failing the solve.
+ */
+
+import { ApiError, apiRequest } from "@/libraries/api";
+import { clearGuestToken, readGuestToken } from "@/libraries/guest-api";
+import type {
+  CreateGameSessionPayload,
+  GameSessionResponse,
+  ListLeaderboardEntriesResponse,
+  PostLeaderboardPayload,
+  UpdateGameSessionPayload,
+} from "@/types/generated/games";
+
+interface GameRequestOptions {
+  method?: string;
+  body?: unknown;
+}
+
+/**
+ * Performs a games API request with the persisted guest token attached when
+ * present. On a 401 (stale guest token) the token is cleared and the request
+ * retried anonymously: the games endpoints themselves are open, so the only
+ * thing a bad token can break is the party affiliation.
+ */
+async function gameRequest<T>(
+  path: string,
+  options: GameRequestOptions = {},
+): Promise<T> {
+  const token = readGuestToken();
+  try {
+    return await apiRequest<T>(path, { ...options, token });
+  } catch (err) {
+    if (token && err instanceof ApiError && err.status === 401) {
+      clearGuestToken();
+      return apiRequest<T>(path, { ...options, token: null });
+    }
+    throw err;
+  }
+}
+
+/** Starts a solve session: POST /api/games/sessions. */
+export function createGameSession(
+  payload: CreateGameSessionPayload,
+): Promise<GameSessionResponse> {
+  return gameRequest("/games/sessions", { method: "POST", body: payload });
+}
+
+/** Reports solve progress: PATCH /api/games/sessions/:id. */
+export function updateGameSession(
+  id: string,
+  payload: UpdateGameSessionPayload,
+): Promise<GameSessionResponse> {
+  return gameRequest(`/games/sessions/${id}`, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+/** Publishes a completed solve: POST /api/games/sessions/:id/leaderboard. */
+export function postLeaderboardEntry(
+  id: string,
+  payload: PostLeaderboardPayload,
+): Promise<GameSessionResponse> {
+  return gameRequest(`/games/sessions/${id}/leaderboard`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+/** Reads a puzzle's leaderboard, fastest first: GET /api/games/leaderboard. */
+export function fetchLeaderboard(
+  puzzleId: string,
+): Promise<ListLeaderboardEntriesResponse> {
+  return apiRequest(
+    `/games/leaderboard?puzzle_id=${encodeURIComponent(puzzleId)}`,
+  );
+}
+
+/**
+ * Fire-and-forget progress report for the moments the page is going away
+ * (visibilitychange to hidden, pagehide). A keepalive fetch survives the
+ * navigation, where a normal fetch would be aborted; the result is
+ * deliberately ignored because there is nobody left to react to it.
+ */
+export function flushGameSession(
+  id: string,
+  payload: UpdateGameSessionPayload,
+): void {
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    const token = readGuestToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    void fetch(`/api/games/sessions/${id}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => {
+      // Telemetry only; the next regular report retries.
+    });
+  } catch {
+    // fetch itself can throw in exotic environments; never break solving.
+  }
+}

@@ -1,31 +1,51 @@
 /*
  * Grid navigation settings, vendored from github.com/crisscrosscx/solve
- * (app/components/library/Grid/navigationSettings.ts). Constants for now;
- * upstream plans to make them user preferences.
+ * (app/components/library/Grid/navigationSettings.ts). Upstream ships these
+ * as constants and plans to make them user preferences; this site has done
+ * that, so they are now a settings object the Grid takes as a prop (the
+ * gear-menu settings dialog edits them; see settings.ts for persistence).
+ * The defaults preserve the original constants' values, so the grid behaves
+ * exactly as before until a solver changes something.
  */
 
-/**
- * When true, typing the last letter of a word will NOT automatically
- * advance to the next word. The solver must press Tab to move on.
- */
-export const NAV_MANUAL_WORD_ADVANCE = true;
+/** How the cursor behaves while typing and moving around the grid. */
+export interface NavigationSettings {
+  /**
+   * What an arrow key pressed against the current typing direction does
+   * after flipping the direction: "stay" leaves the cursor on the same
+   * square, "move" also moves one square the way the arrow points.
+   */
+  arrowKeyAfterDirectionChange: "stay" | "move";
+  /**
+   * What the space bar does: "toggle" flips between across and down,
+   * "clear" erases the current square and moves to the next one in the word.
+   */
+  spacebarBehavior: "toggle" | "clear";
+  /**
+   * When true, backspace on an empty square at the first letter of a word
+   * moves into the previous word. When false it stops at the word boundary.
+   */
+  backspaceIntoPreviousWord: boolean;
+  /** When true, typing skips over already-filled squares within a word. */
+  skipFilledSquares: boolean;
+  /**
+   * When true, after filling the last blank square of a word that still has
+   * other blank squares, the cursor jumps back to the word's first blank.
+   */
+  jumpBackToFirstBlank: boolean;
+  /**
+   * When true, finishing a word advances to the next unfinished word's clue.
+   * When false the cursor stays put and the solver moves on with Tab. Only
+   * applies when the cursor is not jumping back to a blank in the same word.
+   */
+  jumpToNextClue: boolean;
+}
 
-/**
- * When true, typing will skip over already-filled squares.
- * Example: in "__LL_", typing "H" then "E" at position 0 jumps to position 4,
- * skipping the filled "L"s.
- */
-export const NAV_SKIP_FILLED_SQUARES = true;
-
-/**
- * When true, after filling the last blank square in a word that still has
- * other blank squares, the cursor jumps back to the first blank in the word.
- */
-export const NAV_JUMP_TO_FIRST_BLANK_ON_COMPLETE = true;
-
-/**
- * When true, backspace can move into the previous word.
- * When false, backspace at the first letter of a word only clears that letter
- * (if filled) but won't move the selection backward into the previous word.
- */
-export const NAV_BACKSPACE_ACROSS_WORDS = true;
+export const DEFAULT_NAVIGATION_SETTINGS: NavigationSettings = {
+  arrowKeyAfterDirectionChange: "stay",
+  spacebarBehavior: "toggle",
+  backspaceIntoPreviousWord: true,
+  skipFilledSquares: true,
+  jumpBackToFirstBlank: true,
+  jumpToNextClue: false,
+};

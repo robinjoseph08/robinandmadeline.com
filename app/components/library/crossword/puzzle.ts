@@ -11,6 +11,18 @@ export const DIFFICULTIES = ["easy", "medium", "hard"] as const;
 
 export type Difficulty = (typeof DIFFICULTIES)[number];
 
+/** Guest-facing labels, shared by the dialogs, menus, and leaderboard. */
+export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
+  easy: "Easy",
+  medium: "Medium",
+  hard: "Hard",
+};
+
+/** The easier of two difficulties, mirroring the server's easiest-seen rule. */
+export function easierDifficulty(a: Difficulty, b: Difficulty): Difficulty {
+  return DIFFICULTIES.indexOf(a) <= DIFFICULTIES.indexOf(b) ? a : b;
+}
+
 /** Clue text keyed by clue number rendered as a string (e.g. { "1": "..." }). */
 export interface ClueSet {
   across: Record<string, string>;
