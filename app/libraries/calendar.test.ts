@@ -52,7 +52,7 @@ describe("googleCalendarUrl", () => {
     expect(url.searchParams.get("location")).toBe("The Grand Hall");
     // The details always end with a link back to the schedule page.
     expect(url.searchParams.get("details")).toBe(
-      "Dinner and dancing.\n\nhttps://robinandmadeline.com/schedule",
+      "Dinner and dancing.\n\nhttps://www.robinandmadeline.com/schedule",
     );
   });
 
@@ -60,7 +60,7 @@ describe("googleCalendarUrl", () => {
     const url = new URL(googleCalendarUrl(makeEvent({ start_time: "17:00" })));
     expect(url.searchParams.get("location")).toBeNull();
     expect(url.searchParams.get("details")).toBe(
-      "https://robinandmadeline.com/schedule",
+      "https://www.robinandmadeline.com/schedule",
     );
   });
 
@@ -141,7 +141,7 @@ describe("icsContent", () => {
     expect(ics).toContain("LOCATION:The Grand Hall");
     // The description always ends with a link back to the schedule page.
     expect(ics).toContain(
-      "DESCRIPTION:Dinner and dancing.\\n\\nhttps://robinandmadeline.com/schedule",
+      "DESCRIPTION:Dinner and dancing.\\n\\nhttps://www.robinandmadeline.com/schedule",
     );
     // The referenced TZID is defined in the file so strict parsers resolve it.
     expect(ics).toContain("BEGIN:VTIMEZONE");
@@ -169,7 +169,7 @@ describe("icsContent", () => {
     const ics = icsContent(makeEvent({ start_time: "17:00" }), now);
     expect(ics).not.toContain("LOCATION:");
     expect(ics).toContain(
-      "DESCRIPTION:https://robinandmadeline.com/schedule\r\n",
+      "DESCRIPTION:https://www.robinandmadeline.com/schedule\r\n",
     );
   });
 
@@ -183,7 +183,7 @@ describe("icsContent", () => {
     );
     expect(ics).toContain("SUMMARY:Dinner\\; Dancing\\, Fun\\\\Stuff");
     expect(ics).toContain(
-      "DESCRIPTION:Line one\\nLine two\\n\\nhttps://robinandmadeline.com/schedule",
+      "DESCRIPTION:Line one\\nLine two\\n\\nhttps://www.robinandmadeline.com/schedule",
     );
   });
 
@@ -195,7 +195,7 @@ describe("icsContent", () => {
       now,
     );
     expect(ics).toContain(
-      "DESCRIPTION:CRLF\\nthen\\nlone CR\\n\\nhttps://robinandmadeline.com/schedule",
+      "DESCRIPTION:CRLF\\nthen\\nlone CR\\n\\nhttps://www.robinandmadeline.com/schedule",
     );
   });
 });

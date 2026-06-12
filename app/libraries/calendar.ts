@@ -23,7 +23,7 @@ const MINUTES_PER_DAY = 24 * 60;
  * Appended to every generated calendar entry's description so guests can get
  * back to the site from their calendar.
  */
-const SCHEDULE_URL = "https://robinandmadeline.com/schedule";
+const SCHEDULE_URL = "https://www.robinandmadeline.com/schedule";
 
 /**
  * The calendar-entry description: the event's own text (when it has any)
