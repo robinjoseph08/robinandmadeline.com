@@ -32,8 +32,12 @@ export function useFilterParams<T extends object>(
   // committed (react-router #9991), so a handler holding a stale closure
   // (e.g. a filter-sheet toggle racing the search box's debounced commit)
   // would write against outdated params and silently erase the other
-  // writer's value. The effect refreshes the ref on every committed render,
-  // so even a stale handler starts from the newest committed params.
+  // writer's value. Each writer also writes its result back into the ref
+  // synchronously, so two writes that land before React commits a render in
+  // between (a debounce timer firing in the same task as a click handler,
+  // which happens under CPU load) compose instead of the second erasing the
+  // first. The effect re-syncs the ref on every committed render so external
+  // navigations (back/forward, a Link) are picked up too.
   const searchParamsRef = useRef(searchParams);
   useEffect(() => {
     searchParamsRef.current = searchParams;
@@ -64,6 +68,7 @@ export function useFilterParams<T extends object>(
       } else {
         next.set(key as string, serialized);
       }
+      searchParamsRef.current = next;
       setSearchParams(next, { replace: true });
     },
     [setSearchParams],
@@ -79,6 +84,7 @@ export function useFilterParams<T extends object>(
       for (const key of keys) {
         if (!keep.includes(key)) next.delete(key as string);
       }
+      searchParamsRef.current = next;
       setSearchParams(next, { replace: true });
     },
     [setSearchParams, keys],

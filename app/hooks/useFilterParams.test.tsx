@@ -56,4 +56,27 @@ describe("useFilterParams stale-closure safety", () => {
     expect(search).toHaveTextContent("search=alice");
     expect(search).toHaveTextContent("is_placeholder=true");
   });
+
+  it("two writes in the same tick compose; the second preserves the first", () => {
+    render(
+      <MemoryRouter initialEntries={["/admin/guests"]}>
+        <Harness />
+      </MemoryRouter>,
+    );
+    const setFilter = firstRenderSetFilter!;
+
+    // Both writes land before React re-renders (a debounce timer firing in the
+    // same task as a filter-control click, e.g. under CPU load). The second
+    // write must build on the first or it silently erases it: this is the
+    // guests-page race where the filter sheet's write reverted the search
+    // box's debounced commit and the page stuck on the stale search.
+    act(() => {
+      setFilter("search", "alice");
+      setFilter("is_placeholder", true);
+    });
+
+    const search = screen.getByTestId("location-search");
+    expect(search).toHaveTextContent("search=alice");
+    expect(search).toHaveTextContent("is_placeholder=true");
+  });
 });

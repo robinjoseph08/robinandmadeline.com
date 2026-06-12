@@ -1,6 +1,7 @@
 import { keepPreviousData } from "@tanstack/react-query";
 import { Loader2, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigationType } from "react-router-dom";
 import { toast } from "sonner";
 
 import { GuestsGrid } from "@/components/pages/admin/grid/GuestsGrid";
@@ -81,6 +82,7 @@ export default function AdminGuests() {
   // view stays shareable without firing a request on every keystroke.
   const [searchInput, setSearchInput] = useState(filters.search ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
+  const navigationType = useNavigationType();
   useEffect(() => {
     const handle = setTimeout(() => {
       const next = searchInput.trim() || undefined;
@@ -91,12 +93,19 @@ export default function AdminGuests() {
   // Resync the box when `search` changes in the URL from outside it (back/forward
   // navigation, or a shared link loaded into the mounted page). Guarded on focus
   // so it never clobbers what the user is actively typing; that direction is the
-  // debounced effect above.
+  // debounced effect above. Also restricted to non-REPLACE navigations: this
+  // page's own writes (the debounce and the filter sheet) are all replaces, and
+  // under a heavy render react-router can commit one hundreds of milliseconds
+  // late, by which time the box may hold newer typing; copying the page's own
+  // stale write back into the box would destroy that input, and the debounce's
+  // input == URL guard would then never write it. External navigations are
+  // POPs (back/forward) or PUSHes (a link), so they still resync.
   useEffect(() => {
+    if (navigationType === "REPLACE") return;
     if (searchRef.current !== document.activeElement) {
       setSearchInput(filters.search ?? "");
     }
-  }, [filters.search]);
+  }, [filters.search, navigationType]);
 
   const activeFilterCount = FILTER_KEYS.filter(
     (key) => filters[key] !== undefined,
