@@ -61,9 +61,9 @@ func loadParties(t *testing.T, db *bun.DB) []*models.Party {
 func TestImport_CreatesPartiesAndGuestsInOneTransaction(t *testing.T) {
 	db := newDB(t)
 	plan := parseT(t,
-		`Alice,Adams,Alice Adams,Robin,Family,Immediate,"Sibling, Bridal Party",Adams,1,555-0100,alice@example.com,123 Main St,Springfield,No,Yes,Ms.,KALEL,,`,
-		`Bob,Adams,Bob Adams,Robin,Family,Immediate,In-Law,Adams,1,,,,,Yes,No,Mr.,KALEL,,`,
-		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,1,,,,,No,Yes,,,,`,
+		`Alice,Adams,Alice Adams,Robin,Family,Immediate,"Sibling, Bridal Party",Adams,1,555-0100,alice@example.com,123 Main St,Apt 4,Springfield,IL,62704,United States,No,Yes,KALEL`,
+		`Bob,Adams,Bob Adams,Robin,Family,Immediate,In-Law,Adams,1,,,,,,,,,Yes,No,KALEL`,
+		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,1,,,,,,,,,No,Yes,`,
 	)
 
 	summary, err := guestimport.Import(ctx(), db, plan, guestimport.Options{})
@@ -82,6 +82,12 @@ func TestImport_CreatesPartiesAndGuestsInOneTransaction(t *testing.T) {
 	require.Equal(t, models.InvitationPhysical, adams.InvitationType)
 	require.NotNil(t, adams.RSVPCode)
 	require.Equal(t, "KALEL", *adams.RSVPCode, "an explicit code is preserved")
+	require.Equal(t, pointerutil.String("123 Main St"), adams.AddressLine1)
+	require.Equal(t, pointerutil.String("Apt 4"), adams.AddressLine2)
+	require.Equal(t, pointerutil.String("Springfield"), adams.City)
+	require.Equal(t, pointerutil.String("IL"), adams.StateOrProvince)
+	require.Equal(t, pointerutil.String("62704"), adams.PostalCode)
+	require.Equal(t, pointerutil.String("United States"), adams.Country)
 	require.False(t, adams.InfoCollectionRequested, "imported parties start not-requested (ADR 0005)")
 	require.False(t, adams.InfoCollectionConfirmed)
 	require.NotEmpty(t, adams.InfoToken)
@@ -107,18 +113,18 @@ func TestImport_CreatesPartiesAndGuestsInOneTransaction(t *testing.T) {
 	require.Len(t, brown.Guests, 1)
 	require.True(t, brown.Guests[0].IsPrimary, "exactly one primary per party")
 
-	// The sheet has no state/postal/country columns, so even a party imported
-	// with an address line and city lacks required fields and its status
-	// derives incomplete (ADR 0005); both imported parties read incomplete.
-	require.Equal(t, models.StatusIncomplete, adams.InfoCollectionStatus())
+	// Status derives from the imported data (ADR 0005): Adams' primary row
+	// carried an email and a full mailing address, so it imports complete;
+	// Brown has neither, so it reads incomplete.
+	require.Equal(t, models.StatusComplete, adams.InfoCollectionStatus())
 	require.Equal(t, models.StatusIncomplete, brown.InfoCollectionStatus())
 }
 
 func TestImport_PersistsPlaceholdersAfterTheirHostGuest(t *testing.T) {
 	db := newDB(t)
 	plan := parseT(t,
-		`Alice,Adams,Alice Adams,Robin,Family,Immediate,Sibling,Adams,2,,,,,No,Yes,,,,`,
-		`Bob,Adams,Bob Adams,Robin,Family,Immediate,In-Law,Adams,1,,,,,No,No,,,,`,
+		`Alice,Adams,Alice Adams,Robin,Family,Immediate,Sibling,Adams,2,,,,,,,,,No,Yes,`,
+		`Bob,Adams,Bob Adams,Robin,Family,Immediate,In-Law,Adams,1,,,,,,,,,No,No,`,
 	)
 
 	summary, err := guestimport.Import(ctx(), db, plan, guestimport.Options{})
@@ -155,7 +161,7 @@ func TestImport_FailsCleanlyWhenPartiesAlreadyExist(t *testing.T) {
 	db := newDB(t)
 	seedParty(t, db, "Existing")
 	plan := parseT(t,
-		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,1,,,,,No,Yes,,,,`,
+		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,1,,,,,,,,,No,Yes,`,
 	)
 
 	_, err := guestimport.Import(ctx(), db, plan, guestimport.Options{})
@@ -172,7 +178,7 @@ func TestImport_TruncateWipesExistingDataFirst(t *testing.T) {
 	db := newDB(t)
 	seedParty(t, db, "Stale")
 	plan := parseT(t,
-		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,1,,,,,No,Yes,,,,`,
+		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,1,,,,,,,,,No,Yes,`,
 	)
 
 	summary, err := guestimport.Import(ctx(), db, plan, guestimport.Options{Truncate: true})
@@ -187,7 +193,7 @@ func TestImport_TruncateWipesExistingDataFirst(t *testing.T) {
 func TestImport_TruncateRefusesAnEmptyPlan(t *testing.T) {
 	db := newDB(t)
 	seedParty(t, db, "Existing")
-	plan := parseT(t, `,,,,,,,,,,,,,,,,,,`)
+	plan := parseT(t, `,,,,,,,,,,,,,,,,,,,`)
 
 	_, err := guestimport.Import(ctx(), db, plan, guestimport.Options{Truncate: true})
 	require.Error(t, err)
@@ -224,7 +230,7 @@ func TestImport_RollsBackEverythingWhenAnInsertFails(t *testing.T) {
 
 func TestImport_EmptyPlanImportsNothing(t *testing.T) {
 	db := newDB(t)
-	plan := parseT(t, `,,,,,,,,,,,,,,,,,,`)
+	plan := parseT(t, `,,,,,,,,,,,,,,,,,,,`)
 
 	summary, err := guestimport.Import(ctx(), db, plan, guestimport.Options{})
 	require.NoError(t, err)
@@ -252,7 +258,7 @@ func TestImport_BackfillsPublicEventRSVPs(t *testing.T) {
 	require.NoError(t, err)
 
 	plan := parseT(t,
-		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,2,,,,,No,Yes,,,,`,
+		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,2,,,,,,,,,No,Yes,`,
 	)
 	summary, err := guestimport.Import(ctx(), db, plan, guestimport.Options{})
 	require.NoError(t, err)

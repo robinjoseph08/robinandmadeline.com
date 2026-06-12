@@ -8,8 +8,12 @@
 // the party's side, Phylum its relation, Class its circles, Order the guest's
 // tags, and "Family (Party)" the party grouping key. Size is per-row: a guest
 // with Size N brings N-1 unnamed plus-ones, imported as placeholder guests
-// (blank means 1, just the named guest). The Prefix column and the trailing
-// junk "Column N" columns are ignored.
+// (blank means 1, just the named guest). Party-level details (the mailing
+// address columns and Code) are read from each party's first row, its primary
+// guest; later rows leave them blank or repeat them identically. Named rows
+// whose party cell is still blank (a draft of the sheet) are filtered out and
+// counted rather than imported. Any column not named in requiredColumns is
+// ignored.
 package guestimport
 
 import (
@@ -29,8 +33,8 @@ import (
 // every party with its guests, in sheet order, plus the non-fatal warnings the
 // operator should review. A Plan's parties have no IDs, info tokens, or
 // timestamps yet; Import fills those. A nil RSVPCode means "generate one"
-// (the sheet's blank or literal RANDOM); a non-nil one is the couple's
-// personalized code, preserved as-is.
+// (the primary row's blank or literal RANDOM); a non-nil one is the couple's
+// personalized code, uppercased to match the API's rsvp_code normalization.
 type Plan struct {
 	Parties []*PartyPlan
 
@@ -38,10 +42,17 @@ type Plan struct {
 	// fully blank spacer rows), which are skipped rather than imported.
 	SkippedBlankRows int
 
+	// SkippedNoPartyRows counts named rows whose "Family (Party)" cell is
+	// blank. The final sheet assigns every named row a party, but drafts leave
+	// some unassigned; those rows are filtered out before any validation so a
+	// draft export can still be test-imported, and counted so the omission
+	// stays visible.
+	SkippedNoPartyRows int
+
 	// Warnings are non-fatal data observations (blank Child?/Drinking? cells,
-	// conflicting addresses) for the operator to fix in the admin afterward.
-	// Anything that would import wrong data is a Parse error instead, never a
-	// warning.
+	// address values off the primary row, codes on skipped no-party rows) for
+	// the operator to fix in the admin or the sheet afterward. Anything that
+	// would import wrong data is a Parse error instead, never a warning.
 	Warnings []string
 }
 
@@ -52,8 +63,8 @@ type PartyPlan struct {
 	Guests []*models.Guest
 }
 
-// Sheet column headers the import reads. The export has more columns (Prefix,
-// "Column 1".."Column 11"); anything not listed here is ignored.
+// Sheet column headers the import reads. Any other column in the export is
+// ignored.
 const (
 	colFirst       = "First"
 	colLast        = "Last"
@@ -66,8 +77,12 @@ const (
 	colSize        = "Size"
 	colPhone       = "Phone"
 	colEmail       = "Email"
-	colAddress     = "Address"
+	colAddress1    = "Address 1"
+	colAddress2    = "Address 2"
 	colCity        = "City"
+	colState       = "State"
+	colZIP         = "ZIP"
+	colCountry     = "Country"
 	colChild       = "Child?"
 	colDrinking    = "Drinking?"
 	colCode        = "Code"
@@ -78,8 +93,8 @@ const (
 // wrong file (or a re-arranged sheet) and fails immediately.
 var requiredColumns = []string{
 	colFirst, colLast, colFull, colKingdom, colPhylum, colClass, colOrder,
-	colParty, colSize, colPhone, colEmail, colAddress, colCity, colChild,
-	colDrinking, colCode,
+	colParty, colSize, colPhone, colEmail, colAddress1, colAddress2, colCity,
+	colState, colZIP, colCountry, colChild, colDrinking, colCode,
 }
 
 // sideByKingdom maps the sheet's Kingdom values to the party side enum.
@@ -119,10 +134,35 @@ type parsedRow struct {
 	phone      *string
 	isChild    bool
 	isDrinking bool
-	code       string // "" means generate at import time
-	address    string
-	city       string
+	code       string // uppercased explicit code; "" (a blank or RANDOM cell) means none
+	address    addressCells
 	size       int // this guest plus their unnamed plus-ones; always >= 1
+}
+
+// addressCells carries one row's mailing-address cells. The party's address
+// comes from its primary row's cells alone; non-primary rows are only compared
+// against them to warn about stray values.
+type addressCells struct {
+	line1, line2, city, state, postalCode, country string
+}
+
+// addressCell pairs one cell value with its sheet column name, for uniform
+// compare-and-report loops over a row's address cells.
+type addressCell struct {
+	col, value string
+}
+
+// cells returns the row's address cells with their column names, in sheet
+// order.
+func (a addressCells) cells() []addressCell {
+	return []addressCell{
+		{colAddress1, a.line1},
+		{colAddress2, a.line2},
+		{colCity, a.city},
+		{colState, a.state},
+		{colZIP, a.postalCode},
+		{colCountry, a.country},
+	}
 }
 
 // parser accumulates rows, warnings, and problems across a Parse run.
@@ -133,22 +173,29 @@ type parser struct {
 	warnings []string
 	problems []string
 	skipped  int
+	noParty  int
+
+	// noPartyCodes names the skipped no-party rows that carry an explicit
+	// code: a credential that would otherwise vanish without a trace, so the
+	// names go into an aggregate warning.
+	noPartyCodes []string
 
 	blankChild    int
 	blankDrinking int
 }
 
 // Parse reads the guest-list CSV and returns the import Plan: guests grouped
-// into parties by the "Family (Party)" column, in sheet order, with all
-// party-level fields derived from the rows. Fully blank rows (no name) are
-// skipped and counted. Any data problem that would import wrong records (a
-// named row without a party, an unknown Kingdom/Phylum/Class value, codes
+// into parties by the "Family (Party)" column, in sheet order, with the
+// party-level fields read from each party's first row, its primary guest.
+// Fully blank rows (no name) and named rows with no party yet are skipped and
+// counted separately. Any data problem that would import wrong records (an
+// unknown Kingdom/Phylum/Class value, a code off the primary row, codes
 // conflicting within or duplicated across parties) fails the whole parse,
 // reporting every problem at once.
 func Parse(r io.Reader) (*Plan, error) {
 	cr := csv.NewReader(r)
-	// The export's trailing junk columns are not always consistent; index by
-	// header name and tolerate ragged rows instead of enforcing a fixed width.
+	// The export's column set has shifted before; index by header name and
+	// tolerate ragged rows instead of enforcing a fixed width.
 	cr.FieldsPerRecord = -1
 
 	header, err := cr.Read()
@@ -157,6 +204,11 @@ func Parse(r io.Reader) (*Plan, error) {
 	}
 	if err != nil {
 		return nil, errors.Wrap(err, "read csv")
+	}
+	// An Excel round-trip prepends a UTF-8 BOM, which TrimSpace does not
+	// remove and which would misreport the first column as missing.
+	if len(header) > 0 {
+		header[0] = strings.TrimPrefix(header[0], "\ufeff")
 	}
 
 	idx, err := headerIndex(header)
@@ -188,31 +240,47 @@ func Parse(r io.Reader) (*Plan, error) {
 }
 
 // headerIndex maps each required column name to its position in the header
-// row, failing with the full list of missing columns when the file does not
-// look like the guest-list export.
+// row, failing when the file does not look like the guest-list export. Missing
+// columns and duplicated ones (a stale copy left in the sheet would silently
+// bind the mapping to whichever copy comes last) are all reported in one
+// error, so the operator fixes the sheet once.
 func headerIndex(header []string) (map[string]int, error) {
 	idx := make(map[string]int, len(header))
+	seen := make(map[string]int, len(header))
 	for i, name := range header {
-		idx[strings.TrimSpace(name)] = i
+		n := strings.TrimSpace(name)
+		idx[n] = i
+		seen[n]++
 	}
-	var missing []string
+	var missing, duplicated []string
 	for _, name := range requiredColumns {
-		if _, ok := idx[name]; !ok {
+		switch {
+		case seen[name] == 0:
 			missing = append(missing, name)
+		case seen[name] > 1:
+			duplicated = append(duplicated, name)
 		}
 	}
+	var parts []string
 	if len(missing) > 0 {
-		return nil, errors.Errorf("csv is missing expected column(s): %s", strings.Join(missing, ", "))
+		parts = append(parts, "is missing expected column(s): "+strings.Join(missing, ", "))
+	}
+	if len(duplicated) > 0 {
+		parts = append(parts, "has duplicate column(s): "+strings.Join(duplicated, ", "))
+	}
+	if len(parts) > 0 {
+		return nil, errors.Errorf("csv %s", strings.Join(parts, "; "))
 	}
 	return idx, nil
 }
 
 // parseRow maps one data row into a parsedRow, recording problems and
-// warnings. Rows with no name at all are blank spacers and are skipped.
+// warnings. Rows with no name at all are blank spacers and are skipped; named
+// rows with no party yet are filtered out (before any validation) and counted.
 func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 	get := func(col string) string {
-		i := idx[col]
-		if i >= len(record) {
+		i, ok := idx[col]
+		if !ok || i >= len(record) {
 			return ""
 		}
 		return strings.TrimSpace(record[i])
@@ -228,6 +296,19 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 	if name == "" {
 		name = strings.Join(strings.Fields(first+" "+last), " ")
 	}
+
+	// The final sheet assigns every named row a party, but drafts leave some
+	// blank while grouping is still in progress. Those rows are not imported,
+	// so none of their other cells are validated or tallied either, with one
+	// exception: an explicit code on a skipped row is a credential that would
+	// vanish silently, so the row's name is collected into a warning.
+	if get(colParty) == "" {
+		p.noParty++
+		if code := get(colCode); code != "" && !strings.EqualFold(code, rsvpCodeRandom) {
+			p.noPartyCodes = append(p.noPartyCodes, name)
+		}
+		return
+	}
 	problem := func(format string, args ...any) {
 		p.problems = append(p.problems, fmt.Sprintf("line %d (%s): ", line, name)+fmt.Sprintf(format, args...))
 	}
@@ -238,9 +319,15 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 		email:     optional(get(colEmail)),
 		phone:     optional(get(colPhone)),
 		tags:      splitMulti(get(colOrder)),
-		address:   get(colAddress),
-		city:      get(colCity),
-		size:      1,
+		address: addressCells{
+			line1:      get(colAddress1),
+			line2:      get(colAddress2),
+			city:       get(colCity),
+			state:      get(colState),
+			postalCode: get(colZIP),
+			country:    get(colCountry),
+		},
+		size: 1,
 	}
 
 	// Size is per-row: this guest plus their unnamed plus-ones, expanded into
@@ -253,13 +340,6 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 		} else {
 			row.size = n
 		}
-	}
-
-	// The user guarantees every named row of the final sheet has a party; a
-	// missing one here means the wrong file or an unfinished sheet, so it is a
-	// hard error rather than a guessed grouping.
-	if row.partyName == "" {
-		problem("missing %s value", colParty)
 	}
 
 	var ok bool
@@ -296,8 +376,11 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 	}
 
 	// The literal RANDOM marker means the same as a blank code: generate one.
+	// Explicit codes are uppercased to match the API's rsvp_code normalization
+	// (mod:"ucase"), so a lowercase sheet entry cannot import an unreachable
+	// code or trip a case-only conflict.
 	if code := get(colCode); !strings.EqualFold(code, rsvpCodeRandom) {
-		row.code = code
+		row.code = strings.ToUpper(code)
 	}
 
 	p.rows = append(p.rows, row)
@@ -305,27 +388,28 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 
 // buildPlan groups the parsed rows into parties (in first-appearance order)
 // and derives each party's fields from its rows, recording cross-row problems
-// (conflicting sides, relations, or codes; codes shared across parties) and
-// warnings (conflicting addresses).
+// (conflicting sides, relations, or codes; codes off the primary row or shared
+// across parties) and warnings (address values off the primary row).
 func (p *parser) buildPlan() *Plan {
 	groups := make(map[string][]parsedRow)
 	var order []string
 	for _, row := range p.rows {
-		if row.partyName == "" {
-			continue // already a problem; nothing to group
-		}
 		if _, seen := groups[row.partyName]; !seen {
 			order = append(order, row.partyName)
 		}
 		groups[row.partyName] = append(groups[row.partyName], row)
 	}
 
-	plan := &Plan{SkippedBlankRows: p.skipped}
+	plan := &Plan{SkippedBlankRows: p.skipped, SkippedNoPartyRows: p.noParty}
 	codeOwners := make(map[string]string) // explicit code -> party that claimed it
 	for _, name := range order {
 		plan.Parties = append(plan.Parties, p.buildParty(name, groups[name], codeOwners))
 	}
 
+	if len(p.noPartyCodes) > 0 {
+		p.warnings = append(p.warnings, fmt.Sprintf("%d skipped no-party row(s) carry a %s value that was not imported: %s",
+			len(p.noPartyCodes), colCode, strings.Join(p.noPartyCodes, ", ")))
+	}
 	if p.blankChild > 0 {
 		p.warnings = append(p.warnings, fmt.Sprintf("%d guest(s) have a blank %s value; imported as not a child", p.blankChild, colChild))
 	}
@@ -336,20 +420,34 @@ func (p *parser) buildPlan() *Plan {
 	return plan
 }
 
-// buildParty derives one party and its guests from the party's rows. The
-// party-level fields must agree across rows (side, relation, code); circles
-// are the union across rows; the address is the first non-blank with a
-// warning when rows disagree; the first guest is the primary. A row with
-// Size N expands into the named guest followed immediately by its N-1
-// placeholder guests, so guest order (and the import's in-order IDs)
-// keeps each placeholder next to its host.
+// buildParty derives one party and its guests from the party's rows, in sheet
+// order; the first row is the primary guest. The party-level details (the
+// mailing address and the RSVP code) are read from the primary row alone:
+// later rows normally leave them blank (a RANDOM code cell counts as blank),
+// and a repeat identical to the primary's value is tolerated. A stray address
+// value (differing, or present
+// when the primary's is blank) warns and is ignored; a stray code is a
+// problem, because a code is a guest-facing credential and importing the wrong
+// one (or generating one while a personalized code sits ignored on a later
+// row) is wrong data. Side and relation must agree across rows; circles are
+// the union across rows. A row with Size N expands into the named guest
+// followed immediately by its N-1 placeholder guests, so guest order (and the
+// import's in-order IDs) keeps each placeholder next to its host.
 func (p *parser) buildParty(name string, rows []parsedRow, codeOwners map[string]string) *PartyPlan {
+	primary := rows[0]
 	party := &models.Party{
 		Name:           name,
-		Side:           rows[0].side,
-		Relation:       rows[0].relation,
+		Side:           primary.side,
+		Relation:       primary.relation,
 		Circle:         []string{},
 		InvitationType: models.InvitationPhysical,
+
+		AddressLine1:    optional(primary.address.line1),
+		AddressLine2:    optional(primary.address.line2),
+		City:            optional(primary.address.city),
+		StateOrProvince: optional(primary.address.state),
+		PostalCode:      optional(primary.address.postalCode),
+		Country:         optional(primary.address.country),
 	}
 	problem := func(format string, args ...any) {
 		p.problems = append(p.problems, fmt.Sprintf("party %q: ", name)+fmt.Sprintf(format, args...))
@@ -378,7 +476,6 @@ func (p *parser) buildParty(name string, rows []parsedRow, codeOwners map[string
 	}
 
 	seenCircle := make(map[string]bool)
-	var codes []string
 	guests := make([]*models.Guest, 0, len(rows))
 	for i, row := range rows {
 		for _, c := range row.circles {
@@ -387,24 +484,6 @@ func (p *parser) buildParty(name string, rows []parsedRow, codeOwners map[string
 				party.Circle = append(party.Circle, c)
 			}
 		}
-		if row.code != "" && !slices.Contains(codes, row.code) {
-			codes = append(codes, row.code)
-		}
-		if row.address != "" {
-			if party.AddressLine1 == nil {
-				party.AddressLine1 = pointerutil.String(row.address)
-			} else if *party.AddressLine1 != row.address {
-				warn("conflicting %s values; keeping %q", colAddress, *party.AddressLine1)
-			}
-		}
-		if row.city != "" {
-			if party.City == nil {
-				party.City = pointerutil.String(row.city)
-			} else if *party.City != row.city {
-				warn("conflicting %s values; keeping %q", colCity, *party.City)
-			}
-		}
-
 		guests = append(guests, &models.Guest{
 			FullName:   row.fullName,
 			Email:      row.email,
@@ -417,17 +496,42 @@ func (p *parser) buildParty(name string, rows []parsedRow, codeOwners map[string
 		guests = append(guests, placeholderGuests(row)...)
 	}
 
-	switch len(codes) {
-	case 0: // all blank/RANDOM: leave nil for Import to generate
-	case 1:
-		if owner, taken := codeOwners[codes[0]]; taken {
-			problem("%s value %q is already used by party %q", colCode, codes[0], owner)
-		} else {
-			codeOwners[codes[0]] = name
-			party.RSVPCode = pointerutil.String(codes[0])
+	// Sweep the non-primary rows for stray party-level values the primary row
+	// does not carry.
+	primaryCells := primary.address.cells()
+	var strayCodes []string
+	for _, row := range rows[1:] {
+		for i, c := range row.address.cells() {
+			if c.value == "" || c.value == primaryCells[i].value {
+				continue
+			}
+			if primaryCells[i].value == "" {
+				warn("%s value %q on a non-primary row was ignored; party address fields are read from the first row", c.col, c.value)
+			} else {
+				warn("conflicting %s values; keeping the primary row's %q", c.col, primaryCells[i].value)
+			}
 		}
+		if row.code != "" && row.code != primary.code && !slices.Contains(strayCodes, row.code) {
+			strayCodes = append(strayCodes, row.code)
+		}
+	}
+
+	switch {
+	case primary.code == "":
+		// Leave RSVPCode nil for Import to generate, unless a personalized
+		// code is stranded on a later row, which would be dropped silently.
+		for _, code := range strayCodes {
+			problem("%s value %q must be on the party's first row (the primary guest)", colCode, code)
+		}
+	case len(strayCodes) > 0:
+		problem("conflicting %s values across its rows: %s", colCode, strings.Join(append([]string{primary.code}, strayCodes...), ", "))
 	default:
-		problem("conflicting %s values across its rows: %s", colCode, strings.Join(codes, ", "))
+		if owner, taken := codeOwners[primary.code]; taken {
+			problem("%s value %q is already used by party %q", colCode, primary.code, owner)
+		} else {
+			codeOwners[primary.code] = name
+			party.RSVPCode = pointerutil.String(primary.code)
+		}
 	}
 
 	return &PartyPlan{Party: party, Guests: guests}
@@ -487,7 +591,7 @@ func parseYesNo(s string) (value, ok bool) {
 }
 
 // optional returns nil for a blank cell and a pointer otherwise, so empty
-// contact fields persist as SQL NULL.
+// fields persist as SQL NULL.
 func optional(s string) *string {
 	if s == "" {
 		return nil
