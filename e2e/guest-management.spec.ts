@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { loginAsAdmin } from "./auth";
+import { runStamp } from "./stamp";
 
 // Issue #4's critical E2E flow: admin login, create a party (born from its first
 // guest), add guests including a placeholder, edit a guest, delete a guest,
@@ -10,7 +11,7 @@ import { loginAsAdmin } from "./auth";
 // scoped to those names, so the spec is robust against data left by earlier runs
 // in the shared e2e database (no reset endpoint needed).
 
-const stamp = Date.now().toString(36);
+const stamp = runStamp();
 const partyName = `E2E Party ${stamp}`;
 const alice = `Alice ${stamp}`;
 const bob = `Bob ${stamp}`;

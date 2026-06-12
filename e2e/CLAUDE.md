@@ -40,9 +40,11 @@ through the browser.
   `loginAsAdmin(page)` from `./auth`, which logs in through the real endpoint and
   seeds the `admin_token` into localStorage before the app boots.
 - No test-only API endpoints and no database reset between runs. Instead, name
-  every entity with a per-run unique suffix and scope all assertions to those
-  names, so a spec is robust against data left by earlier runs in the shared e2e
-  database. Use the guest search box to isolate a single row before acting on it.
+  every entity with a per-run unique suffix from `runStamp()` in `./stamp` and
+  scope all assertions to those names, so a spec is robust against data left by
+  earlier runs in the shared e2e database. The stamp is letters-only by design
+  (its comment explains why digits would break guest-search isolation). Use the
+  guest search box to isolate a single row before acting on it.
 - Prefer role-based selectors (`getByRole`, `getByLabel`); pass `exact: true`
   when a name is a prefix of another (for example the cell label "Name" versus
   "New guest name"). The grid cells are inputs, so match a row by a cell's

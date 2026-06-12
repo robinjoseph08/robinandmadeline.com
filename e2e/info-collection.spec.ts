@@ -6,6 +6,7 @@ import {
 } from "@playwright/test";
 
 import { ADMIN_PASSWORD, ADMIN_USERNAME } from "./auth";
+import { runStamp } from "./stamp";
 
 // Issue #8's critical E2E flow: a guest opens their party's personalized
 // /i/:token link, sees their party members' names pre-filled, corrects a
@@ -21,7 +22,7 @@ import { ADMIN_PASSWORD, ADMIN_USERNAME } from "./auth";
 // to those names, so the spec is robust against data left by earlier runs in
 // the shared e2e database.
 
-const stamp = Date.now().toString(36);
+const stamp = runStamp();
 const physicalPartyName = `E2E Info Party ${stamp}`;
 const bestGuessName = `Allice R ${stamp}`;
 const correctedName = `Alice R ${stamp}`;
