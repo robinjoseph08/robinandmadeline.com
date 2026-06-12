@@ -65,6 +65,11 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	})
 	registerAdmin(api, authMiddleware, db)
 	registerGuest(api, authMiddleware, db)
+	// The guest-facing schedule mounts on the open group behind optional guest
+	// auth: anonymous requests see public events, a valid guest token adds the
+	// party's invited private events, and a presented-but-invalid token is a
+	// 401 so stale tokens surface instead of silently downgrading the view.
+	events.RegisterScheduleRoutes(api, authMiddleware, events.NewService(db))
 	// The info-collection flow mounts on the open group: there is no JWT, the
 	// opaque high-entropy per-party info token in the URL is the authentication
 	// (ADR 0003), so unlike the guessable RSVP codes it needs no rate limiter.

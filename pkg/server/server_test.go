@@ -110,6 +110,20 @@ func TestGuestRoute_RequiresGuestToken(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
+func TestScheduleRoute_WiredBehindOptionalGuestAuth(t *testing.T) {
+	srv := server.New(newTestConfig(t), nil)
+
+	// An invalid bearer token is rejected by the optional-guest middleware
+	// (401, not 404), which both proves GET /api/events is mounted behind it
+	// and keeps this wiring test db-free (schedule behavior is covered in
+	// pkg/events).
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/events", http.NoBody)
+	req.Header.Set("Authorization", "Bearer not-a-real-jwt")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
 func TestGuestLoginRoute_Wired(t *testing.T) {
 	srv := server.New(newTestConfig(t), nil)
 

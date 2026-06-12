@@ -1,11 +1,12 @@
-// Package events is the admin API and data layer for events and their Event
-// RSVPs. An Event RSVP row is the invitation (ADR 0002): public events hold a
-// pending row for every guest, private events only for explicitly invited
-// parties, and this package owns every write that keeps that invariant true
-// (event CRUD, party invites, the admin status override, and the backfill the
-// guest-create paths call). The persistent models live in pkg/models; this
-// package owns the service writes, request/response types (types.go), and HTTP
-// handlers.
+// Package events is the API and data layer for events and their Event
+// RSVPs: the admin management surface plus the guest-facing schedule read
+// (GET /api/events, personalized by an optional guest token). An Event RSVP
+// row is the invitation (ADR 0002): public events hold a pending row for
+// every guest, private events only for explicitly invited parties, and this
+// package owns every write that keeps that invariant true (event CRUD, party
+// invites, the admin status override, and the backfill the guest-create paths
+// call). The persistent models live in pkg/models; this package owns the
+// service writes, request/response types (types.go), and HTTP handlers.
 package events
 
 import (

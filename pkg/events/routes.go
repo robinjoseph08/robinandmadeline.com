@@ -1,6 +1,9 @@
 package events
 
-import "github.com/labstack/echo/v4"
+import (
+	"github.com/labstack/echo/v4"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
+)
 
 // RegisterRoutes mounts the events admin endpoints on the given group, which is
 // expected to be the already-protected admin group (behind the admin JWT
@@ -35,4 +38,19 @@ func RegisterRoutes(admin *echo.Group, service *Service) {
 	events.POST("/:id/invite", h.inviteParties)
 	events.GET("/:id/rsvps", h.listEventRSVPs)
 	events.PUT("/:id/rsvps/:guestId", h.updateEventRSVP)
+}
+
+// RegisterScheduleRoutes mounts the guest-facing schedule endpoint on the
+// open /api group, behind the optional-guest middleware:
+//
+//	GET /events    the schedule (public events; plus the party's invited
+//	               events when a valid guest token is presented)
+//
+// It is the one events route outside the admin group: the schedule is the
+// public face of the same data, read-only, personalized by the guest JWT when
+// one is offered and anonymous otherwise (a presented-but-invalid token is a
+// 401, see auth.OptionalGuest).
+func RegisterScheduleRoutes(api *echo.Group, mw *auth.Middleware, service *Service) {
+	h := &handler{service: service}
+	api.GET("/events", h.listScheduleEvents, mw.OptionalGuest)
 }

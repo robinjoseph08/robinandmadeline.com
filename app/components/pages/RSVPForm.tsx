@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { usePartyRSVPs, useUpdatePartyRSVPs } from "@/hooks/queries/rsvp";
-import { formatLongDate, formatTime } from "@/libraries/format";
+import { formatEventWhen, formatLongDate } from "@/libraries/format";
 import {
   ApiError,
   clearGuestToken,
@@ -103,32 +103,6 @@ function submittedName(guest: RSVPGuest, input: string): string | undefined {
 /** The composite key the form's status state is indexed by. */
 function entryKey(eventId: string, guestId: string): string {
   return `${eventId}:${guestId}`;
-}
-
-/** Friendly display for an event's date (falls back to the raw string). */
-function formatEventDate(date: string): string {
-  const parsed = new Date(`${date}T12:00:00`);
-  if (Number.isNaN(parsed.getTime())) return date;
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  }).format(parsed);
-}
-
-/**
- * One line saying when an event happens: "Saturday, June 13, 2026 · 5:00 PM"
- * when a start time is set, with "5:00 PM to 10:00 PM" when an end time is
- * too, and just the date when the event has no start time.
- */
-function formatEventWhen(eventGroup: RSVPEventGroup): string {
-  const date = formatEventDate(eventGroup.date);
-  if (!eventGroup.start_time) return date;
-  const time = eventGroup.end_time
-    ? `${formatTime(eventGroup.start_time)} to ${formatTime(eventGroup.end_time)}`
-    : formatTime(eventGroup.start_time);
-  return `${date} · ${time}`;
 }
 
 interface RSVPViewProps {

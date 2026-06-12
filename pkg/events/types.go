@@ -8,17 +8,19 @@ import "github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 
 // CreateEventPayload is the body for POST /events. date is the calendar day as
 // "YYYY-MM-DD" (the custom date validator checks the format; required rejects
-// blank). start_time/end_time are optional "HH:MM" 24-hour strings
-// (validator's datetime layout check). is_public decides invitation semantics
-// (ADR 0002): creating a public event backfills a pending Event RSVP for every
-// existing guest in the same transaction.
+// blank). start_time/end_time are optional zero-padded "HH:MM" 24-hour
+// strings (the custom time validator; the padding keeps lexical order
+// chronological for the schedule's ORDER BY and the values fixed-width for
+// calendar formats). is_public decides invitation semantics (ADR 0002):
+// creating a public event backfills a pending Event RSVP for every existing
+// guest in the same transaction.
 type CreateEventPayload struct {
 	Name        string  `json:"name" mod:"trim" validate:"required,max=200"`
 	Description *string `json:"description" mod:"trim" validate:"omitempty,max=2000"`
 	Location    *string `json:"location" mod:"trim" validate:"omitempty,max=500"`
 	Date        string  `json:"date" mod:"trim" validate:"required,date"`
-	StartTime   *string `json:"start_time" mod:"trim" validate:"omitempty,datetime=15:04"`
-	EndTime     *string `json:"end_time" mod:"trim" validate:"omitempty,datetime=15:04"`
+	StartTime   *string `json:"start_time" mod:"trim" validate:"omitempty,time"`
+	EndTime     *string `json:"end_time" mod:"trim" validate:"omitempty,time"`
 	IsPublic    bool    `json:"is_public"`
 }
 
@@ -32,8 +34,8 @@ type UpdateEventPayload struct {
 	Description *string `json:"description" mod:"trim" validate:"omitempty,max=2000"`
 	Location    *string `json:"location" mod:"trim" validate:"omitempty,max=500"`
 	Date        string  `json:"date" mod:"trim" validate:"required,date"`
-	StartTime   *string `json:"start_time" mod:"trim" validate:"omitempty,datetime=15:04"`
-	EndTime     *string `json:"end_time" mod:"trim" validate:"omitempty,datetime=15:04"`
+	StartTime   *string `json:"start_time" mod:"trim" validate:"omitempty,time"`
+	EndTime     *string `json:"end_time" mod:"trim" validate:"omitempty,time"`
 	IsPublic    bool    `json:"is_public"`
 }
 
@@ -77,6 +79,33 @@ type EventResponse struct {
 // ListEventsResponse is the uniform list envelope for events.
 type ListEventsResponse struct {
 	Items []EventResponse `json:"items"`
+	Total int             `json:"total"`
+}
+
+// SchedulePhotoGroup is one photo group assignment on the guest-facing
+// schedule: a named photo session the authenticated guest is part of at an
+// event. Photo groups are a later slice, so nothing populates this type yet;
+// it exists to fix the schedule response's shape (photo_groups is always
+// present, an empty list today) so that adding photo groups later only fills
+// the list in instead of changing the contract.
+type SchedulePhotoGroup struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// ScheduleEvent is the guest-facing view of one event on the schedule: the
+// stored model (embedded by value, like EventResponse) plus the authenticated
+// guest's photo group assignments. It deliberately omits the RSVP breakdown:
+// attendance tallies are admin data the schedule has no business exposing.
+type ScheduleEvent struct {
+	models.Event `tstype:",extends"`
+	PhotoGroups  []SchedulePhotoGroup `json:"photo_groups"`
+}
+
+// ListScheduleEventsResponse is the body of GET /api/events, the uniform list
+// envelope for the guest-facing schedule.
+type ListScheduleEventsResponse struct {
+	Items []ScheduleEvent `json:"items"`
 	Total int             `json:"total"`
 }
 
