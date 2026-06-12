@@ -76,9 +76,11 @@ test("admin manages parties and guests end to end", async ({ page }) => {
 
   // --- Edit a guest inline (set Alice's email), confirm it persists --------
   // Assertions are scoped to Alice's row (matched by her delete button) rather
-  // than a global row count: the search can legitimately surface unrelated
-  // rows left by earlier runs, e.g. when the run stamp's digits happen to
-  // substring-match another guest's phone number.
+  // than a global row count, so rows left by earlier runs in the shared e2e
+  // database can never satisfy or break them (digit-bearing stamps once
+  // dragged other guests' phone numbers into a name search; runStamp's
+  // letters-only design closes that, and row-scoping keeps the spec immune
+  // either way).
   const search = page.getByRole("textbox", { name: "Search guests" });
   await search.fill(alice);
   const aliceRow = page

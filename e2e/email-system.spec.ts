@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { loginAsAdmin } from "./auth";
+import { runStamp } from "./stamp";
 
 // Issue #11's critical E2E flow: create an email template, compose from it,
 // filter the recipients down to a known guest, preview the resolved merge
@@ -13,7 +14,7 @@ import { loginAsAdmin } from "./auth";
 // runs in the shared e2e database. The recipient filter uses a per-run unique
 // tag, so the audience is exactly the one guest this run created.
 
-const stamp = Date.now().toString(36);
+const stamp = runStamp();
 const partyName = `Email Party ${stamp}`;
 const guestName = `Mailee ${stamp}`;
 const guestEmail = `mailee-${stamp}@example.com`;
