@@ -32,7 +32,9 @@ type WorkerConfig struct {
 	// reconcile pass (run each cycle, including immediately on restart)
 	// treats it as stuck (left behind by a crash) and checks it against
 	// Mailgun. It must comfortably exceed the longest plausible in-flight
-	// send so a row a live worker is processing is never touched.
+	// send so a row a live worker is processing is never touched; the worker
+	// enforces that itself by flooring the effective threshold at the batch
+	// budget (see effectiveStuckThreshold).
 	StuckThreshold time.Duration
 }
 
@@ -177,13 +179,17 @@ func (w *Worker) ProcessBatch(ctx context.Context) (int, error) {
 // (timeout, connection drop) leaves the row `sending` for the reconciler,
 // since Mailgun may have accepted the message and marking it failed could
 // both misreport a delivered email and invite a duplicate manual resend.
+// Failures loading the row's context (send, event, guest) also leave it
+// `sending`: nothing was dispatched, so the reconciler's not-found answer
+// requeues it for free, where a `failed` mark would turn a transient database
+// blip into a permanent failure the admin must manually re-send.
 func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends map[string]*models.EmailSend, events map[string]*models.Event) {
 	send, ok := sends[row.SendID]
 	if !ok {
 		var err error
 		send, err = loadSend(ctx, w.db, row.SendID)
 		if err != nil {
-			w.markFailed(ctx, row, "load send: "+err.Error())
+			w.leaveForReconciliation(err, row, "load send failed")
 			return
 		}
 		sends[row.SendID] = send
@@ -201,7 +207,7 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 				// fields render empty rather than blocking the send.
 				loaded = nil
 			case err != nil:
-				w.markFailed(ctx, row, "load event: "+err.Error())
+				w.leaveForReconciliation(err, row, "load event failed")
 				return
 			}
 			events[*eventID] = loaded
@@ -212,10 +218,11 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 	guest := new(models.Guest)
 	err := w.db.NewSelect().Model(guest).Relation("Party").Where("g.id = ?", row.GuestID).Scan(ctx)
 	if err != nil {
-		// A guest deleted between enqueue and pickup cascades the row away, so
-		// this is either that race or a real failure; both read as failed (the
-		// update below simply no-ops if the row is gone).
-		w.markFailed(ctx, row, "load guest: "+err.Error())
+		// A guest deleted between enqueue and pickup cascades the recipient
+		// row away with it, so there is nothing left to update either way;
+		// a transient failure leaves the row for the reconciler like the
+		// rest.
+		w.leaveForReconciliation(err, row, "load guest failed")
 		return
 	}
 
@@ -268,7 +275,7 @@ func (w *Worker) ReconcileStuck(ctx context.Context) (int, error) {
 	var stuck []*models.EmailRecipient
 	err := w.db.NewSelect().Model(&stuck).
 		Where("erc.status = ?", models.EmailSending).
-		Where("erc.updated_at < now() - make_interval(secs => ?)", w.cfg.StuckThreshold.Seconds()).
+		Where("erc.updated_at < now() - make_interval(secs => ?)", w.effectiveStuckThreshold().Seconds()).
 		Order("erc.created_at ASC", "erc.id ASC").
 		Scan(ctx)
 	if err != nil {
@@ -288,9 +295,22 @@ func (w *Worker) ReconcileStuck(ctx context.Context) (int, error) {
 		} else {
 			row.Status = models.EmailQueued
 		}
-		w.updateStuckRow(ctx, row)
+		w.updateRow(ctx, row)
 	}
 	return len(stuck), nil
+}
+
+// effectiveStuckThreshold is StuckThreshold floored at the batch budget plus
+// a minute: a row claimed at the start of a slow batch legitimately sits in
+// `sending` for up to the whole budget, and a threshold tuned below that
+// would let an overlapping instance's reconciler requeue (and double-send) a
+// row this worker is still going to reach. The floor keeps the two knobs
+// safe to tune independently.
+func (w *Worker) effectiveStuckThreshold() time.Duration {
+	if floor := w.batchBudget() + time.Minute; w.cfg.StuckThreshold < floor {
+		return floor
+	}
+	return w.cfg.StuckThreshold
 }
 
 // markFailed records a row's failure reason and flips it to failed. The
@@ -309,30 +329,29 @@ func (w *Worker) markFailed(ctx context.Context, row *models.EmailRecipient, rea
 	w.updateRow(ctx, row)
 }
 
-// updateRow persists a row's status fields. It detaches from the batch
-// context (a row whose send timed out still needs its outcome written) and
-// takes its own short deadline. Errors are logged, not returned: a failed
-// status write leaves the row `sending`, which the stuck-row reconciler will
-// resolve against Mailgun on a later cycle, so no email is ever double-sent
-// over a bookkeeping failure.
-func (w *Worker) updateRow(ctx context.Context, row *models.EmailRecipient) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-	defer cancel()
-	row.UpdatedAt = time.Now()
-	_, err := w.db.NewUpdate().Model(row).
-		Column("status", "mailgun_message_id", "failure_reason", "updated_at").
-		WherePK().Exec(ctx)
-	if err != nil {
-		w.log.Err(err).Error("email worker row update failed", logger.Data{"recipient_id": row.ID})
-	}
+// leaveForReconciliation logs a row whose outcome could not be determined (or
+// whose context failed to load) and leaves it `sending` on purpose: once it
+// ages past the stuck threshold the reconciler settles it against Mailgun's
+// event log, marking it sent if a message was accepted and requeueing it for
+// a fresh attempt if not.
+func (w *Worker) leaveForReconciliation(err error, row *models.EmailRecipient, msg string) {
+	w.log.Err(err).Warn("email worker: "+msg+"; leaving row for reconciliation", logger.Data{"recipient_id": row.ID})
 }
 
-// updateStuckRow is updateRow for the reconcile path, guarded on the row
-// still being `sending`: with overlapping workers (a deploy handing off), a
-// slow reconciler holding a stale list must not overwrite a row another
-// instance has since requeued, claimed, and sent; that write would wipe the
-// message id and queue a duplicate email.
-func (w *Worker) updateStuckRow(ctx context.Context, row *models.EmailRecipient) {
+// updateRow persists a row's status fields, guarded on the row still being
+// `sending`: every transition the worker writes starts from a claimed row,
+// and the guard keeps it from stomping an outcome someone else recorded
+// first. The delivery webhook can land via the recipient_id fallback before
+// the success path's write commits (downgrading a delivered or bounced row
+// back to sent would lose that outcome forever, since Mailgun never resends
+// an acknowledged event), and a stale reconciler racing an overlapping
+// instance must not requeue a row that instance already sent. The write
+// detaches from the batch context (a row whose send timed out still needs
+// its outcome written) and takes its own short deadline. Errors are logged,
+// not returned: an unwritten row stays `sending`, which the reconciler
+// resolves against Mailgun on a later cycle, so no email is ever double-sent
+// over a bookkeeping failure.
+func (w *Worker) updateRow(ctx context.Context, row *models.EmailRecipient) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
 	row.UpdatedAt = time.Now()
@@ -342,10 +361,10 @@ func (w *Worker) updateStuckRow(ctx context.Context, row *models.EmailRecipient)
 		Where("status = ?", models.EmailSending).
 		Exec(ctx)
 	if err != nil {
-		w.log.Err(err).Error("email worker stuck-row update failed", logger.Data{"recipient_id": row.ID})
+		w.log.Err(err).Error("email worker row update failed", logger.Data{"recipient_id": row.ID})
 		return
 	}
 	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
-		w.log.Warn("stuck row moved on before reconcile write; left untouched", logger.Data{"recipient_id": row.ID})
+		w.log.Warn("recipient row moved on before the status write; left untouched", logger.Data{"recipient_id": row.ID})
 	}
 }

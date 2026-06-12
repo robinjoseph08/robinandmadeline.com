@@ -19,12 +19,21 @@ import { useEmailSend } from "@/hooks/queries/emails";
 
 /**
  * One send's detail: the copy as sent, its delivery stats, and the
- * per-recipient delivery breakdown. Polls while open so statuses progress
- * live as the background worker and Mailgun's webhooks advance them.
+ * per-recipient delivery breakdown. Polls while any recipient is still in
+ * flight (queued or sending) so statuses progress live as the background
+ * worker and Mailgun's webhooks advance them, and stops once every row is
+ * terminal.
  */
 export default function AdminEmailSendDetail() {
   const { id } = useParams<{ id: string }>();
-  const sendQuery = useEmailSend(id, { refetchInterval: 5000 });
+  const sendQuery = useEmailSend(id, {
+    refetchInterval: (query) => {
+      const stats = query.state.data?.stats;
+      return stats === undefined || stats.queued + stats.sending > 0
+        ? 5000
+        : false;
+    },
+  });
 
   const send = sendQuery.data;
 

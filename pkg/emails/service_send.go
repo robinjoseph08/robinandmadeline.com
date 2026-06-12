@@ -102,6 +102,14 @@ func (s *Service) CreateSend(ctx context.Context, in SendEmailPayload) (*models.
 
 	err = s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewInsert().Model(send).Exec(ctx); err != nil {
+			// The template existence pre-check above runs before this
+			// transaction; a template deleted in between trips the
+			// template_id foreign key here (ON DELETE SET NULL only covers
+			// deletes after the insert), the same retryable race as the
+			// recipients insert below.
+			if errcodes.IsForeignKeyViolation(err) {
+				return errcodes.ValidationError("The selected template no longer exists.")
+			}
 			return errors.Wrap(err, "insert email send")
 		}
 		if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {

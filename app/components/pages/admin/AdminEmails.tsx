@@ -22,8 +22,17 @@ import { useEmailSends } from "@/hooks/queries/emails";
  */
 export default function AdminEmails() {
   // Poll so queued -> sent -> delivered progress appears without a manual
-  // refresh; 5s matches the worker's poll cadence.
-  const sendsQuery = useEmailSends({ refetchInterval: 5000 });
+  // refresh; 5s matches the worker's poll cadence. Stops once no send has
+  // in-flight (queued or sending) recipients left.
+  const sendsQuery = useEmailSends({
+    refetchInterval: (query) => {
+      const items = query.state.data?.items;
+      return items === undefined ||
+        items.some((send) => send.stats.queued + send.stats.sending > 0)
+        ? 5000
+        : false;
+    },
+  });
 
   const sends = sendsQuery.data?.items ?? [];
 

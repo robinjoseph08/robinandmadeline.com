@@ -510,6 +510,78 @@ func TestReconcileStuck_UnseenRowIsRequeuedAndRetriedOnce(t *testing.T) {
 	assert.Len(t, client.sentMessages(), 1)
 }
 
+func TestProcessBatch_WebhookOutcomeLandingMidSendIsNotStomped(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+
+	// While the Mailgun call is in flight, the delivery webhook lands first
+	// (via its recipient_id fallback) and records a bounce. The worker's
+	// success-path write must not downgrade that terminal outcome back to
+	// `sent`: Mailgun never resends an acknowledged event, so the bounce
+	// would be lost forever.
+	client := newFakeMailgun()
+	client.blockSends = make(chan struct{})
+	client.claimed = make(chan struct{}, 1)
+	w := newWorker(f, client, workerConfig())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, err := w.ProcessBatch(ctx())
+		assert.NoError(t, err)
+	}()
+
+	select {
+	case <-client.claimed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker never started sending")
+	}
+	_, err := f.db.NewUpdate().Model((*models.EmailRecipient)(nil)).
+		Set("status = ?", models.EmailBounced).
+		Set("mailgun_message_id = ?", "from-webhook@test.mailgun").
+		Set("failure_reason = ?", "mailbox full").
+		Where("id = ?", row.ID).Exec(ctx())
+	require.NoError(t, err)
+	close(client.blockSends)
+	<-done
+
+	got := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	assert.Equal(t, models.EmailBounced, got.Status)
+	require.NotNil(t, got.FailureReason)
+	assert.Equal(t, "mailbox full", *got.FailureReason)
+	require.NotNil(t, got.MailgunMessageID)
+	assert.Equal(t, "from-webhook@test.mailgun", *got.MailgunMessageID)
+}
+
+func TestReconcileStuck_ThresholdIsFlooredAtTheBatchBudget(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	// Old enough for the configured threshold, but a 40-row batch can keep a
+	// claimed row legitimately in `sending` for its whole budget (40 x 30s),
+	// so the effective threshold must floor there and leave the row alone:
+	// requeueing it would double-send once the owning worker reaches it.
+	strandRow(t, f, row.ID, 10*time.Minute)
+
+	cfg := workerConfig()
+	cfg.BatchSize = 40
+	cfg.StuckThreshold = time.Minute
+	client := newFakeMailgun()
+	w := newWorker(f, client, cfg)
+
+	n, err := w.ReconcileStuck(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, models.EmailSending, recipientsForSend(t, f.db, send.ID)[alice.ID].Status)
+}
+
 func TestReconcileStuck_FreshSendingRowsAreLeftAlone(t *testing.T) {
 	f := newFixtures(t)
 	p := createPartyT(t, f, "The Smiths", partyOpts{})
