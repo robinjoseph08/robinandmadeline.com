@@ -60,9 +60,13 @@ export default function LeaderboardDialog({
             <>
               <ol className="space-y-1.5">
                 {data.items.map((entry, index) => (
+                  // The index disambiguates entries that share a name and a
+                  // completion timestamp (the backend dedupes neither); the
+                  // list is replaced wholesale on refetch, so an index key
+                  // cannot go stale.
                   <li
                     className="flex items-baseline gap-3 text-sm"
-                    key={`${entry.display_name}:${entry.completed_at}`}
+                    key={`${index}:${entry.display_name}`}
                   >
                     <span className="w-6 shrink-0 text-right text-muted-foreground">
                       {index + 1}.

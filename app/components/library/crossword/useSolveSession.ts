@@ -318,6 +318,12 @@ export function useSolveSession({
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("pagehide", handlePageHide);
+      // In-SPA navigation away unmounts the page with no pagehide or
+      // visibilitychange, so flush here too; otherwise the server stays up
+      // to a heartbeat interval stale forever if the guest never returns.
+      // The clock effect is declared earlier, so its cleanup has already
+      // folded the live stretch into the base when this runs.
+      flushOnHide();
     };
   }, [flushOnHide]);
 

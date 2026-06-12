@@ -269,15 +269,20 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
 
       <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1">
-          {settings.showTimer && session.started && (
-            <span
-              aria-label="Solve time"
-              className="font-medium tabular-nums"
-              data-testid="crossword-timer"
-            >
-              {formatDuration(session.elapsedMs)}
-            </span>
-          )}
+          {/* A finished solve with no accumulated time (an unreportable
+              restore) has nothing honest to show, so the readout hides
+              rather than presenting a frozen 0:00. */}
+          {settings.showTimer &&
+            session.started &&
+            !(session.finished && session.elapsedMs === 0) && (
+              <span
+                aria-label="Solve time"
+                className="font-medium tabular-nums"
+                data-testid="crossword-timer"
+              >
+                {formatDuration(session.elapsedMs)}
+              </span>
+            )}
           {session.started && !solved && (
             <Button
               aria-label={session.paused ? "Resume timer" : "Pause timer"}

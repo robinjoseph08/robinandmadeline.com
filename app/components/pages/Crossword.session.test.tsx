@@ -481,6 +481,24 @@ describe("Crossword solve sessions", () => {
       );
     });
 
+    it("flushes a report when the page unmounts mid-solve", async () => {
+      // In-SPA navigation away fires no pagehide or visibilitychange; the
+      // unmount itself must flush, or the server stays a heartbeat stale
+      // forever when the guest never comes back.
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
+      const view = renderCrossword();
+      await advance(5_000);
+
+      view.unmount();
+
+      expect(lastPatchBody()).toMatchObject({
+        elapsed_ms: 65_000,
+        completed: false,
+      });
+    });
+
     it("keeps the clock stopped when the page mounts in a hidden tab", async () => {
       seedProgress(EMPTY_ENTRIES);
       seedSession({ id: "sess-9", elapsedMs: 60_000 });
@@ -653,6 +671,9 @@ describe("Crossword solve sessions", () => {
       ).not.toBeInTheDocument();
       // The solve still reads as solved; it just carries no time.
       expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
+      // With no honest time there is nothing for the readout to show, so no
+      // frozen 0:00 timer renders either.
+      expect(screen.queryByTestId("crossword-timer")).not.toBeInTheDocument();
 
       // Hiding the tab must not mint a session record either: the record's
       // absence is exactly what marks this solve unreportable on the next
