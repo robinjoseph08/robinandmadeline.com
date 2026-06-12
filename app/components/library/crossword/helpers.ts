@@ -201,6 +201,13 @@ export function nextSelections(
       break;
   }
   if (!nextSquare) {
+    // Nothing left in the movement direction. Wrapping around the grid only
+    // makes sense going forward; backspace must never teleport to the far
+    // corner and clear a letter there, so backward movement stops instead
+    // (the caller treats "same square" as a no-op).
+    if (movementDirection === "backward") {
+      return [current[0]];
+    }
     nextSquare = findValidSquare(resetRow, resetCol, direction);
     nextDirection = inverseDirection[direction];
   }

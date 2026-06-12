@@ -302,8 +302,8 @@ const Grid = forwardRef<GridHandle, Props>(
 
     const handleKeyDown = useCallback(
       (e: KeyboardEvent) => {
-        // Allow browser shortcuts (Cmd+R, Ctrl+F, etc.) to work
-        if (e.metaKey || e.ctrlKey) {
+        // Allow browser and OS shortcuts (Cmd+R, Ctrl+F, Alt menus) to work
+        if (e.metaKey || e.ctrlKey || e.altKey) {
           return;
         }
 
@@ -502,6 +502,10 @@ const Grid = forwardRef<GridHandle, Props>(
           }
           ref={hiddenInputRef}
           spellCheck={false}
+          // Only ever focused programmatically (square clicks, the imperative
+          // handle); keep it out of the tab order so keyboard users cannot
+          // tab into an invisible second stop after leaving the grid.
+          tabIndex={-1}
           type="text"
           value={HIDDEN_INPUT_SENTINEL}
         />
