@@ -296,6 +296,25 @@ func TestWebhook_MalformedRecipientIDVariableIsAcknowledged(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
 
+func TestWebhook_RecipientIDVariantFormIsCanonicalizedBeforeMatching(t *testing.T) {
+	e, f := newWebhookAPI(t, testSigningKey)
+	row := sentRecipient(t, f, "ignored-2@mg.example.test")
+	_, err := f.db.NewUpdate().Model((*models.EmailRecipient)(nil)).
+		Set("status = ?", models.EmailSending).
+		Set("mailgun_message_id = NULL").
+		Where("id = ?", row.ID).Exec(ctx())
+	require.NoError(t, err)
+
+	// uuid.Parse accepts forms (urn:uuid:, braces) that Postgres's uuid input
+	// rejects; the fallback must bind the canonical parsed form so a variant
+	// still matches the row instead of failing the cast.
+	rec := postWebhook(t, e, webhookBody(testSigningKey, "delivered", "variant-mid@mg.example.test", map[string]any{
+		"user-variables": map[string]any{"recipient_id": "urn:uuid:" + row.ID},
+	}))
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Equal(t, models.EmailDelivered, reloadRecipient(t, f, row.ID).Status)
+}
+
 func TestWebhook_OversizedBodyIsRejected(t *testing.T) {
 	e, _ := newWebhookAPI(t, testSigningKey)
 
