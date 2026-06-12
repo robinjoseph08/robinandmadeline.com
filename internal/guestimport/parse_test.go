@@ -1,6 +1,7 @@
 package guestimport_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -116,18 +117,22 @@ func TestParse_NamedRowsWithoutAPartyAreFilteredOut(t *testing.T) {
 	// Drafts of the sheet leave "Family (Party)" blank on rows not yet grouped.
 	// Those rows are filtered out before any validation (Eli's bogus taxonomy
 	// values and blank Child?/Drinking? cells must produce no problem or
-	// warning) and counted separately from the blank spacer rows.
+	// warning) and counted separately from the blank spacer rows. The one
+	// thing a skipped row does surface is an explicit code, which would
+	// otherwise vanish silently: Fay's earns the single aggregate warning.
 	plan := parseT(t,
 		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,`,
 		`Eli,Stone,Eli Stone,Narnia,Acquaintance,Pottery,UTD,,1,,,,,,,,,,,`,
+		`Fay,Reed,Fay Reed,Robin,Friend,College,UTD,,1,,,,,,,,,No,Yes,MUMMY`,
 		`,,,,,,,,,,,,,,,,,,,`,
 	)
 	require.Len(t, plan.Parties, 1)
 	require.Equal(t, "Cole", plan.Parties[0].Party.Name)
 	require.Len(t, plan.Parties[0].Guests, 1)
-	require.Equal(t, 1, plan.SkippedNoPartyRows)
+	require.Equal(t, 2, plan.SkippedNoPartyRows)
 	require.Equal(t, 1, plan.SkippedBlankRows)
-	require.Empty(t, plan.Warnings)
+	require.Len(t, plan.Warnings, 1)
+	require.Contains(t, plan.Warnings[0], "1 skipped no-party row(s) carry a Code value that was not imported: Fay Reed")
 }
 
 func TestParse_BlankChildAndDrinkingDefaultFalseWithAggregateWarnings(t *testing.T) {
@@ -264,12 +269,26 @@ func TestParse_ConflictingCodesWithinPartyIsError(t *testing.T) {
 }
 
 func TestParse_CodeSharedAcrossPartiesIsError(t *testing.T) {
+	// Stone's lowercase spelling still collides: codes are uppercased on
+	// parse, matching the API's rsvp_code normalization.
 	_, err := guestimport.Parse(strings.NewReader(buildCSV(
 		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,PEPPER`,
-		`Eli,Stone,Eli Stone,Robin,Friend,College,UTD,Stone,1,,,,,,,,,No,Yes,PEPPER`,
+		`Eli,Stone,Eli Stone,Robin,Friend,College,UTD,Stone,1,,,,,,,,,No,Yes,pepper`,
 	)))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `party "Stone": Code value "PEPPER" is already used by party "Cole"`)
+}
+
+func TestParse_CodesAreUppercased(t *testing.T) {
+	// The API normalizes rsvp_code to uppercase (mod:"ucase"); the import does
+	// the same, so a lowercase sheet entry cannot import an unreachable code
+	// and a case-only repeat is not a conflict.
+	plan := parseT(t,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,pepper`,
+		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,Pepper`,
+	)
+	require.Empty(t, plan.Warnings)
+	require.Equal(t, pointerutil.String("PEPPER"), plan.Parties[0].Party.RSVPCode)
 }
 
 func TestParse_CodeOnThePrimaryRowCoversTheParty(t *testing.T) {
@@ -297,18 +316,34 @@ func TestParse_CodeOnlyOnANonPrimaryRowIsError(t *testing.T) {
 }
 
 func TestParse_ConflictingAddressFieldsWarnAndKeepThePrimaryRows(t *testing.T) {
-	// Eli's row disagrees on Address 1 and City but repeats State/ZIP/Country
-	// identically; only the disagreements warn, and the primary row's values
-	// win.
+	// Eli's row disagrees on every address field (one warning each, with the
+	// column named, so a mislabeled or dropped cells() entry fails here);
+	// Fay's repeats the primary's address identically and warns about
+	// nothing. The primary row's values win throughout.
 	plan := parseT(t,
-		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,12 Oak Ave,,Austin,TX,78701,United States,No,Yes,`,
-		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,1,,,99 Elm St,,Dallas,TX,78701,United States,No,Yes,`,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,12 Oak Ave,Unit 1,Austin,TX,78701,United States,No,Yes,`,
+		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,1,,,99 Elm St,Unit 9,Dallas,CA,90210,Canada,No,Yes,`,
+		`Fay,Cole,Fay Cole,Robin,Friend,College,UTD,Cole,1,,,12 Oak Ave,Unit 1,Austin,TX,78701,United States,No,Yes,`,
 	)
-	require.Equal(t, pointerutil.String("12 Oak Ave"), plan.Parties[0].Party.AddressLine1)
-	require.Equal(t, pointerutil.String("Austin"), plan.Parties[0].Party.City)
-	require.Len(t, plan.Warnings, 2)
-	require.Contains(t, plan.Warnings[0], `party "Cole": conflicting Address 1 values; keeping the primary row's "12 Oak Ave"`)
-	require.Contains(t, plan.Warnings[1], `party "Cole": conflicting City values; keeping the primary row's "Austin"`)
+	party := plan.Parties[0].Party
+	require.Equal(t, pointerutil.String("12 Oak Ave"), party.AddressLine1)
+	require.Equal(t, pointerutil.String("Unit 1"), party.AddressLine2)
+	require.Equal(t, pointerutil.String("Austin"), party.City)
+	require.Equal(t, pointerutil.String("TX"), party.StateOrProvince)
+	require.Equal(t, pointerutil.String("78701"), party.PostalCode)
+	require.Equal(t, pointerutil.String("United States"), party.Country)
+
+	require.Len(t, plan.Warnings, 6)
+	for i, want := range []string{
+		`conflicting Address 1 values; keeping the primary row's "12 Oak Ave"`,
+		`conflicting Address 2 values; keeping the primary row's "Unit 1"`,
+		`conflicting City values; keeping the primary row's "Austin"`,
+		`conflicting State values; keeping the primary row's "TX"`,
+		`conflicting ZIP values; keeping the primary row's "78701"`,
+		`conflicting Country values; keeping the primary row's "United States"`,
+	} {
+		require.Contains(t, plan.Warnings[i], `party "Cole": `+want)
+	}
 }
 
 func TestParse_AddressOnlyOnANonPrimaryRowIsIgnoredWithAWarning(t *testing.T) {
@@ -342,4 +377,36 @@ func TestParse_MissingRequiredColumnIsError(t *testing.T) {
 	require.Contains(t, err.Error(), "csv is missing expected column(s)")
 	require.Contains(t, err.Error(), "Kingdom")
 	require.Contains(t, err.Error(), "ZIP")
+
+	// Every header in the export is load-bearing: renaming any single one must
+	// fail the parse and report that column by name, so no column can quietly
+	// fall out of the required set and import wrong data.
+	columns := strings.Split(csvHeader, ",")
+	for i, col := range columns {
+		mutated := slices.Clone(columns)
+		mutated[i] = "Bogus"
+		_, err := guestimport.Parse(strings.NewReader(strings.Join(mutated, ",") + "\n"))
+		require.Error(t, err, "renaming %q must fail the parse", col)
+		require.Contains(t, err.Error(), col, "renaming %q must be reported as missing", col)
+	}
+}
+
+func TestParse_DuplicateRequiredColumnIsError(t *testing.T) {
+	// A stale copy of a known column would make the mapping silently bind to
+	// whichever copy comes last, so it fails instead.
+	_, err := guestimport.Parse(strings.NewReader(csvHeader + ",City\nDana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,,Austin\n"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "csv has duplicate column(s): City")
+}
+
+func TestParse_UnknownExtraColumnsAreIgnored(t *testing.T) {
+	// The sheet grows scratch columns from time to time; anything the parser
+	// does not recognize must pass through harmlessly.
+	plan, err := guestimport.Parse(strings.NewReader(
+		csvHeader + ",Notes\n" +
+			`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,PEPPER,remind dana` + "\n"))
+	require.NoError(t, err)
+	require.Len(t, plan.Parties, 1)
+	require.Equal(t, pointerutil.String("PEPPER"), plan.Parties[0].Party.RSVPCode)
+	require.Equal(t, "Dana Cole", plan.Parties[0].Guests[0].FullName)
 }

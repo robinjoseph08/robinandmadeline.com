@@ -10,9 +10,10 @@
 // with Size N brings N-1 unnamed plus-ones, imported as placeholder guests
 // (blank means 1, just the named guest). Party-level details (the mailing
 // address columns and Code) are read from each party's first row, its primary
-// guest; later rows normally leave them blank. Named rows whose party cell is
-// still blank (a draft of the sheet) are filtered out and counted rather than
-// imported. Any column not named in requiredColumns is ignored.
+// guest; later rows leave them blank or repeat them identically. Named rows
+// whose party cell is still blank (a draft of the sheet) are filtered out and
+// counted rather than imported. Any column not named in requiredColumns is
+// ignored.
 package guestimport
 
 import (
@@ -32,8 +33,8 @@ import (
 // every party with its guests, in sheet order, plus the non-fatal warnings the
 // operator should review. A Plan's parties have no IDs, info tokens, or
 // timestamps yet; Import fills those. A nil RSVPCode means "generate one"
-// (the sheet's blank or literal RANDOM); a non-nil one is the couple's
-// personalized code, preserved as-is.
+// (the primary row's blank or literal RANDOM); a non-nil one is the couple's
+// personalized code, uppercased to match the API's rsvp_code normalization.
 type Plan struct {
 	Parties []*PartyPlan
 
@@ -49,9 +50,9 @@ type Plan struct {
 	SkippedNoPartyRows int
 
 	// Warnings are non-fatal data observations (blank Child?/Drinking? cells,
-	// address values off the primary row) for the operator to fix in the admin
-	// afterward. Anything that would import wrong data is a Parse error
-	// instead, never a warning.
+	// address values off the primary row, codes on skipped no-party rows) for
+	// the operator to fix in the admin or the sheet afterward. Anything that
+	// would import wrong data is a Parse error instead, never a warning.
 	Warnings []string
 }
 
@@ -133,7 +134,7 @@ type parsedRow struct {
 	phone      *string
 	isChild    bool
 	isDrinking bool
-	code       string // "" means generate at import time
+	code       string // uppercased explicit code; "" (a blank or RANDOM cell) means none
 	address    addressCells
 	size       int // this guest plus their unnamed plus-ones; always >= 1
 }
@@ -173,6 +174,11 @@ type parser struct {
 	problems []string
 	skipped  int
 	noParty  int
+
+	// noPartyCodes names the skipped no-party rows that carry an explicit
+	// code: a credential that would otherwise vanish without a trace, so the
+	// names go into an aggregate warning.
+	noPartyCodes []string
 
 	blankChild    int
 	blankDrinking int
@@ -230,20 +236,31 @@ func Parse(r io.Reader) (*Plan, error) {
 
 // headerIndex maps each required column name to its position in the header
 // row, failing with the full list of missing columns when the file does not
-// look like the guest-list export.
+// look like the guest-list export. A required column appearing more than once
+// (a stale copy left in the sheet) is also an error, since the mapping would
+// silently bind to whichever copy comes last.
 func headerIndex(header []string) (map[string]int, error) {
 	idx := make(map[string]int, len(header))
+	seen := make(map[string]int, len(header))
 	for i, name := range header {
-		idx[strings.TrimSpace(name)] = i
+		n := strings.TrimSpace(name)
+		idx[n] = i
+		seen[n]++
 	}
-	var missing []string
+	var missing, duplicated []string
 	for _, name := range requiredColumns {
-		if _, ok := idx[name]; !ok {
+		switch {
+		case seen[name] == 0:
 			missing = append(missing, name)
+		case seen[name] > 1:
+			duplicated = append(duplicated, name)
 		}
 	}
 	if len(missing) > 0 {
 		return nil, errors.Errorf("csv is missing expected column(s): %s", strings.Join(missing, ", "))
+	}
+	if len(duplicated) > 0 {
+		return nil, errors.Errorf("csv has duplicate column(s): %s", strings.Join(duplicated, ", "))
 	}
 	return idx, nil
 }
@@ -253,8 +270,8 @@ func headerIndex(header []string) (map[string]int, error) {
 // rows with no party yet are filtered out (before any validation) and counted.
 func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 	get := func(col string) string {
-		i := idx[col]
-		if i >= len(record) {
+		i, ok := idx[col]
+		if !ok || i >= len(record) {
 			return ""
 		}
 		return strings.TrimSpace(record[i])
@@ -266,17 +283,22 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 		return
 	}
 
-	// The final sheet assigns every named row a party, but drafts leave some
-	// blank while grouping is still in progress. Those rows are not imported,
-	// so none of their other cells are validated or tallied either.
-	if get(colParty) == "" {
-		p.noParty++
-		return
-	}
-
 	name := full
 	if name == "" {
 		name = strings.Join(strings.Fields(first+" "+last), " ")
+	}
+
+	// The final sheet assigns every named row a party, but drafts leave some
+	// blank while grouping is still in progress. Those rows are not imported,
+	// so none of their other cells are validated or tallied either, with one
+	// exception: an explicit code on a skipped row is a credential that would
+	// vanish silently, so the row's name is collected into a warning.
+	if get(colParty) == "" {
+		p.noParty++
+		if code := get(colCode); code != "" && !strings.EqualFold(code, rsvpCodeRandom) {
+			p.noPartyCodes = append(p.noPartyCodes, name)
+		}
+		return
 	}
 	problem := func(format string, args ...any) {
 		p.problems = append(p.problems, fmt.Sprintf("line %d (%s): ", line, name)+fmt.Sprintf(format, args...))
@@ -345,8 +367,11 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 	}
 
 	// The literal RANDOM marker means the same as a blank code: generate one.
+	// Explicit codes are uppercased to match the API's rsvp_code normalization
+	// (mod:"ucase"), so a lowercase sheet entry cannot import an unreachable
+	// code or trip a case-only conflict.
 	if code := get(colCode); !strings.EqualFold(code, rsvpCodeRandom) {
-		row.code = code
+		row.code = strings.ToUpper(code)
 	}
 
 	p.rows = append(p.rows, row)
@@ -372,6 +397,10 @@ func (p *parser) buildPlan() *Plan {
 		plan.Parties = append(plan.Parties, p.buildParty(name, groups[name], codeOwners))
 	}
 
+	if len(p.noPartyCodes) > 0 {
+		p.warnings = append(p.warnings, fmt.Sprintf("%d skipped no-party row(s) carry a %s value that was not imported: %s",
+			len(p.noPartyCodes), colCode, strings.Join(p.noPartyCodes, ", ")))
+	}
 	if p.blankChild > 0 {
 		p.warnings = append(p.warnings, fmt.Sprintf("%d guest(s) have a blank %s value; imported as not a child", p.blankChild, colChild))
 	}

@@ -61,7 +61,7 @@ func loadParties(t *testing.T, db *bun.DB) []*models.Party {
 func TestImport_CreatesPartiesAndGuestsInOneTransaction(t *testing.T) {
 	db := newDB(t)
 	plan := parseT(t,
-		`Alice,Adams,Alice Adams,Robin,Family,Immediate,"Sibling, Bridal Party",Adams,1,555-0100,alice@example.com,123 Main St,,Springfield,IL,62704,United States,No,Yes,KALEL`,
+		`Alice,Adams,Alice Adams,Robin,Family,Immediate,"Sibling, Bridal Party",Adams,1,555-0100,alice@example.com,123 Main St,Apt 4,Springfield,IL,62704,United States,No,Yes,KALEL`,
 		`Bob,Adams,Bob Adams,Robin,Family,Immediate,In-Law,Adams,1,,,,,,,,,Yes,No,KALEL`,
 		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,1,,,,,,,,,No,Yes,`,
 	)
@@ -83,6 +83,7 @@ func TestImport_CreatesPartiesAndGuestsInOneTransaction(t *testing.T) {
 	require.NotNil(t, adams.RSVPCode)
 	require.Equal(t, "KALEL", *adams.RSVPCode, "an explicit code is preserved")
 	require.Equal(t, pointerutil.String("123 Main St"), adams.AddressLine1)
+	require.Equal(t, pointerutil.String("Apt 4"), adams.AddressLine2)
 	require.Equal(t, pointerutil.String("Springfield"), adams.City)
 	require.Equal(t, pointerutil.String("IL"), adams.StateOrProvince)
 	require.Equal(t, pointerutil.String("62704"), adams.PostalCode)
