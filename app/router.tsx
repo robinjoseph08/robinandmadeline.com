@@ -27,7 +27,9 @@ import RSVPForm from "@/components/pages/RSVPForm";
 import Schedule from "@/components/pages/Schedule";
 import Story from "@/components/pages/Story";
 
-export const router = createBrowserRouter([
+// The route table is exported on its own so tests can mount the real routes
+// in a memory router (see router.test.tsx) instead of mirroring them.
+export const routes = [
   {
     path: "/",
     Component: Root,
@@ -74,4 +76,6 @@ export const router = createBrowserRouter([
       },
     ],
   },
-]);
+];
+
+export const router = createBrowserRouter(routes);

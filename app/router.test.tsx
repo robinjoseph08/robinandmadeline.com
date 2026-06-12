@@ -1,28 +1,30 @@
 // The bare /games/crossword path predates the puzzle registry; the router
-// redirects it to the games landing rather than 404ing old links.
+// redirects it to the games landing rather than 404ing old links. The test
+// mounts the real route table in a memory router (wrapped in the same
+// providers index.tsx uses), so deleting the redirect entry from router.tsx
+// fails here.
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { createMemoryRouter, Navigate, RouterProvider } from "react-router-dom";
+import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
-import Games from "@/components/pages/Games";
+import { AuthProvider } from "@/libraries/auth";
+import { routes } from "@/router";
 
 describe("router", () => {
   it("redirects the bare /games/crossword path to the games landing", () => {
-    // These two entries mirror app/router.tsx (the real router boots the
-    // whole app shell, so the relevant routes are replicated here).
-    const router = createMemoryRouter(
-      [
-        { path: "/games", Component: Games },
-        {
-          path: "/games/crossword",
-          element: <Navigate replace to="/games" />,
-        },
-      ],
-      { initialEntries: ["/games/crossword"] },
-    );
+    const router = createMemoryRouter(routes, {
+      initialEntries: ["/games/crossword"],
+    });
 
-    render(<RouterProvider router={router} />);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AuthProvider>
+          <RouterProvider router={router} />
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
 
     expect(screen.getByRole("heading", { name: "Games" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/games");

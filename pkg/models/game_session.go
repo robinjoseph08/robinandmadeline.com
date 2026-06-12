@@ -38,9 +38,10 @@ func EasierDifficulty(a, b string) string {
 	return a
 }
 
-// GameSession is one server-timed crossword solve, created when a guest starts
-// a puzzle and updated as they solve. Every solve is timed here regardless of
-// whether the guest chose to display a timer in the UI.
+// GameSession is one tracked crossword solve, created when a guest starts a
+// puzzle and updated as they solve. Every solve is tracked here regardless of
+// whether the guest chose to display a timer in the UI, but the elapsed time
+// itself is client-reported (see ElapsedMS below and the pkg/games doc).
 //
 // The id is a UUID that doubles as the session's bearer token: the crossword
 // requires no authentication, so holding the id is what authorizes updates to
