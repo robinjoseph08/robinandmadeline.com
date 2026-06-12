@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import Crossword from "@/components/pages/Crossword";
@@ -14,6 +15,10 @@ const ALL_BUT_LAST = `${SOLUTION.slice(0, 23)}?.`;
 
 function gridEl() {
   return screen.getByRole("application", { name: /crossword grid/i });
+}
+
+function hiddenInput() {
+  return screen.getByLabelText("Crossword answer input");
 }
 
 function square(row: number, col: number) {
@@ -35,6 +40,9 @@ describe("Crossword", () => {
     // The two corner blocks from the puzzle definition.
     expect(square(0, 0)).toHaveClass("bg-ink");
     expect(square(4, 4)).toHaveClass("bg-ink");
+    // Clue numbers render inside their squares so clues map to words.
+    expect(square(0, 1)).toHaveTextContent("1");
+    expect(square(1, 0)).toHaveTextContent("5");
     // Easy clue text shows by default.
     expect(
       screen.getByRole("button", { name: /1\. Smooch shared at the altar/ }),
@@ -62,6 +70,118 @@ describe("Crossword", () => {
     fireEvent.keyDown(gridEl(), { key: "Backspace" });
 
     expect(square(0, 1)).not.toHaveTextContent("K");
+  });
+
+  it("routes real keyboard input through the focused hidden input", async () => {
+    const user = userEvent.setup();
+    render(<Crossword />);
+
+    await user.click(square(0, 1));
+    // userEvent sends keys to document.activeElement, so this only works if
+    // clicking actually moved focus into the grid: the square's mousedown
+    // calls preventDefault (suppressing native focus) and must focus the
+    // hidden input itself.
+    await user.keyboard("k");
+
+    expect(square(0, 1)).toHaveTextContent("K");
+  });
+
+  it("enters letters that arrive only as input mutations, as on touch keyboards", () => {
+    render(<Crossword />);
+
+    fireEvent.mouseDown(square(0, 1));
+    fireEvent.change(hiddenInput(), { target: { value: " k" } });
+
+    expect(square(0, 1)).toHaveTextContent("K");
+
+    // The cursor advanced, so the next letter lands in the following square.
+    fireEvent.change(hiddenInput(), { target: { value: " i" } });
+    expect(square(0, 2)).toHaveTextContent("I");
+  });
+
+  it("treats the hidden input shrinking as backspace, as on touch keyboards", () => {
+    render(<Crossword />);
+
+    fireEvent.mouseDown(square(0, 1));
+    fireEvent.keyDown(gridEl(), { key: "K" });
+
+    // Mobile backspace never emits a usable key event; deleting the sentinel
+    // from the hidden input is the only observable signal.
+    fireEvent.change(hiddenInput(), { target: { value: "" } });
+
+    expect(square(0, 1)).not.toHaveTextContent("K");
+  });
+
+  it("ignores punctuation and digits so a stray keystroke cannot poison the save", () => {
+    const { unmount } = render(<Crossword />);
+
+    fireEvent.mouseDown(square(0, 1));
+    fireEvent.keyDown(gridEl(), { key: "K" });
+    fireEvent.keyDown(gridEl(), { key: "." });
+    fireEvent.keyDown(gridEl(), { key: "1" });
+
+    // Neither character entered the grid or moved the cursor; "." in
+    // particular is the block marker in the entries format, and saving it
+    // would invalidate the whole save.
+    const saved = JSON.parse(localStorage.getItem(PROGRESS_KEY)!) as {
+      entries: string;
+    };
+    expect(saved.entries).toBe(`.K${"?".repeat(22)}.`);
+
+    // The save still fits the puzzle, so the K survives a reload.
+    unmount();
+    render(<Crossword />);
+    expect(square(0, 1)).toHaveTextContent("K");
+  });
+
+  it("toggles typing direction when the selected square is clicked again", () => {
+    render(<Crossword />);
+
+    fireEvent.mouseDown(square(0, 1));
+    fireEvent.mouseDown(square(0, 1));
+    fireEvent.keyDown(gridEl(), { key: "K" });
+    fireEvent.keyDown(gridEl(), { key: "A" });
+
+    // The second letter went down the column (1-Down), not across the row.
+    expect(square(1, 1)).toHaveTextContent("A");
+    expect(square(0, 2)).not.toHaveTextContent("A");
+  });
+
+  it("selects the first open square when the grid itself gains focus", () => {
+    render(<Crossword />);
+
+    fireEvent.focus(gridEl());
+    fireEvent.keyDown(gridEl(), { key: "K" });
+
+    // The first non-block square is row 0, col 1.
+    expect(square(0, 1)).toHaveTextContent("K");
+  });
+
+  it("jumps to the next unfinished word with Tab", () => {
+    render(<Crossword />);
+
+    fireEvent.mouseDown(square(0, 1)); // 1-Across, KISS
+    fireEvent.keyDown(gridEl(), { key: "Tab" });
+
+    // The next across word, 5-Across (DANCE), starts at row 1, col 0.
+    expect(square(1, 0)).toHaveClass("bg-secondary");
+  });
+
+  it("selects a word from its clue and highlights the active clue", () => {
+    render(<Crossword />);
+
+    const clue = screen.getByRole("button", {
+      name: /5\. The couple's first one is a reception highlight/,
+    });
+    fireEvent.click(clue);
+
+    // 5-Across (DANCE) starts at row 1, col 0.
+    expect(square(1, 0)).toHaveClass("bg-secondary");
+    expect(clue).toHaveClass("bg-secondary/50");
+
+    // Typing lands at the start of the chosen word.
+    fireEvent.keyDown(gridEl(), { key: "D" });
+    expect(square(1, 0)).toHaveTextContent("D");
   });
 
   it("switches clue sets without resetting entered letters", () => {
@@ -173,6 +293,25 @@ describe("Crossword", () => {
     fireEvent.keyDown(gridEl(), { key: "Backspace" });
     fireEvent.keyDown(gridEl(), { key: "E" });
 
+    expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
+  });
+
+  it("locks the grid after it is solved", () => {
+    localStorage.setItem(
+      PROGRESS_KEY,
+      JSON.stringify({ entries: ALL_BUT_LAST, difficulty: "easy" }),
+    );
+
+    render(<Crossword />);
+    fireEvent.mouseDown(square(4, 3));
+    fireEvent.keyDown(gridEl(), { key: "E" });
+    expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
+
+    // Stray keystrokes after the win must not corrupt the solved grid.
+    fireEvent.keyDown(gridEl(), { key: "X" });
+    fireEvent.keyDown(gridEl(), { key: "Backspace" });
+
+    expect(square(4, 3)).toHaveTextContent("E");
     expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
   });
 

@@ -45,7 +45,9 @@ export function entriesFromGrid(grid: GridModel): string {
 /**
  * Build the solver's grid for a puzzle, optionally restoring saved entries.
  * Entries that don't fit the puzzle (wrong length, or blocks in different
- * places) are ignored so a stale save can never corrupt the grid.
+ * places) are ignored so a stale save can never corrupt the grid shape, and
+ * characters this app would never write (a save only contains "A"-"Z", ".",
+ * and "?") restore as empty squares rather than as junk content.
  */
 export function gridFromEntries(
   puzzle: CrosswordPuzzle,
@@ -58,7 +60,7 @@ export function gridFromEntries(
     entries.length === blank.length &&
     entries.split("").every((char, i) => (char === ".") === (blank[i] === "."))
   ) {
-    data = entries;
+    data = entries.replace(/[^A-Z.?]/g, "?");
   }
   return generateGridModel(puzzle.width, puzzle.height, data);
 }
@@ -96,6 +98,22 @@ export function validatePuzzle(puzzle: CrosswordPuzzle): string[] {
   // Compute the words the grid actually contains, then require every
   // difficulty's clue sets to cover exactly those words.
   const grid = generateGridModel(puzzle.width, puzzle.height, puzzle.solution);
+
+  // A square that belongs to no word (blocks or edges on all four sides)
+  // can never be clued, so the puzzle would be impossible to solve from the
+  // clues even though every clued word is fillable.
+  for (const square of grid.squares) {
+    if (
+      square.type !== "block" &&
+      !grid.wordMap[`${square.row}:${square.col}:across`] &&
+      !grid.wordMap[`${square.row}:${square.col}:down`]
+    ) {
+      problems.push(
+        `the square at row ${square.row}, column ${square.col} belongs to no across or down word, so it can never be clued`,
+      );
+    }
+  }
+
   const wordNumbers: Record<Direction, Set<string>> = {
     across: new Set(),
     down: new Set(),

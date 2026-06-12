@@ -53,6 +53,13 @@ export interface GridHandle {
   focus: () => void;
 }
 
+// The hidden input always holds this sentinel so mobile keyboards produce an
+// observable mutation for backspace (the value shrinks) as well as for
+// letters (the value grows). With an empty input, deleting emits no event at
+// all, which would leave backspace dead on exactly the keyboards the hidden
+// input exists for.
+const HIDDEN_INPUT_SENTINEL = " ";
+
 const Grid = forwardRef<GridHandle, Props>(
   (
     {
@@ -67,6 +74,13 @@ const Grid = forwardRef<GridHandle, Props>(
   ) => {
     const [grid, setGrid] = useState<GridModel>(initialGrid);
     const [selections, setSelections] = useState<Selection[]>([]);
+
+    // Edits lock once the grid is correct. Computed from local grid state
+    // rather than relying only on the isSolved prop, which arrives a render
+    // late (the parent learns of grid changes via an effect), so a fast
+    // keystroke right after the winning one cannot corrupt the solved grid.
+    const isLocked =
+      isSolved || (isPuzzleComplete(grid) && validateSolution(grid, solution));
 
     const gridContainerRef = useRef<HTMLDivElement>(null);
     // The hidden input that receives focus so touch devices show a keyboard.
@@ -160,7 +174,7 @@ const Grid = forwardRef<GridHandle, Props>(
         }
 
         // Don't allow editing if puzzle is solved
-        if (isSolved) {
+        if (isLocked) {
           return;
         }
 
@@ -173,7 +187,7 @@ const Grid = forwardRef<GridHandle, Props>(
         const wasComplete = isPuzzleComplete(grid);
 
         const updatedGrid = updateSquare(grid, activeSquare, {
-          solution: key === " " ? undefined : key.toUpperCase(),
+          solution: key.toUpperCase(),
         });
         setGrid(updatedGrid);
 
@@ -231,7 +245,7 @@ const Grid = forwardRef<GridHandle, Props>(
         }
         // If NAV_MANUAL_WORD_ADVANCE is true, stay at current position
       },
-      [grid, selections, isSolved, solution],
+      [grid, selections, isLocked, solution],
     );
 
     // Clear the selected square, or move backward and clear when already empty.
@@ -241,7 +255,7 @@ const Grid = forwardRef<GridHandle, Props>(
       }
 
       // Don't allow editing if puzzle is solved
-      if (isSolved) {
+      if (isLocked) {
         return;
       }
 
@@ -284,7 +298,7 @@ const Grid = forwardRef<GridHandle, Props>(
         setSelections(previousSelections);
       }
       // If we couldn't find a previous square, do nothing
-    }, [grid, selections, isSolved]);
+    }, [grid, selections, isLocked]);
 
     const handleKeyDown = useCallback(
       (e: KeyboardEvent) => {
@@ -293,11 +307,18 @@ const Grid = forwardRef<GridHandle, Props>(
           return;
         }
 
-        e.preventDefault();
+        if (e.key === "Escape") {
+          // Escape hatch for keyboard users: blur the grid so Tab goes back
+          // to moving focus around the page instead of between words.
+          hiddenInputRef.current?.blur();
+          gridContainerRef.current?.blur();
+          return;
+        }
 
         if (e.key === "Tab") {
           // Move to next/previous word
           if (selections.length === 1) {
+            e.preventDefault();
             const nextWord = e.shiftKey
               ? getPreviousWordSkippingCompleted(
                   grid,
@@ -318,6 +339,7 @@ const Grid = forwardRef<GridHandle, Props>(
 
         if (e.key === " ") {
           // Space key: toggle direction
+          e.preventDefault();
           if (selections.length === 1) {
             setSelections((prev) => [
               {
@@ -330,6 +352,7 @@ const Grid = forwardRef<GridHandle, Props>(
         }
 
         if (e.key === "Backspace") {
+          e.preventDefault();
           handleBackspace();
           return;
         }
@@ -337,6 +360,7 @@ const Grid = forwardRef<GridHandle, Props>(
         if (
           ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)
         ) {
+          e.preventDefault();
           // Move the selection in a certain direction.
           if (selections.length === 0) {
             // There's no selection, so don't do anything.
@@ -416,18 +440,33 @@ const Grid = forwardRef<GridHandle, Props>(
           return;
         }
 
-        if (e.key.length === 1) {
+        // Only single letters enter the grid. Anything else (digits,
+        // punctuation, function keys) is left to the browser: entering it
+        // would poison the saved entries string ("." is the block marker and
+        // "?" the empty-square marker), and unhandled keys like F5 must keep
+        // working.
+        if (/^[a-zA-Z]$/.test(e.key)) {
+          e.preventDefault();
           enterCharacter(e.key);
         }
       },
       [grid, selections, enterCharacter, handleBackspace],
     );
 
-    // Some mobile keyboards don't emit usable keydown events for letters; they
-    // only mutate the input. Catch those characters here.
+    // Some mobile keyboards don't emit usable keydown events; they only
+    // mutate the input. Recover what happened from the mutation: a value
+    // shorter than the sentinel means backspace deleted it, and any letter in
+    // the value was typed (the sentinel is a space, so it never matches).
+    // Desktop keydowns never reach here: handled keys are preventDefaulted
+    // before they can mutate the input.
     const handleHiddenInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-      const typed = e.target.value.slice(-1);
-      if (/[a-zA-Z]/.test(typed)) {
+      const value = e.target.value;
+      if (value.length < HIDDEN_INPUT_SENTINEL.length) {
+        handleBackspace();
+        return;
+      }
+      const typed = value.replace(/[^a-zA-Z]/g, "").slice(-1);
+      if (typed !== "") {
         enterCharacter(typed);
       }
     };
@@ -453,10 +492,18 @@ const Grid = forwardRef<GridHandle, Props>(
           autoCorrect="off"
           className="absolute left-0 top-0 h-px w-px opacity-0"
           onChange={handleHiddenInputChange}
+          // Keep the caret after the sentinel so backspace has something to
+          // delete; focus can otherwise land at position 0.
+          onFocus={(e) =>
+            e.currentTarget.setSelectionRange(
+              HIDDEN_INPUT_SENTINEL.length,
+              HIDDEN_INPUT_SENTINEL.length,
+            )
+          }
           ref={hiddenInputRef}
           spellCheck={false}
           type="text"
-          value=""
+          value={HIDDEN_INPUT_SENTINEL}
         />
         {grid.squares.map((square) => (
           <Square
