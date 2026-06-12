@@ -79,6 +79,40 @@ type Config struct {
 	// the per-IP limit. Defaults to false, so dev and tests key on the socket
 	// peer address.
 	TrustProxyHeaders bool
+
+	// PublicBaseURL is the site origin guest-facing links in emails are built
+	// on ({{rsvp_link}}, {{info_link}} merge fields).
+	PublicBaseURL string
+
+	// MailgunAPIKey is the private Mailgun API key. When empty (local dev,
+	// tests, e2e), the email worker does not start and queued emails stay
+	// queued, so nothing ever calls the real Mailgun API by accident.
+	MailgunAPIKey string
+
+	// MailgunDomain is the Mailgun sending domain (e.g. mg.example.com).
+	MailgunDomain string
+
+	// MailgunBaseURL is the Mailgun API origin; override for the EU region.
+	MailgunBaseURL string
+
+	// MailgunWebhookSigningKey verifies Mailgun delivery webhook signatures.
+	// When empty, every webhook is rejected as unauthorized.
+	MailgunWebhookSigningKey string
+
+	// EmailFrom is the From header on every outbound email.
+	EmailFrom string
+
+	// EmailWorkerBatchSize is how many queued recipients one worker batch
+	// claims (ADR 0004).
+	EmailWorkerBatchSize int
+
+	// EmailWorkerPollInterval is how long the worker sleeps between queue
+	// polls when idle.
+	EmailWorkerPollInterval time.Duration
+
+	// EmailWorkerStuckThreshold is how old a `sending` row must be before the
+	// restart reconciliation checks it against Mailgun (ADR 0004).
+	EmailWorkerStuckThreshold time.Duration
 }
 
 // Default values used for local development when an env var is unset.
@@ -107,6 +141,20 @@ const (
 	// (ADR 0006). The e2e harness raises the rate so specs never trip it.
 	defaultLoginRatePerMinute = 5.0
 	defaultLoginRateBurst     = 5
+	// The production site origin; emails built locally still link to the real
+	// site, which is what a test send should show.
+	defaultPublicBaseURL = "https://robinandmadeline.com"
+	// Mailgun's US-region API origin (the EU one is api.eu.mailgun.net).
+	defaultMailgunBaseURL = "https://api.mailgun.net"
+	defaultEmailFrom      = "Robin & Madeline <hello@robinandmadeline.com>"
+	// Small batches with a short pause keep one slow Mailgun call from
+	// stalling the whole queue while still draining ~174 recipients in
+	// seconds (ADR 0004).
+	defaultEmailWorkerBatchSize    = 10
+	defaultEmailWorkerPollInterval = 5 * time.Second
+	// Comfortably longer than a worst-case in-flight batch, so a live
+	// worker's rows are never mistaken for crash leftovers.
+	defaultEmailWorkerStuckThreshold = 5 * time.Minute
 )
 
 // New builds a Config from the environment, applying defaults for any unset
@@ -143,6 +191,21 @@ func New() (*Config, error) {
 		return nil, err
 	}
 
+	emailWorkerBatchSize, err := envInt("EMAIL_WORKER_BATCH_SIZE", defaultEmailWorkerBatchSize)
+	if err != nil {
+		return nil, err
+	}
+
+	emailWorkerPollInterval, err := envDuration("EMAIL_WORKER_POLL_INTERVAL", defaultEmailWorkerPollInterval)
+	if err != nil {
+		return nil, err
+	}
+
+	emailWorkerStuckThreshold, err := envDuration("EMAIL_WORKER_STUCK_THRESHOLD", defaultEmailWorkerStuckThreshold)
+	if err != nil {
+		return nil, err
+	}
+
 	// A canonical host carrying a scheme, port, path, or whitespace would
 	// produce redirect targets that never match the incoming Host again (an
 	// infinite redirect loop for the whole site), so it fails loudly at boot
@@ -166,6 +229,17 @@ func New() (*Config, error) {
 		StaticDir:            envStr("STATIC_DIR", ""),
 		CanonicalHost:        canonicalHost,
 		TrustProxyHeaders:    trustProxyHeaders,
+		PublicBaseURL:        envStr("PUBLIC_BASE_URL", defaultPublicBaseURL),
+		// Mailgun credentials default to empty: without an API key the email
+		// worker stays off, and without a signing key webhooks are rejected.
+		MailgunAPIKey:             os.Getenv("MAILGUN_API_KEY"),
+		MailgunDomain:             os.Getenv("MAILGUN_DOMAIN"),
+		MailgunBaseURL:            envStr("MAILGUN_BASE_URL", defaultMailgunBaseURL),
+		MailgunWebhookSigningKey:  os.Getenv("MAILGUN_WEBHOOK_SIGNING_KEY"),
+		EmailFrom:                 envStr("EMAIL_FROM", defaultEmailFrom),
+		EmailWorkerBatchSize:      emailWorkerBatchSize,
+		EmailWorkerPollInterval:   emailWorkerPollInterval,
+		EmailWorkerStuckThreshold: emailWorkerStuckThreshold,
 	}, nil
 }
 

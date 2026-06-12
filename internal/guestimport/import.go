@@ -61,11 +61,12 @@ func Import(ctx context.Context, db *bun.DB, plan *Plan, opts Options) (*Summary
 			}
 			// Every table is named explicitly (rather than CASCADE) so that if a
 			// future table ever references parties, this stale script fails loudly
-			// instead of silently wiping it. event_rsvps and photo_group_assignments
-			// go with the guests that own the rows; events and photo_groups
-			// themselves survive a re-import.
-			if _, err := tx.ExecContext(ctx, "TRUNCATE TABLE parties, guests, event_rsvps, photo_group_assignments"); err != nil {
-				return errors.Wrap(err, "truncate parties, guests, event rsvps, and photo group assignments")
+			// instead of silently wiping it. event_rsvps, photo_group_assignments,
+			// and email_recipients go with the guests that own the rows (mirroring
+			// their FK cascades); events, photo_groups, and email_sends themselves
+			// survive a re-import.
+			if _, err := tx.ExecContext(ctx, "TRUNCATE TABLE parties, guests, event_rsvps, photo_group_assignments, email_recipients"); err != nil {
+				return errors.Wrap(err, "truncate parties, guests, event rsvps, photo group assignments, and email recipients")
 			}
 		} else {
 			count, err := tx.NewSelect().Model((*models.Party)(nil)).Count(ctx)

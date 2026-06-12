@@ -27,6 +27,17 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, 365*24*time.Hour, cfg.GuestSessionDuration)
 		assert.InDelta(t, 5.0, cfg.LoginRatePerMinute, 0)
 		assert.Equal(t, 5, cfg.LoginRateBurst)
+		assert.Equal(t, "https://robinandmadeline.com", cfg.PublicBaseURL)
+		// Mailgun credentials default to empty so the worker stays off and
+		// webhooks are rejected until they are explicitly configured.
+		assert.Empty(t, cfg.MailgunAPIKey)
+		assert.Empty(t, cfg.MailgunDomain)
+		assert.Empty(t, cfg.MailgunWebhookSigningKey)
+		assert.Equal(t, "https://api.mailgun.net", cfg.MailgunBaseURL)
+		assert.Equal(t, "Robin & Madeline <hello@robinandmadeline.com>", cfg.EmailFrom)
+		assert.Equal(t, 10, cfg.EmailWorkerBatchSize)
+		assert.Equal(t, 5*time.Second, cfg.EmailWorkerPollInterval)
+		assert.Equal(t, 5*time.Minute, cfg.EmailWorkerStuckThreshold)
 	})
 
 	t.Run("reads values from environment", func(t *testing.T) {
@@ -39,6 +50,15 @@ func TestNew(t *testing.T) {
 		t.Setenv("GUEST_SESSION_DURATION", "720h")
 		t.Setenv("LOGIN_RATE_PER_MINUTE", "120")
 		t.Setenv("LOGIN_RATE_BURST", "20")
+		t.Setenv("PUBLIC_BASE_URL", "https://staging.example.com")
+		t.Setenv("MAILGUN_API_KEY", "key-abc")
+		t.Setenv("MAILGUN_DOMAIN", "mg.example.com")
+		t.Setenv("MAILGUN_BASE_URL", "https://api.eu.mailgun.net")
+		t.Setenv("MAILGUN_WEBHOOK_SIGNING_KEY", "whsec-abc")
+		t.Setenv("EMAIL_FROM", "Us <us@example.com>")
+		t.Setenv("EMAIL_WORKER_BATCH_SIZE", "25")
+		t.Setenv("EMAIL_WORKER_POLL_INTERVAL", "1s")
+		t.Setenv("EMAIL_WORKER_STUCK_THRESHOLD", "10m")
 
 		cfg, err := config.New()
 		require.NoError(t, err)
@@ -52,6 +72,22 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, 720*time.Hour, cfg.GuestSessionDuration)
 		assert.InDelta(t, 120.0, cfg.LoginRatePerMinute, 0)
 		assert.Equal(t, 20, cfg.LoginRateBurst)
+		assert.Equal(t, "https://staging.example.com", cfg.PublicBaseURL)
+		assert.Equal(t, "key-abc", cfg.MailgunAPIKey)
+		assert.Equal(t, "mg.example.com", cfg.MailgunDomain)
+		assert.Equal(t, "https://api.eu.mailgun.net", cfg.MailgunBaseURL)
+		assert.Equal(t, "whsec-abc", cfg.MailgunWebhookSigningKey)
+		assert.Equal(t, "Us <us@example.com>", cfg.EmailFrom)
+		assert.Equal(t, 25, cfg.EmailWorkerBatchSize)
+		assert.Equal(t, time.Second, cfg.EmailWorkerPollInterval)
+		assert.Equal(t, 10*time.Minute, cfg.EmailWorkerStuckThreshold)
+	})
+
+	t.Run("errors on malformed EMAIL_WORKER_POLL_INTERVAL", func(t *testing.T) {
+		t.Setenv("EMAIL_WORKER_POLL_INTERVAL", "not-a-duration")
+
+		_, err := config.New()
+		assert.Error(t, err)
 	})
 
 	t.Run("uses the canonical database for the main checkout", func(t *testing.T) {

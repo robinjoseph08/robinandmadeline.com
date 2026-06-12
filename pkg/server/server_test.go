@@ -85,6 +85,12 @@ func TestProtectedAdminRoute_RequiresToken(t *testing.T) {
 	srv.Handler.ServeHTTP(photoGroupsRec, photoGroupsReq)
 	require.Equal(t, http.StatusUnauthorized, photoGroupsRec.Code)
 
+	// Same for the emails routes.
+	emailsReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/emails/templates", http.NoBody)
+	emailsRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(emailsRec, emailsReq)
+	require.Equal(t, http.StatusUnauthorized, emailsRec.Code)
+
 	// Logging in then presenting the token grants access.
 	loginBody := `{"username":"admin","password":"correct-horse"}`
 	loginReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/admin/login", strings.NewReader(loginBody))
@@ -147,6 +153,21 @@ func TestGuestLoginRoute_Wired(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
+func TestMailgunWebhookRoute_WiredOnOpenGroup(t *testing.T) {
+	srv := server.New(newTestConfig(t), nil)
+
+	// No JWT is attached: the webhook lives on the open group (Mailgun is the
+	// caller). The test config has no signing key, so the signature check
+	// rejects the payload with 401, which both proves the route is mounted
+	// outside the admin middleware and that unsigned payloads cannot get in
+	// (full webhook behavior is covered in pkg/emails).
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/webhooks/mailgun", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
 func TestHealthEndpoint(t *testing.T) {

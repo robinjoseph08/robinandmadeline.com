@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 
 /**
@@ -26,6 +26,18 @@ export function useFilterParams<T extends object>(
   boolKeys: readonly (keyof T)[] = [],
 ) {
   const [searchParams, setSearchParams] = useSearchParams();
+  // The writers below read the current params through this ref rather than
+  // react-router's functional `setSearchParams((prev) => ...)`: that form
+  // hands the callback the params captured when the callback's render
+  // committed (react-router #9991), so a handler holding a stale closure
+  // (e.g. a filter-sheet toggle racing the search box's debounced commit)
+  // would write against outdated params and silently erase the other
+  // writer's value. The effect refreshes the ref on every committed render,
+  // so even a stale handler starts from the newest committed params.
+  const searchParamsRef = useRef(searchParams);
+  useEffect(() => {
+    searchParamsRef.current = searchParams;
+  }, [searchParams]);
   const boolSet = useMemo(
     () => new Set(boolKeys as readonly string[]),
     [boolKeys],
@@ -43,21 +55,16 @@ export function useFilterParams<T extends object>(
 
   const setFilter = useCallback(
     <K extends keyof T>(key: K, value: T[K]) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          // undefined / empty clears the param; everything else (including the
-          // boolean false -> "false") is stored as a string.
-          const serialized = value === undefined ? "" : String(value);
-          if (serialized === "") {
-            next.delete(key as string);
-          } else {
-            next.set(key as string, serialized);
-          }
-          return next;
-        },
-        { replace: true },
-      );
+      const next = new URLSearchParams(searchParamsRef.current);
+      // undefined / empty clears the param; everything else (including the
+      // boolean false -> "false") is stored as a string.
+      const serialized = value === undefined ? "" : String(value);
+      if (serialized === "") {
+        next.delete(key as string);
+      } else {
+        next.set(key as string, serialized);
+      }
+      setSearchParams(next, { replace: true });
     },
     [setSearchParams],
   );
@@ -68,16 +75,11 @@ export function useFilterParams<T extends object>(
   // clear, so they stay in the URL just as the read side leaves them.
   const clearAll = useCallback(
     (keep: readonly (keyof T)[] = []) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          for (const key of keys) {
-            if (!keep.includes(key)) next.delete(key as string);
-          }
-          return next;
-        },
-        { replace: true },
-      );
+      const next = new URLSearchParams(searchParamsRef.current);
+      for (const key of keys) {
+        if (!keep.includes(key)) next.delete(key as string);
+      }
+      setSearchParams(next, { replace: true });
     },
     [setSearchParams, keys],
   );

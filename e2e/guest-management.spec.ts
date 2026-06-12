@@ -75,9 +75,16 @@ test("admin manages parties and guests end to end", async ({ page }) => {
   await expect(page.getByText(`Added ${carol}`, { exact: true })).toBeVisible();
 
   // --- Edit a guest inline (set Alice's email), confirm it persists --------
+  // Assertions are scoped to Alice's row (matched by her delete button) rather
+  // than a global row count: the search can legitimately surface unrelated
+  // rows left by earlier runs, e.g. when the run stamp's digits happen to
+  // substring-match another guest's phone number.
   const search = page.getByRole("textbox", { name: "Search guests" });
   await search.fill(alice);
-  const email = page.getByRole("textbox", { name: "Email", exact: true });
+  const aliceRow = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("button", { name: `Delete ${alice}` }) });
+  const email = aliceRow.getByRole("textbox", { name: "Email", exact: true });
   await expect(email).toHaveCount(1);
   await email.fill("alice@example.com");
   // Wait for the PATCH to land before reloading: the guest PATCH has no
@@ -95,19 +102,20 @@ test("admin manages parties and guests end to end", async ({ page }) => {
   await page.reload({ waitUntil: "domcontentloaded" });
   await search.fill(alice);
   await expect(
-    page.getByRole("textbox", { name: "Email", exact: true }),
+    aliceRow.getByRole("textbox", { name: "Email", exact: true }),
   ).toHaveValue("alice@example.com");
 
   // --- Delete a guest ------------------------------------------------------
+  // Same row-scoped technique: Carol's row is the one with her delete button.
   await search.fill(carol);
+  const carolDelete = page.getByRole("button", { name: `Delete ${carol}` });
+  const carolRow = page.getByRole("row").filter({ has: carolDelete });
   await expect(
-    page.getByRole("textbox", { name: "Name", exact: true }),
+    carolRow.getByRole("textbox", { name: "Name", exact: true }),
   ).toHaveValue(carol);
-  await page.getByRole("button", { name: `Delete ${carol}` }).click();
+  await carolDelete.click();
   await expect(page.getByText("Guest deleted")).toBeVisible();
-  await expect(
-    page.getByRole("textbox", { name: "Name", exact: true }),
-  ).toHaveCount(0);
+  await expect(carolDelete).toHaveCount(0);
 
   // --- Confirm a filter narrows the list -----------------------------------
   // Search by the run stamp so both remaining guests (matched via their shared
@@ -158,20 +166,23 @@ test("admin manages parties and guests end to end", async ({ page }) => {
 
 /**
  * Finds the parties-grid row whose Name cell holds the given party name. The name
- * lives in an input, so it cannot be matched by row text; this checks each Name
- * input's value instead.
+ * lives in an input, so it cannot be matched by row text; this checks the Name
+ * inputs' values instead. All values are read in a single evaluateAll round
+ * trip: the shared e2e database accumulates parties across runs, and one
+ * protocol call per row would eat most of the test budget on a loaded machine.
  */
 async function partyRow(page: Page, name: string) {
   const nameInputs = page.getByRole("textbox", { name: "Name", exact: true });
   await expect(nameInputs.first()).toBeVisible();
-  const count = await nameInputs.count();
-  for (let i = 0; i < count; i++) {
-    if ((await nameInputs.nth(i).inputValue()) === name) {
-      // The enclosing row: scope row-action lookups to this one party.
-      return nameInputs.nth(i).locator("xpath=ancestor::tr[1]");
-    }
+  const values = await nameInputs.evaluateAll((els) =>
+    els.map((el) => (el as HTMLInputElement).value),
+  );
+  const index = values.indexOf(name);
+  if (index === -1) {
+    throw new Error(`party row not found for ${name}`);
   }
-  throw new Error(`party row not found for ${name}`);
+  // The enclosing row: scope row-action lookups to this one party.
+  return nameInputs.nth(index).locator("xpath=ancestor::tr[1]");
 }
 
 /** Reads the system clipboard from the page context. */

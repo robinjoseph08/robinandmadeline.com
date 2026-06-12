@@ -90,6 +90,13 @@ unaffected: `STATIC_DIR` (serve the built SPA from this directory),
 `CANONICAL_HOST` (permanently redirect every other host to this one), and
 `TRUST_PROXY_HEADERS` (resolve client IPs from Fly's forwarded header).
 
+Email delivery (the admin email system) is configured separately and is off by
+default: without `MAILGUN_API_KEY` the queue worker never starts and sends
+stay queued. Set `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, and
+`MAILGUN_WEBHOOK_SIGNING_KEY` (plus optionally `MAILGUN_BASE_URL`,
+`EMAIL_FROM`, `PUBLIC_BASE_URL`, and the `EMAIL_WORKER_*` tuning knobs) to
+enable real sending and delivery webhooks.
+
 ## Deployment
 
 Production is a single Fly.io app (Go binary serving the API and the built
