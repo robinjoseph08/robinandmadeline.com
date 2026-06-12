@@ -75,9 +75,15 @@ test("admin manages parties and guests end to end", async ({ page }) => {
   await expect(page.getByText(`Added ${carol}`, { exact: true })).toBeVisible();
 
   // --- Edit a guest inline (set Alice's email), confirm it persists --------
+  // Never assume the search isolates a single row: the shared e2e database
+  // accumulates other runs' leftovers, so scope to Alice's row by her delete
+  // button instead of relying on the result count.
+  const aliceRow = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("button", { name: `Delete ${alice}` }) });
   const search = page.getByRole("textbox", { name: "Search guests" });
   await search.fill(alice);
-  const email = page.getByRole("textbox", { name: "Email", exact: true });
+  const email = aliceRow.getByRole("textbox", { name: "Email", exact: true });
   await expect(email).toHaveCount(1);
   await email.fill("alice@example.com");
   // Wait for the PATCH to land before reloading: the guest PATCH has no
@@ -94,20 +100,19 @@ test("admin manages parties and guests end to end", async ({ page }) => {
   // Reload and re-search to confirm the PATCH persisted, not just optimistic.
   await page.reload({ waitUntil: "domcontentloaded" });
   await search.fill(alice);
-  await expect(
-    page.getByRole("textbox", { name: "Email", exact: true }),
-  ).toHaveValue("alice@example.com");
+  await expect(email).toHaveValue("alice@example.com");
 
   // --- Delete a guest ------------------------------------------------------
+  const carolRow = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("button", { name: `Delete ${carol}` }) });
   await search.fill(carol);
   await expect(
-    page.getByRole("textbox", { name: "Name", exact: true }),
+    carolRow.getByRole("textbox", { name: "Name", exact: true }),
   ).toHaveValue(carol);
   await page.getByRole("button", { name: `Delete ${carol}` }).click();
   await expect(page.getByText("Guest deleted")).toBeVisible();
-  await expect(
-    page.getByRole("textbox", { name: "Name", exact: true }),
-  ).toHaveCount(0);
+  await expect(carolRow).toHaveCount(0);
 
   // --- Confirm a filter narrows the list -----------------------------------
   // Search by the run stamp so both remaining guests (matched via their shared
@@ -118,6 +123,11 @@ test("admin manages parties and guests end to end", async ({ page }) => {
   await search.fill(stamp);
   await expect(aliceDelete).toBeVisible();
   await expect(bobDelete).toBeVisible();
+  // The search box commits to the URL through a debounce. Wait for that
+  // commit before opening the sheet: the placeholder filter's write rebuilds
+  // the whole query string, so applying it mid-commit can drop the search
+  // term and leave the list filtered by the previous query.
+  await page.waitForURL((url) => url.searchParams.get("search") === stamp);
   await page.getByRole("button", { name: "Filters" }).click();
   const sheet = page.getByRole("dialog");
   await sheet
