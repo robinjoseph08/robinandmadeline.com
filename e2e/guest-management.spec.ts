@@ -10,7 +10,13 @@ import { loginAsAdmin } from "./auth";
 // scoped to those names, so the spec is robust against data left by earlier runs
 // in the shared e2e database (no reset endpoint needed).
 
-const stamp = Date.now().toString(36);
+// Letters-only: the guest search also matches phones by the digits in the
+// term, so a stamp containing digits would drag every phone-bearing guest
+// left by earlier runs into a name search and break row isolation. Digits
+// are mapped to the letters g-p to keep the timestamp's uniqueness.
+const stamp = Date.now()
+  .toString(36)
+  .replace(/\d/g, (digit) => String.fromCharCode(103 + Number(digit)));
 const partyName = `E2E Party ${stamp}`;
 const alice = `Alice ${stamp}`;
 const bob = `Bob ${stamp}`;
