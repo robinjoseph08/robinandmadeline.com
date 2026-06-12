@@ -1,7 +1,8 @@
 // The authorable crossword puzzle format and its bridge to the solver's
 // GridModel. A puzzle is plain JSON-shaped data: one grid and answer string
 // shared by every difficulty, plus one clue set per difficulty (same answers,
-// different clue text). See puzzle-data.ts for the live example.
+// different clue text). See puzzle-data.ts and puzzle-data-full.ts for the
+// live examples, and puzzles.ts for the slug registry that routes to them.
 
 import { generateGridModel } from "./helpers";
 import type { Direction, GridModel } from "./types";

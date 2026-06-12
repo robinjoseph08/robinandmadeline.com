@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 
 import Grid, { GridHandle } from "@/components/library/crossword/Grid";
 import {
@@ -11,12 +12,13 @@ import {
   saveProgress,
 } from "@/components/library/crossword/progress";
 import {
+  CrosswordPuzzle,
   DIFFICULTIES,
   Difficulty,
   entriesFromGrid,
   gridFromEntries,
 } from "@/components/library/crossword/puzzle";
-import { weddingCrossword } from "@/components/library/crossword/puzzle-data";
+import { getPuzzleBySlug } from "@/components/library/crossword/puzzles";
 import {
   Direction,
   GridModel,
@@ -29,8 +31,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/libraries/utils";
 
-const puzzle = weddingCrossword;
-
 const DIFFICULTY_LABELS: Record<Difficulty, string> = {
   easy: "Easy",
   medium: "Medium",
@@ -38,12 +38,41 @@ const DIFFICULTY_LABELS: Record<Difficulty, string> = {
 };
 
 /**
- * The crossword page. One grid with one set of answers; the difficulty
- * selector only swaps the clue text, so switching never touches entered
- * letters. Everything is client-side: progress persists to localStorage so a
- * guest can refresh or come back later and resume.
+ * The crossword page behind /games/crossword/:puzzleSlug. The slug resolves
+ * against the puzzle registry; an unknown slug gets the same friendly
+ * not-found treatment as a bad info-collection link. The `key` on the game
+ * forces a full remount when the slug changes, so navigating between puzzles
+ * never carries one grid's state into the other.
  */
 export default function Crossword() {
+  const { puzzleSlug = "" } = useParams();
+  const puzzle = getPuzzleBySlug(puzzleSlug);
+
+  if (!puzzle) {
+    return (
+      <section className="mx-auto max-w-2xl py-8">
+        <h1 className="text-3xl font-bold">Hmm, we can't find that puzzle</h1>
+        <p className="mt-3 text-muted-foreground" role="alert">
+          There's no crossword at this address. Head back to{" "}
+          <Link className="underline" to="/games">
+            the games page
+          </Link>{" "}
+          to find one.
+        </p>
+      </section>
+    );
+  }
+
+  return <CrosswordGame key={puzzle.id} puzzle={puzzle} />;
+}
+
+/**
+ * One puzzle's solve view. One grid with one set of answers; the difficulty
+ * selector only swaps the clue text, so switching never touches entered
+ * letters. Everything is client-side: progress persists to localStorage
+ * (keyed by puzzle id) so a guest can refresh or come back later and resume.
+ */
+function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   // Restore any saved progress once, at mount. After this, the grid and the
   // difficulty live in component state and are written back on every change.
   const [initial] = useState(() => {
@@ -63,7 +92,7 @@ export default function Crossword() {
 
   useEffect(() => {
     saveProgress(puzzle.id, { entries: entriesFromGrid(grid), difficulty });
-  }, [grid, difficulty]);
+  }, [puzzle.id, grid, difficulty]);
 
   const clues = puzzle.clues[difficulty];
   const completedWords = getCompletedWords(grid);
@@ -79,13 +108,19 @@ export default function Crossword() {
     }
   };
 
+  // The 15x15 needs more horizontal room than the mini, both for the page
+  // and for the grid itself, so its squares stay comfortably tappable.
+  const isLargePuzzle = puzzle.width > 10;
+
   return (
-    <section className="mx-auto max-w-4xl py-8">
-      <h1 className="text-3xl font-bold">Crossword</h1>
+    <section
+      className={cn("mx-auto py-8", isLargePuzzle ? "max-w-5xl" : "max-w-4xl")}
+    >
+      <h1 className="text-3xl font-bold">{puzzle.title}</h1>
       <p className="mt-3 text-muted-foreground">
-        {puzzle.title}: same puzzle, three flavors of clues. Pick your
-        difficulty and switch any time; your letters stay put. Progress saves
-        automatically in this browser.
+        Same answers, three flavors of clues. Pick your difficulty and switch
+        any time; your letters stay put. Progress saves automatically in this
+        browser.
       </p>
 
       <div
@@ -117,9 +152,19 @@ export default function Crossword() {
         </p>
       ) : null}
 
-      <div className="mt-6 grid gap-8 md:grid-cols-2">
+      <div
+        className={cn(
+          "mt-6 grid gap-8",
+          isLargePuzzle
+            ? "md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
+            : "md:grid-cols-2",
+        )}
+      >
         <Grid
-          className="mx-auto h-fit w-full max-w-md"
+          className={cn(
+            "mx-auto h-fit w-full",
+            isLargePuzzle ? "max-w-xl" : "max-w-md",
+          )}
           initialGrid={initial.grid}
           isSolved={solved}
           onGridChange={setGrid}

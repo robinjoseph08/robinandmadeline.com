@@ -1,8 +1,9 @@
-// The hardcoded wedding crossword. This is placeholder content: the grid is
-// real and solvable, but the clues will be rewritten with ones about the
-// couple before the wedding. The object below is plain JSON-shaped data, so
-// it is easy to author by hand or generate with a simple script; a unit test
-// runs validatePuzzle over it to keep the grid and clue sets consistent.
+// The hardcoded 5x5 mini crossword (the 15x15 lives in puzzle-data-full.ts,
+// and puzzles.ts maps URL slugs to both). This is placeholder content: the
+// grid is real and solvable, but the clues will be rewritten with ones about
+// the couple before the wedding. The object below is plain JSON-shaped data,
+// so it is easy to author by hand or generate with a simple script; a unit
+// test runs validatePuzzle over it to keep the grid and clue sets consistent.
 //
 // The grid ("." squares are blocks):
 //
@@ -14,7 +15,7 @@
 
 import type { CrosswordPuzzle } from "./puzzle";
 
-export const weddingCrossword: CrosswordPuzzle = {
+export const weddingMini: CrosswordPuzzle = {
   id: "wedding-mini-v1",
   title: "The Wedding Mini",
   width: 5,

@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import AdminDashboard from "@/components/pages/admin/AdminDashboard";
 import AdminEmailCompose from "@/components/pages/admin/AdminEmailCompose";
@@ -36,7 +36,10 @@ export const router = createBrowserRouter([
       { path: "story", Component: Story },
       { path: "schedule", Component: Schedule },
       { path: "games", Component: Games },
-      { path: "games/crossword", Component: Crossword },
+      // The puzzle slug resolves against the crossword puzzle registry; the
+      // bare path predates the registry, so send it back to the landing.
+      { path: "games/crossword", element: <Navigate replace to="/games" /> },
+      { path: "games/crossword/:puzzleSlug", Component: Crossword },
       { path: "photos", Component: Photos },
       { path: "faq", Component: FAQ },
       { path: "rsvp", Component: RSVP },

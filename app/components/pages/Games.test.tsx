@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import Games from "@/components/pages/Games";
 
 describe("Games", () => {
-  it("renders the games landing with a link to the crossword", () => {
+  it("renders the games landing with links to both crosswords", () => {
     render(
       <MemoryRouter>
         <Games />
@@ -14,7 +14,10 @@ describe("Games", () => {
 
     expect(screen.getByRole("heading", { name: /games/i })).toBeInTheDocument();
 
-    const crossword = screen.getByRole("link", { name: /crossword/i });
-    expect(crossword).toHaveAttribute("href", "/games/crossword");
+    const mini = screen.getByRole("link", { name: /mini crossword/i });
+    expect(mini).toHaveAttribute("href", "/games/crossword/mini");
+
+    const full = screen.getByRole("link", { name: /fifteen-by-fifteen/i });
+    expect(full).toHaveAttribute("href", "/games/crossword/full");
   });
 });
