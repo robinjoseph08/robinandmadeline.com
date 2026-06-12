@@ -52,12 +52,21 @@ func newID() string {
 	return uuid.Must(uuid.NewV7()).String()
 }
 
+// dbNow returns the current time truncated to the microsecond precision of a
+// Postgres timestamptz. Stamping rows with the pre-truncated value keeps the
+// timestamps a write returns byte-identical to what every later read sees;
+// otherwise they drift by the sub-microsecond nanoseconds Linux clocks carry
+// (macOS clocks tick in microseconds, which is why the drift hides locally).
+func dbNow() time.Time {
+	return time.Now().Truncate(time.Microsecond)
+}
+
 // CreateSession starts a solve: it inserts a session for the given puzzle at
 // the given starting difficulty, capturing the client IP and, when partyID is
 // non-blank (a valid guest token rode the request) and the party still exists
 // (see attachParty), the party affiliation.
 func (s *Service) CreateSession(ctx context.Context, in CreateGameSessionPayload, partyID, ipAddress string) (*models.GameSession, error) {
-	now := time.Now()
+	now := dbNow()
 	session := &models.GameSession{
 		ID:         newID(),
 		PuzzleID:   in.PuzzleID,
@@ -106,7 +115,7 @@ func (s *Service) UpdateSession(ctx context.Context, id string, in UpdateGameSes
 			return errcodes.ValidationError("elapsed_ms cannot decrease; send the total accumulated time.")
 		}
 
-		now := time.Now()
+		now := dbNow()
 		loaded.ElapsedMS = int64(*in.ElapsedMS)
 		if in.Difficulty != nil {
 			loaded.Difficulty = models.EasierDifficulty(loaded.Difficulty, *in.Difficulty)
@@ -175,7 +184,7 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 		if err := attachParty(ctx, tx, loaded, partyID); err != nil {
 			return err
 		}
-		loaded.UpdatedAt = time.Now()
+		loaded.UpdatedAt = dbNow()
 
 		_, err = tx.NewUpdate().Model(loaded).
 			Column("display_name", "party_id", "updated_at").
