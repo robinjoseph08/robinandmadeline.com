@@ -367,6 +367,13 @@ describe("Crossword solve sessions", () => {
       // The grid is obscured and inert so the clock can't be gamed.
       const overlay = screen.getByTestId("crossword-grid-overlay");
       expect(square(0, 1).closest("[inert]")).not.toBeNull();
+      // The clues are inert too: a paused solver must not be able to keep
+      // reading the puzzle off the clock.
+      expect(
+        screen
+          .getByRole("button", { name: /1\. Smooch shared at the altar/ })
+          .closest("[inert]"),
+      ).not.toBeNull();
 
       // Paused time does not count.
       await advance(4_000);
@@ -397,9 +404,30 @@ describe("Crossword solve sessions", () => {
       expect(timer()).toHaveTextContent("0:05");
     });
 
-    it("pauses when the tab hides and flushes through a keepalive fetch", async () => {
-      const fetchMock = vi.fn(() => Promise.resolve({ ok: true }));
-      vi.stubGlobal("fetch", fetchMock);
+    it("pauses while the leaderboard dialog is open and flushes on opening", async () => {
+      useFakeClock();
+      renderCrossword();
+      await startGame();
+
+      await advance(3_000);
+      fireEvent.click(screen.getByRole("button", { name: /leaderboard/i }));
+      await flushAsync();
+
+      expect(lastPatchBody()).toMatchObject({ elapsed_ms: 3_000 });
+
+      // Time spent reading the leaderboard does not count. The dialog has
+      // two closers (the footer button and the X); either resumes the clock.
+      await advance(5_000);
+      const dialog = screen.getByTestId("crossword-leaderboard-dialog");
+      fireEvent.click(
+        within(dialog).getAllByRole("button", { name: "Close" })[0],
+      );
+      await advance(2_000);
+
+      expect(timer()).toHaveTextContent("0:05");
+    });
+
+    it("pauses when the tab hides and flushes through a keepalive request", async () => {
       useFakeClock();
       renderCrossword();
       await startGame();
@@ -408,21 +436,71 @@ describe("Crossword solve sessions", () => {
       setVisibility("hidden");
       await flushAsync();
 
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/games/sessions/sess-1",
-        expect.objectContaining({ method: "PATCH", keepalive: true }),
+      // The flush rides the regular apiRequest path with keepalive set so it
+      // survives the page going away.
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/games/sessions/sess-1",
+        expect.objectContaining({
+          method: "PATCH",
+          keepalive: true,
+          body: expect.objectContaining({
+            elapsed_ms: 4_000,
+            completed: false,
+          }),
+        }),
       );
-      const body = JSON.parse(
-        (fetchMock.mock.calls[0] as unknown as [string, { body: string }])[1]
-          .body,
-      ) as UpdateGameSessionPayload;
-      expect(body).toMatchObject({ elapsed_ms: 4_000, completed: false });
 
       // Hidden time does not count; coming back resumes the clock.
       await advance(5_000);
       setVisibility("visible");
       await advance(1_000);
       expect(timer()).toHaveTextContent("0:05");
+    });
+
+    it("flushes through a keepalive request on pagehide", async () => {
+      useFakeClock();
+      renderCrossword();
+      await startGame();
+
+      await advance(4_000);
+      act(() => {
+        window.dispatchEvent(new Event("pagehide"));
+      });
+      await flushAsync();
+
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/games/sessions/sess-1",
+        expect.objectContaining({
+          method: "PATCH",
+          keepalive: true,
+          body: expect.objectContaining({
+            elapsed_ms: 4_000,
+            completed: false,
+          }),
+        }),
+      );
+    });
+
+    it("keeps the clock stopped when the page mounts in a hidden tab", async () => {
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-9", elapsedMs: 60_000 });
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "hidden",
+      });
+      useFakeClock();
+
+      renderCrossword();
+      await advance(45_000);
+
+      // No phantom active time accrued and no heartbeat fired while hidden.
+      expect(timer()).toHaveTextContent("1:00");
+      expect(patchBodies()).toHaveLength(0);
+
+      // First focus starts the clock.
+      setVisibility("visible");
+      await advance(2_000);
+      expect(timer()).toHaveTextContent("1:02");
     });
 
     it("heartbeats the total elapsed every 30 seconds, never lowering it", async () => {
@@ -438,6 +516,34 @@ describe("Crossword solve sessions", () => {
       expect(bodies[0].elapsed_ms).toBe(30_000);
       expect(bodies[1].elapsed_ms).toBe(60_000);
       expect(bodies[1].elapsed_ms!).toBeGreaterThan(bodies[0].elapsed_ms!);
+    });
+
+    it("stops the heartbeat while paused", async () => {
+      useFakeClock();
+      renderCrossword();
+      await startGame();
+
+      await advance(5_000);
+      fireEvent.click(screen.getByRole("button", { name: "Pause timer" }));
+      await flushAsync();
+
+      // The pause itself flushed once; a paused solve must not keep
+      // reporting, however long it sits.
+      expect(patchBodies()).toHaveLength(1);
+      await advance(65_000);
+      expect(patchBodies()).toHaveLength(1);
+    });
+
+    it("clamps reported elapsed time to the backend's 24 hour ceiling", async () => {
+      // 5 seconds shy of the cap; the next heartbeat would overshoot it.
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-1", elapsedMs: 86_395_000 });
+      useFakeClock();
+
+      renderCrossword();
+      await advance(30_000);
+
+      expect(lastPatchBody().elapsed_ms).toBe(86_400_000);
     });
 
     it("keeps recording time when the readout is hidden", async () => {
@@ -492,6 +598,67 @@ describe("Crossword solve sessions", () => {
         ).toHaveTextContent(/in 2:00 with the easy clues/),
       );
       expect(storedSession().completed).toBe(true);
+    });
+
+    it("keeps the local easiest difficulty when the server reports a harder one", async () => {
+      // The server missed the easy report (it never arrived), so it still
+      // says hard; the recorded difficulty is the min of both views, and the
+      // dialog must show the local easiest.
+      seedProgress(ALL_BUT_LAST, "easy");
+      seedSession({ id: "sess-1", elapsedMs: 120_000, difficulty: "easy" });
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string }) => {
+          if (options?.method === "PATCH") {
+            return Promise.resolve(
+              makeSession({
+                difficulty: "hard",
+                completed_at: "2026-06-12T00:00:00Z",
+              }),
+            );
+          }
+          if (path.startsWith("/games/leaderboard")) {
+            return Promise.resolve({ items: [], total: 0 });
+          }
+          return Promise.reject(new Error(`unexpected ${path}`));
+        },
+      );
+
+      renderCrossword();
+      await solveLastLetter();
+
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("crossword-completion-dialog"),
+        ).toHaveTextContent(/in 2:00 with the easy clues/),
+      );
+    });
+
+    it("never reports a restored solve that has no session record", async () => {
+      // Solved progress from before session tracking existed (or whose
+      // session record was cleared): there is no honest time, so nothing may
+      // be reported and nothing may be posted.
+      seedProgress(SOLUTION);
+      useFakeClock();
+
+      renderCrossword();
+      await advance(31_000);
+
+      expect(
+        apiRequest.mock.calls.some(([path]) =>
+          String(path).startsWith("/games/sessions"),
+        ),
+      ).toBe(false);
+      expect(
+        screen.queryByRole("button", { name: "Post your time" }),
+      ).not.toBeInTheDocument();
+      // The solve still reads as solved; it just carries no time.
+      expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
+
+      // Hiding the tab must not mint a session record either: the record's
+      // absence is exactly what marks this solve unreportable on the next
+      // visit, so flushOnHide persisting one would reopen the loophole.
+      setVisibility("hidden");
+      expect(localStorage.getItem(SESSION_KEY)).toBeNull();
     });
 
     it("prefills the display name for a signed-in guest and posts it", async () => {
@@ -590,6 +757,153 @@ describe("Crossword solve sessions", () => {
       );
     });
 
+    it("accepts a display name of exactly 50 characters", async () => {
+      const name = "x".repeat(50);
+      seedProgress(ALL_BUT_LAST);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      const base = apiRequest.getMockImplementation()!;
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string }) => {
+          if (path === "/games/sessions/sess-1/leaderboard") {
+            return Promise.resolve(makeSession({ display_name: name }));
+          }
+          return base(path, options);
+        },
+      );
+
+      renderCrossword();
+      await solveLastLetter();
+
+      const input = await screen.findByLabelText("Display name");
+      fireEvent.change(input, { target: { value: name } });
+      const postButton = screen.getByRole("button", { name: "Post my time" });
+      expect(postButton).toBeEnabled();
+      fireEvent.click(postButton);
+
+      await waitFor(() =>
+        expect(apiRequest).toHaveBeenCalledWith(
+          "/games/sessions/sess-1/leaderboard",
+          expect.objectContaining({ body: { display_name: name } }),
+        ),
+      );
+    });
+
+    it("refetches the leaderboard after a successful post", async () => {
+      seedProgress(ALL_BUT_LAST);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      const base = apiRequest.getMockImplementation()!;
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string }) => {
+          if (path === "/games/sessions/sess-1/leaderboard") {
+            return Promise.resolve(makeSession({ display_name: "Bob" }));
+          }
+          return base(path, options);
+        },
+      );
+      const leaderboardGets = () =>
+        apiRequest.mock.calls.filter(([path]) =>
+          String(path).startsWith("/games/leaderboard"),
+        ).length;
+
+      renderCrossword();
+      await solveLastLetter();
+
+      // The completion dialog's warm-up fetch ran before the post...
+      const input = await screen.findByLabelText("Display name");
+      await waitFor(() => expect(leaderboardGets()).toBeGreaterThan(0));
+      const getsBeforePost = leaderboardGets();
+
+      fireEvent.change(input, { target: { value: "Bob" } });
+      fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
+
+      // ...so a successful post refetches it, ensuring "View leaderboard"
+      // includes the guest's own entry.
+      await waitFor(() =>
+        expect(leaderboardGets()).toBeGreaterThan(getsBeforePost),
+      );
+    });
+
+    it("re-sends an unacknowledged completion before posting", async () => {
+      // The completion report failed (offline at the moment of the solve),
+      // so posting must first establish the completion, then post.
+      seedProgress(ALL_BUT_LAST);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      let patchFails = true;
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string }) => {
+          if (options?.method === "PATCH") {
+            return patchFails
+              ? Promise.reject(new TypeError("network down"))
+              : Promise.resolve(
+                  makeSession({ completed_at: "2026-06-12T00:00:00Z" }),
+                );
+          }
+          if (path === "/games/sessions/sess-1/leaderboard") {
+            return Promise.resolve(makeSession({ display_name: "Bob" }));
+          }
+          if (path.startsWith("/games/leaderboard")) {
+            return Promise.resolve({ items: [], total: 0 });
+          }
+          return Promise.reject(new Error(`unexpected ${path}`));
+        },
+      );
+
+      renderCrossword();
+      await solveLastLetter();
+      expect(storedSession().completed).toBe(false);
+
+      // The network is back by the time the guest posts.
+      patchFails = false;
+      const input = await screen.findByLabelText("Display name");
+      fireEvent.change(input, { target: { value: "Bob" } });
+      fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("crossword-completion-dialog"),
+        ).toHaveTextContent(/on the leaderboard/i),
+      );
+      // The completion PATCH landed before the leaderboard POST.
+      const methods = apiRequest.mock.calls.map(
+        ([path, options]) =>
+          [String(path), (options as { method?: string })?.method] as const,
+      );
+      const lastPatch = methods.reduce(
+        (last, [, method], index) => (method === "PATCH" ? index : last),
+        -1,
+      );
+      const postIndex = methods.findIndex(
+        ([path, method]) => method === "POST" && path.endsWith("/leaderboard"),
+      );
+      expect(lastPatch).toBeGreaterThanOrEqual(0);
+      expect(postIndex).toBeGreaterThan(lastPatch);
+      expect(storedSession().completed).toBe(true);
+    });
+
+    it("explains when the post cannot reach the server at all", async () => {
+      // No session was ever created (fully offline) and the post's own
+      // completion attempt fails too: the dialog must surface the hook's
+      // crafted message rather than a generic one.
+      seedProgress(ALL_BUT_LAST);
+      apiRequest.mockImplementation(() =>
+        Promise.reject(new TypeError("network down")),
+      );
+
+      renderCrossword();
+      await solveLastLetter();
+
+      const input = await screen.findByLabelText("Display name");
+      fireEvent.change(input, { target: { value: "Bob" } });
+      fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        /couldn't reach the server to record your solve/i,
+      );
+      expect(
+        screen.getByTestId("crossword-completion-dialog"),
+      ).toBeInTheDocument();
+    });
+
     it("surfaces a leaderboard rejection in the dialog and keeps it open", async () => {
       seedProgress(ALL_BUT_LAST);
       seedSession({ id: "sess-1", elapsedMs: 60_000 });
@@ -625,6 +939,45 @@ describe("Crossword solve sessions", () => {
         screen.getByTestId("crossword-completion-dialog"),
       ).toBeInTheDocument();
       expect(storedSession().postedName).toBeUndefined();
+    });
+
+    it("does not show a stale error when the dialog reopens", async () => {
+      seedProgress(ALL_BUT_LAST);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string }) => {
+          if (options?.method === "PATCH") {
+            return Promise.resolve(makeSession());
+          }
+          if (path === "/games/sessions/sess-1/leaderboard") {
+            return Promise.reject(
+              new ApiError(409, "this solve is already posted as another name"),
+            );
+          }
+          if (path.startsWith("/games/leaderboard")) {
+            return Promise.resolve({ items: [], total: 0 });
+          }
+          return Promise.reject(new Error(`unexpected ${path}`));
+        },
+      );
+
+      renderCrossword();
+      await solveLastLetter();
+
+      const input = await screen.findByLabelText("Display name");
+      fireEvent.change(input, { target: { value: "Rob" } });
+      fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        /already posted/i,
+      );
+
+      // Close and reopen: the old failure must not greet the guest again.
+      fireEvent.click(screen.getByRole("button", { name: "No thanks" }));
+      fireEvent.click(screen.getByRole("button", { name: "Post your time" }));
+      expect(
+        await screen.findByTestId("crossword-completion-dialog"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/already posted/i)).not.toBeInTheDocument();
     });
 
     it("treats declining to post as a first-class path", async () => {

@@ -7,9 +7,15 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// This file's 20260614000000 timestamp is deliberately ahead of the calendar:
+// the email system's migrations are being authored concurrently in another
+// worktree, and a future date guarantees this name cannot collide with the
+// names that work is minting. Bun applies whichever registered migrations are
+// still unapplied regardless of how their names sort, so the future date is
+// harmless and must not be "corrected" to the authoring date.
 func init() {
 	up := func(ctx context.Context, db *bun.DB) error {
-		// game_sessions: one server-timed crossword solve. A row is created when
+		// game_sessions: one tracked crossword solve. A row is created when
 		// a guest starts a puzzle and updated as they solve, so a row whose
 		// completed_at is NULL is a started-but-never-finished solve (observable
 		// as such, not inferred client-side).

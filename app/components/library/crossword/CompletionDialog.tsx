@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ApiError } from "@/libraries/api";
 import { formatDuration } from "@/libraries/format";
 
 import { Difficulty, DIFFICULTY_LABELS } from "./puzzle";
@@ -58,6 +57,18 @@ export default function CompletionDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A failure from an earlier attempt must not greet the guest when the
+  // dialog reopens (for example via "Post your time"), so clear it whenever
+  // open flips to true. This is the render-time adjustment pattern from the
+  // React docs, which avoids an extra effect-driven render pass.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setError(null);
+    }
+  }
+
   // The prefill arrives async (the guest's RSVP record loads when the dialog
   // opens), so the field shows it until the guest types anything themselves.
   const name = touched ? typedName : (prefillName ?? "");
@@ -75,8 +86,11 @@ export default function CompletionDialog({
     try {
       await onPost(trimmed);
     } catch (err) {
+      // Any thrown Error carries a message written for the guest: ApiError
+      // holds the backend's, and useSolveSession crafts a friendly one for
+      // offline failures. The generic copy is only for non-Error throws.
       setError(
-        err instanceof ApiError
+        err instanceof Error && err.message
           ? err.message
           : "We couldn't post your time right now. Please try again.",
       );

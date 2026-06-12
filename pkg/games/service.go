@@ -1,10 +1,12 @@
 // Package games is the API and data layer for the games section's server-side
-// state: crossword solve sessions and the v1 leaderboard. Every solve is timed
-// server-side regardless of whether the guest displays a timer in the UI: a
-// session row is created when a guest starts a puzzle, updated with the
+// state: crossword solve sessions and the v1 leaderboard. A session row is
+// created when a guest starts a puzzle, updated with the client-reported
 // accumulated active-solving time (and any difficulty switches) as they solve,
 // and stamped with completed_at when they finish, so a row without one is
-// observable as started-but-never-completed.
+// observable as started-but-never-completed. The server stamps created_at and
+// completed_at itself but only sanity-checks the reported elapsed_ms (it must
+// grow monotonically and stay under a 24-hour cap), so the ranked leaderboard
+// times are honor-system, not server-timed.
 //
 // The endpoints are public (the crossword needs no authentication); the
 // session's UUID id doubles as its bearer token, so holding the id is what
@@ -52,7 +54,8 @@ func newID() string {
 
 // CreateSession starts a solve: it inserts a session for the given puzzle at
 // the given starting difficulty, capturing the client IP and, when partyID is
-// non-blank (a valid guest token rode the request), the party affiliation.
+// non-blank (a valid guest token rode the request) and the party still exists
+// (see attachParty), the party affiliation.
 func (s *Service) CreateSession(ctx context.Context, in CreateGameSessionPayload, partyID, ipAddress string) (*models.GameSession, error) {
 	now := time.Now()
 	session := &models.GameSession{
@@ -64,8 +67,8 @@ func (s *Service) CreateSession(ctx context.Context, in CreateGameSessionPayload
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	if partyID != "" {
-		session.PartyID = &partyID
+	if err := attachParty(ctx, s.db, session, partyID); err != nil {
+		return nil, err
 	}
 	if _, err := s.db.NewInsert().Model(session).Exec(ctx); err != nil {
 		return nil, errors.Wrap(err, "insert game session")
@@ -81,7 +84,8 @@ func (s *Service) CreateSession(ctx context.Context, in CreateGameSessionPayload
 // client retry); any update that would change it is a 409. The row is locked
 // for the duration so concurrent reports cannot interleave between the read
 // and the write. A party is attached opportunistically when partyID is
-// non-blank and the session has none yet (e.g. the guest signed in mid-solve).
+// non-blank and the session has none yet (e.g. the guest signed in mid-solve);
+// see attachParty.
 func (s *Service) UpdateSession(ctx context.Context, id string, in UpdateGameSessionPayload, partyID string) (*models.GameSession, error) {
 	session := new(models.GameSession)
 	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
@@ -110,7 +114,9 @@ func (s *Service) UpdateSession(ctx context.Context, id string, in UpdateGameSes
 		if in.Completed {
 			loaded.CompletedAt = &now
 		}
-		attachParty(loaded, partyID)
+		if err := attachParty(ctx, tx, loaded, partyID); err != nil {
+			return err
+		}
 		loaded.UpdatedAt = now
 
 		_, err = tx.NewUpdate().Model(loaded).
@@ -166,7 +172,9 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 		}
 
 		loaded.DisplayName = &in.DisplayName
-		attachParty(loaded, partyID)
+		if err := attachParty(ctx, tx, loaded, partyID); err != nil {
+			return err
+		}
 		loaded.UpdatedAt = time.Now()
 
 		_, err = tx.NewUpdate().Model(loaded).
@@ -185,7 +193,8 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 }
 
 // Leaderboard reads one puzzle's published entries: completed, opted-in
-// sessions only, fastest first (ties broken by who completed earlier), capped
+// sessions only, fastest first (ties broken by who completed earlier, then by
+// session id so even a full tie orders identically across requests), capped
 // at leaderboardLimit. The returned total counts every published entry for the
 // puzzle, beyond the cap. The slice is never nil, so it serializes as [].
 func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]LeaderboardEntry, int, error) {
@@ -194,7 +203,7 @@ func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]Leade
 		Where("gs.puzzle_id = ?", in.PuzzleID).
 		Where("gs.display_name IS NOT NULL").
 		Where("gs.completed_at IS NOT NULL").
-		Order("gs.elapsed_ms ASC", "gs.completed_at ASC").
+		Order("gs.elapsed_ms ASC", "gs.completed_at ASC", "gs.id ASC").
 		Limit(leaderboardLimit).
 		ScanAndCount(ctx)
 	if err != nil {
@@ -231,10 +240,27 @@ func loadSessionForUpdate(ctx context.Context, tx bun.Tx, id string) (*models.Ga
 }
 
 // attachParty sets the session's party when a guest token rode the request
-// (partyID non-blank) and the session is not yet affiliated. An existing
-// affiliation is never overwritten: the party that started the solve keeps it.
-func attachParty(session *models.GameSession, partyID string) {
-	if partyID != "" && session.PartyID == nil {
+// (partyID non-blank), the session is not yet affiliated, and the party row
+// still exists. An existing affiliation is never overwritten: the party that
+// started the solve keeps it. The existence check matters because a guest
+// token outlives its party row: the guest import deletes and recreates every
+// party with fresh ids, an admin can delete a party outright, and tokens stay
+// valid for months, so attaching a stale claim would violate the party FK and
+// turn every session write for that guest into a 500. A stale token must
+// instead degrade to an anonymous session. A party deleted between this check
+// and the caller's write can still hit the FK; that window is vanishingly
+// small and accepted. The query runs only when an attach would actually
+// happen, on s.db in CreateSession and on the caller's transaction elsewhere.
+func attachParty(ctx context.Context, db bun.IDB, session *models.GameSession, partyID string) error {
+	if partyID == "" || session.PartyID != nil {
+		return nil
+	}
+	exists, err := db.NewSelect().Model((*models.Party)(nil)).Where("p.id = ?", partyID).Exists(ctx)
+	if err != nil {
+		return errors.Wrap(err, "check party exists")
+	}
+	if exists {
 		session.PartyID = &partyID
 	}
+	return nil
 }

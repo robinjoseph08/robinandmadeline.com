@@ -1,7 +1,9 @@
 package games
 
 import (
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -40,16 +42,29 @@ func pathID(c echo.Context) (string, error) {
 // clientIP extracts the real client IP for abuse tracing. In production the
 // app sits behind Fly.io's proxy, which sets Fly-Client-IP to the connecting
 // client (a header an end client cannot forge through the proxy, unlike an
-// appended X-Forwarded-For). When it is absent (local dev, tests), Echo's
-// RealIP covers the common cases: X-Forwarded-For first, then X-Real-IP, then
-// the socket's RemoteAddr. A server-wide Echo IPExtractor for Fly (which would
-// also feed the login rate limiter, ADR 0006) is issue #15's scope; this stays
-// a local concern until that lands.
+// appended X-Forwarded-For). Anywhere the app is reached without that proxy
+// (local dev, a direct hit) the headers are client-controlled text, so every
+// candidate must parse as an IP before it is stored; otherwise a client could
+// persist arbitrary text as its "IP" and defeat the tracing. The precedence is
+// the Fly header, then Echo's RealIP (X-Forwarded-For first, then X-Real-IP,
+// then the socket's RemoteAddr), then the socket's RemoteAddr host directly
+// (covering a garbage forwarded header), then "". Valid IPs are stored in
+// net.ParseIP's canonical form. A server-wide Echo IPExtractor for Fly (which
+// would also feed the login rate limiter, ADR 0006) is issue #15's scope; this
+// stays a local concern until that lands.
 func clientIP(c echo.Context) string {
-	if ip := c.Request().Header.Get(flyClientIPHeader); ip != "" {
-		return ip
+	if ip := net.ParseIP(strings.TrimSpace(c.Request().Header.Get(flyClientIPHeader))); ip != nil {
+		return ip.String()
 	}
-	return c.RealIP()
+	if ip := net.ParseIP(strings.TrimSpace(c.RealIP())); ip != nil {
+		return ip.String()
+	}
+	if host, _, err := net.SplitHostPort(c.Request().RemoteAddr); err == nil {
+		if ip := net.ParseIP(host); ip != nil {
+			return ip.String()
+		}
+	}
+	return ""
 }
 
 // createSession handles POST /api/games/sessions: a guest starting a puzzle.

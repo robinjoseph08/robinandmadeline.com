@@ -520,13 +520,15 @@ describe("Crossword", () => {
       ).not.toBeInTheDocument();
       // ...but the entered letter did not.
       expect(square(0, 1)).toHaveTextContent("K");
-      // The switch was reported so the server can record the easiest level.
+      // The switch was reported, and the payload carries the easiest level
+      // used so far (easy, where the solve started) rather than the current
+      // one, so the server's min always converges to the local truth.
       expect(apiRequest).toHaveBeenCalledWith(
         "/games/sessions/sess-1",
         expect.objectContaining({
           method: "PATCH",
           body: expect.objectContaining({
-            difficulty: "medium",
+            difficulty: "easy",
             completed: false,
           }),
         }),
@@ -760,6 +762,36 @@ describe("Crossword", () => {
       fireEvent.keyDown(gridEl(), { key: "K" });
       fireEvent.keyDown(gridEl(), { key: "X" });
       expect(square(0, 2)).toHaveTextContent("X");
+    });
+
+    it("jumps back to a word's first blank by default, and stays put when disabled", async () => {
+      // Default: filling the last square of a word that still has an earlier
+      // blank jumps the cursor back to that blank.
+      const first = renderCrossword();
+      await startGame();
+      fireEvent.mouseDown(square(0, 2));
+      for (const key of ["I", "S", "S"]) {
+        fireEvent.keyDown(gridEl(), { key });
+      }
+      fireEvent.keyDown(gridEl(), { key: "K" });
+      // The K landed back on the skipped first square of KISS.
+      expect(square(0, 1)).toHaveTextContent("K");
+      first.unmount();
+      localStorage.clear();
+      mockApiRoutes();
+
+      seedSettings({ jumpBackToFirstBlank: false });
+      renderCrossword();
+      await startGame();
+      fireEvent.mouseDown(square(0, 2));
+      for (const key of ["I", "S", "S"]) {
+        fireEvent.keyDown(gridEl(), { key });
+      }
+      fireEvent.keyDown(gridEl(), { key: "K" });
+      // The cursor stayed at the end of the word, so the K overwrote the
+      // last square instead of jumping back.
+      expect(square(0, 4)).toHaveTextContent("K");
+      expect(square(0, 1)).not.toHaveTextContent("K");
     });
 
     it("stays at the end of a finished word by default, and jumps to the next clue when configured", async () => {

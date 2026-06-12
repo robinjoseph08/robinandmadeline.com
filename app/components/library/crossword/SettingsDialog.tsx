@@ -50,7 +50,7 @@ export default function SettingsDialog({
           <CheckboxRow
             checked={settings.skipFilledSquares}
             id="setting-skip-filled"
-            label="Within a word, skip over filled squares"
+            label="Skip over filled squares"
             onChange={(skipFilledSquares) =>
               onSettingsChange({ skipFilledSquares })
             }
