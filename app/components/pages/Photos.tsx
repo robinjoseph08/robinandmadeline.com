@@ -1,10 +1,79 @@
-import PagePlaceholder from "@/components/library/PagePlaceholder";
+import { Image as ImageIcon } from "lucide-react";
+import { useState } from "react";
 
+import PageHeader from "@/components/library/PageHeader";
+import {
+  GALLERY_PHOTOS,
+  type GalleryPhoto,
+} from "@/components/pages/photos-content";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { cn } from "@/libraries/utils";
+
+/**
+ * Photo gallery: a masonry-style grid of placeholder tiles. Clicking a tile
+ * opens a lightbox dialog with the full-size view (also a placeholder until
+ * real photos land in the content file).
+ */
 export default function Photos() {
+  const [active, setActive] = useState<GalleryPhoto | null>(null);
+
   return (
-    <PagePlaceholder
-      description="Photos from our journey together. (Coming soon.)"
-      title="Photos"
-    />
+    <div className="py-12">
+      <PageHeader
+        subtitle="A gallery of our favorite moments. Real photos are coming soon."
+        title="Photos"
+      />
+
+      <div className="mt-10 columns-2 gap-4 sm:columns-3">
+        {GALLERY_PHOTOS.map((photo) => (
+          <button
+            aria-label={`View ${photo.label}`}
+            className={cn(
+              "mb-4 flex w-full cursor-pointer break-inside-avoid items-center justify-center rounded-xl transition-opacity hover:opacity-80",
+              photo.colorClass,
+              photo.aspectClass,
+            )}
+            key={photo.label}
+            onClick={() => setActive(photo)}
+            type="button"
+          >
+            <ImageIcon aria-hidden className="size-6 text-ink/30" />
+          </button>
+        ))}
+      </div>
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) setActive(null);
+        }}
+        open={active !== null}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{active?.label}</DialogTitle>
+            <DialogDescription>
+              The full-size photo will appear here once the gallery is ready.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="pb-6">
+            <div
+              className={cn(
+                "flex aspect-[4/3] w-full items-center justify-center rounded-lg",
+                active?.colorClass,
+              )}
+            >
+              <ImageIcon aria-hidden className="size-10 text-ink/30" />
+            </div>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
