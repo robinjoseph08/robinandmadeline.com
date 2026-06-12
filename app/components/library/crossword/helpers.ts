@@ -223,14 +223,18 @@ export function nextSelections(
 export function updateSquare(
   grid: GridModel,
   squareToUpdate: SquareModel,
-  update: Partial<SquareModel>,
+  // Deliberately narrowed to the entered letter: numbering derives from the
+  // block layout, so as long as updates can't change `type`, the identity
+  // preservation below stays sound by construction.
+  update: Partial<Pick<SquareModel, "solution">>,
 ): GridModel {
   // Only the changed square gets a new object. Untouched squares keep their
   // identity so the memoized Square components can skip re-rendering them;
   // before this, every keystroke re-rendered all 225 squares of the 15x15.
   // recalculateNumbers re-derives numbers and the word map over the shared
-  // objects, which is safe in solve mode: blocks never move, so every number
-  // it writes is the value the square already holds.
+  // objects, which is safe in solve mode: blocks never move (the parameter
+  // type enforces it), so every number it writes is the value the square
+  // already holds.
   const newGrid = {
     ...grid,
     squares: grid.squares.map((square) =>

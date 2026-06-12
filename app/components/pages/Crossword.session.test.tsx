@@ -419,6 +419,43 @@ describe("Crossword solve sessions", () => {
       expect(timer()).toHaveTextContent("0:07");
     });
 
+    it("resumes from every pause dialog close path, not just the Resume button", async () => {
+      useFakeClock();
+      renderCrossword();
+      await startGame();
+
+      await advance(3_000);
+      fireEvent.click(screen.getByRole("button", { name: "Pause timer" }));
+      await flushAsync();
+
+      // The dialog is controlled by the paused state, so the X must route
+      // through onOpenChange into a resume; a no-op there would strand the
+      // guest paused with the dialog snapping back open.
+      const dialog = screen.getByTestId("crossword-pause-dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await flushDialogClose();
+      await flushAsync();
+      expect(
+        screen.queryByTestId("crossword-pause-dialog"),
+      ).not.toBeInTheDocument();
+      await advance(2_000);
+      expect(timer()).toHaveTextContent("0:05");
+
+      // Escape is the other built-in close path; it resumes too.
+      fireEvent.click(screen.getByRole("button", { name: "Pause timer" }));
+      await flushAsync();
+      fireEvent.keyDown(screen.getByTestId("crossword-pause-dialog"), {
+        key: "Escape",
+      });
+      await flushDialogClose();
+      await flushAsync();
+      expect(
+        screen.queryByTestId("crossword-pause-dialog"),
+      ).not.toBeInTheDocument();
+      await advance(2_000);
+      expect(timer()).toHaveTextContent("0:07");
+    });
+
     it("pauses while the settings dialog is open and flushes on opening", async () => {
       useFakeClock();
       renderCrossword();
@@ -1123,16 +1160,19 @@ describe("Crossword solve sessions", () => {
       fireEvent.click(screen.getByRole("button", { name: /leaderboard/i }));
 
       const dialog = await screen.findByTestId("crossword-leaderboard-dialog");
-      // One tab per difficulty, defaulting to the difficulty this solve was
-      // recorded at; the fetch is scoped to it.
-      const tabs = within(dialog).getAllByRole("tab");
+      // One tab per difficulty (a pressed-button group), defaulting to the
+      // difficulty this solve was recorded at; the fetch is scoped to it.
+      const picker = within(dialog).getByRole("group", {
+        name: "Leaderboard difficulty",
+      });
+      const tabs = within(picker).getAllByRole("button");
       expect(tabs.map((tab) => tab.textContent)).toEqual([
         "Easy",
         "Medium",
         "Hard",
       ]);
       expect(
-        within(dialog).getByRole("tab", { selected: true }),
+        within(picker).getByRole("button", { pressed: true }),
       ).toHaveTextContent("Medium");
       expect(apiRequest).toHaveBeenCalledWith(
         "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=medium",
@@ -1148,7 +1188,7 @@ describe("Crossword solve sessions", () => {
       expect(dialog).toHaveTextContent(/fastest 2 of 12/i);
 
       // Switching tabs fetches that difficulty's board.
-      fireEvent.click(within(dialog).getByRole("tab", { name: "Hard" }));
+      fireEvent.click(within(picker).getByRole("button", { name: "Hard" }));
       await waitFor(() =>
         expect(apiRequest).toHaveBeenCalledWith(
           "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=hard",

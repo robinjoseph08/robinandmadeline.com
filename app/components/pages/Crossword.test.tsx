@@ -591,52 +591,42 @@ describe("Crossword", () => {
       expect(square(1, 0)).toHaveTextContent("D");
     });
 
-    it("accents the clue crossing the cursor in the other direction's list", async () => {
+    it("accents the clue crossing the cursor in the other direction's list only", async () => {
       renderCrossword();
       await startGame();
 
       // Select 5-Across at (1,0); the down word through (1,0) is 5-Down.
       fireEvent.mouseDown(square(1, 0));
 
-      const downList = screen.getByTestId("crossword-clues-down");
-      const crossing = within(downList)
-        .getAllByRole("listitem")
-        .find((item) => item.getAttribute("data-clue-number") === "5");
-      expect(crossing).toBeDefined();
-      expect(within(crossing!).getByRole("button").className).toContain(
-        "border-l-4",
-      );
+      const clueButton = (direction: string) => {
+        const item = within(screen.getByTestId(`crossword-clues-${direction}`))
+          .getAllByRole("listitem")
+          .find((li) => li.getAttribute("data-clue-number") === "5");
+        expect(item).toBeDefined();
+        return within(item!).getByRole("button");
+      };
+
+      // The down list accents 5-Down as the crossing clue.
+      expect(clueButton("down").className).toContain("border-l-4");
+      // The across list highlights 5-Across as SELECTED, never as crossing:
+      // the page must not feed the crossing number to the selected
+      // direction's own list.
+      expect(clueButton("across").className).toContain("bg-secondary/50");
+      expect(clueButton("across").className).not.toContain("border-l-4");
     });
 
-    it("keeps clue lists independently scrollable and scrolls the active clues into view", async () => {
-      const scrollSpy = vi
-        .spyOn(Element.prototype, "scrollIntoView")
-        .mockImplementation(() => {});
+    it("keeps each clue list in its own bounded scroll container", async () => {
       renderCrossword();
       await startGame();
-      scrollSpy.mockClear();
 
-      // Each direction's list is its own scroll container (jsdom cannot
-      // scroll for real, so assert the mechanism: bounded overflow plus
-      // scrollIntoView on selection change).
+      // jsdom cannot lay out or scroll for real, so the page test pins the
+      // scroll container itself; the scroll-into-view mechanics are pinned
+      // with mocked geometry in ClueList.test.tsx.
       for (const direction of ["across", "down"]) {
         const list = screen.getByTestId(`crossword-clues-${direction}`);
         expect(list.className).toContain("overflow-y-auto");
         expect(list.className).toContain("max-h-");
       }
-
-      // Moving the selection scrolls the selected clue's list AND the
-      // crossing clue's list.
-      fireEvent.mouseDown(square(1, 0));
-      const scrolledLists = scrollSpy.mock.instances.map((el) =>
-        (el as HTMLElement)
-          .closest("[data-testid^='crossword-clues-']")
-          ?.getAttribute("data-testid"),
-      );
-      expect(scrolledLists).toContain("crossword-clues-across");
-      expect(scrolledLists).toContain("crossword-clues-down");
-
-      scrollSpy.mockRestore();
     });
   });
 

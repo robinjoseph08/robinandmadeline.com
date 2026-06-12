@@ -5,9 +5,10 @@ import {
   Settings as SettingsIcon,
   Trophy,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import ClueList from "@/components/library/crossword/ClueList";
 import CompletionDialog from "@/components/library/crossword/CompletionDialog";
 import Grid, { GridHandle } from "@/components/library/crossword/Grid";
 import {
@@ -275,8 +276,9 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
 
   const clues = puzzle.clues[difficulty];
   // Two-step memo so the Set's identity only changes when its CONTENTS do:
-  // the memoized clue lists then skip re-rendering on keystrokes that didn't
-  // complete or un-complete a word.
+  // the selected direction's memoized clue list then skips re-rendering on
+  // keystrokes that didn't complete or un-complete a word (the other
+  // direction's list still re-renders as the crossing clue changes).
   const completedWordsKey = useMemo(
     () => Array.from(getCompletedWords(grid)).sort().join("|"),
     [grid],
@@ -306,8 +308,8 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   }, [grid, selections]);
 
   // Reads the live grid through a ref (synced in an effect) so the callback
-  // stays referentially stable and the memoized clue lists don't re-render
-  // per keystroke.
+  // stays referentially stable and never forces the memoized clue lists to
+  // re-render by changing identity.
   const liveGridRef = useRef(grid);
   useEffect(() => {
     liveGridRef.current = grid;
@@ -582,79 +584,3 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     </section>
   );
 }
-
-interface ClueListProps {
-  clues: Record<string, string>;
-  completedWords: Set<string>;
-  /** The clue crossing the cursor square (the opposite direction's word). */
-  crossingNumber?: string;
-  direction: Direction;
-  onClueClick: (number: string, direction: Direction) => void;
-  selectedNumber?: string;
-}
-
-/**
- * One direction's clues in an independently scrollable container, ported
- * from the reference solver (crisscrosscx/solve): the selected clue is
- * highlighted and kept scrolled into view as the cursor moves, the crossing
- * clue gets an accent border, and completed clues fade. Memoized so grid
- * keystrokes that change no clue state skip re-rendering the whole list.
- */
-const ClueList = memo(function ClueList({
-  clues,
-  completedWords,
-  crossingNumber,
-  direction,
-  onClueClick,
-  selectedNumber,
-}: ClueListProps) {
-  const listRef = useRef<HTMLOListElement>(null);
-
-  // Auto-scroll the active clue (selected, or crossing for the other
-  // direction's list) into view as the selection moves through the grid.
-  // block:"nearest" only scrolls the inner list, and only when the clue is
-  // outside its scrollport.
-  const activeNumber = selectedNumber ?? crossingNumber;
-  useEffect(() => {
-    if (activeNumber === undefined) {
-      return;
-    }
-    listRef.current
-      ?.querySelector(`[data-clue-number="${activeNumber}"]`)
-      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [activeNumber]);
-
-  return (
-    <section>
-      <h2 className="text-lg font-semibold capitalize">{direction}</h2>
-      <ol
-        className="mt-2 max-h-64 space-y-1 overflow-y-auto overscroll-contain pr-1 md:max-h-[32rem]"
-        data-testid={`crossword-clues-${direction}`}
-        ref={listRef}
-      >
-        {Object.entries(clues)
-          .sort(([a], [b]) => parseInt(a, 10) - parseInt(b, 10))
-          .map(([number, clue]) => (
-            <li data-clue-number={number} key={number}>
-              <button
-                className={cn(
-                  "w-full rounded px-2 py-1 text-left text-sm transition-colors hover:bg-secondary/30",
-                  selectedNumber === number && "bg-secondary/50",
-                  // The crossing word's clue gets the reference's accent
-                  // border (pl-1 keeps the text aligned with its siblings).
-                  crossingNumber === number &&
-                    "rounded-l-none border-l-4 border-secondary pl-1",
-                  completedWords.has(`${number}:${direction}`) &&
-                    "text-muted-foreground/70",
-                )}
-                onClick={() => onClueClick(number, direction)}
-                type="button"
-              >
-                <span className="font-medium">{number}.</span> {clue}
-              </button>
-            </li>
-          ))}
-      </ol>
-    </section>
-  );
-});
