@@ -63,7 +63,9 @@ async function adminPost(
 
 /**
  * Seeds a party with one guest, a public event, a private event the party is
- * invited to, and a private event it is not, returning the party's RSVP code.
+ * invited to, and a private event only a second party is invited to (so its
+ * invisibility proves invitations are scoped to the requesting party, not
+ * merely present). Returns the first party's RSVP code.
  */
 async function seedFixtures(request: APIRequestContext): Promise<string> {
   const token = await adminToken(request);
@@ -77,6 +79,13 @@ async function seedFixtures(request: APIRequestContext): Promise<string> {
   const partyId = party.id as string;
   const rsvpCode = party.rsvp_code as string;
   expect(rsvpCode).toBeTruthy();
+
+  const otherParty = await adminPost(request, token, "/api/admin/parties", {
+    name: `${partyName} Other`,
+    side: "madeline",
+    relation: "friend",
+    guest: { full_name: `Riley R ${stamp}` },
+  });
 
   await adminPost(request, token, "/api/admin/events", {
     name: publicEventName,
@@ -98,11 +107,14 @@ async function seedFixtures(request: APIRequestContext): Promise<string> {
     party_ids: [partyId],
   });
 
-  await adminPost(request, token, "/api/admin/events", {
+  const uninvited = await adminPost(request, token, "/api/admin/events", {
     name: uninvitedEventName,
     date: "2026-10-17",
     start_time: "10:00",
     is_public: false,
+  });
+  await adminPost(request, token, `/api/admin/events/${uninvited.id}/invite`, {
+    party_ids: [otherParty.id as string],
   });
 
   return rsvpCode;

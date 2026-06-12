@@ -29,6 +29,25 @@ func dateValidator(fl validator.FieldLevel) bool {
 	return dateRE.MatchString(value)
 }
 
+// timeRE constrains an "HH:MM" wall-clock value to zero-padded 24-hour form
+// (00:00 through 23:59). The padding is load-bearing, not cosmetic: stored
+// times sort lexically in chronological order (the schedule's ORDER BY relies
+// on it) and feed fixed-width calendar formats ("5:00" would render as the
+// invalid iCalendar time 50000). Go's `datetime=15:04` check is too lenient
+// here because time.Parse accepts a single-digit hour.
+var timeRE = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
+
+// timeValidator ensures the value matches zero-padded 24-hour "HH:MM" or the
+// empty string. Like the date validator it permits blank so a value can be
+// cleared; pair with `omitempty`, and add `required` or `ne=` to forbid blank.
+func timeValidator(fl validator.FieldLevel) bool {
+	value := fl.Field().String()
+	if value == "" {
+		return true
+	}
+	return timeRE.MatchString(value)
+}
+
 // urlValidator ensures the value is a valid URL or the empty string. The empty
 // string is allowed so that this validator can be used to clear out values. If
 // you want to enforce a non-empty URL, add a `required` tag.

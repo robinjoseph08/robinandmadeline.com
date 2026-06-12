@@ -123,14 +123,17 @@ export function googleCalendarUrl(event: Event): string {
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
-/** Escapes a text value per RFC 5545 (backslash, semicolon, comma, newline). */
+/**
+ * Escapes a text value per RFC 5545 (backslash, semicolon, comma) and folds
+ * every newline form (CRLF, lone LF, lone CR) to the escaped \n, since a raw
+ * CR or LF inside a content line is invalid iCalendar.
+ */
 function escapeText(value: string): string {
   return value
     .replace(/\\/g, "\\\\")
     .replace(/;/g, "\\;")
     .replace(/,/g, "\\,")
-    .replace(/\r\n/g, "\\n")
-    .replace(/\n/g, "\\n");
+    .replace(/\r\n|\r|\n/g, "\\n");
 }
 
 /** A Date as the UTC basic date-time iCalendar stamps require. */
@@ -152,8 +155,8 @@ export function icsContent(event: Event, now: Date = new Date()): string {
     "CALSCALE:GREGORIAN",
   ];
 
-  // The timezone definition is only needed (and only valid) when an event
-  // references local times; an all-day event has no wall-clock to pin.
+  // The timezone definition is only needed when an event references local
+  // times; an all-day event has no wall-clock to pin.
   if (event.start_time) {
     lines.push(...VENUE_VTIMEZONE);
   }
@@ -212,5 +215,8 @@ export function downloadICS(event: Event): void {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  // Revoking in the same task as the click has intermittently cancelled the
+  // download in Safari, so leave the blob URL alive long enough for any
+  // browser to have started reading it.
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }

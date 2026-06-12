@@ -8,15 +8,6 @@ import {
 } from "@/libraries/guest-api";
 import type { ListScheduleEventsResponse } from "@/types/generated/events";
 
-/**
- * React Query hook for the guest-facing schedule (GET /api/events). The
- * endpoint personalizes by an optional guest token: anonymous requests get
- * public events only, a valid token adds the party's invited private events.
- * The fetch attaches the persisted guest token when one exists; a 401 on that
- * authenticated attempt means the stored token is stale, so it is cleared and
- * the fetch retries anonymously rather than failing the page.
- */
-
 export enum QueryKey {
   ScheduleEvents = "ScheduleEvents",
 }
@@ -27,6 +18,15 @@ export interface ScheduleView {
   authenticated: boolean;
 }
 
+/**
+ * Fetches the guest-facing schedule (GET /api/events). The endpoint
+ * personalizes by an optional guest token: anonymous requests get public
+ * events only, a valid token adds the party's invited private events. The
+ * fetch attaches the persisted guest token when one exists; a 401 on that
+ * authenticated attempt means the stored token is stale, so it is cleared and
+ * the fetch retries anonymously rather than failing the page. Any other
+ * failure surfaces as the query's error and leaves the token alone.
+ */
 async function fetchSchedule(): Promise<ScheduleView> {
   const token = readGuestToken();
   if (token === null) {

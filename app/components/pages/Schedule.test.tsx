@@ -176,7 +176,38 @@ describe("Schedule", () => {
     await screen.findByRole("article", { name: "Reception" });
     expect(localStorage.getItem(GUEST_TOKEN_STORAGE_KEY)).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The retry is genuinely anonymous: resending the stale token would just
+    // 401 again against a real server.
+    const [, retryInit] = fetchMock.mock.calls[1];
+    expect(retryInit.headers ?? {}).not.toHaveProperty("Authorization");
     expect(screen.getByText(/enter your party code/i)).toBeInTheDocument();
+  });
+
+  it("keeps the stored token when the authenticated fetch fails with a non-401", async () => {
+    localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, "a.guest.jwt");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "internal_server_error",
+            message: "Something went wrong.",
+            status_code: 500,
+          },
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderSchedule();
+
+    // A server blip surfaces as the error state; it must not log the guest
+    // out (only a 401 means the token itself is stale) or retry anonymously.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /something went wrong loading the schedule/i,
+    );
+    expect(localStorage.getItem(GUEST_TOKEN_STORAGE_KEY)).toBe("a.guest.jwt");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("offers an .ics download and a Google Calendar link per event", async () => {

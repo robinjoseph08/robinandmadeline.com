@@ -224,7 +224,7 @@ func TestBind_DiveRequiredForSliceModTraversal(t *testing.T) {
 	})
 }
 
-// TestValidators covers the date, url, and emailblank custom validators
+// TestValidators covers the date, time, url, and emailblank custom validators
 // directly.
 func TestValidators(t *testing.T) {
 	t.Parallel()
@@ -232,9 +232,10 @@ func TestValidators(t *testing.T) {
 	require.NoError(t, err)
 
 	type payload struct {
-		When string `json:"when" validate:"omitempty,date"`
-		Site string `json:"site" validate:"omitempty,url"`
-		Mail string `json:"mail" validate:"omitempty,emailblank"`
+		When  string `json:"when" validate:"omitempty,date"`
+		Start string `json:"start" validate:"omitempty,time"`
+		Site  string `json:"site" validate:"omitempty,url"`
+		Mail  string `json:"mail" validate:"omitempty,emailblank"`
 	}
 
 	cases := []struct {
@@ -249,6 +250,14 @@ func TestValidators(t *testing.T) {
 		{"zero day rejected", `{"when":"2026-06-00"}`, false},
 		{"month 13 rejected", `{"when":"2026-13-07"}`, false},
 		{"day 32 rejected", `{"when":"2026-06-32"}`, false},
+		{"valid time", `{"start":"17:00"}`, true},
+		{"midnight allowed", `{"start":"00:00"}`, true},
+		{"last minute allowed", `{"start":"23:59"}`, true},
+		{"empty time allowed", `{"start":""}`, true},
+		{"unpadded hour rejected", `{"start":"5:00"}`, false},
+		{"hour 24 rejected", `{"start":"24:00"}`, false},
+		{"minute 60 rejected", `{"start":"17:60"}`, false},
+		{"missing colon rejected", `{"start":"1700"}`, false},
 		{"valid url", `{"site":"https://example.com"}`, true},
 		{"bad url", `{"site":"not a url"}`, false},
 		{"valid email", `{"mail":"pat@example.com"}`, true},

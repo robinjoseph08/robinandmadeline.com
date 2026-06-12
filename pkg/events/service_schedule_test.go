@@ -42,10 +42,16 @@ func TestScheduleEvents_PartyListsPublicAndInvitedPrivateEvents(t *testing.T) {
 	_, err := svc.InviteParties(ctx(), invited.ID, events.InvitePartiesPayload{PartyIDs: []string{p.ID}})
 	require.NoError(t, err)
 
-	// A private event the party was never invited to stays invisible.
+	// A private event the party was never invited to stays invisible, even
+	// though ANOTHER party's invitation gives it Event RSVP rows: the
+	// invitation must be scoped to the requesting party, not merely exist.
+	other := createPartyT(t, partySvc, "The Joneses")
+	addGuestT(t, partySvc, other.ID, "Riley")
 	uninvitedInput := privateEventInput()
 	uninvitedInput.Name = "Bridal Party Photos"
-	createEventT(t, svc, uninvitedInput)
+	uninvited := createEventT(t, svc, uninvitedInput)
+	_, err = svc.InviteParties(ctx(), uninvited.ID, events.InvitePartiesPayload{PartyIDs: []string{other.ID}})
+	require.NoError(t, err)
 
 	list, total, err := svc.ScheduleEvents(ctx(), p.ID)
 	require.NoError(t, err)
@@ -95,4 +101,25 @@ func TestScheduleEvents_ScheduleOrder(t *testing.T) {
 	require.NoError(t, err)
 	// Date first, then start_time with untimed events trailing their day.
 	assert.Equal(t, []string{"Ceremony", "Welcome Party", "Brunch"}, eventNames(list))
+}
+
+func TestScheduleEvents_IDBreaksTiesForIdenticalTimes(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	// Two events sharing a (date, start_time) pair fall through to the id
+	// tiebreak. Event ids are UUIDv7 (time-ordered), so creation order is the
+	// stable result; without the tiebreak the order would be nondeterministic.
+	first := publicEventInput()
+	first.Name = "Shuttle to Venue"
+	first.StartTime = pointerutil.String("15:00")
+	createEventT(t, svc, first)
+
+	second := publicEventInput()
+	second.Name = "Shuttle to Hotel"
+	second.StartTime = pointerutil.String("15:00")
+	createEventT(t, svc, second)
+
+	list, _, err := svc.ScheduleEvents(ctx(), "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Shuttle to Venue", "Shuttle to Hotel"}, eventNames(list))
 }

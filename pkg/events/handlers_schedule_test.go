@@ -123,9 +123,15 @@ func TestScheduleHandler_GuestTokenListsInvitedEventsInScheduleOrder(t *testing.
 	invited := createEventT(t, api.events, privateEventInput())
 	_, err := api.events.InviteParties(ctx(), invited.ID, events.InvitePartiesPayload{PartyIDs: []string{p.ID}})
 	require.NoError(t, err)
-	uninvited := privateEventInput()
-	uninvited.Name = "Bridal Party Photos"
-	createEventT(t, api.events, uninvited)
+	// The uninvited private event carries another party's invitation, so it
+	// has Event RSVP rows; only party scoping keeps it off this schedule.
+	other := createPartyT(t, api.parties, "The Joneses")
+	addGuestT(t, api.parties, other.ID, "Riley")
+	uninvitedInput := privateEventInput()
+	uninvitedInput.Name = "Bridal Party Photos"
+	uninvited := createEventT(t, api.events, uninvitedInput)
+	_, err = api.events.InviteParties(ctx(), uninvited.ID, events.InvitePartiesPayload{PartyIDs: []string{other.ID}})
+	require.NoError(t, err)
 
 	token, err := api.auth.GenerateGuestToken(p.ID)
 	require.NoError(t, err)

@@ -67,6 +67,11 @@ describe("googleCalendarUrl", () => {
     expect(url.searchParams.get("ctz")).toBeNull();
   });
 
+  it("rolls an all-day event's exclusive end across a year boundary", () => {
+    const url = new URL(googleCalendarUrl(makeEvent({ date: "2026-12-31" })));
+    expect(url.searchParams.get("dates")).toBe("20261231/20270101");
+  });
+
   it("defaults a missing end time to one hour after the start", () => {
     const url = new URL(googleCalendarUrl(makeEvent({ start_time: "17:00" })));
     expect(url.searchParams.get("dates")).toBe(
@@ -133,6 +138,14 @@ describe("icsContent", () => {
     // The referenced TZID is defined in the file so strict parsers resolve it.
     expect(ics).toContain("BEGIN:VTIMEZONE");
     expect(ics).toContain("TZID:America/Chicago");
+    // The DST rules are hand-maintained; a corrupted offset would shift every
+    // imported event by an hour in strict clients, so pin them.
+    expect(ics).toContain("TZOFFSETFROM:-0600");
+    expect(ics).toContain("TZOFFSETTO:-0500");
+    expect(ics).toContain("TZOFFSETFROM:-0500");
+    expect(ics).toContain("TZOFFSETTO:-0600");
+    expect(ics).toContain("RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU");
+    expect(ics).toContain("RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU");
   });
 
   it("renders an untimed event as an all-day event", () => {
@@ -161,6 +174,16 @@ describe("icsContent", () => {
     expect(ics).toContain("SUMMARY:Dinner\\; Dancing\\, Fun\\\\Stuff");
     expect(ics).toContain("DESCRIPTION:Line one\\nLine two");
   });
+
+  it("folds CRLF and lone CR newlines to the escaped form too", () => {
+    // A raw CR or LF inside a content line is invalid iCalendar, so every
+    // newline flavor a JSON payload can carry must collapse to \n.
+    const ics = icsContent(
+      makeEvent({ description: "CRLF\r\nthen\rlone CR" }),
+      now,
+    );
+    expect(ics).toContain("DESCRIPTION:CRLF\\nthen\\nlone CR");
+  });
 });
 
 describe("icsFilename", () => {
@@ -178,12 +201,14 @@ describe("icsFilename", () => {
 describe("downloadICS", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     // jsdom never defines these, so removing the stubs restores its state.
     delete (URL as Partial<typeof URL>).createObjectURL;
     delete (URL as Partial<typeof URL>).revokeObjectURL;
   });
 
-  it("triggers a browser download of the .ics file", () => {
+  it("triggers a browser download of the .ics file", async () => {
+    vi.useFakeTimers();
     // jsdom implements neither createObjectURL nor revokeObjectURL.
     const createObjectURL = vi.fn().mockReturnValue("blob:fake-url");
     const revokeObjectURL = vi.fn();
@@ -194,8 +219,19 @@ describe("downloadICS", () => {
 
     downloadICS(makeEvent({ start_time: "17:00" }));
 
+    // The downloaded blob really is the event's .ics body, not just any blob.
     expect(createObjectURL).toHaveBeenCalledTimes(1);
+    const blob = createObjectURL.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe("text/calendar;charset=utf-8");
+    const body = await blob.text();
+    expect(body).toContain("BEGIN:VCALENDAR");
+    expect(body).toContain("SUMMARY:Reception");
     expect(click).toHaveBeenCalledTimes(1);
+
+    // The blob URL outlives the click (revoking in the same task cancels the
+    // download in Safari); it is still revoked eventually.
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    vi.runAllTimers();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake-url");
   });
 });

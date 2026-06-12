@@ -65,6 +65,9 @@ func New() (*Binder, error) {
 	if err := validate.RegisterValidation("date", dateValidator); err != nil {
 		return nil, errors.WithStack(err)
 	}
+	if err := validate.RegisterValidation("time", timeValidator); err != nil {
+		return nil, errors.WithStack(err)
+	}
 	if err := validate.RegisterValidation("url", urlValidator); err != nil {
 		return nil, errors.WithStack(err)
 	}

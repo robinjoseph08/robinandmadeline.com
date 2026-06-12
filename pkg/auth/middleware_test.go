@@ -206,6 +206,10 @@ func runOptionalGuest(t *testing.T, svc *auth.Service, authHeader string) (nextC
 	if err != nil {
 		e.HTTPErrorHandler(err, c)
 	}
+	// Every OptionalGuest response, authenticated or not, varies by the
+	// Authorization header: a shared cache must never serve one audience's
+	// personalized body to another.
+	assert.Contains(t, rec.Header().Values("Vary"), echo.HeaderAuthorization)
 	return nextCalled, partyID, rec.Code
 }
 

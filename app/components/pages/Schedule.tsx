@@ -41,8 +41,12 @@ export default function Schedule() {
   return (
     <section className="mx-auto max-w-2xl py-8">
       <h1 className="text-3xl font-bold">Schedule</h1>
+      {/* The anonymous view may be missing the party's private events, so
+          only the authenticated intro claims to be everything. */}
       <p className="mt-3 text-muted-foreground">
-        Here is everything we have planned for the weekend.
+        {data.authenticated
+          ? "Here is everything we have planned for the weekend."
+          : "Here is what is happening over the wedding weekend."}
       </p>
       {!data.authenticated ? (
         <p className="mt-2 text-sm text-muted-foreground">
@@ -50,7 +54,7 @@ export default function Schedule() {
           <Link className="underline underline-offset-2" to="/rsvp">
             Enter your party code
           </Link>{" "}
-          to see your full schedule.
+          to unlock your full schedule.
         </p>
       ) : null}
 
@@ -113,7 +117,12 @@ function EventCard({ event, authenticated }: EventCardProps) {
           Add to Calendar (.ics)
         </Button>
         <Button asChild size="sm" variant="outline">
-          <a href={googleCalendarUrl(event)} rel="noreferrer" target="_blank">
+          <a
+            aria-label="Google Calendar (opens in new tab)"
+            href={googleCalendarUrl(event)}
+            rel="noreferrer"
+            target="_blank"
+          >
             <ExternalLink aria-hidden="true" />
             Google Calendar
           </a>

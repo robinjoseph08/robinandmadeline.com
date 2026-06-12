@@ -68,6 +68,10 @@ func (m *Middleware) RequireGuest(next echo.HandlerFunc) echo.HandlerFunc {
 func (m *Middleware) OptionalGuest(next echo.HandlerFunc) echo.HandlerFunc {
 	requireGuest := m.RequireGuest(next)
 	return func(c echo.Context) error {
+		// The response body varies by the (optional) credential, so any shared
+		// cache in front must key on the Authorization header; without this a
+		// cache could serve one party's personalized response to everyone.
+		c.Response().Header().Add("Vary", echo.HeaderAuthorization)
 		if c.Request().Header.Get(echo.HeaderAuthorization) == "" {
 			return next(c)
 		}
