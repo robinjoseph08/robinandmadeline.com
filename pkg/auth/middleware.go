@@ -59,6 +59,34 @@ func (m *Middleware) RequireGuest(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
+// OptionalGuest authenticates exactly like RequireGuest when the request
+// presents an Authorization header, and lets header-less requests through
+// unauthenticated (no claims on the context). A presented token must be a
+// valid, unexpired guest token with a party id: a bad credential is a 401, so
+// the client learns its stored token is stale (and can clear it and retry
+// anonymously) instead of being silently downgraded to the public view.
+func (m *Middleware) OptionalGuest(next echo.HandlerFunc) echo.HandlerFunc {
+	requireGuest := m.RequireGuest(next)
+	return func(c echo.Context) error {
+		if c.Request().Header.Get(echo.HeaderAuthorization) == "" {
+			return next(c)
+		}
+		return requireGuest(c)
+	}
+}
+
+// GuestPartyID returns the authenticated guest's party id, or "" when the
+// context carries no guest claims (an unauthenticated request behind
+// OptionalGuest). Handlers that cannot proceed without a party use
+// PartyIDFromContext, which errors instead.
+func GuestPartyID(c echo.Context) string {
+	claims, ok := c.Get(ContextKeyClaims).(*JWTClaims)
+	if !ok {
+		return ""
+	}
+	return claims.PartyID
+}
+
 // PartyIDFromContext returns the party id of the authenticated guest, stashed
 // on the context by RequireGuest. Handlers behind RequireGuest can rely on it;
 // a missing or party-less claim (a route mounted outside the middleware, a

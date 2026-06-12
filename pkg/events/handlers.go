@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/pkg/errors"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 )
@@ -170,6 +171,25 @@ func (h *handler) updateEventRSVP(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, newEventRSVPListItem(row))
+}
+
+// listScheduleEvents handles GET /api/events, the guest-facing schedule. The
+// route sits behind OptionalGuest: without a token the schedule holds public
+// events only; with a valid guest token it also holds the private events the
+// guest's party is invited to. photo_groups is always present and, until
+// photo groups are built (a later slice), always empty.
+func (h *handler) listScheduleEvents(c echo.Context) error {
+	partyID := auth.GuestPartyID(c)
+	list, total, err := h.service.ScheduleEvents(c.Request().Context(), partyID)
+	if err != nil {
+		return err
+	}
+
+	items := make([]ScheduleEvent, 0, len(list))
+	for _, e := range list {
+		items = append(items, ScheduleEvent{Event: *e, PhotoGroups: []SchedulePhotoGroup{}})
+	}
+	return c.JSON(http.StatusOK, ListScheduleEventsResponse{Items: items, Total: total})
 }
 
 // respondWithEvent runs an event write/read and renders the event with its

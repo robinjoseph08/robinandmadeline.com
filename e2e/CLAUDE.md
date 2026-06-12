@@ -2,9 +2,10 @@
 
 Playwright end-to-end tests that drive the real SPA against a real API and
 Postgres. They cover the critical flows from the issue tracker (today: issue
-#4's party and guest management, issue #7's guest RSVP flow, and issue #8's
-info-collection flow). Unit-level behavior stays in Go tests and vitest; e2e
-is for whole-journey coverage through the browser.
+#4's party and guest management, issue #7's guest RSVP flow, issue #8's
+info-collection flow, and issue #9's public/personalized schedule). Unit-level
+behavior stays in Go tests and vitest; e2e is for whole-journey coverage
+through the browser.
 
 ## Running
 
