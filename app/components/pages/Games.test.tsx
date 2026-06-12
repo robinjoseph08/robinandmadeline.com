@@ -15,9 +15,9 @@ describe("Games", () => {
     expect(screen.getByRole("heading", { name: /games/i })).toBeInTheDocument();
 
     const mini = screen.getByRole("link", { name: /mini crossword/i });
-    expect(mini).toHaveAttribute("href", "/games/crossword/mini");
+    expect(mini).toHaveAttribute("href", "/games/mini");
 
     const full = screen.getByRole("link", { name: /fifteen-by-fifteen/i });
-    expect(full).toHaveAttribute("href", "/games/crossword/full");
+    expect(full).toHaveAttribute("href", "/games/crossword");
   });
 });

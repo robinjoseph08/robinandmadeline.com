@@ -1,7 +1,7 @@
 // The pre-solve dialog: pick a starting difficulty and whether to show the
-// timer. Dismissing it without starting leaves the grid obscured behind a
-// "Start solving" overlay (the page reopens this dialog from there), so the
-// clock always starts exactly when the guest commits.
+// timer. Dismissing it without starting leaves the play area blurred behind
+// a centered "Start solving" button (the page reopens this dialog from
+// there), so the clock always starts exactly when the guest commits.
 
 import { useState } from "react";
 
@@ -21,6 +21,11 @@ import { Label } from "@/components/ui/label";
 import { DIFFICULTIES, Difficulty, DIFFICULTY_LABELS } from "./puzzle";
 
 interface StartDialogProps {
+  /**
+   * Radix close-focus hook: the page uses it to put focus in the grid when
+   * the dialog closes because the solve started.
+   */
+  onCloseAutoFocus: (event: Event) => void;
   onOpenChange: (open: boolean) => void;
   onShowTimerChange: (show: boolean) => void;
   onStart: (difficulty: Difficulty) => void;
@@ -30,6 +35,7 @@ interface StartDialogProps {
 }
 
 export default function StartDialog({
+  onCloseAutoFocus,
   onOpenChange,
   onShowTimerChange,
   onStart,
@@ -40,7 +46,10 @@ export default function StartDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent data-testid="crossword-start-dialog">
+      <DialogContent
+        data-testid="crossword-start-dialog"
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <DialogHeader>
           <DialogTitle>Ready to solve?</DialogTitle>
           <DialogDescription>

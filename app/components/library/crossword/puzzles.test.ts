@@ -6,9 +6,9 @@ import {
 } from "@/components/library/crossword/puzzles";
 
 describe("getPuzzleBySlug", () => {
-  it("resolves the mini and full slugs to distinct puzzles", () => {
+  it("resolves the mini and crossword slugs to distinct puzzles", () => {
     const mini = getPuzzleBySlug("mini");
-    const full = getPuzzleBySlug("full");
+    const full = getPuzzleBySlug("crossword");
 
     expect(mini?.id).toBe("wedding-mini-v1");
     expect(mini?.width).toBe(5);

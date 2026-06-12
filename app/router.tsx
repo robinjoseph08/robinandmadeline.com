@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter } from "react-router-dom";
 
 import AdminDashboard from "@/components/pages/admin/AdminDashboard";
 import AdminEmailCompose from "@/components/pages/admin/AdminEmailCompose";
@@ -38,10 +38,11 @@ export const routes = [
       { path: "story", Component: Story },
       { path: "schedule", Component: Schedule },
       { path: "games", Component: Games },
-      // The puzzle slug resolves against the crossword puzzle registry; the
-      // bare path predates the registry, so send it back to the landing.
-      { path: "games/crossword", element: <Navigate replace to="/games" /> },
-      { path: "games/crossword/:puzzleSlug", Component: Crossword },
+      // Each puzzle lives at its own short path (/games/mini is the 5x5,
+      // /games/crossword the full 15x15). The slug resolves against the
+      // crossword puzzle registry, and unknown slugs get the page's friendly
+      // not-found treatment.
+      { path: "games/:puzzleSlug", Component: Crossword },
       { path: "photos", Component: Photos },
       { path: "faq", Component: FAQ },
       { path: "rsvp", Component: RSVP },

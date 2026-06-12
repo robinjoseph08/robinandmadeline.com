@@ -109,9 +109,9 @@ function renderCrossword(slug = "mini") {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[`/games/crossword/${slug}`]}>
+      <MemoryRouter initialEntries={[`/games/${slug}`]}>
         <Routes>
-          <Route Component={Crossword} path="/games/crossword/:puzzleSlug" />
+          <Route Component={Crossword} path="/games/:puzzleSlug" />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -120,7 +120,31 @@ function renderCrossword(slug = "mini") {
 
 async function startGame() {
   fireEvent.click(screen.getByRole("button", { name: "Start solving" }));
+  await flushDialogClose();
   await flushAsync();
+}
+
+/** Resume a solve that mounted paused (the return-paused behavior). */
+async function resumeGame() {
+  const dialog = screen.getByTestId("crossword-pause-dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Resume" }));
+  await flushDialogClose();
+  await flushAsync();
+}
+
+/**
+ * Flush Radix's deferred close-focus (a setTimeout(0) in its FocusScope) so
+ * the grid focus that follows a dialog close lands inside act, whether the
+ * test runs real or fake timers.
+ */
+async function flushDialogClose() {
+  await act(async () => {
+    if (vi.isFakeTimers()) {
+      vi.advanceTimersByTime(0);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  });
 }
 
 /** Drain queued telemetry promises (several chained microtask ticks). */
@@ -186,8 +210,12 @@ function setVisibility(state: DocumentVisibilityState) {
   });
 }
 
-/** Solve the last letter of an ALL_BUT_LAST grid. */
+/** Solve the last letter of an ALL_BUT_LAST grid (resuming first: a restored
+ * in-progress solve mounts paused). */
 async function solveLastLetter() {
+  if (screen.queryByTestId("crossword-pause-dialog")) {
+    await resumeGame();
+  }
   fireEvent.mouseDown(square(4, 3));
   fireEvent.keyDown(gridEl(), { key: "E" });
   await flushAsync();
@@ -231,6 +259,7 @@ describe("Crossword solve sessions", () => {
       renderCrossword();
       expect(timer()).toHaveTextContent("1:00");
 
+      await resumeGame();
       await advance(30_000);
 
       // No new session: the heartbeat reports against the stored one, with
@@ -272,6 +301,7 @@ describe("Crossword solve sessions", () => {
       useFakeClock();
 
       renderCrossword();
+      await resumeGame();
       await advance(30_000);
 
       expect(apiRequest).toHaveBeenCalledWith(
@@ -301,6 +331,7 @@ describe("Crossword solve sessions", () => {
       useFakeClock();
 
       renderCrossword();
+      await resumeGame();
       await advance(30_000);
       expect(patchBodies()).toHaveLength(1);
 
@@ -336,7 +367,7 @@ describe("Crossword solve sessions", () => {
       renderCrossword();
       await startGame();
 
-      fireEvent.mouseDown(square(0, 1));
+      // Starting auto-selected (0,1) across.
       fireEvent.keyDown(gridEl(), { key: "K" });
       fireEvent.keyDown(gridEl(), { key: "I" });
       await flushAsync();
@@ -348,7 +379,7 @@ describe("Crossword solve sessions", () => {
   });
 
   describe("timer and pause", () => {
-    it("accumulates active time, pauses behind an obscuring overlay, and flushes on pause", async () => {
+    it("accumulates active time, pauses behind a centered dialog over a blurred play area, and flushes on pause", async () => {
       useFakeClock();
       renderCrossword();
       await startGame();
@@ -364,22 +395,26 @@ describe("Crossword solve sessions", () => {
         elapsed_ms: 5_000,
         completed: false,
       });
-      // The grid is obscured and inert so the clock can't be gamed.
-      const overlay = screen.getByTestId("crossword-grid-overlay");
-      expect(square(0, 1).closest("[inert]")).not.toBeNull();
-      // The clues are inert too: a paused solver must not be able to keep
-      // reading the puzzle off the clock.
+      // The pause state is a centered dialog showing the stopped clock...
+      const dialog = screen.getByTestId("crossword-pause-dialog");
       expect(
-        screen
-          .getByRole("button", { name: /1\. Smooch shared at the altar/ })
-          .closest("[inert]"),
+        within(dialog).getByTestId("crossword-pause-elapsed"),
+      ).toHaveTextContent("0:05");
+      // ...and behind it the entire play area (grid AND clues) is blurred
+      // and inert, so the clock can't be gamed by reading the puzzle.
+      const playArea = screen.getByTestId("crossword-play-area");
+      expect(playArea).toHaveAttribute("inert");
+      expect(playArea.className).toContain("blur");
+      expect(square(0, 1).closest("[inert]")).not.toBeNull();
+      expect(
+        screen.getByTestId("crossword-clues-across").closest("[inert]"),
       ).not.toBeNull();
 
       // Paused time does not count.
       await advance(4_000);
       expect(timer()).toHaveTextContent("0:05");
 
-      fireEvent.click(within(overlay).getByRole("button", { name: "Resume" }));
+      await resumeGame();
       await advance(2_000);
       expect(timer()).toHaveTextContent("0:07");
     });
@@ -404,27 +439,45 @@ describe("Crossword solve sessions", () => {
       expect(timer()).toHaveTextContent("0:05");
     });
 
-    it("pauses while the leaderboard dialog is open and flushes on opening", async () => {
-      useFakeClock();
+    it("offers no leaderboard before the puzzle is solved", async () => {
       renderCrossword();
       await startGame();
 
-      await advance(3_000);
-      fireEvent.click(screen.getByRole("button", { name: /leaderboard/i }));
-      await flushAsync();
+      // Mid-solve the toolbar has settings but no leaderboard affordance;
+      // the leaderboard is for finishers only (the completion dialog and
+      // the solved summary).
+      expect(
+        screen.getByRole("button", { name: "Settings" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /leaderboard/i }),
+      ).not.toBeInTheDocument();
+    });
 
-      expect(lastPatchBody()).toMatchObject({ elapsed_ms: 3_000 });
+    it("starts paused when returning to an in-progress solve and resumes only explicitly", async () => {
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
 
-      // Time spent reading the leaderboard does not count. The dialog has
-      // two closers (the footer button and the X); either resumes the clock.
-      await advance(5_000);
-      const dialog = screen.getByTestId("crossword-leaderboard-dialog");
-      fireEvent.click(
-        within(dialog).getAllByRole("button", { name: "Close" })[0],
+      renderCrossword();
+
+      // Mounted paused: the centered pause dialog is up, the play area is
+      // obscured, and the clock is not ticking.
+      expect(screen.getByTestId("crossword-pause-dialog")).toBeInTheDocument();
+      expect(screen.getByTestId("crossword-play-area")).toHaveAttribute(
+        "inert",
       );
-      await advance(2_000);
+      await advance(10_000);
+      expect(timer()).toHaveTextContent("1:00");
+      expect(patchBodies()).toHaveLength(0);
 
-      expect(timer()).toHaveTextContent("0:05");
+      // The explicit resume starts the clock and focuses the grid, so
+      // typing works without a click.
+      await resumeGame();
+      await advance(2_000);
+      expect(timer()).toHaveTextContent("1:02");
+      fireEvent.keyDown(gridEl(), { key: "K" });
+      expect(square(0, 1)).toHaveTextContent("K");
     });
 
     it("pauses when the tab hides and flushes through a keepalive request", async () => {
@@ -489,6 +542,7 @@ describe("Crossword solve sessions", () => {
       seedSession({ id: "sess-1", elapsedMs: 60_000 });
       useFakeClock();
       const view = renderCrossword();
+      await resumeGame();
       await advance(5_000);
 
       view.unmount();
@@ -509,6 +563,9 @@ describe("Crossword solve sessions", () => {
       useFakeClock();
 
       renderCrossword();
+      // Even resumed (the mount was paused), the hidden tab keeps the clock
+      // stopped: hiding is its own pause inside the session hook.
+      await resumeGame();
       await advance(45_000);
 
       // No phantom active time accrued and no heartbeat fired while hidden.
@@ -559,6 +616,7 @@ describe("Crossword solve sessions", () => {
       useFakeClock();
 
       renderCrossword();
+      await resumeGame();
       await advance(30_000);
 
       expect(lastPatchBody().elapsed_ms).toBe(86_400_000);
@@ -1029,22 +1087,27 @@ describe("Crossword solve sessions", () => {
       ).toBeInTheDocument();
     });
 
-    it("renders the leaderboard fastest first", async () => {
-      seedProgress(EMPTY_ENTRIES);
-      seedSession({ id: "sess-1" });
+    it("opens the leaderboard from the solved summary on the solve's own difficulty tab", async () => {
+      seedProgress(SOLUTION, "medium");
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        difficulty: "medium",
+      });
       apiRequest.mockImplementation((path: string) => {
         if (path.startsWith("/games/leaderboard")) {
           return Promise.resolve({
             items: [
               {
                 display_name: "Alice",
-                difficulty: "easy",
+                difficulty: "medium",
                 elapsed_ms: 61_000,
                 completed_at: "2026-06-10T00:00:00Z",
               },
               {
                 display_name: "Bob",
-                difficulty: "hard",
+                difficulty: "medium",
                 elapsed_ms: 95_000,
                 completed_at: "2026-06-11T00:00:00Z",
               },
@@ -1056,21 +1119,41 @@ describe("Crossword solve sessions", () => {
       });
 
       renderCrossword();
+      await flushAsync();
       fireEvent.click(screen.getByRole("button", { name: /leaderboard/i }));
 
       const dialog = await screen.findByTestId("crossword-leaderboard-dialog");
+      // One tab per difficulty, defaulting to the difficulty this solve was
+      // recorded at; the fetch is scoped to it.
+      const tabs = within(dialog).getAllByRole("tab");
+      expect(tabs.map((tab) => tab.textContent)).toEqual([
+        "Easy",
+        "Medium",
+        "Hard",
+      ]);
+      expect(
+        within(dialog).getByRole("tab", { selected: true }),
+      ).toHaveTextContent("Medium");
       expect(apiRequest).toHaveBeenCalledWith(
-        "/games/leaderboard?puzzle_id=wedding-mini-v1",
+        "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=medium",
       );
+
+      // Fastest first within the tab.
       const rows = await within(dialog).findAllByRole("listitem");
       expect(rows).toHaveLength(2);
       expect(rows[0]).toHaveTextContent("Alice");
       expect(rows[0]).toHaveTextContent("1:01");
-      expect(rows[0]).toHaveTextContent("Easy");
       expect(rows[1]).toHaveTextContent("Bob");
       expect(rows[1]).toHaveTextContent("1:35");
-      expect(rows[1]).toHaveTextContent("Hard");
       expect(dialog).toHaveTextContent(/fastest 2 of 12/i);
+
+      // Switching tabs fetches that difficulty's board.
+      fireEvent.click(within(dialog).getByRole("tab", { name: "Hard" }));
+      await waitFor(() =>
+        expect(apiRequest).toHaveBeenCalledWith(
+          "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=hard",
+        ),
+      );
     });
 
     it("summarizes a returning completed solve without reopening the dialog", async () => {
@@ -1092,14 +1175,22 @@ describe("Crossword solve sessions", () => {
         /you solved it in 1:30 with the easy clues/i,
       );
       expect(timer()).toHaveTextContent("1:30");
-      // The solve is final: no pause control, and nothing reported.
+      // The solve is final: no pause control or pause dialog (a solved
+      // return must not mount paused), and nothing reported.
       expect(
         screen.queryByRole("button", { name: "Pause timer" }),
       ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("crossword-pause-dialog"),
+      ).not.toBeInTheDocument();
       expect(patchBodies()).toHaveLength(0);
-      // Posting stays available because this solve never opted in.
+      // Posting stays available because this solve never opted in, and the
+      // leaderboard is reachable now that the puzzle is solved.
       expect(
         screen.getByRole("button", { name: "Post your time" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /leaderboard/i }),
       ).toBeInTheDocument();
     });
 

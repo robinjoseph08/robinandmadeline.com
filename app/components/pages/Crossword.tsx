@@ -2,11 +2,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   MoreHorizontal,
   Pause,
-  Play,
   Settings as SettingsIcon,
   Trophy,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import CompletionDialog from "@/components/library/crossword/CompletionDialog";
@@ -17,6 +16,7 @@ import {
   getSelectedWord,
 } from "@/components/library/crossword/helpers";
 import LeaderboardDialog from "@/components/library/crossword/LeaderboardDialog";
+import PauseDialog from "@/components/library/crossword/PauseDialog";
 import {
   loadProgress,
   saveProgress,
@@ -41,6 +41,7 @@ import StartDialog from "@/components/library/crossword/StartDialog";
 import {
   Direction,
   GridModel,
+  inverseDirection,
   Selection,
 } from "@/components/library/crossword/types";
 import { useSolveSession } from "@/components/library/crossword/useSolveSession";
@@ -61,11 +62,12 @@ import { readGuestToken } from "@/libraries/guest-api";
 import { cn } from "@/libraries/utils";
 
 /**
- * The crossword page behind /games/crossword/:puzzleSlug. The slug resolves
- * against the puzzle registry; an unknown slug gets the same friendly
- * not-found treatment as a bad info-collection link. The `key` on the game
- * forces a full remount when the slug changes, so navigating between puzzles
- * never carries one grid's state into the other.
+ * The crossword page behind /games/:puzzleSlug (/games/mini is the 5x5,
+ * /games/crossword the full 15x15). The slug resolves against the puzzle
+ * registry; an unknown slug gets the same friendly not-found treatment as a
+ * bad info-collection link. The `key` on the game forces a full remount when
+ * the slug changes, so navigating between puzzles never carries one grid's
+ * state into the other.
  */
 export default function Crossword() {
   const { puzzleSlug = "" } = useParams();
@@ -133,6 +135,11 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     // An unreportable solve mounts finished so the clock never runs and the
     // heartbeat never mints a fresh session for it.
     initiallyFinished: initial.unreportable,
+    // A restored in-progress solve mounts paused (behind the pause dialog):
+    // a page load must never drop the guest into the grid with the clock
+    // already ticking. Tab visibility changes during a visit still silently
+    // pause and resume inside useSolveSession.
+    initiallyPaused: initial.hasProgress && !initial.solved,
   });
   const {
     complete: completeSession,
@@ -140,8 +147,11 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     started: sessionStarted,
   } = session;
 
-  const gridFull = isPuzzleComplete(grid);
-  const solved = gridFull && validateSolution(grid, puzzle.solution);
+  const gridFull = useMemo(() => isPuzzleComplete(grid), [grid]);
+  const solved = useMemo(
+    () => gridFull && validateSolution(grid, puzzle.solution),
+    [gridFull, grid, puzzle.solution],
+  );
 
   // Save progress only once a solve has started: the saved progress is also
   // what marks a returning guest (it skips the start dialog), so a visitor
@@ -182,10 +192,33 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     });
   }, []);
 
+  const focusGrid = useCallback(() => {
+    gridRef.current?.focus();
+  }, []);
+
   const handleStart = (chosen: Difficulty) => {
     setDifficulty(chosen);
     session.start(chosen);
     setStartOpen(false);
+  };
+
+  // When the start dialog closes because the solve began, focus belongs in
+  // the grid (with the first open square selected, via Grid's focus handler)
+  // so the guest can type immediately. A dismissal without starting keeps
+  // Radix's default: the play area is still inert behind the blur.
+  const handleStartCloseAutoFocus = (event: Event) => {
+    if (session.started) {
+      event.preventDefault();
+      focusGrid();
+    }
+  };
+
+  // Resuming from the pause dialog always returns focus to the grid; the
+  // prior selection (if any) is still in the grid's state, so typing picks
+  // up exactly where the guest left off.
+  const handlePauseCloseAutoFocus = (event: Event) => {
+    event.preventDefault();
+    focusGrid();
   };
 
   const handleSettingsOpenChange = (open: boolean) => {
@@ -193,12 +226,14 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     setUiPaused(open);
   };
 
-  // The leaderboard modal covers the grid just like the settings dialog, so
-  // it pauses the clock the same way (setUiPaused is a no-op for a solve
-  // that is finished or not yet started).
-  const handleLeaderboardOpenChange = (open: boolean) => {
-    setLeaderboardOpen(open);
-    setUiPaused(open);
+  // Closing the settings dialog returns focus to the grid so typing works
+  // immediately, unless the play area is inert (pre-start, or paused behind
+  // the pause dialog), where focus must stay out.
+  const handleSettingsCloseAutoFocus = (event: Event) => {
+    if (session.started && !session.paused) {
+      event.preventDefault();
+      focusGrid();
+    }
   };
 
   const handleDifficultySwitch = (level: Difficulty) => {
@@ -219,13 +254,17 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   });
   const prefillName = partyData?.guests[0]?.full_name;
 
-  // Warm the leaderboard while the completion dialog is up, so "View
-  // leaderboard" opens populated.
-  useLeaderboard(puzzle.id, { enabled: completionOpen });
+  // Warm the leaderboard tab the guest will land on (their own recorded
+  // difficulty) while the completion dialog is up, so "View leaderboard"
+  // opens populated.
+  useLeaderboard(puzzle.id, session.recordedDifficulty, {
+    enabled: completionOpen,
+  });
 
   // The warm-up fetch above runs before the guest posts, so after a
   // successful post the cached leaderboard is missing their entry; refetch
-  // it so "View leaderboard" shows them.
+  // it (the prefix sweeps every difficulty tab) so "View leaderboard" shows
+  // them.
   const queryClient = useQueryClient();
   const handlePost = async (displayName: string) => {
     await session.postToLeaderboard(displayName);
@@ -235,18 +274,57 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   };
 
   const clues = puzzle.clues[difficulty];
-  const completedWords = getCompletedWords(grid);
-  const selectedWord = getSelectedWord(grid, selections);
+  // Two-step memo so the Set's identity only changes when its CONTENTS do:
+  // the memoized clue lists then skip re-rendering on keystrokes that didn't
+  // complete or un-complete a word.
+  const completedWordsKey = useMemo(
+    () => Array.from(getCompletedWords(grid)).sort().join("|"),
+    [grid],
+  );
+  const completedWords = useMemo(
+    () => new Set(completedWordsKey === "" ? [] : completedWordsKey.split("|")),
+    [completedWordsKey],
+  );
+  const selectedWord = useMemo(
+    () => getSelectedWord(grid, selections),
+    [grid, selections],
+  );
   const selectedClueNumber = selectedWord?.[0].number?.toString();
   const selectedDirection =
     selections.length === 1 ? selections[0].direction : undefined;
-
-  const handleClueClick = (number: string, direction: Direction) => {
-    const wordSelection = findWordByClueNumber(grid, number, direction);
-    if (wordSelection) {
-      gridRef.current?.setSelection(wordSelection);
+  // The clue crossing the cursor square in the other direction; it gets an
+  // accent in its list and is kept scrolled into view, like the reference
+  // solver (crisscrosscx/solve) does.
+  const crossingClueNumber = useMemo(() => {
+    if (selections.length !== 1) {
+      return undefined;
     }
-  };
+    const { row, col, direction } = selections[0];
+    const crossing =
+      grid.wordMap[`${row}:${col}:${inverseDirection[direction]}`];
+    return crossing?.[0].number?.toString();
+  }, [grid, selections]);
+
+  // Reads the live grid through a ref (synced in an effect) so the callback
+  // stays referentially stable and the memoized clue lists don't re-render
+  // per keystroke.
+  const liveGridRef = useRef(grid);
+  useEffect(() => {
+    liveGridRef.current = grid;
+  }, [grid]);
+  const handleClueClick = useCallback(
+    (number: string, direction: Direction) => {
+      const wordSelection = findWordByClueNumber(
+        liveGridRef.current,
+        number,
+        direction,
+      );
+      if (wordSelection) {
+        gridRef.current?.setSelection(wordSelection);
+      }
+    },
+    [],
+  );
 
   // The 15x15 needs more horizontal room than the mini, both for the page
   // and for the grid itself, so its squares stay comfortably tappable.
@@ -254,7 +332,8 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
 
   // The solving area is obscured before the guest starts and while they are
   // explicitly paused, NYT-style, so the clock can't be beaten by reading
-  // the puzzle off the clock. `inert` keeps keyboard focus out too.
+  // the puzzle off the clock. The whole play area (grid AND clues) blurs,
+  // and `inert` keeps keyboard focus out too.
   const obscured = !session.started || session.paused;
 
   return (
@@ -285,26 +364,17 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
             )}
           {session.started && !solved && (
             <Button
-              aria-label={session.paused ? "Resume timer" : "Pause timer"}
-              onClick={session.paused ? session.resume : session.pause}
+              aria-label="Pause timer"
+              onClick={session.pause}
               size="icon"
               type="button"
               variant="ghost"
             >
-              {session.paused ? <Play /> : <Pause />}
+              <Pause />
             </Button>
           )}
         </div>
         <div className="flex items-center gap-1">
-          <Button
-            onClick={() => handleLeaderboardOpenChange(true)}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            <Trophy />
-            Leaderboard
-          </Button>
           <Button
             aria-label="Settings"
             onClick={() => handleSettingsOpenChange(true)}
@@ -369,19 +439,31 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
               : ""}
             ! See you on the dance floor.
           </p>
-          {/* An unreportable solve has no honest time to post (see
-              initial.unreportable). */}
-          {!session.posted && !initial.unreportable && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {/* An unreportable solve has no honest time to post (see
+                initial.unreportable). */}
+            {!session.posted && !initial.unreportable && (
+              <Button
+                onClick={() => setCompletionOpen(true)}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                Post your time
+              </Button>
+            )}
+            {/* The leaderboard is for finishers: it never shows mid-solve,
+                only here and in the completion dialog. */}
             <Button
-              className="mt-2"
-              onClick={() => setCompletionOpen(true)}
+              onClick={() => setLeaderboardOpen(true)}
               size="sm"
               type="button"
               variant="outline"
             >
-              Post your time
+              <Trophy />
+              Leaderboard
             </Button>
-          )}
+          </div>
         </div>
       ) : gridFull ? (
         <p className="mt-4 text-muted-foreground" role="status">
@@ -396,7 +478,12 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
             isLargePuzzle
               ? "md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
               : "md:grid-cols-2",
+            // While obscured, the entire play area (grid AND clues) blurs:
+            // no sliver of puzzle peeks out at any viewport size, nothing is
+            // readable, and inert keeps it non-interactive.
+            obscured && "pointer-events-none select-none blur-md",
           )}
+          data-testid="crossword-play-area"
           inert={obscured || undefined}
         >
           <Grid
@@ -418,6 +505,11 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
               <ClueList
                 clues={clues[direction]}
                 completedWords={completedWords}
+                crossingNumber={
+                  selectedDirection && selectedDirection !== direction
+                    ? crossingClueNumber
+                    : undefined
+                }
                 direction={direction}
                 key={direction}
                 onClueClick={handleClueClick}
@@ -430,32 +522,36 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
             ))}
           </div>
         </div>
-        {obscured && (
+        {/* When the start dialog was dismissed without starting, the blurred
+            play area keeps a centered way back in. */}
+        {!session.started && !startOpen && (
           <div
-            className="absolute inset-0 z-10 flex items-start justify-center rounded-md bg-cream pt-24"
-            data-testid="crossword-grid-overlay"
+            className="absolute inset-0 z-10 flex items-center justify-center"
+            data-testid="crossword-start-overlay"
           >
-            {session.started ? (
-              <Button onClick={session.resume} type="button">
-                Resume
-              </Button>
-            ) : (
-              <Button onClick={() => setStartOpen(true)} type="button">
-                Start solving
-              </Button>
-            )}
+            <Button onClick={() => setStartOpen(true)} type="button">
+              Start solving
+            </Button>
           </div>
         )}
       </div>
 
       <StartDialog
+        onCloseAutoFocus={handleStartCloseAutoFocus}
         onOpenChange={setStartOpen}
         onShowTimerChange={(showTimer) => updateSettings({ showTimer })}
         onStart={handleStart}
         open={startOpen}
         showTimer={settings.showTimer}
       />
+      <PauseDialog
+        elapsed={settings.showTimer ? formatDuration(session.elapsedMs) : null}
+        onCloseAutoFocus={handlePauseCloseAutoFocus}
+        onResume={session.resume}
+        open={session.paused}
+      />
       <SettingsDialog
+        onCloseAutoFocus={handleSettingsCloseAutoFocus}
         onOpenChange={handleSettingsOpenChange}
         onSettingsChange={updateSettings}
         open={settingsOpen}
@@ -469,7 +565,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
         onPost={handlePost}
         onViewLeaderboard={() => {
           setCompletionOpen(false);
-          handleLeaderboardOpenChange(true);
+          setLeaderboardOpen(true);
         }}
         open={completionOpen}
         posted={session.posted}
@@ -477,7 +573,8 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
         puzzleTitle={puzzle.title}
       />
       <LeaderboardDialog
-        onOpenChange={handleLeaderboardOpenChange}
+        defaultDifficulty={session.recordedDifficulty}
+        onOpenChange={setLeaderboardOpen}
         open={leaderboardOpen}
         puzzleId={puzzle.id}
         puzzleTitle={puzzle.title}
@@ -489,30 +586,64 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
 interface ClueListProps {
   clues: Record<string, string>;
   completedWords: Set<string>;
+  /** The clue crossing the cursor square (the opposite direction's word). */
+  crossingNumber?: string;
   direction: Direction;
   onClueClick: (number: string, direction: Direction) => void;
   selectedNumber?: string;
 }
 
-function ClueList({
+/**
+ * One direction's clues in an independently scrollable container, ported
+ * from the reference solver (crisscrosscx/solve): the selected clue is
+ * highlighted and kept scrolled into view as the cursor moves, the crossing
+ * clue gets an accent border, and completed clues fade. Memoized so grid
+ * keystrokes that change no clue state skip re-rendering the whole list.
+ */
+const ClueList = memo(function ClueList({
   clues,
   completedWords,
+  crossingNumber,
   direction,
   onClueClick,
   selectedNumber,
 }: ClueListProps) {
+  const listRef = useRef<HTMLOListElement>(null);
+
+  // Auto-scroll the active clue (selected, or crossing for the other
+  // direction's list) into view as the selection moves through the grid.
+  // block:"nearest" only scrolls the inner list, and only when the clue is
+  // outside its scrollport.
+  const activeNumber = selectedNumber ?? crossingNumber;
+  useEffect(() => {
+    if (activeNumber === undefined) {
+      return;
+    }
+    listRef.current
+      ?.querySelector(`[data-clue-number="${activeNumber}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [activeNumber]);
+
   return (
     <section>
       <h2 className="text-lg font-semibold capitalize">{direction}</h2>
-      <ol className="mt-2 space-y-1">
+      <ol
+        className="mt-2 max-h-64 space-y-1 overflow-y-auto overscroll-contain pr-1 md:max-h-[32rem]"
+        data-testid={`crossword-clues-${direction}`}
+        ref={listRef}
+      >
         {Object.entries(clues)
           .sort(([a], [b]) => parseInt(a, 10) - parseInt(b, 10))
           .map(([number, clue]) => (
-            <li key={number}>
+            <li data-clue-number={number} key={number}>
               <button
                 className={cn(
                   "w-full rounded px-2 py-1 text-left text-sm transition-colors hover:bg-secondary/30",
                   selectedNumber === number && "bg-secondary/50",
+                  // The crossing word's clue gets the reference's accent
+                  // border (pl-1 keeps the text aligned with its siblings).
+                  crossingNumber === number &&
+                    "rounded-l-none border-l-4 border-secondary pl-1",
                   completedWords.has(`${number}:${direction}`) &&
                     "text-muted-foreground/70",
                 )}
@@ -526,4 +657,4 @@ function ClueList({
       </ol>
     </section>
   );
-}
+});

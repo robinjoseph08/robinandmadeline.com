@@ -2,35 +2,32 @@
 // (app/components/library/Grid/Square.tsx) and adapted: solve-only props,
 // wedding palette colors, and squares that scale with the grid container so
 // the puzzle stays playable on small screens.
+//
+// The component is memoized and receives only primitives plus a stable
+// callback, so a keystroke re-renders just the squares whose selection or
+// content changed instead of the whole grid (225 squares on the 15x15).
 
-import { MouseEventHandler } from "react";
+import { memo, MouseEvent } from "react";
 
 import { cn } from "@/libraries/utils";
 
-import { getSelectedWord } from "./helpers";
-import { GridModel, Selection, SquareModel } from "./types";
-
-function isSelectedSquare(
-  selections: Selection[],
-  square: SquareModel,
-): boolean {
-  return (
-    selections.length === 1 &&
-    selections[0].col === square.col &&
-    selections[0].row === square.row
-  );
-}
+import { SquareModel } from "./types";
 
 interface Props {
-  grid: GridModel;
-  onMouseDown: MouseEventHandler;
-  selections: Selection[];
+  /** Whether this square is the cursor. */
+  isSelected: boolean;
+  /** Whether this square is in the selected word (but not the cursor). */
+  isInSelectedWord: boolean;
+  onMouseDown: (e: MouseEvent, square: SquareModel) => void;
   square: SquareModel;
 }
 
-const Square = ({ grid, onMouseDown, selections, square }: Props) => {
-  const selectedWord = getSelectedWord(grid, selections);
-
+const Square = memo(function Square({
+  isSelected,
+  isInSelectedWord,
+  onMouseDown,
+  square,
+}: Props) {
   return (
     <div
       className={cn(
@@ -40,17 +37,12 @@ const Square = ({ grid, onMouseDown, selections, square }: Props) => {
         // This is a block.
         square.type === "block" && "bg-ink",
         // This is the selected square.
-        square.type !== "block" &&
-          isSelectedSquare(selections, square) &&
-          "bg-secondary",
+        square.type !== "block" && isSelected && "bg-secondary",
         // This is a square that's in the same word as the selection.
-        selectedWord &&
-          !isSelectedSquare(selections, square) &&
-          selectedWord.includes(square) &&
-          "bg-secondary/40",
+        isInSelectedWord && "bg-secondary/40",
       )}
       data-testid={`crossword-square-${square.row}-${square.col}`}
-      onMouseDown={onMouseDown}
+      onMouseDown={(e) => onMouseDown(e, square)}
       style={{
         gridRow: `${square.row + 1} / span 1`,
         gridColumn: `${square.col + 1} / span 1`,
@@ -80,6 +72,6 @@ const Square = ({ grid, onMouseDown, selections, square }: Props) => {
       </div>
     </div>
   );
-};
+});
 
 export default Square;

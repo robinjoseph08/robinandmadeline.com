@@ -1,12 +1,14 @@
-// The leaderboard dialog's secondary states: loading, error, empty, and the
-// truncation footer. The populated happy path renders through the page in
+// The leaderboard dialog's secondary states: loading, error, empty, the
+// truncation footer, and the difficulty tabs' fetch and default behavior.
+// The populated happy path renders through the page in
 // Crossword.session.test.tsx.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import LeaderboardDialog from "./LeaderboardDialog";
+import type { Difficulty } from "./puzzle";
 
 const apiRequest = vi.fn();
 vi.mock("@/libraries/api", async () => {
@@ -17,20 +19,40 @@ vi.mock("@/libraries/api", async () => {
   };
 });
 
-function renderDialog() {
+function renderDialog({
+  defaultDifficulty,
+  open = true,
+}: { defaultDifficulty?: Difficulty; open?: boolean } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <LeaderboardDialog
+        defaultDifficulty={defaultDifficulty}
         onOpenChange={() => {}}
-        open
+        open={open}
         puzzleId="wedding-mini-v1"
         puzzleTitle="The Wedding Mini"
       />
     </QueryClientProvider>,
   );
+  return {
+    ...view,
+    rerenderOpen(value: boolean) {
+      view.rerender(
+        <QueryClientProvider client={queryClient}>
+          <LeaderboardDialog
+            defaultDifficulty={defaultDifficulty}
+            onOpenChange={() => {}}
+            open={value}
+            puzzleId="wedding-mini-v1"
+            puzzleTitle="The Wedding Mini"
+          />
+        </QueryClientProvider>,
+      );
+    },
+  };
 }
 
 describe("LeaderboardDialog", () => {
@@ -63,7 +85,63 @@ describe("LeaderboardDialog", () => {
 
     renderDialog();
 
-    expect(await screen.findByText(/no times posted yet/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/no easy times posted yet/i),
+    ).toBeInTheDocument();
+  });
+
+  it("defaults to easy and fetches with the difficulty param", async () => {
+    apiRequest.mockResolvedValue({ items: [], total: 0 });
+
+    renderDialog();
+
+    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+      "Easy",
+    );
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=easy",
+      ),
+    );
+  });
+
+  it("fetches the clicked tab's difficulty", async () => {
+    apiRequest.mockResolvedValue({ items: [], total: 0 });
+
+    renderDialog();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Medium" }));
+
+    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+      "Medium",
+    );
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=medium",
+      ),
+    );
+  });
+
+  it("opens on the provided default difficulty and re-anchors on reopen", async () => {
+    apiRequest.mockResolvedValue({ items: [], total: 0 });
+
+    const { rerenderOpen } = renderDialog({ defaultDifficulty: "hard" });
+
+    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+      "Hard",
+    );
+
+    // Wander to another tab, close, reopen: the dialog re-anchors to the
+    // solve's own difficulty rather than remembering the wander.
+    fireEvent.click(screen.getByRole("tab", { name: "Easy" }));
+    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+      "Easy",
+    );
+    rerenderOpen(false);
+    rerenderOpen(true);
+    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+      "Hard",
+    );
   });
 
   it("omits the truncation footer when every posted solve is shown", async () => {
