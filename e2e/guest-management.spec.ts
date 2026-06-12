@@ -12,11 +12,12 @@ import { loginAsAdmin } from "./auth";
 
 // Letters-only: the guest search also matches phones by the digits in the
 // term, so a stamp containing digits would drag every phone-bearing guest
-// left by earlier runs into a name search and break row isolation. Digits
-// are mapped to the letters g-p to keep the timestamp's uniqueness.
-const stamp = Date.now()
-  .toString(36)
-  .replace(/\d/g, (digit) => String.fromCharCode(103 + Number(digit)));
+// left by earlier runs into a name search and break row isolation. The
+// timestamp is rendered in base 26 with each digit mapped to a-z, which is
+// injective, so the stamp stays unique per run and never contains digits.
+const stamp = [...Date.now().toString(26)]
+  .map((c) => String.fromCharCode(97 + parseInt(c, 26)))
+  .join("");
 const partyName = `E2E Party ${stamp}`;
 const alice = `Alice ${stamp}`;
 const bob = `Bob ${stamp}`;
