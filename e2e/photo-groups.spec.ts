@@ -7,6 +7,7 @@ import {
 } from "@playwright/test";
 
 import { ADMIN_PASSWORD, ADMIN_USERNAME, loginAsAdmin } from "./auth";
+import { runStamp } from "./stamp";
 
 // Issue #10's critical E2E flow: the admin manages the photo groups (the
 // photographer's shot list, one global shooting order for the session between
@@ -24,7 +25,7 @@ import { ADMIN_PASSWORD, ADMIN_USERNAME, loginAsAdmin } from "./auth";
 // N" label and check relative order and admin/guest agreement, never absolute
 // numbers.
 
-const stamp = Date.now().toString(36);
+const stamp = runStamp();
 const partyName = `E2E Photo Party ${stamp}`;
 const guestName = `Casey C ${stamp}`;
 const familyGroupName = `Family Photos ${stamp}`;
