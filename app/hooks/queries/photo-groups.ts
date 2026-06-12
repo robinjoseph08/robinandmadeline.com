@@ -21,11 +21,15 @@ import type {
  * React Query hooks for the photo-groups API (the photographer's shot list,
  * one global shooting order). The admin hooks go through `adminRequest` (which
  * carries the admin token) and render the whole list from one query, so each
- * mutation simply invalidates that list: the dataset is wedding-sized and the
- * refetch is one request. The one guest-facing hook (usePartyPhotoGroups)
- * goes through `guestRequest` instead, which carries the persisted guest
- * token. All hooks are typed end to end with the tygo-generated
- * request/response types.
+ * mutation simply invalidates that list when it settles: the dataset is
+ * wedding-sized and the refetch is one request. Invalidating on failure too
+ * (onSettled, not onSuccess) re-syncs the list when the rejection came from
+ * stale local state, e.g. a group deleted from another device making a
+ * reorder 422 or a delete 404; without it every retry would fail identically
+ * until a manual reload (refetchOnWindowFocus is globally disabled). The one
+ * guest-facing hook (usePartyPhotoGroups) goes through `guestRequest`
+ * instead, which carries the persisted guest token. All hooks are typed end
+ * to end with the tygo-generated request/response types.
  */
 
 export enum QueryKey {
@@ -49,8 +53,8 @@ export const usePhotoGroups = (
 // usePartyPhotoGroups fetches the authenticated party's photo groups (GET
 // /api/guest/photo-groups): the groups the party's guests are in, each naming
 // which of the party's guests it needs, with positions in the shooting order.
-// Callers gate it with `enabled` on having a guest session; the request 401s
-// without a valid token.
+// Callers mount the consuming component only for authenticated visitors (see
+// the schedule's PhotosSection); the request 401s without a valid token.
 export const usePartyPhotoGroups = (
   options: Omit<
     UseQueryOptions<ListPartyPhotoGroupsResponse, ApiError>,
@@ -70,7 +74,7 @@ export const useCreatePhotoGroup = () => {
   return useMutation<PhotoGroupResponse, ApiError, CreatePhotoGroupPayload>({
     mutationFn: (payload) =>
       adminRequest("/admin/photo-groups", { method: "POST", body: payload }),
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({
         queryKey: [QueryKey.ListPhotoGroups],
       });
@@ -91,7 +95,7 @@ export const useUpdatePhotoGroup = () => {
         method: "PUT",
         body: payload,
       }),
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({
         queryKey: [QueryKey.ListPhotoGroups],
       });
@@ -107,7 +111,7 @@ export const useDeletePhotoGroup = () => {
       adminRequest(`/admin/photo-groups/${photoGroupId}`, {
         method: "DELETE",
       }),
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({
         queryKey: [QueryKey.ListPhotoGroups],
       });
@@ -130,11 +134,13 @@ export const useReorderPhotoGroups = () => {
         method: "POST",
         body: payload,
       }),
-    onSuccess: () => {
+    onSettled: () => {
       // A move's payload is computed from the currently rendered order, so
       // hold the mutation pending (keeping the move buttons disabled) until
       // the refetched order lands; otherwise a quick second move would swap
-      // against the stale list.
+      // against the stale list. Settled rather than success: a 422 from a
+      // stale list also needs the refetch, or every retry would submit the
+      // same stale id set.
       return queryClient.invalidateQueries({
         queryKey: [QueryKey.ListPhotoGroups],
       });
@@ -155,7 +161,7 @@ export const useAddPhotoGroupGuest = () => {
         method: "POST",
         body: payload,
       }),
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({
         queryKey: [QueryKey.ListPhotoGroups],
       });
@@ -172,7 +178,7 @@ export const useRemovePhotoGroupGuest = () => {
         adminRequest(`/admin/photo-groups/${photoGroupId}/guests/${guestId}`, {
           method: "DELETE",
         }),
-      onSuccess: () => {
+      onSettled: () => {
         queryClient.invalidateQueries({
           queryKey: [QueryKey.ListPhotoGroups],
         });

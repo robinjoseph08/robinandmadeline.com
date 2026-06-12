@@ -367,7 +367,7 @@ describe("Schedule", () => {
 
     renderSchedule();
 
-    const section = await screen.findByRole("region", { name: "Photos" });
+    const section = await screen.findByRole("region", { name: "Group Photos" });
     // The static copy states when the photo session happens (domain truth:
     // one session between the ceremony and the reception).
     expect(
@@ -401,7 +401,7 @@ describe("Schedule", () => {
 
     await screen.findByRole("article", { name: "Reception" });
     expect(
-      screen.queryByRole("region", { name: "Photos" }),
+      screen.queryByRole("region", { name: "Group Photos" }),
     ).not.toBeInTheDocument();
   });
 
@@ -437,7 +437,7 @@ describe("Schedule", () => {
     // hidden rather than disturbing the page with an error.
     await screen.findByRole("article", { name: "Reception" });
     expect(
-      screen.queryByRole("region", { name: "Photos" }),
+      screen.queryByRole("region", { name: "Group Photos" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -451,7 +451,7 @@ describe("Schedule", () => {
 
     await screen.findByRole("article", { name: "Reception" });
     expect(
-      screen.queryByRole("region", { name: "Photos" }),
+      screen.queryByRole("region", { name: "Group Photos" }),
     ).not.toBeInTheDocument();
     const requested = fetchMock.mock.calls.map((call) => call[0] as string);
     expect(requested).toEqual(["/api/events"]);

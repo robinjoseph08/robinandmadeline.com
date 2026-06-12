@@ -81,12 +81,21 @@ func (s *Service) PartyPhotoGroups(ctx context.Context, partyID string) ([]Party
 	}
 
 	for _, r := range rows {
+		names := namesByGroup[r.ID]
+		// The ranked read and the names read are two statements with no shared
+		// snapshot, so a group the first selected can lose the party's last
+		// member before the second runs. Skip such a group rather than emit a
+		// nil GuestNames (JSON null, which would break the generated string[]
+		// contract): the section only names groups the party is actually in.
+		if len(names) == 0 {
+			continue
+		}
 		groups = append(groups, PartyPhotoGroup{
 			ID:         r.ID,
 			Name:       r.Name,
 			Position:   r.Position,
 			Total:      r.Total,
-			GuestNames: namesByGroup[r.ID],
+			GuestNames: names,
 		})
 	}
 	return groups, nil

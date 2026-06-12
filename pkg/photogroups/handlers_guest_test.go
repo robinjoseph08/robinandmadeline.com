@@ -91,13 +91,17 @@ func TestPartyPhotoGroupsHandler_NamesThePartysGuestsPerGroup(t *testing.T) {
 	api := newGuestAPI(t)
 
 	smiths := createPartyT(t, api.parties, "The Smiths")
+	// Created in non-alphabetical order and assigned to the first group in
+	// the reverse of creation order, so the asserted names can only come from
+	// party order (created_at, then id): alphabetical or assignment-time
+	// ordering would flip them.
+	zoe := addGuestT(t, api.parties, smiths.ID, "Zoe Smith")
 	alice := addGuestT(t, api.parties, smiths.ID, "Alice Smith")
-	bob := addGuestT(t, api.parties, smiths.ID, "Bob Smith")
 	joneses := createPartyT(t, api.parties, "The Joneses")
 	riley := addGuestT(t, api.parties, joneses.ID, "Riley Jones")
 
 	// Three groups in shooting order. The Smiths are in the first (both) and
-	// the third (Bob only); the second holds only Riley, so it stays off the
+	// the third (Alice only); the second holds only Riley, so it stays off the
 	// Smiths' view but still counts toward positions and the total. The first
 	// group also holds Riley, proving guest_names is scoped to the requesting
 	// party even when a group mixes parties.
@@ -105,10 +109,10 @@ func TestPartyPhotoGroupsHandler_NamesThePartysGuestsPerGroup(t *testing.T) {
 	others := createGroupT(t, api.photoGroups, "Groom's Family")
 	friends := createGroupT(t, api.photoGroups, "College Friends")
 	assignGuestT(t, api.photoGroups, family.ID, alice.ID)
-	assignGuestT(t, api.photoGroups, family.ID, bob.ID)
+	assignGuestT(t, api.photoGroups, family.ID, zoe.ID)
 	assignGuestT(t, api.photoGroups, family.ID, riley.ID)
 	assignGuestT(t, api.photoGroups, others.ID, riley.ID)
-	assignGuestT(t, api.photoGroups, friends.ID, bob.ID)
+	assignGuestT(t, api.photoGroups, friends.ID, alice.ID)
 
 	token, err := api.auth.GenerateGuestToken(smiths.ID)
 	require.NoError(t, err)
@@ -125,14 +129,15 @@ func TestPartyPhotoGroupsHandler_NamesThePartysGuestsPerGroup(t *testing.T) {
 	assert.Equal(t, "Bride's Family", first.Name)
 	assert.Equal(t, 1, first.Position)
 	assert.Equal(t, 3, first.Total)
-	// Only the Smiths' guests, in party order; Riley is invisible to them.
-	assert.Equal(t, []string{"Alice Smith", "Bob Smith"}, first.GuestNames)
+	// Only the Smiths' guests, in party order (Zoe joined the party first);
+	// Riley is invisible to them.
+	assert.Equal(t, []string{"Zoe Smith", "Alice Smith"}, first.GuestNames)
 
 	second := resp.Items[1]
 	assert.Equal(t, friends.ID, second.ID)
 	assert.Equal(t, 3, second.Position)
 	assert.Equal(t, 3, second.Total)
-	assert.Equal(t, []string{"Bob Smith"}, second.GuestNames)
+	assert.Equal(t, []string{"Alice Smith"}, second.GuestNames)
 }
 
 func TestPartyPhotoGroupsHandler_NoAssignmentsIsEmptyList(t *testing.T) {

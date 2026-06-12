@@ -170,13 +170,15 @@ test("admin builds the shot list and the guest's schedule names their guests per
   // --- Anonymous: the schedule has no photos section -------------------------
   await page.goto("/schedule", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Schedule" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Photos" })).not.toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Group Photos" }),
+  ).not.toBeVisible();
 
   // --- Guest: the photos section names the party's guest with the position ---
   await loginAsGuest(page, rsvpCode);
   await page.goto("/schedule", { waitUntil: "domcontentloaded" });
 
-  const photos = page.getByRole("region", { name: "Photos" });
+  const photos = page.getByRole("region", { name: "Group Photos" });
   await expect(photos).toBeVisible();
   await expect(
     photos.getByText(/group photos after the ceremony, before the reception/i),

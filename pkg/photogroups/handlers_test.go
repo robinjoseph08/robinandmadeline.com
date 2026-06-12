@@ -308,35 +308,36 @@ func TestAddGuestHandler_ReturnsRefreshedMembersAndIsIdempotent(t *testing.T) {
 	e, fx := newAPI(t)
 	group := createGroupT(t, fx.photoGroups, "Bride's Family")
 	p := createPartyT(t, fx.parties, "The Smiths")
-	alice := addGuestT(t, fx.parties, p.ID, "Alice")
+	zed := addGuestT(t, fx.parties, p.ID, "Zed")
 
 	rec := do(t, e, http.MethodPost, "/api/admin/photo-groups/"+group.ID+"/guests", map[string]any{
-		"guest_id": alice.ID,
+		"guest_id": zed.ID,
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
 	resp := decodeGroup(t, rec)
 	require.Len(t, resp.Guests, 1)
-	assert.Equal(t, alice.ID, resp.Guests[0].GuestID)
-	assert.Equal(t, "Alice", resp.Guests[0].GuestName)
+	assert.Equal(t, zed.ID, resp.Guests[0].GuestID)
+	assert.Equal(t, "Zed", resp.Guests[0].GuestName)
 
 	// Re-adding is an idempotent no-op: still one membership.
 	rec = do(t, e, http.MethodPost, "/api/admin/photo-groups/"+group.ID+"/guests", map[string]any{
-		"guest_id": alice.ID,
+		"guest_id": zed.ID,
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Len(t, decodeGroup(t, rec).Guests, 1)
 
 	// A second member appends after the first: members keep insertion order
-	// (created_at, then guest id), so the list never reshuffles.
-	bob := addGuestT(t, fx.parties, p.ID, "Bob")
+	// (created_at, then guest id), so the list never reshuffles. Zed stays
+	// first even though Alice sorts before him alphabetically.
+	alice := addGuestT(t, fx.parties, p.ID, "Alice")
 	rec = do(t, e, http.MethodPost, "/api/admin/photo-groups/"+group.ID+"/guests", map[string]any{
-		"guest_id": bob.ID,
+		"guest_id": alice.ID,
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
 	resp = decodeGroup(t, rec)
 	require.Len(t, resp.Guests, 2)
-	assert.Equal(t, alice.ID, resp.Guests[0].GuestID)
-	assert.Equal(t, bob.ID, resp.Guests[1].GuestID)
+	assert.Equal(t, zed.ID, resp.Guests[0].GuestID)
+	assert.Equal(t, alice.ID, resp.Guests[1].GuestID)
 }
 
 func TestAddGuestHandler_UnknownGuestIs422(t *testing.T) {
@@ -362,20 +363,33 @@ func TestAddGuestHandler_MissingGroupIs404(t *testing.T) {
 	assert.Equal(t, string(errcodes.CodeNotFound), errorCode(t, rec))
 }
 
-func TestRemoveGuestHandler_Returns204(t *testing.T) {
+func TestRemoveGuestHandler_Returns204AndRemovesOnlyThatMembership(t *testing.T) {
 	e, fx := newAPI(t)
 	group := createGroupT(t, fx.photoGroups, "Bride's Family")
+	other := createGroupT(t, fx.photoGroups, "College Friends")
 	p := createPartyT(t, fx.parties, "The Smiths")
 	alice := addGuestT(t, fx.parties, p.ID, "Alice")
+	bob := addGuestT(t, fx.parties, p.ID, "Bob")
+	// Alice is in both groups and Bob shares the first, so the delete's scope
+	// is observable: dropping either WHERE clause would also remove Bob from
+	// the group or Alice from her other group.
 	assignGuestT(t, fx.photoGroups, group.ID, alice.ID)
+	assignGuestT(t, fx.photoGroups, group.ID, bob.ID)
+	assignGuestT(t, fx.photoGroups, other.ID, alice.ID)
 
 	rec := do(t, e, http.MethodDelete, "/api/admin/photo-groups/"+group.ID+"/guests/"+alice.ID, nil)
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 
-	// The removal is visible in the list.
+	// Exactly the one membership is gone: Bob stays in the group, and Alice
+	// stays in her other group.
 	rec = do(t, e, http.MethodGet, "/api/admin/photo-groups", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Empty(t, decodeList(t, rec).Items[0].Guests)
+	items := decodeList(t, rec).Items
+	require.Len(t, items, 2)
+	require.Len(t, items[0].Guests, 1)
+	assert.Equal(t, bob.ID, items[0].Guests[0].GuestID)
+	require.Len(t, items[1].Guests, 1)
+	assert.Equal(t, alice.ID, items[1].Guests[0].GuestID)
 }
 
 func TestRemoveGuestHandler_MissingMembershipIs404(t *testing.T) {

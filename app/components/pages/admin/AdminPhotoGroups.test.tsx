@@ -274,6 +274,92 @@ describe("AdminPhotoGroups reorder", () => {
     });
   });
 
+  it("POSTs the full id sequence with the moved group swapped down", async () => {
+    const onWrite = vi.fn().mockResolvedValue({ items: [], total: 0 });
+    stubRequests({
+      groups: [
+        makeGroup({ id: "pg1", name: "Bride's Family" }),
+        makeGroup({ id: "pg2", name: "College Friends", sort_order: 2 }),
+      ],
+      onWrite,
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("College Friends");
+    await user.click(
+      screen.getByRole("button", { name: "Move Bride's Family down" }),
+    );
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/photo-groups/reorder", {
+        method: "POST",
+        body: { photo_group_ids: ["pg2", "pg1"] },
+      });
+    });
+  });
+
+  it("keeps the move buttons disabled until the refetched order lands", async () => {
+    // The reorder mutation deliberately stays pending through the list
+    // refetch (its onSettled returns the invalidation promise), because the
+    // next move's payload is computed from the rendered order. Hold the
+    // refetch open and check the buttons only re-enable once it resolves.
+    let releaseRefetch:
+      | ((value: { items: PhotoGroupResponse[]; total: number }) => void)
+      | undefined;
+    const groups = [
+      makeGroup({ id: "pg1", name: "Bride's Family" }),
+      makeGroup({ id: "pg2", name: "College Friends", sort_order: 2 }),
+    ];
+    let listCalls = 0;
+    adminRequest.mockImplementation((path: string, options?: object) => {
+      const method = (options as { method?: string } | undefined)?.method;
+      if (path === "/admin/photo-groups/reorder" && method === "POST") {
+        return Promise.resolve({ items: [], total: 0 });
+      }
+      if (path === "/admin/photo-groups") {
+        listCalls += 1;
+        if (listCalls === 1) {
+          return Promise.resolve({ items: groups, total: groups.length });
+        }
+        return new Promise((resolve) => {
+          releaseRefetch = resolve;
+        });
+      }
+      return Promise.resolve({ items: [], total: 0 });
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("College Friends");
+    const moveUp = screen.getByRole("button", {
+      name: "Move College Friends up",
+    });
+    await user.click(moveUp);
+
+    // The POST has resolved but the refetch is still in flight: every move
+    // button must stay disabled so a second move cannot use the stale order.
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith(
+        "/admin/photo-groups/reorder",
+        expect.anything(),
+      );
+    });
+    expect(moveUp).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Move Bride's Family down" }),
+    ).toBeDisabled();
+
+    releaseRefetch?.({ items: [...groups].reverse(), total: groups.length });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Move College Friends down" }),
+      ).toBeEnabled();
+    });
+  });
+
   it("disables moving the first group up and the last down", async () => {
     stubRequests({
       groups: [

@@ -104,8 +104,8 @@ function PhotosSection() {
   if (groups.length === 0) return null;
 
   return (
-    <section aria-label="Photos" className="mt-10">
-      <h2 className="text-2xl font-semibold">Photos</h2>
+    <section aria-label="Group Photos" className="mt-10">
+      <h2 className="text-2xl font-semibold">Group Photos</h2>
       <p className="mt-3">
         We'll be taking group photos after the ceremony, before the reception.
         Here is where we need you:
