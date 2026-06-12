@@ -153,6 +153,35 @@ func TestPartyPhotoGroupsHandler_NoAssignmentsIsEmptyList(t *testing.T) {
 	assert.JSONEq(t, `{"items":[],"total":0}`, rec.Body.String())
 }
 
+func TestPartyPhotoGroupsHandler_PositionsFollowTheReorderedOrder(t *testing.T) {
+	api := newGuestAPI(t)
+
+	smiths := createPartyT(t, api.parties, "The Smiths")
+	alice := addGuestT(t, api.parties, smiths.ID, "Alice Smith")
+
+	first := createGroupT(t, api.photoGroups, "Bride's Family")
+	second := createGroupT(t, api.photoGroups, "College Friends")
+	assignGuestT(t, api.photoGroups, second.ID, alice.ID)
+
+	// Reverse the shooting order so creation order (and so UUIDv7 id order)
+	// disagrees with sort_order: a rank computed over anything but sort_order
+	// would still report position 2.
+	require.NoError(t, api.photoGroups.ReorderPhotoGroups(ctx(), photogroups.ReorderPhotoGroupsPayload{
+		PhotoGroupIDs: []string{second.ID, first.ID},
+	}))
+
+	token, err := api.auth.GenerateGuestToken(smiths.ID)
+	require.NoError(t, err)
+
+	rec := getPartyPhotoGroups(t, api.echo, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	resp := decodePartyGroups(t, rec)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, second.ID, resp.Items[0].ID)
+	assert.Equal(t, 1, resp.Items[0].Position)
+}
+
 func TestPartyPhotoGroupsHandler_PositionsReRankAfterADelete(t *testing.T) {
 	api := newGuestAPI(t)
 

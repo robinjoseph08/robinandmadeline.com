@@ -389,6 +389,11 @@ describe("Schedule", () => {
       within(cards[1]).getByRole("heading", { name: /College Friends/ }),
     ).toBeInTheDocument();
     expect(within(cards[1]).getByText("Leslie")).toBeInTheDocument();
+    // The badge also shows the bare number to sighted users (aria-hidden, so
+    // screen readers hear only the worded "Group N" above); without these the
+    // number could become screen-reader-only and every test would still pass.
+    expect(within(cards[0]).getByText("1")).toHaveAttribute("aria-hidden");
+    expect(within(cards[1]).getByText("3")).toHaveAttribute("aria-hidden");
     // The total number of groups is deliberately not shown.
     expect(section).not.toHaveTextContent(/of \d+/i);
     // The photos read is the authenticated guest endpoint.

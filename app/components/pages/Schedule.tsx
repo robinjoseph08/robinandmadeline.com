@@ -129,11 +129,13 @@ function PhotosSection() {
                 <span className="sr-only">Group {group.position}</span>
               </span>
               <div className="min-w-0">
-                <h3 className="text-sm font-medium text-ink/60">
+                <h3 className="break-words text-sm font-medium text-ink/60">
                   {group.name}
                 </h3>
                 {names ? (
-                  <p className="mt-0.5 text-lg font-semibold">{names}</p>
+                  <p className="mt-0.5 break-words text-lg font-semibold">
+                    {names}
+                  </p>
                 ) : null}
               </div>
             </li>

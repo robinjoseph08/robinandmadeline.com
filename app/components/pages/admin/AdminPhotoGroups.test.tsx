@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ApiError } from "@/libraries/admin-api";
 import type { GuestListItem } from "@/types/generated/parties";
 import type {
   PhotoGroupGuest,
@@ -286,6 +287,155 @@ describe("AdminPhotoGroups delete", () => {
       "/admin/photo-groups/pg1",
       expect.objectContaining({ method: "DELETE" }),
     );
+  });
+
+  it("confirms for exactly the group whose button opened the dialog", async () => {
+    const onWrite = vi.fn().mockResolvedValue(undefined);
+    stubRequests({
+      groups: [
+        makeGroup({}),
+        makeGroup({ id: "pg2", name: "College Friends", sort_order: 2 }),
+      ],
+      onWrite,
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("College Friends");
+    await user.click(
+      screen.getByRole("button", { name: "Delete College Friends" }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Delete College Friends?",
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete group" }),
+    );
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/photo-groups/pg2", {
+        method: "DELETE",
+      });
+    });
+    expect(adminRequest).not.toHaveBeenCalledWith(
+      "/admin/photo-groups/pg1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("keeps the dialog open when the delete fails so the admin can retry", async () => {
+    // Lazy rejection: an eagerly created rejected promise would sit
+    // handler-less until the click and trip the unhandled-rejection guard.
+    const onWrite = vi
+      .fn()
+      .mockImplementation(() => Promise.reject(new Error("It broke.")));
+    stubRequests({ groups: [makeGroup({})], onWrite });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("Bride's Family");
+    await user.click(
+      screen.getByRole("button", { name: "Delete Bride's Family" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Delete Bride's Family?",
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete group" }),
+    );
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/photo-groups/pg1", {
+        method: "DELETE",
+      });
+    });
+    // The failure keeps the dialog open for a retry, and the row survives.
+    expect(
+      screen.getByRole("dialog", { name: "Delete Bride's Family?" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Bride's Family")).toBeInTheDocument();
+  });
+
+  it("treats an already-deleted group as deleted and closes the dialog", async () => {
+    let current = [makeGroup({})];
+    const onWrite = vi.fn().mockImplementation(() => {
+      current = [];
+      return Promise.reject(
+        new ApiError(404, "Photo group not found.", "not_found"),
+      );
+    });
+    stubRequests({ groups: () => current, onWrite });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("Bride's Family");
+    await user.click(
+      screen.getByRole("button", { name: "Delete Bride's Family" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Delete Bride's Family?",
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete group" }),
+    );
+
+    // The group already being gone is the asked-for outcome: the dialog
+    // closes instead of wedging in a 404 retry loop, and the refetched empty
+    // state renders.
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    expect(await screen.findByText(/no photo groups yet/i)).toBeInTheDocument();
+  });
+
+  it("ignores dismissal while the delete is in flight", async () => {
+    let resolveDelete: (() => void) | undefined;
+    let current = [makeGroup({})];
+    const onWrite = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDelete = () => {
+            current = [];
+            resolve();
+          };
+        }),
+    );
+    stubRequests({ groups: () => current, onWrite });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("Bride's Family");
+    await user.click(
+      screen.getByRole("button", { name: "Delete Bride's Family" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Delete Bride's Family?",
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete group" }),
+    );
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/photo-groups/pg1", {
+        method: "DELETE",
+      });
+    });
+
+    // Escape mid-request is ignored: a dismissal would read as an abort the
+    // request would not honor.
+    await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("dialog", { name: "Delete Bride's Family?" }),
+    ).toBeInTheDocument();
+
+    resolveDelete?.();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
   });
 });
 

@@ -202,9 +202,11 @@ test("admin builds the shot list and the guest's schedule names their guests per
     .filter({ hasText: friendsGroupName });
   await expect(friendsCard).toBeVisible();
   await expect(friendsCard.getByText("Casey", { exact: true })).toBeVisible();
-  // The next char after the number must not be another digit (textContent
-  // runs the sr-only label straight into the group name, so "Group 5" is
-  // followed by a letter; \b would not catch "Group 51" when expecting 5).
+  // The number must not be followed by another digit, or "Group 51" would
+  // satisfy an expected "Group 5". (\D|$) rather than \b: textContent runs
+  // the sr-only label straight into the group name ("Group 5Friends..."),
+  // and a digit-to-letter junction has no word boundary, so \b would reject
+  // that legitimate output.
   await expect(friendsCard).toContainText(
     new RegExp(`Group ${friendsAfter}(\\D|$)`),
   );

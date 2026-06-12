@@ -24,6 +24,7 @@ import {
   useReorderPhotoGroups,
   useUpdatePhotoGroup,
 } from "@/hooks/queries/photo-groups";
+import { ApiError } from "@/libraries/admin-api";
 import type { GuestListItem } from "@/types/generated/parties";
 import type { PhotoGroupResponse } from "@/types/generated/photogroups";
 
@@ -45,10 +46,13 @@ export default function AdminPhotoGroups() {
   const deleteGroup = useDeletePhotoGroup();
 
   const [newName, setNewName] = useState("");
-  // The group the delete dialog is confirming for; null keeps it closed.
+  // The group the delete dialog is confirming for, plus a separate open flag
+  // (mirroring AdminEvents' dialog state): closing keeps the target rendered
+  // through the exit animation instead of flashing a nameless "Delete ?".
   const [deleteTarget, setDeleteTarget] = useState<PhotoGroupResponse | null>(
     null,
   );
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const groups = groupsQuery.data?.items ?? [];
   const guests = guestsQuery.data?.items ?? [];
@@ -89,14 +93,23 @@ export default function AdminPhotoGroups() {
   };
 
   // Runs after the dialog's explicit confirm; the dialog (not window.confirm)
-  // is the gate, so the row's delete button only ever opens it.
+  // is the gate, so the row's delete button only ever opens it. On failure
+  // the dialog stays open for a retry, except a 404: the group already being
+  // gone (deleted from another tab or device) is the state the admin asked
+  // for, so closing beats wedging the dialog in a retry loop. Either way the
+  // mutation's settled invalidation refreshes the list behind the dialog.
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
       await deleteGroup.mutateAsync({ photoGroupId: deleteTarget.id });
       toast.success("Photo group deleted");
-      setDeleteTarget(null);
+      setDeleteOpen(false);
     } catch (error) {
+      if (error instanceof ApiError && error.code === "not_found") {
+        toast.success("Photo group deleted");
+        setDeleteOpen(false);
+        return;
+      }
       toast.error(
         error instanceof Error ? error.message : "Failed to delete group",
       );
@@ -133,7 +146,10 @@ export default function AdminPhotoGroups() {
                   guests={guests}
                   index={index}
                   key={group.id}
-                  onDelete={() => setDeleteTarget(group)}
+                  onDelete={() => {
+                    setDeleteTarget(group);
+                    setDeleteOpen(true);
+                  }}
                   onMove={(direction) => handleMove(index, direction)}
                   reordering={reorderGroups.isPending}
                 />
@@ -170,9 +186,12 @@ export default function AdminPhotoGroups() {
           the row whose delete button opened it. */}
       <Dialog
         onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null);
+          // Dismissal (Escape, overlay click, the corner X) is ignored while
+          // the delete is in flight: closing mid-request would read as an
+          // abort the request would not honor.
+          if (!open && !deleteGroup.isPending) setDeleteOpen(false);
         }}
-        open={deleteTarget !== null}
+        open={deleteOpen}
       >
         <DialogContent>
           <DialogHeader>
@@ -184,7 +203,8 @@ export default function AdminPhotoGroups() {
           </DialogHeader>
           <DialogFooter>
             <Button
-              onClick={() => setDeleteTarget(null)}
+              disabled={deleteGroup.isPending}
+              onClick={() => setDeleteOpen(false)}
               type="button"
               variant="outline"
             >

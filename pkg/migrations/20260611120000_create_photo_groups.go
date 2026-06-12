@@ -47,8 +47,8 @@ func init() {
 			return fmt.Errorf("create photo_group_assignments table: %w", err)
 		}
 
-		// The guest-facing photos section looks memberships up by guest (via
-		// the party's guests); photo_group_id is covered by the primary key's
+		// The guest-facing Group Photos section looks memberships up by guest
+		// (via the party's guests); photo_group_id is covered by the primary key's
 		// leading column.
 		_, err = db.ExecContext(ctx, `CREATE INDEX ix_photo_group_assignments_guest_id ON photo_group_assignments (guest_id)`)
 		if err != nil {

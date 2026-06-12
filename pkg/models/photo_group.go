@@ -14,7 +14,7 @@ import (
 // SortOrder is the group's position within that list. New groups are appended
 // (max + 1) and the reorder endpoint rewrites the whole sequence, so values
 // stay small but are not guaranteed contiguous after deletes; display
-// positions ("group 3 of 12") are computed by ranking on sort_order, never by
+// positions ("group 3") are computed by ranking on sort_order, never by
 // reading the raw value.
 type PhotoGroup struct {
 	bun.BaseModel `bun:"table:photo_groups,alias:pg" tstype:"-"`
