@@ -154,7 +154,7 @@ func (w *Webhook) applyByRecipientID(c echo.Context, payload webhookPayload, app
 	// outside this system), and a malformed one can never name a row, so
 	// neither should reach Postgres as a failing text-to-uuid cast. The
 	// parsed canonical form is what gets bound: uuid.Parse accepts variants
-	// (urn:uuid:, braces) that Postgres's uuid input does not.
+	// (e.g. the urn:uuid: prefix) that Postgres's uuid input does not.
 	parsed, err := uuid.Parse(payload.EventData.UserVariables.RecipientID)
 	if err != nil {
 		log.Warn("mailgun webhook matched no recipient", logger.Data{

@@ -305,9 +305,9 @@ func TestWebhook_RecipientIDVariantFormIsCanonicalizedBeforeMatching(t *testing.
 		Where("id = ?", row.ID).Exec(ctx())
 	require.NoError(t, err)
 
-	// uuid.Parse accepts forms (urn:uuid:, braces) that Postgres's uuid input
-	// rejects; the fallback must bind the canonical parsed form so a variant
-	// still matches the row instead of failing the cast.
+	// uuid.Parse accepts forms (e.g. the urn:uuid: prefix) that Postgres's
+	// uuid input rejects; the fallback must bind the canonical parsed form so
+	// a variant still matches the row instead of failing the cast.
 	rec := postWebhook(t, e, webhookBody(testSigningKey, "delivered", "variant-mid@mg.example.test", map[string]any{
 		"user-variables": map[string]any{"recipient_id": "urn:uuid:" + row.ID},
 	}))
