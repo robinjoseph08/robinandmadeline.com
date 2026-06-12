@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { loginAsAdmin } from "./auth";
+import { runStamp } from "./stamp";
 
 // Issue #4's critical E2E flow: admin login, create a party (born from its first
 // guest), add guests including a placeholder, edit a guest, delete a guest,
@@ -10,14 +11,7 @@ import { loginAsAdmin } from "./auth";
 // scoped to those names, so the spec is robust against data left by earlier runs
 // in the shared e2e database (no reset endpoint needed).
 
-// Letters-only: the guest search also matches phones by the digits in the
-// term, so a stamp containing digits would drag every phone-bearing guest
-// left by earlier runs into a name search and break row isolation. The
-// timestamp is rendered in base 26 with each digit mapped to a-z, which is
-// injective, so the stamp stays unique per run and never contains digits.
-const stamp = [...Date.now().toString(26)]
-  .map((c) => String.fromCharCode(97 + parseInt(c, 26)))
-  .join("");
+const stamp = runStamp();
 const partyName = `E2E Party ${stamp}`;
 const alice = `Alice ${stamp}`;
 const bob = `Bob ${stamp}`;

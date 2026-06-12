@@ -6,6 +6,7 @@ import {
 } from "@playwright/test";
 
 import { ADMIN_PASSWORD, ADMIN_USERNAME } from "./auth";
+import { runStamp } from "./stamp";
 
 // Issue #7's critical E2E flow: a guest enters their party's RSVP code, fills
 // in the form (statuses for every guest, a placeholder's real name, dietary
@@ -21,7 +22,7 @@ import { ADMIN_PASSWORD, ADMIN_USERNAME } from "./auth";
 // shared e2e database). Every entity carries a per-run unique suffix and all
 // assertions are scoped to those names.
 
-const stamp = Date.now().toString(36);
+const stamp = runStamp();
 const partyName = `E2E RSVP Party ${stamp}`;
 const alice = `Alice R ${stamp}`;
 const placeholder = `Guest of Alice ${stamp}`;

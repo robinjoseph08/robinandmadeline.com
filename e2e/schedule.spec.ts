@@ -6,6 +6,7 @@ import {
 } from "@playwright/test";
 
 import { ADMIN_PASSWORD, ADMIN_USERNAME } from "./auth";
+import { runStamp } from "./stamp";
 
 // Issue #9's critical E2E flow: the schedule page adapts to authentication.
 // An anonymous visitor sees only public events plus a prompt to enter their
@@ -20,7 +21,7 @@ import { ADMIN_PASSWORD, ADMIN_USERNAME } from "./auth";
 // spec neither breaks nor is broken by data from other runs in the shared e2e
 // database.
 
-const stamp = Date.now().toString(36);
+const stamp = runStamp();
 const partyName = `E2E Schedule Party ${stamp}`;
 const guestName = `Sam S ${stamp}`;
 const publicEventName = `E2E Welcome Party ${stamp}`;
