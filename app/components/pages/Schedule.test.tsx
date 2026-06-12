@@ -110,6 +110,22 @@ describe("Schedule", () => {
     );
   });
 
+  it("treats a blank stored token as anonymous", async () => {
+    // apiRequest only attaches truthy tokens, so a stored "" must take the
+    // anonymous path: otherwise the server returns 200 to the tokenless
+    // request and the page claims the authenticated view forever.
+    localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, "");
+    const fetchMock = mockScheduleFetch([makeEvent()]);
+
+    renderSchedule();
+
+    await screen.findByRole("article", { name: "Reception" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers ?? {}).not.toHaveProperty("Authorization");
+    expect(screen.getByText(/enter your party code/i)).toBeInTheDocument();
+  });
+
   it("sends the stored guest token and marks private events", async () => {
     localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, "a.guest.jwt");
     const fetchMock = mockScheduleFetch([

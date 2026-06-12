@@ -19,7 +19,10 @@ import type { ScheduleEvent } from "@/types/generated/events";
 export default function Schedule() {
   const { data, error, isPending } = useScheduleEvents();
 
-  if (error) {
+  // Only a failure with nothing to show becomes the error page: when a
+  // background refetch fails, the cached schedule the visitor is already
+  // reading stays up instead of being swapped for a banner.
+  if (error && !data) {
     return (
       <section className="mx-auto max-w-2xl py-8">
         <p className="text-destructive" role="alert">
