@@ -163,10 +163,11 @@ fi
 # === Setup ===
 
 [tasks.setup]
-description = "Install tools and dependencies"
+description = "Install tools and dependencies, generate TypeScript types"
 run = '''
 mise install
 pnpm install
 go mod download
+mise tygo
 pnpm exec playwright install chromium
 '''

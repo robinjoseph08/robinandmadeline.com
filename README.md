@@ -25,8 +25,9 @@ mise.toml           Tool pins + tasks
 ## Getting started
 
 ```sh
-# Install pinned tools (go, node, pnpm, air, golangci-lint), dependencies, and
-# the Playwright Chromium browser used by the e2e tests
+# Install pinned tools (go, node, pnpm, air, golangci-lint, tygo) and
+# dependencies, generate the TypeScript API types, and install the Playwright
+# Chromium browser used by the e2e tests
 mise setup
 
 # Start local Postgres
