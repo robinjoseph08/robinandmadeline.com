@@ -29,10 +29,8 @@ import {
   updateSquare,
 } from "./helpers";
 import {
-  NAV_BACKSPACE_ACROSS_WORDS,
-  NAV_JUMP_TO_FIRST_BLANK_ON_COMPLETE,
-  NAV_MANUAL_WORD_ADVANCE,
-  NAV_SKIP_FILLED_SQUARES,
+  DEFAULT_NAVIGATION_SETTINGS,
+  NavigationSettings,
 } from "./navigationSettings";
 import Square from "./Square";
 import { GridModel, inverseDirection, Selection, SquareModel } from "./types";
@@ -44,6 +42,8 @@ interface Props {
   isSolved?: boolean;
   onGridChange?: (grid: GridModel) => void;
   onSelectionChange?: (selections: Selection[]) => void;
+  /** Cursor-behavior preferences; defaults to the original vendored behavior. */
+  settings?: NavigationSettings;
   /** The answer string ("." for blocks), used to stop cursor advancement on a correct fill. */
   solution: string;
 }
@@ -68,6 +68,7 @@ const Grid = forwardRef<GridHandle, Props>(
       isSolved,
       onGridChange,
       onSelectionChange,
+      settings = DEFAULT_NAVIGATION_SETTINGS,
       solution,
     },
     ref,
@@ -209,7 +210,7 @@ const Grid = forwardRef<GridHandle, Props>(
         const nextInWord = getNextInWordSkippingFilled(
           updatedGrid,
           selections[0],
-          NAV_SKIP_FILLED_SQUARES,
+          settings.skipFilledSquares,
         );
 
         if (nextInWord) {
@@ -220,7 +221,7 @@ const Grid = forwardRef<GridHandle, Props>(
 
         // Reached end of word or no more valid squares in word.
         // Check if we should jump back to first blank
-        if (NAV_JUMP_TO_FIRST_BLANK_ON_COMPLETE) {
+        if (settings.jumpBackToFirstBlank) {
           const firstBlank = getFirstBlankInWord(updatedGrid, selections[0]);
           if (firstBlank) {
             setSelections([firstBlank]);
@@ -229,11 +230,11 @@ const Grid = forwardRef<GridHandle, Props>(
         }
 
         // Check if we should auto-advance to next word
-        if (!NAV_MANUAL_WORD_ADVANCE) {
+        if (settings.jumpToNextClue) {
           const nextWord = getNextWordSkippingCompleted(
             updatedGrid,
             selections[0],
-            NAV_SKIP_FILLED_SQUARES,
+            settings.skipFilledSquares,
           );
           if (nextWord) {
             setSelections([nextWord]);
@@ -243,9 +244,9 @@ const Grid = forwardRef<GridHandle, Props>(
             );
           }
         }
-        // If NAV_MANUAL_WORD_ADVANCE is true, stay at current position
+        // Without jumpToNextClue, stay at current position
       },
-      [grid, selections, isLocked, solution],
+      [grid, selections, isLocked, solution, settings],
     );
 
     // Clear the selected square, or move backward and clear when already empty.
@@ -271,10 +272,10 @@ const Grid = forwardRef<GridHandle, Props>(
       }
 
       // Current square is empty: check if we should move backward.
-      // If we're at the first letter of a word and NAV_BACKSPACE_ACROSS_WORDS
-      // is false, don't move.
+      // If we're at the first letter of a word and backspacing into the
+      // previous word is disabled, don't move.
       const isFirstLetter = isFirstLetterOfWord(grid, selections[0]);
-      if (isFirstLetter && !NAV_BACKSPACE_ACROSS_WORDS) {
+      if (isFirstLetter && !settings.backspaceIntoPreviousWord) {
         return;
       }
 
@@ -298,7 +299,7 @@ const Grid = forwardRef<GridHandle, Props>(
         setSelections(previousSelections);
       }
       // If we couldn't find a previous square, do nothing
-    }, [grid, selections, isLocked]);
+    }, [grid, selections, isLocked, settings]);
 
     const handleKeyDown = useCallback(
       (e: KeyboardEvent) => {
@@ -323,12 +324,12 @@ const Grid = forwardRef<GridHandle, Props>(
               ? getPreviousWordSkippingCompleted(
                   grid,
                   selections[0],
-                  NAV_SKIP_FILLED_SQUARES,
+                  settings.skipFilledSquares,
                 )
               : getNextWordSkippingCompleted(
                   grid,
                   selections[0],
-                  NAV_SKIP_FILLED_SQUARES,
+                  settings.skipFilledSquares,
                 );
             if (nextWord) {
               setSelections([nextWord]);
@@ -338,16 +339,45 @@ const Grid = forwardRef<GridHandle, Props>(
         }
 
         if (e.key === " ") {
-          // Space key: toggle direction
           e.preventDefault();
-          if (selections.length === 1) {
-            setSelections((prev) => [
-              {
-                ...prev[0],
-                direction: inverseDirection[prev[0].direction],
-              },
-            ]);
+          if (selections.length !== 1) {
+            return;
           }
+          if (settings.spacebarBehavior === "clear") {
+            // Space clears the current square and moves to the next square
+            // in the word (plain next, no skipping), staying at the end.
+            if (isLocked) {
+              return;
+            }
+            const currentSquare = at(
+              grid,
+              selections[0].row,
+              selections[0].col,
+            );
+            if (!currentSquare) {
+              return;
+            }
+            const updatedGrid = updateSquare(grid, currentSquare, {
+              solution: undefined,
+            });
+            setGrid(updatedGrid);
+            const nextInWord = getNextInWordSkippingFilled(
+              updatedGrid,
+              selections[0],
+              false,
+            );
+            if (nextInWord) {
+              setSelections([nextInWord]);
+            }
+            return;
+          }
+          // Space toggles direction
+          setSelections((prev) => [
+            {
+              ...prev[0],
+              direction: inverseDirection[prev[0].direction],
+            },
+          ]);
           return;
         }
 
@@ -367,14 +397,19 @@ const Grid = forwardRef<GridHandle, Props>(
             return;
           }
 
-          if (
+          // An arrow against the current typing direction always flips the
+          // direction; whether the cursor also moves is a preference.
+          const flipsDirection =
             (["ArrowLeft", "ArrowRight"].includes(e.key) &&
               selections[0].direction !== "across") ||
             (["ArrowUp", "ArrowDown"].includes(e.key) &&
-              selections[0].direction !== "down")
+              selections[0].direction !== "down");
+
+          if (
+            flipsDirection &&
+            settings.arrowKeyAfterDirectionChange === "stay"
           ) {
-            // The arrow is in the opposite direction of the current selection,
-            // so we don't move yet, we just change direction.
+            // Change direction but stay in the same square.
             setSelections((prev) => [
               {
                 ...prev[0],
@@ -386,7 +421,12 @@ const Grid = forwardRef<GridHandle, Props>(
 
           // Simple grid-based arrow key movement
           setSelections((prev) => {
-            const currentSelection = prev[0];
+            const currentSelection = {
+              ...prev[0],
+              direction: flipsDirection
+                ? inverseDirection[prev[0].direction]
+                : prev[0].direction,
+            };
             let newRow = currentSelection.row;
             let newCol = currentSelection.col;
 
@@ -434,8 +474,9 @@ const Grid = forwardRef<GridHandle, Props>(
               }
             }
 
-            // If we hit the boundary or couldn't find a valid square, don't move
-            return prev;
+            // If we hit the boundary or couldn't find a valid square, don't
+            // move (a flipped direction still sticks).
+            return [currentSelection];
           });
           return;
         }
@@ -450,7 +491,7 @@ const Grid = forwardRef<GridHandle, Props>(
           enterCharacter(e.key);
         }
       },
-      [grid, selections, enterCharacter, handleBackspace],
+      [grid, selections, enterCharacter, handleBackspace, isLocked, settings],
     );
 
     // Some mobile keyboards don't emit usable keydown events; they only
