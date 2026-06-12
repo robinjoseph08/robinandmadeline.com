@@ -2,31 +2,31 @@ import {
   expect,
   test,
   type APIRequestContext,
+  type Locator,
   type Page,
 } from "@playwright/test";
 
 import { ADMIN_PASSWORD, ADMIN_USERNAME, loginAsAdmin } from "./auth";
 
-// Issue #10's critical E2E flow: the admin manages an event's photo groups
-// (the photographer's shot list) on the Photo Groups page, and the guest's
-// schedule shows the groups their party is in, with positions in the shooting
-// order. The admin creates two groups, reorders them, assigns the guest to
-// one, and the schedule line reflects the final order.
+// Issue #10's critical E2E flow: the admin manages the photo groups (the
+// photographer's shot list, one global shooting order for the session between
+// the ceremony and the reception) on the Photo Groups page, and the guest's
+// schedule gains a photos section naming which of their party's guests are in
+// which groups. The admin creates two groups, assigns the guest to one,
+// reorders, and the schedule section reflects the final order.
 //
 // Fixtures are seeded through the real admin API (no test-only endpoints);
 // the photo group management itself is driven through the UI, since that is
 // the surface under test. All entities carry a per-run unique suffix and
-// every assertion is scoped to those names, so this spec neither breaks nor
-// is broken by data from other runs in the shared e2e database. Photo groups
-// belong to their event, and this run's event is uniquely named and created
-// fresh, so the positions asserted here are fully owned by this run; the
-// event is also private with only this run's party invited, keeping it off
-// other concurrent guests' schedules.
+// every assertion is scoped to those names. The shooting order is GLOBAL, so
+// groups left by earlier runs in the shared e2e database shift this run's raw
+// positions; the assertions therefore read each group's rendered "Group X of
+// N" label and check relative order and admin/guest agreement, never absolute
+// numbers.
 
 const stamp = Date.now().toString(36);
 const partyName = `E2E Photo Party ${stamp}`;
 const guestName = `Casey C ${stamp}`;
-const eventName = `E2E Portraits Session ${stamp}`;
 const familyGroupName = `Family Photos ${stamp}`;
 const friendsGroupName = `Friends Photos ${stamp}`;
 
@@ -47,49 +47,31 @@ async function adminToken(request: APIRequestContext): Promise<string> {
   return token;
 }
 
-/** Performs an authenticated admin API POST, failing loudly on a non-2xx. */
-async function adminPost(
-  request: APIRequestContext,
-  token: string,
-  path: string,
-  data: unknown,
-): Promise<Record<string, unknown>> {
-  const res = await request.post(path, {
-    data,
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok()) {
-    throw new Error(`${path} failed: ${res.status()} ${await res.text()}`);
-  }
-  return (await res.json()) as Record<string, unknown>;
-}
-
 /**
- * Seeds a party with one guest and a private event the party is invited to.
- * Returns the party's RSVP code for the guest login.
+ * Seeds a party with one guest through the real admin API and returns the
+ * party's RSVP code for the guest login. Photo groups need no event, so the
+ * party is the only fixture.
  */
 async function seedFixtures(request: APIRequestContext): Promise<string> {
   const token = await adminToken(request);
 
-  const party = await adminPost(request, token, "/api/admin/parties", {
-    name: partyName,
-    side: "robin",
-    relation: "friend",
-    guest: { full_name: guestName },
+  const res = await request.post("/api/admin/parties", {
+    data: {
+      name: partyName,
+      side: "robin",
+      relation: "friend",
+      guest: { full_name: guestName },
+    },
+    headers: { Authorization: `Bearer ${token}` },
   });
+  if (!res.ok()) {
+    throw new Error(
+      `seeding party failed: ${res.status()} ${await res.text()}`,
+    );
+  }
+  const party = (await res.json()) as Record<string, unknown>;
   const rsvpCode = party.rsvp_code as string;
   expect(rsvpCode).toBeTruthy();
-
-  const event = await adminPost(request, token, "/api/admin/events", {
-    name: eventName,
-    date: "2026-10-17",
-    start_time: "15:00",
-    is_public: false,
-  });
-  await adminPost(request, token, `/api/admin/events/${event.id}/invite`, {
-    party_ids: [party.id as string],
-  });
-
   return rsvpCode;
 }
 
@@ -113,59 +95,98 @@ async function loginAsGuest(page: Page, code: string): Promise<void> {
   );
 }
 
-test("admin builds an event's photo groups and the guest sees their groups on the schedule", async ({
+/**
+ * The admin list row for one group, located by its visible name. Scoped to
+ * the main content area because sonner's success toasts ("Added ...") are
+ * also list items and carry the group's name.
+ */
+function groupRow(page: Page, name: string): Locator {
+  return page.getByRole("main").getByRole("listitem").filter({ hasText: name });
+}
+
+/**
+ * Reads a group row's rendered "Group X of N" label. Positions are global
+ * across runs in the shared database, so tests compare these instead of
+ * asserting absolute numbers.
+ */
+async function rowPosition(
+  row: Locator,
+): Promise<{ position: number; total: number }> {
+  const label = await row.getByText(/^Group \d+ of \d+$/).textContent();
+  const match = /^Group (\d+) of (\d+)$/.exec(label ?? "");
+  if (!match) {
+    throw new Error(`unexpected position label: ${label ?? "(missing)"}`);
+  }
+  return { position: Number(match[1]), total: Number(match[2]) };
+}
+
+test("admin builds the shot list and the guest's schedule names their guests per group", async ({
   page,
 }) => {
   const rsvpCode = await seedFixtures(page.request);
 
-  // --- Admin: create two groups under the event ------------------------------
+  // --- Admin: create two groups, appended at the end of the global order ----
   await loginAsAdmin(page);
   await page.goto("/admin/photo-groups", { waitUntil: "domcontentloaded" });
 
-  const section = page.getByRole("region", { name: eventName });
-  await expect(section).toBeVisible();
-
-  const nameInput = section.getByLabel(`New photo group name for ${eventName}`);
+  const nameInput = page.getByLabel("New photo group name");
   await nameInput.fill(familyGroupName);
-  await section
-    .getByRole("button", { name: `Add group to ${eventName}` })
-    .click();
-  await expect(section.getByText(familyGroupName)).toBeVisible();
+  await page.getByRole("button", { name: "Add group" }).click();
+  await expect(groupRow(page, familyGroupName)).toBeVisible();
 
   await nameInput.fill(friendsGroupName);
-  await section
-    .getByRole("button", { name: `Add group to ${eventName}` })
-    .click();
-  await expect(section.getByText(friendsGroupName)).toBeVisible();
+  await page.getByRole("button", { name: "Add group" }).click();
+  await expect(groupRow(page, friendsGroupName)).toBeVisible();
 
-  // --- Admin: assign the guest to the second group ---------------------------
-  await section
+  // Creates append, so the friends group sits right after the family group.
+  const familyBefore = await rowPosition(groupRow(page, familyGroupName));
+  const friendsBefore = await rowPosition(groupRow(page, friendsGroupName));
+  expect(friendsBefore.position).toBe(familyBefore.position + 1);
+
+  // --- Admin: assign the guest to the friends group --------------------------
+  await page
     .getByRole("combobox", { name: `Add guest to ${friendsGroupName}` })
     .click();
   // The picker searches the full guest list; type to isolate this run's guest.
   await page.getByPlaceholder("Search guests...").fill(guestName);
   await page.getByRole("option", { name: new RegExp(guestName) }).click();
-  await expect(section.getByText(`${guestName} (${partyName})`)).toBeVisible();
+  await expect(
+    groupRow(page, friendsGroupName).getByText(`${guestName} (${partyName})`),
+  ).toBeVisible();
 
-  // --- Admin: move the guest's group to the front of the shooting order ------
-  await section
+  // --- Admin: move the guest's group one slot up in the shooting order -------
+  await page
     .getByRole("button", { name: `Move ${friendsGroupName} up` })
     .click();
-  // The order swap lands: the friends group is now group 1.
-  const friendsRow = section
-    .getByRole("listitem")
-    .filter({ hasText: friendsGroupName });
-  await expect(friendsRow.getByText("Group 1 of 2")).toBeVisible();
+  await expect(async () => {
+    const friendsAfter = await rowPosition(groupRow(page, friendsGroupName));
+    expect(friendsAfter.position).toBe(friendsBefore.position - 1);
+  }).toPass();
+  const familyAfter = await rowPosition(groupRow(page, familyGroupName));
+  expect(familyAfter.position).toBe(familyBefore.position + 1);
+  const friendsAfter = await rowPosition(groupRow(page, friendsGroupName));
 
-  // --- Guest: the schedule shows the group with its position -----------------
+  // --- Anonymous: the schedule has no photos section -------------------------
+  await page.goto("/schedule", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Schedule" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Photos" })).not.toBeVisible();
+
+  // --- Guest: the photos section names the party's guest with the position ---
   await loginAsGuest(page, rsvpCode);
   await page.goto("/schedule", { waitUntil: "domcontentloaded" });
 
-  const eventCard = page.getByRole("article", { name: eventName });
-  await expect(eventCard).toBeVisible();
+  const photos = page.getByRole("region", { name: "Photos" });
+  await expect(photos).toBeVisible();
   await expect(
-    eventCard.getByText(
-      `Stay for photos! You're in: ${friendsGroupName}. Group 1 of 2.`,
+    photos.getByText(/group photos after the ceremony, before the reception/i),
+  ).toBeVisible();
+  // The line carries the same global position the admin page showed, and the
+  // guest's first name. The family group holds none of this party's guests,
+  // so it never appears.
+  await expect(
+    photos.getByText(
+      `${friendsGroupName} (group ${friendsAfter.position} of ${friendsAfter.total}): Casey`,
     ),
   ).toBeVisible();
+  await expect(photos.getByText(familyGroupName)).not.toBeVisible();
 });

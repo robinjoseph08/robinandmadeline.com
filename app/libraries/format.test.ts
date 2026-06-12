@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import type { SchedulePhotoGroup } from "@/types/generated/events";
+import type { PartyPhotoGroup } from "@/types/generated/photogroups";
 
 import {
   formatEventDate,
   formatEventWhen,
   formatLongDate,
-  formatPhotoGroupsLine,
+  formatPhotoGroupLine,
   formatTime,
 } from "./format";
 
@@ -65,43 +65,48 @@ describe("formatEventWhen", () => {
   });
 });
 
-describe("formatPhotoGroupsLine", () => {
+describe("formatPhotoGroupLine", () => {
   const group = (
-    name: string,
-    position: number,
-    total: number,
-  ): SchedulePhotoGroup => ({ id: `pg-${position}`, name, position, total });
+    guestNames: string[],
+    overrides: Partial<PartyPhotoGroup> = {},
+  ): PartyPhotoGroup => ({
+    id: "pg-1",
+    name: "Family Photos",
+    position: 1,
+    total: 3,
+    guest_names: guestNames,
+    ...overrides,
+  });
 
-  it("names a single group with its position", () => {
-    expect(formatPhotoGroupsLine([group("Bride's Family", 3, 12)])).toBe(
-      "Stay for photos! You're in: Bride's Family. Group 3 of 12.",
+  it("names a single guest by first name with the group's position", () => {
+    expect(formatPhotoGroupLine(group(["Leon Smith"]))).toBe(
+      "Family Photos (group 1 of 3): Leon",
     );
   });
 
-  it("joins two groups with their positions", () => {
+  it("lists several guests' first names in order", () => {
     expect(
-      formatPhotoGroupsLine([
-        group("Bride's Family", 3, 12),
-        group("College Friends", 5, 12),
-      ]),
-    ).toBe(
-      "Stay for photos! You're in: Bride's Family, College Friends. Groups 3 and 5 of 12.",
+      formatPhotoGroupLine(
+        group(["Leon Smith", "Leslie Smith", "Riley Smith"], {
+          name: "College Friends",
+          position: 2,
+          total: 12,
+        }),
+      ),
+    ).toBe("College Friends (group 2 of 12): Leon, Leslie, Riley");
+  });
+
+  it("keeps a single-word name whole", () => {
+    expect(formatPhotoGroupLine(group(["Cher"]))).toBe(
+      "Family Photos (group 1 of 3): Cher",
     );
   });
 
-  it("lists three or more positions with commas and a final and", () => {
-    expect(
-      formatPhotoGroupsLine([
-        group("Bride's Family", 2, 12),
-        group("College Friends", 5, 12),
-        group("Wedding Party", 7, 12),
-      ]),
-    ).toBe(
-      "Stay for photos! You're in: Bride's Family, College Friends, Wedding Party. Groups 2, 5, and 7 of 12.",
+  it("omits the guest list when there are no names", () => {
+    // The API only sends groups the party has members in, but an empty list
+    // must not render a dangling colon.
+    expect(formatPhotoGroupLine(group([]))).toBe(
+      "Family Photos (group 1 of 3)",
     );
-  });
-
-  it("returns an empty string when there are no groups", () => {
-    expect(formatPhotoGroupsLine([])).toBe("");
   });
 });

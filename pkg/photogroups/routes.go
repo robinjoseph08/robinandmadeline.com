@@ -8,10 +8,10 @@ import "github.com/labstack/echo/v4"
 //
 // Route shape (relative to the admin group, i.e. /api/admin):
 //
-//	Photo groups:
-//	  GET    /photo-groups                       list (optionally ?event_id=, shooting order)
-//	  POST   /photo-groups                       create (appended at the end of its event)
-//	  POST   /photo-groups/reorder               rewrite one event's shooting order
+//	Photo groups (one global list in shooting order):
+//	  GET    /photo-groups                       list
+//	  POST   /photo-groups                       create (appended at the end)
+//	  POST   /photo-groups/reorder               rewrite the shooting order
 //	  PUT    /photo-groups/:id                   rename
 //	  DELETE /photo-groups/:id                   delete (cascades to assignments)
 //
@@ -19,10 +19,6 @@ import "github.com/labstack/echo/v4"
 //	detail surface of their own):
 //	  POST   /photo-groups/:id/guests            add a guest to the group (idempotent)
 //	  DELETE /photo-groups/:id/guests/:guestId   remove a guest from the group
-//
-// Photo groups mount flat rather than nested under /events/:id because the
-// admin page manages every event's shot list at once; the owning event rides
-// in the query string (list) or body (create, reorder).
 func RegisterRoutes(admin *echo.Group, service *Service) {
 	h := &handler{service: service}
 
@@ -34,4 +30,15 @@ func RegisterRoutes(admin *echo.Group, service *Service) {
 	groups.DELETE("/:id", h.deletePhotoGroup)
 	groups.POST("/:id/guests", h.addGuest)
 	groups.DELETE("/:id/guests/:guestId", h.removeGuest)
+}
+
+// RegisterGuestRoutes mounts the guest-facing photo-groups endpoint on the
+// given group, which is expected to be the guest group behind RequireGuest,
+// so the route requires a guest token whose party_id claim scopes the read:
+//
+//	GET /photo-groups    the groups the party's guests are in, with positions
+//	                     and the names of the party's guests per group
+func RegisterGuestRoutes(guest *echo.Group, service *Service) {
+	h := &handler{service: service}
+	guest.GET("/photo-groups", h.listPartyPhotoGroups)
 }

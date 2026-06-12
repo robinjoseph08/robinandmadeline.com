@@ -114,6 +114,12 @@ func TestGuestRoute_RequiresGuestToken(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	// Same for the guest-facing photo-groups route.
+	photoGroupsReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/guest/photo-groups", http.NoBody)
+	photoGroupsRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(photoGroupsRec, photoGroupsReq)
+	require.Equal(t, http.StatusUnauthorized, photoGroupsRec.Code)
 }
 
 func TestScheduleRoute_WiredBehindOptionalGuestAuth(t *testing.T) {

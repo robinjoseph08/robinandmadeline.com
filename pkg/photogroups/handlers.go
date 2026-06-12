@@ -6,14 +6,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/pkg/errors"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 )
 
 // handler holds the dependencies for the photo-groups HTTP handlers. It is
-// unexported; routes are wired via RegisterRoutes. Handlers return errcodes
-// errors directly (and the *Error the service produces flows through), which
-// the shared error handler renders. There is no per-package error translation.
+// unexported; routes are wired via RegisterRoutes / RegisterGuestRoutes.
+// Handlers return errcodes errors directly (and the *Error the service
+// produces flows through), which the shared error handler renders. There is
+// no per-package error translation.
 type handler struct {
 	service *Service
 }
@@ -32,19 +34,15 @@ func pathID(c echo.Context, param, resource string) (string, error) {
 	return id.String(), nil
 }
 
-// listPhotoGroups handles GET /api/admin/photo-groups: photo groups in
-// shooting order (optionally narrowed to one event via ?event_id=), each with
-// its members, in the uniform {items, total} envelope.
+// listPhotoGroups handles GET /api/admin/photo-groups: every photo group in
+// shooting order, each with its members, in the uniform {items, total}
+// envelope.
 func (h *handler) listPhotoGroups(c echo.Context) error {
-	var query ListPhotoGroupsQuery
-	if err := c.Bind(&query); err != nil {
-		return errors.WithStack(err)
-	}
-	return h.respondWithList(c, query)
+	return h.respondWithList(c)
 }
 
 // createPhotoGroup handles POST /api/admin/photo-groups, returning 201 with
-// the created group (born memberless at the end of its event's order).
+// the created group (born memberless at the end of the shooting order).
 func (h *handler) createPhotoGroup(c echo.Context) error {
 	var body CreatePhotoGroupPayload
 	if err := c.Bind(&body); err != nil {
@@ -85,11 +83,9 @@ func (h *handler) deletePhotoGroup(c echo.Context) error {
 }
 
 // reorderPhotoGroups handles POST /api/admin/photo-groups/reorder: rewrites
-// one event's shooting order from the payload's id sequence. It returns the
-// event's groups in their new order (the same shape as the filtered list) so
-// callers get the authoritative resulting order back. (The admin UI still
-// refetches its unfiltered all-events list, which this one-event response
-// cannot replace.)
+// the shooting order from the payload's id sequence. It returns the groups in
+// their new order (the same shape as the list endpoint), the authoritative
+// result of the write for any caller.
 func (h *handler) reorderPhotoGroups(c echo.Context) error {
 	var body ReorderPhotoGroupsPayload
 	if err := c.Bind(&body); err != nil {
@@ -98,13 +94,13 @@ func (h *handler) reorderPhotoGroups(c echo.Context) error {
 	if err := h.service.ReorderPhotoGroups(c.Request().Context(), body); err != nil {
 		return err
 	}
-	return h.respondWithList(c, ListPhotoGroupsQuery{EventID: &body.EventID})
+	return h.respondWithList(c)
 }
 
 // addGuest handles POST /api/admin/photo-groups/:id/guests: adds one guest to
 // the group (an idempotent no-op when already a member). It returns the group
-// with its refreshed member list so callers get the authoritative membership
-// back. (The admin UI relies on its list refetch rather than this response.)
+// with its refreshed member list, the authoritative result of the write for
+// any caller.
 func (h *handler) addGuest(c echo.Context) error {
 	id, err := pathID(c, "id", "photo group")
 	if err != nil {
@@ -138,12 +134,24 @@ func (h *handler) removeGuest(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// respondWithList renders the matching groups in shooting order with their
-// members in the uniform {items, total} envelope, the shape the list endpoint
-// and the reorder response share.
-func (h *handler) respondWithList(c echo.Context, query ListPhotoGroupsQuery) error {
+// listPartyPhotoGroups handles GET /api/guest/photo-groups, the guest-facing
+// view. The route sits behind RequireGuest, whose party_id claim scopes the
+// read: the response holds the groups the party's guests are in, each naming
+// exactly which of the party's guests it needs.
+func (h *handler) listPartyPhotoGroups(c echo.Context) error {
+	items, err := h.service.PartyPhotoGroups(c.Request().Context(), auth.GuestPartyID(c))
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, ListPartyPhotoGroupsResponse{Items: items, Total: len(items)})
+}
+
+// respondWithList renders every group in shooting order with its members in
+// the uniform {items, total} envelope, the shape the list endpoint and the
+// reorder response share.
+func (h *handler) respondWithList(c echo.Context) error {
 	ctx := c.Request().Context()
-	list, total, err := h.service.ListPhotoGroups(ctx, query)
+	list, total, err := h.service.ListPhotoGroups(ctx)
 	if err != nil {
 		return err
 	}

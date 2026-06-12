@@ -6,10 +6,11 @@ import {
 } from "@tanstack/react-query";
 
 import { adminRequest, ApiError } from "@/libraries/admin-api";
+import { guestRequest } from "@/libraries/guest-api";
 import type {
   AddPhotoGroupGuestPayload,
   CreatePhotoGroupPayload,
-  ListPhotoGroupsQuery,
+  ListPartyPhotoGroupsResponse,
   ListPhotoGroupsResponse,
   PhotoGroupResponse,
   ReorderPhotoGroupsPayload,
@@ -17,20 +18,22 @@ import type {
 } from "@/types/generated/photogroups";
 
 /**
- * React Query hooks for the photo-groups admin API (the photographer's
- * per-event shot list). Every fetch goes through `adminRequest` (which carries
- * the admin token); the hooks are typed end to end with the tygo-generated
- * request/response types. The admin page renders every event's groups from
- * one unfiltered list query, so each mutation simply invalidates that list:
- * the dataset is wedding-sized and the refetch is one request.
+ * React Query hooks for the photo-groups API (the photographer's shot list,
+ * one global shooting order). The admin hooks go through `adminRequest` (which
+ * carries the admin token) and render the whole list from one query, so each
+ * mutation simply invalidates that list: the dataset is wedding-sized and the
+ * refetch is one request. The one guest-facing hook (usePartyPhotoGroups)
+ * goes through `guestRequest` instead, which carries the persisted guest
+ * token. All hooks are typed end to end with the tygo-generated
+ * request/response types.
  */
 
 export enum QueryKey {
   ListPhotoGroups = "ListPhotoGroups",
+  PartyPhotoGroups = "PartyPhotoGroups",
 }
 
 export const usePhotoGroups = (
-  query: ListPhotoGroupsQuery = {},
   options: Omit<
     UseQueryOptions<ListPhotoGroupsResponse, ApiError>,
     "queryKey" | "queryFn"
@@ -38,8 +41,26 @@ export const usePhotoGroups = (
 ) => {
   return useQuery<ListPhotoGroupsResponse, ApiError>({
     ...options,
-    queryKey: [QueryKey.ListPhotoGroups, query],
-    queryFn: () => adminRequest("/admin/photo-groups", { query }),
+    queryKey: [QueryKey.ListPhotoGroups],
+    queryFn: () => adminRequest("/admin/photo-groups"),
+  });
+};
+
+// usePartyPhotoGroups fetches the authenticated party's photo groups (GET
+// /api/guest/photo-groups): the groups the party's guests are in, each naming
+// which of the party's guests it needs, with positions in the shooting order.
+// Callers gate it with `enabled` on having a guest session; the request 401s
+// without a valid token.
+export const usePartyPhotoGroups = (
+  options: Omit<
+    UseQueryOptions<ListPartyPhotoGroupsResponse, ApiError>,
+    "queryKey" | "queryFn"
+  > = {},
+) => {
+  return useQuery<ListPartyPhotoGroupsResponse, ApiError>({
+    ...options,
+    queryKey: [QueryKey.PartyPhotoGroups],
+    queryFn: () => guestRequest("/guest/photo-groups"),
   });
 };
 
@@ -94,9 +115,8 @@ export const useDeletePhotoGroup = () => {
   });
 };
 
-// useReorderPhotoGroups rewrites one event's shooting order: the payload
-// carries the event's photo group ids in their new order (each of them
-// exactly once).
+// useReorderPhotoGroups rewrites the shooting order: the payload carries
+// every photo group id in its new order (each of them exactly once).
 export const useReorderPhotoGroups = () => {
   const queryClient = useQueryClient();
 

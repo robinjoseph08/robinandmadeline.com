@@ -15,21 +15,17 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
-	"github.com/robinjoseph08/robinandmadeline.com/pkg/photogroups"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uptrace/bun"
 )
 
 // scheduleAPI bundles the wired Echo instance with the services the schedule
-// tests build fixtures and tokens through (and the db handle, through which
-// the photo-group tests construct a photogroups.Service for fixtures).
+// tests build fixtures and tokens through.
 type scheduleAPI struct {
 	echo    *echo.Echo
 	events  *events.Service
 	parties *parties.Service
 	auth    *auth.Service
-	db      *bun.DB
 }
 
 // newScheduleAPI wires the schedule route behind the real auth middleware
@@ -38,7 +34,7 @@ type scheduleAPI struct {
 // bundled auth service mints guest tokens for the authenticated cases.
 func newScheduleAPI(t *testing.T) scheduleAPI {
 	t.Helper()
-	svc, partySvc, db := newServices(t)
+	svc, partySvc, _ := newServices(t)
 	e := echo.New()
 	b, err := binder.New()
 	require.NoError(t, err)
@@ -48,7 +44,7 @@ func newScheduleAPI(t *testing.T) scheduleAPI {
 	authSvc := auth.NewService("test-secret", time.Hour, time.Hour, "admin", "pw")
 	g := e.Group("/api")
 	events.RegisterScheduleRoutes(g, auth.NewMiddleware(authSvc), svc)
-	return scheduleAPI{echo: e, events: svc, parties: partySvc, auth: authSvc, db: db}
+	return scheduleAPI{echo: e, events: svc, parties: partySvc, auth: authSvc}
 }
 
 // getSchedule issues GET /api/events with an optional bearer token.
@@ -74,12 +70,6 @@ type scheduleResponse struct {
 		StartTime   *string `json:"start_time"`
 		EndTime     *string `json:"end_time"`
 		IsPublic    bool    `json:"is_public"`
-		PhotoGroups []struct {
-			ID       string `json:"id"`
-			Name     string `json:"name"`
-			Position int    `json:"position"`
-			Total    int    `json:"total"`
-		} `json:"photo_groups"`
 	} `json:"items"`
 	Total int `json:"total"`
 }
@@ -116,147 +106,6 @@ func TestScheduleHandler_NoTokenListsOnlyPublicEvents(t *testing.T) {
 	assert.Equal(t, pointerutil.String("The Grand Hall"), item.Location)
 	assert.Equal(t, pointerutil.String("Dinner and dancing."), item.Description)
 	assert.True(t, item.IsPublic)
-	// photo_groups is always present, an empty list on the anonymous view
-	// (assignments are personal data), never null.
-	assert.NotNil(t, item.PhotoGroups)
-	assert.Empty(t, item.PhotoGroups)
-}
-
-func TestScheduleHandler_GuestTokenCarriesPartyPhotoGroupsWithPositions(t *testing.T) {
-	api := newScheduleAPI(t)
-	photoSvc := photogroups.NewService(api.db)
-
-	p := createPartyT(t, api.parties, "The Smiths")
-	alice := addGuestT(t, api.parties, p.ID, "Alice")
-	bob := addGuestT(t, api.parties, p.ID, "Bob")
-	other := createPartyT(t, api.parties, "The Joneses")
-	riley := addGuestT(t, api.parties, other.ID, "Riley")
-
-	event := createEventT(t, api.events, publicEventInput())
-
-	// Three groups in shooting order; Alice is in the first, Bob in the third,
-	// and only Riley (another party) in the second, so the party's view is the
-	// union of its guests' groups with positions ranked across ALL of the
-	// event's groups.
-	family, err := photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: event.ID, Name: "Bride's Family"})
-	require.NoError(t, err)
-	joneses, err := photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: event.ID, Name: "The Joneses"})
-	require.NoError(t, err)
-	friends, err := photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: event.ID, Name: "College Friends"})
-	require.NoError(t, err)
-	_, err = photoSvc.AddGuest(ctx(), family.ID, photogroups.AddPhotoGroupGuestPayload{GuestID: alice.ID})
-	require.NoError(t, err)
-	_, err = photoSvc.AddGuest(ctx(), friends.ID, photogroups.AddPhotoGroupGuestPayload{GuestID: bob.ID})
-	require.NoError(t, err)
-	_, err = photoSvc.AddGuest(ctx(), joneses.ID, photogroups.AddPhotoGroupGuestPayload{GuestID: riley.ID})
-	require.NoError(t, err)
-
-	token, err := api.auth.GenerateGuestToken(p.ID)
-	require.NoError(t, err)
-
-	rec := getSchedule(t, api.echo, token)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	resp := decodeSchedule(t, rec)
-	require.Len(t, resp.Items, 1)
-	groups := resp.Items[0].PhotoGroups
-	require.Len(t, groups, 2)
-	// Shooting order; the other party's group never appears but still counts
-	// toward positions and the total.
-	assert.Equal(t, family.ID, groups[0].ID)
-	assert.Equal(t, "Bride's Family", groups[0].Name)
-	assert.Equal(t, 1, groups[0].Position)
-	assert.Equal(t, 3, groups[0].Total)
-	assert.Equal(t, friends.ID, groups[1].ID)
-	assert.Equal(t, "College Friends", groups[1].Name)
-	assert.Equal(t, 3, groups[1].Position)
-	assert.Equal(t, 3, groups[1].Total)
-}
-
-func TestScheduleHandler_PhotoGroupPositionsRankPerEventAndSurviveDeletes(t *testing.T) {
-	api := newScheduleAPI(t)
-	photoSvc := photogroups.NewService(api.db)
-
-	p := createPartyT(t, api.parties, "The Smiths")
-	alice := addGuestT(t, api.parties, p.ID, "Alice")
-
-	reception := createEventT(t, api.events, publicEventInput())
-	dinner := createEventT(t, api.events, privateEventInput())
-	_, err := api.events.InviteParties(ctx(), dinner.ID, events.InvitePartiesPayload{PartyIDs: []string{p.ID}})
-	require.NoError(t, err)
-
-	// Reception: four groups, then the second is deleted, leaving a raw
-	// sort_order gap (1, _, 3, 4). Positions must rank the remaining groups
-	// (1, 2, 3) rather than echo the raw sort_order.
-	_, err = photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: reception.ID, Name: "Bride's Family"})
-	require.NoError(t, err)
-	grandparents, err := photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: reception.ID, Name: "Grandparents"})
-	require.NoError(t, err)
-	friends, err := photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: reception.ID, Name: "College Friends"})
-	require.NoError(t, err)
-	_, err = photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: reception.ID, Name: "Wedding Party"})
-	require.NoError(t, err)
-	require.NoError(t, photoSvc.DeletePhotoGroup(ctx(), grandparents.ID))
-	_, err = photoSvc.AddGuest(ctx(), friends.ID, photogroups.AddPhotoGroupGuestPayload{GuestID: alice.ID})
-	require.NoError(t, err)
-
-	// Rehearsal dinner: two groups of its own. Positions and totals partition
-	// per event, so they must count only this event's groups, not every group
-	// on the schedule.
-	_, err = photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: dinner.ID, Name: "Toast Speakers"})
-	require.NoError(t, err)
-	outOfTown, err := photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: dinner.ID, Name: "Out-of-Town Guests"})
-	require.NoError(t, err)
-	_, err = photoSvc.AddGuest(ctx(), outOfTown.ID, photogroups.AddPhotoGroupGuestPayload{GuestID: alice.ID})
-	require.NoError(t, err)
-
-	token, err := api.auth.GenerateGuestToken(p.ID)
-	require.NoError(t, err)
-
-	rec := getSchedule(t, api.echo, token)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	resp := decodeSchedule(t, rec)
-	require.Len(t, resp.Items, 2)
-
-	// Schedule order: the dinner (2026-10-16) precedes the reception
-	// (2026-10-17). Its total is its own two groups.
-	dinnerGroups := resp.Items[0].PhotoGroups
-	require.Len(t, dinnerGroups, 1)
-	assert.Equal(t, outOfTown.ID, dinnerGroups[0].ID)
-	assert.Equal(t, 2, dinnerGroups[0].Position)
-	assert.Equal(t, 2, dinnerGroups[0].Total)
-
-	// The friends group's raw sort_order is still 3; the delete promoted it
-	// to rank 2 of the reception's 3 remaining groups.
-	receptionGroups := resp.Items[1].PhotoGroups
-	require.Len(t, receptionGroups, 1)
-	assert.Equal(t, friends.ID, receptionGroups[0].ID)
-	assert.Equal(t, 2, receptionGroups[0].Position)
-	assert.Equal(t, 3, receptionGroups[0].Total)
-}
-
-func TestScheduleHandler_GuestWithNoAssignmentsGetsEmptyPhotoGroups(t *testing.T) {
-	api := newScheduleAPI(t)
-	photoSvc := photogroups.NewService(api.db)
-
-	p := createPartyT(t, api.parties, "The Smiths")
-	addGuestT(t, api.parties, p.ID, "Alice")
-	event := createEventT(t, api.events, publicEventInput())
-	_, err := photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: event.ID, Name: "Bride's Family"})
-	require.NoError(t, err)
-
-	token, err := api.auth.GenerateGuestToken(p.ID)
-	require.NoError(t, err)
-
-	rec := getSchedule(t, api.echo, token)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	resp := decodeSchedule(t, rec)
-	require.Len(t, resp.Items, 1)
-	// Present and empty, never null: the event has groups, just none of ours.
-	assert.NotNil(t, resp.Items[0].PhotoGroups)
-	assert.Empty(t, resp.Items[0].PhotoGroups)
 }
 
 func TestScheduleHandler_GuestTokenListsInvitedEventsInScheduleOrder(t *testing.T) {

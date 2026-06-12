@@ -3,11 +3,9 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Combobox } from "@/components/library/Combobox";
-import { formatEventWhen } from "@/components/pages/admin/events/format";
 import { TooltipIconButton } from "@/components/pages/admin/grid/grid-buttons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useEvents } from "@/hooks/queries/events";
 import { useGuests } from "@/hooks/queries/guests";
 import {
   useAddPhotoGroupGuest,
@@ -18,96 +16,40 @@ import {
   useReorderPhotoGroups,
   useUpdatePhotoGroup,
 } from "@/hooks/queries/photo-groups";
-import type { EventResponse } from "@/types/generated/events";
 import type { GuestListItem } from "@/types/generated/parties";
 import type { PhotoGroupResponse } from "@/types/generated/photogroups";
 
 /**
- * Admin photo groups: the photographer's shot list, organized by event. Each
- * event section lists its groups in shooting order; the admin can create,
- * rename, and delete groups, move them up and down the order, and assign or
- * remove guests. The guest-facing schedule shows each party the groups its
- * guests are in, with their positions, so the order here is what guests see.
+ * Admin photo groups: the photographer's shot list for the one photo session
+ * between the ceremony and the reception. One flat list in shooting order; the
+ * admin can create, rename, and delete groups, move them up and down the
+ * order, and assign or remove guests. The guest-facing schedule shows each
+ * party the groups its guests are in, with their positions, so the order here
+ * is what guests see.
  */
 export default function AdminPhotoGroups() {
-  const eventsQuery = useEvents();
   const groupsQuery = usePhotoGroups();
   // The flat, unfiltered guest list feeds every group's add-guest picker.
   const guestsQuery = useGuests();
+  const createGroup = useCreatePhotoGroup();
+  const reorderGroups = useReorderPhotoGroups();
 
-  const events = eventsQuery.data?.items ?? [];
+  const [newName, setNewName] = useState("");
+
+  const groups = groupsQuery.data?.items ?? [];
   const guests = guestsQuery.data?.items ?? [];
-
-  const groupItems = groupsQuery.data?.items;
-  const groupsByEvent = useMemo(() => {
-    const byEvent = new Map<string, PhotoGroupResponse[]>();
-    for (const group of groupItems ?? []) {
-      const list = byEvent.get(group.event_id) ?? [];
-      list.push(group);
-      byEvent.set(group.event_id, list);
-    }
-    return byEvent;
-  }, [groupItems]);
 
   // The guest list feeds every add-guest picker, so its loading and failure
   // states are the page's too (otherwise a failed fetch would render as "No
   // matching guests.").
-  const isLoading =
-    eventsQuery.isLoading || groupsQuery.isLoading || guestsQuery.isLoading;
-  const error = eventsQuery.error ?? groupsQuery.error ?? guestsQuery.error;
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Photo Groups</h1>
-        <p className="text-sm text-muted-foreground">
-          The photographer's shot list for each event. Guests see their groups
-          and positions on their schedule.
-        </p>
-      </div>
-
-      {isLoading ? (
-        <p className="text-muted-foreground">Loading photo groups...</p>
-      ) : error ? (
-        <p className="text-destructive">{error.message}</p>
-      ) : events.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No events yet. Photo groups belong to an event, so add events first.
-        </p>
-      ) : (
-        events.map((event) => (
-          <EventSection
-            event={event}
-            groups={groupsByEvent.get(event.id) ?? []}
-            guests={guests}
-            key={event.id}
-          />
-        ))
-      )}
-    </div>
-  );
-}
-
-interface EventSectionProps {
-  event: EventResponse;
-  groups: PhotoGroupResponse[];
-  guests: GuestListItem[];
-}
-
-/**
- * One event's shot list: its groups in shooting order plus the add-group
- * form. New groups are appended at the end of the order.
- */
-function EventSection({ event, groups, guests }: EventSectionProps) {
-  const createGroup = useCreatePhotoGroup();
-  const reorderGroups = useReorderPhotoGroups();
-  const [newName, setNewName] = useState("");
+  const isLoading = groupsQuery.isLoading || guestsQuery.isLoading;
+  const error = groupsQuery.error ?? guestsQuery.error;
 
   const handleCreate = async () => {
     const name = newName.trim();
     if (!name) return;
     try {
-      await createGroup.mutateAsync({ event_id: event.id, name });
+      await createGroup.mutateAsync({ name });
       toast.success(`Added ${name}`);
       setNewName("");
     } catch (error) {
@@ -117,17 +59,14 @@ function EventSection({ event, groups, guests }: EventSectionProps) {
     }
   };
 
-  // Swaps the group at index with its neighbor and submits the event's full
-  // id sequence (the API requires each group exactly once).
+  // Swaps the group at index with its neighbor and submits the full id
+  // sequence (the API requires every group exactly once).
   const handleMove = async (index: number, direction: -1 | 1) => {
     const ids = groups.map((g) => g.id);
     const target = index + direction;
     [ids[index], ids[target]] = [ids[target], ids[index]];
     try {
-      await reorderGroups.mutateAsync({
-        event_id: event.id,
-        photo_group_ids: ids,
-      });
+      await reorderGroups.mutateAsync({ photo_group_ids: ids });
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to reorder groups",
@@ -136,61 +75,67 @@ function EventSection({ event, groups, guests }: EventSectionProps) {
   };
 
   return (
-    <section
-      aria-label={event.name}
-      className="space-y-3 rounded-md border border-ink/10 p-4"
-    >
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-lg font-medium">{event.name}</h2>
-        <span className="text-sm text-muted-foreground">
-          {formatEventWhen(event)}
-        </span>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">Photo Groups</h1>
+        <p className="text-sm text-muted-foreground">
+          The photographer's shot list for the photo session between the
+          ceremony and the reception, in shooting order. Guests see their groups
+          and positions on their schedule.
+        </p>
       </div>
 
-      {groups.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No photo groups yet. Add the first one below.
-        </p>
+      {isLoading ? (
+        <p className="text-muted-foreground">Loading photo groups...</p>
+      ) : error ? (
+        <p className="text-destructive">{error.message}</p>
       ) : (
-        <ul className="space-y-2">
-          {groups.map((group, index) => (
-            <GroupRow
-              count={groups.length}
-              group={group}
-              guests={guests}
-              index={index}
-              key={group.id}
-              onMove={(direction) => handleMove(index, direction)}
-              reordering={reorderGroups.isPending}
-            />
-          ))}
-        </ul>
-      )}
+        <>
+          {groups.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No photo groups yet. Add the first one below.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {groups.map((group, index) => (
+                <GroupRow
+                  count={groups.length}
+                  group={group}
+                  guests={guests}
+                  index={index}
+                  key={group.id}
+                  onMove={(direction) => handleMove(index, direction)}
+                  reordering={reorderGroups.isPending}
+                />
+              ))}
+            </ul>
+          )}
 
-      <form
-        className="flex flex-wrap items-center gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void handleCreate();
-        }}
-      >
-        <Input
-          aria-label={`New photo group name for ${event.name}`}
-          className="w-64"
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="New group name"
-          value={newName}
-        />
-        <Button
-          aria-label={`Add group to ${event.name}`}
-          disabled={newName.trim() === "" || createGroup.isPending}
-          type="submit"
-        >
-          <Plus />
-          Add group
-        </Button>
-      </form>
-    </section>
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleCreate();
+            }}
+          >
+            <Input
+              aria-label="New photo group name"
+              className="w-64"
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="New group name"
+              value={newName}
+            />
+            <Button
+              disabled={newName.trim() === "" || createGroup.isPending}
+              type="submit"
+            >
+              <Plus />
+              Add group
+            </Button>
+          </form>
+        </>
+      )}
+    </div>
   );
 }
 

@@ -82,29 +82,15 @@ type ListEventsResponse struct {
 	Total int             `json:"total"`
 }
 
-// SchedulePhotoGroup is one photo group assignment on the guest-facing
-// schedule: a named photo session someone in the authenticated guest's party
-// is part of at an event. Position is the group's 1-based rank in the event's
-// shooting order and Total the event's group count, both spanning ALL of the
-// event's groups (not just the party's), so the page can say "group 3 of 12".
-// Position is a computed rank, not the raw sort_order, which may have gaps
-// after deletes.
-type SchedulePhotoGroup struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Position int    `json:"position"`
-	Total    int    `json:"total"`
-}
-
 // ScheduleEvent is the guest-facing view of one event on the schedule: the
-// stored model (embedded by value, like EventResponse) plus the authenticated
-// guest's party's photo group assignments (always present; empty on the
-// anonymous view and for events where the party has none). It deliberately
-// omits the RSVP breakdown: attendance tallies are admin data the schedule has
-// no business exposing.
+// stored model, embedded by value like EventResponse. It deliberately omits
+// the RSVP breakdown: attendance tallies are admin data the schedule has no
+// business exposing. Photo groups are not part of the schedule payload: they
+// are not tied to events (the one photo session sits between the ceremony and
+// the reception), so the authenticated party's groups travel on GET
+// /api/guest/photo-groups (pkg/photogroups) instead.
 type ScheduleEvent struct {
 	models.Event `tstype:",extends"`
-	PhotoGroups  []SchedulePhotoGroup `json:"photo_groups"`
 }
 
 // ListScheduleEventsResponse is the body of GET /api/events, the uniform list

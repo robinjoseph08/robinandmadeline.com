@@ -10,16 +10,16 @@ import (
 func init() {
 	up := func(ctx context.Context, db *bun.DB) error {
 		// photo_groups: a named set of guests needed together for a specific
-		// photo at an event, with a shooting order. sort_order is the position
-		// within the event's list; the API appends new groups at the end and the
-		// reorder endpoint rewrites the whole sequence, so values stay small
-		// integers but are not guaranteed contiguous (reads rank by sort_order
-		// rather than trusting the raw value). The event FK cascades: deleting
-		// an event takes its shot list with it.
+		// photo, with a shooting order. All group photos happen in the one
+		// session between the ceremony and the reception, so groups form a
+		// single global list rather than belonging to an event. sort_order is
+		// the position within that list; the API appends new groups at the end
+		// and the reorder endpoint rewrites the whole sequence, so values stay
+		// small integers but are not guaranteed contiguous (reads rank by
+		// sort_order rather than trusting the raw value).
 		_, err := db.ExecContext(ctx, `
 			CREATE TABLE photo_groups (
 				id UUID PRIMARY KEY,
-				event_id UUID NOT NULL REFERENCES events (id) ON DELETE CASCADE,
 				name TEXT NOT NULL,
 				sort_order INT NOT NULL,
 				created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -28,13 +28,6 @@ func init() {
 		`)
 		if err != nil {
 			return fmt.Errorf("create photo_groups table: %w", err)
-		}
-
-		// Every read of photo groups is scoped to an event and ordered by
-		// sort_order, so one composite index serves both the lookup and the sort.
-		_, err = db.ExecContext(ctx, `CREATE INDEX ix_photo_groups_event_id_sort_order ON photo_groups (event_id, sort_order)`)
-		if err != nil {
-			return fmt.Errorf("create photo_groups event/sort index: %w", err)
 		}
 
 		// photo_group_assignments: membership of one guest in one photo group.
@@ -54,8 +47,8 @@ func init() {
 			return fmt.Errorf("create photo_group_assignments table: %w", err)
 		}
 
-		// The guest-facing schedule looks memberships up by guest (via the
-		// party's guests); photo_group_id is covered by the primary key's
+		// The guest-facing photos section looks memberships up by guest (via
+		// the party's guests); photo_group_id is covered by the primary key's
 		// leading column.
 		_, err = db.ExecContext(ctx, `CREATE INDEX ix_photo_group_assignments_guest_id ON photo_group_assignments (guest_id)`)
 		if err != nil {

@@ -6,19 +6,20 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// PhotoGroup is a named set of guests needed together for a specific photo at
-// an event, with a shooting order (the photographer's shot list).
+// PhotoGroup is a named set of guests needed together for a specific photo,
+// with a shooting order (the photographer's shot list). All group photos
+// happen in the one session between the ceremony and the reception, so groups
+// form a single global list rather than belonging to an event.
 //
-// SortOrder is the group's position within its event's list. New groups are
-// appended (max + 1) and the reorder endpoint rewrites the whole sequence, so
-// values stay small but are not guaranteed contiguous after deletes; display
+// SortOrder is the group's position within that list. New groups are appended
+// (max + 1) and the reorder endpoint rewrites the whole sequence, so values
+// stay small but are not guaranteed contiguous after deletes; display
 // positions ("group 3 of 12") are computed by ranking on sort_order, never by
 // reading the raw value.
 type PhotoGroup struct {
 	bun.BaseModel `bun:"table:photo_groups,alias:pg" tstype:"-"`
 
 	ID        string `bun:"id,pk" json:"id"`
-	EventID   string `bun:"event_id" json:"event_id"`
 	Name      string `bun:"name" json:"name"`
 	SortOrder int    `bun:"sort_order" json:"sort_order"`
 

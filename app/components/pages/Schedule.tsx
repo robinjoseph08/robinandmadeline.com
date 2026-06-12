@@ -3,18 +3,21 @@ import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { usePartyPhotoGroups } from "@/hooks/queries/photo-groups";
 import { useScheduleEvents } from "@/hooks/queries/schedule";
 import { downloadICS, googleCalendarUrl } from "@/libraries/calendar";
-import { formatEventWhen, formatPhotoGroupsLine } from "@/libraries/format";
+import { formatEventWhen, formatPhotoGroupLine } from "@/libraries/format";
 import type { ScheduleEvent } from "@/types/generated/events";
 
 /**
  * The schedule page, one page for both audiences: anonymous visitors see the
  * public events, and a visitor with a stored guest token also sees the
- * private events their party is invited to (marked with a badge). Each event
- * offers an .ics download and a prefilled Google Calendar link, both built on
- * the client from the event's fields. Visitors without a token get a subtle
- * pointer to code entry, where logging in unlocks their full schedule.
+ * private events their party is invited to (marked with a badge) plus a
+ * photos section naming which of their party's guests are in which photo
+ * groups. Each event offers an .ics download and a prefilled Google Calendar
+ * link, both built on the client from the event's fields. Visitors without a
+ * token get a subtle pointer to code entry, where logging in unlocks their
+ * full schedule.
  */
 export default function Schedule() {
   const { data, error, isPending } = useScheduleEvents();
@@ -76,6 +79,42 @@ export default function Schedule() {
           ))}
         </div>
       )}
+
+      {/* Photo groups are not tied to an event (the one photo session sits
+          between the ceremony and the reception), so they get their own
+          section rather than a line on an event card. Mounted only for
+          authenticated visitors: the data is per-party. */}
+      {data.authenticated ? <PhotosSection /> : null}
+    </section>
+  );
+}
+
+/**
+ * The photos section: the photo groups the visitor's party is in, naming
+ * which of the party's guests each group needs and where it falls in the
+ * shooting order. Renders nothing until the data is in and only when the
+ * party has at least one assignment, so parties outside the shot list never
+ * see an empty shell (and a failed fetch quietly hides the section rather
+ * than disturbing the schedule above it).
+ */
+function PhotosSection() {
+  const { data } = usePartyPhotoGroups();
+
+  const groups = data?.items ?? [];
+  if (groups.length === 0) return null;
+
+  return (
+    <section aria-label="Photos" className="mt-10">
+      <h2 className="text-2xl font-semibold">Photos</h2>
+      <p className="mt-3">
+        We'll be taking group photos after the ceremony, before the reception.
+        Here is where we need you:
+      </p>
+      <ul className="mt-3 list-disc space-y-1 pl-5">
+        {groups.map((group) => (
+          <li key={group.id}>{formatPhotoGroupLine(group)}</li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -108,16 +147,6 @@ function EventCard({ event, authenticated }: EventCardProps) {
         <p className="mt-1 text-sm text-muted-foreground">{event.location}</p>
       ) : null}
       {event.description ? <p className="mt-3">{event.description}</p> : null}
-
-      {/* The party's photo groups for this event, with each group's position
-          in the shooting order. Gated on authentication like the invite
-          badge: the line speaks as "you", which only makes sense for a
-          logged-in party. */}
-      {authenticated && event.photo_groups.length > 0 ? (
-        <p className="mt-3 text-sm font-medium">
-          {formatPhotoGroupsLine(event.photo_groups)}
-        </p>
-      ) : null}
 
       <div className="mt-4 flex flex-wrap gap-2">
         <Button

@@ -1,10 +1,12 @@
-// Package photogroups is the admin API and data layer for photo groups: the
-// photographer's per-event shot list (named sets of guests needed together for
-// a photo, in shooting order) and the assignments of guests into those groups.
-// It owns every photo_groups / photo_group_assignments write; the guest-facing
-// schedule read lives in pkg/events, which surfaces a guest's assignments on
-// GET /api/events. The persistent models live in pkg/models; this package owns
-// the service writes, request/response types (types.go), and HTTP handlers.
+// Package photogroups is the API and data layer for photo groups: the
+// photographer's shot list (named sets of guests needed together for a photo,
+// in one global shooting order, taken in the session between the ceremony and
+// the reception) and the assignments of guests into those groups. It owns
+// every photo_groups / photo_group_assignments write through the admin
+// surface, plus the guest-facing read (GET /api/guest/photo-groups) that
+// shows a party which of its guests are in which groups. The persistent
+// models live in pkg/models; this package owns the service, request/response
+// types (types.go), and HTTP handlers.
 package photogroups
 
 import (
@@ -51,37 +53,26 @@ func loadGroup(ctx context.Context, db bun.IDB, id string) (*models.PhotoGroup, 
 	return group, nil
 }
 
-// CreatePhotoGroup inserts a photo group at the end of its event's shooting
-// order (sort_order = current max + 1, so the first group is 1). The max read
-// and the insert share a transaction, but under READ COMMITTED two concurrent
+// CreatePhotoGroup inserts a photo group at the end of the shooting order
+// (sort_order = current max + 1, so the first group is 1). The max read and
+// the insert share a transaction, but under READ COMMITTED two concurrent
 // creates can still both read the same max and claim the same raw position;
 // that is harmless, because every read ranks by (sort_order, id) rather than
-// trusting the raw values. An unknown event_id is a 422: the payload names
-// the event, so a stale id is a payload problem. The payload is already
-// bound, trimmed, and validated by the binder.
+// trusting the raw values. The payload is already bound, trimmed, and
+// validated by the binder.
 func (s *Service) CreatePhotoGroup(ctx context.Context, in CreatePhotoGroupPayload) (*models.PhotoGroup, error) {
 	now := time.Now()
 	group := &models.PhotoGroup{
 		ID:        newID(),
-		EventID:   in.EventID,
 		Name:      in.Name,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
 
 	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
-		exists, err := tx.NewSelect().Model((*models.Event)(nil)).Where("id = ?", in.EventID).Exists(ctx)
-		if err != nil {
-			return errors.Wrap(err, "check event exists")
-		}
-		if !exists {
-			return errcodes.ValidationError("That event does not exist.")
-		}
-
 		var maxSortOrder int
-		err = tx.NewSelect().Model((*models.PhotoGroup)(nil)).
+		err := tx.NewSelect().Model((*models.PhotoGroup)(nil)).
 			ColumnExpr("COALESCE(MAX(sort_order), 0)").
-			Where("event_id = ?", in.EventID).
 			Scan(ctx, &maxSortOrder)
 		if err != nil {
 			return errors.Wrap(err, "read max sort order")
@@ -100,9 +91,8 @@ func (s *Service) CreatePhotoGroup(ctx context.Context, in CreatePhotoGroupPaylo
 }
 
 // UpdatePhotoGroup applies the editable fields (the name) to an existing
-// photo group (PUT-style). A missing group is a 404. The owning event and the
-// sort order never change here: the event is part of the group's identity, and
-// positions change only through ReorderPhotoGroups.
+// photo group (PUT-style). A missing group is a 404. The sort order never
+// changes here: positions change only through ReorderPhotoGroups.
 func (s *Service) UpdatePhotoGroup(ctx context.Context, id string, in UpdatePhotoGroupPayload) (*models.PhotoGroup, error) {
 	group, err := loadGroup(ctx, s.db, id)
 	if err != nil {
@@ -149,23 +139,22 @@ func (s *Service) DeletePhotoGroup(ctx context.Context, id string) error {
 	return nil
 }
 
-// ReorderPhotoGroups rewrites one event's shooting order: the payload's id
-// sequence becomes sort_order 1..n. The ids must be exactly the event's groups
-// (every one, no extras, no duplicates; 422 otherwise), so a reorder can never
-// silently drop or duplicate a position; the whole rewrite is one transaction.
-// An unknown event_id has no groups and so fails the same set check.
+// ReorderPhotoGroups rewrites the shooting order: the payload's id sequence
+// becomes sort_order 1..n. The ids must be exactly the existing groups (every
+// one, no extras, no duplicates; 422 otherwise), so a reorder can never
+// silently drop or duplicate a position; the whole rewrite is one
+// transaction.
 func (s *Service) ReorderPhotoGroups(ctx context.Context, in ReorderPhotoGroupsPayload) error {
 	return s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
 		var existingIDs []string
 		err := tx.NewSelect().Model((*models.PhotoGroup)(nil)).Column("id").
-			Where("event_id = ?", in.EventID).
 			Scan(ctx, &existingIDs)
 		if err != nil {
-			return errors.Wrap(err, "list event's photo group ids")
+			return errors.Wrap(err, "list photo group ids")
 		}
 
 		if !sameIDSet(in.PhotoGroupIDs, existingIDs) {
-			return errcodes.ValidationError("The new order must list exactly the event's photo groups, each exactly once.")
+			return errcodes.ValidationError("The new order must list every photo group exactly once.")
 		}
 
 		now := time.Now()
@@ -206,17 +195,14 @@ func sameIDSet(ids, want []string) bool {
 	return true
 }
 
-// ListPhotoGroups returns photo groups and the total count, optionally
-// narrowed to one event, in shooting order within each event (sort_order, then
-// id as a stable tiebreak; event_id first so one event's groups stay
-// contiguous in the all-events list).
-func (s *Service) ListPhotoGroups(ctx context.Context, in ListPhotoGroupsQuery) ([]*models.PhotoGroup, int, error) {
+// ListPhotoGroups returns every photo group and the total count, in shooting
+// order (sort_order, then id as a stable tiebreak). The list is wedding-sized
+// (tens of groups at most), so it takes no filters.
+func (s *Service) ListPhotoGroups(ctx context.Context) ([]*models.PhotoGroup, int, error) {
 	var list []*models.PhotoGroup
-	q := s.db.NewSelect().Model(&list)
-	if in.EventID != nil {
-		q = q.Where("pg.event_id = ?", *in.EventID)
-	}
-	total, err := q.Order("pg.event_id ASC", "pg.sort_order ASC", "pg.id ASC").ScanAndCount(ctx)
+	total, err := s.db.NewSelect().Model(&list).
+		Order("pg.sort_order ASC", "pg.id ASC").
+		ScanAndCount(ctx)
 	if err != nil {
 		return nil, 0, errors.Wrap(err, "list photo groups")
 	}

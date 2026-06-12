@@ -5,7 +5,6 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { EventResponse } from "@/types/generated/events";
 import type { GuestListItem } from "@/types/generated/parties";
 import type {
   PhotoGroupGuest,
@@ -25,27 +24,9 @@ vi.mock("@/libraries/admin-api", async () => {
   };
 });
 
-function makeEvent(overrides: Partial<EventResponse>): EventResponse {
-  return {
-    id: "e1",
-    name: "Ceremony",
-    description: undefined,
-    location: undefined,
-    date: "2026-10-17",
-    start_time: undefined,
-    end_time: undefined,
-    is_public: true,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-    rsvp_breakdown: { pending: 0, attending: 0, not_attending: 0, total: 0 },
-    ...overrides,
-  };
-}
-
 function makeGroup(overrides: Partial<PhotoGroupResponse>): PhotoGroupResponse {
   return {
     id: "pg1",
-    event_id: "e1",
     name: "Bride's Family",
     sort_order: 1,
     created_at: "2026-01-01T00:00:00Z",
@@ -88,18 +69,16 @@ function makeGuest(overrides: Partial<GuestListItem>): GuestListItem {
 }
 
 /**
- * Stubs adminRequest with the page's three reads (events, photo groups,
- * guests) and captures writes through the optional handler, which wins when
- * it returns a value. `groups` may be a function so a write can change what
- * the next list refetch returns (pinning the mutation's cache invalidation).
+ * Stubs adminRequest with the page's two reads (photo groups, guests) and
+ * captures writes through the optional handler, which wins when it returns a
+ * value. `groups` may be a function so a write can change what the next list
+ * refetch returns (pinning the mutation's cache invalidation).
  */
 function stubRequests({
-  events = [makeEvent({})],
   groups = [],
   guests = [],
   onWrite,
 }: {
-  events?: EventResponse[];
   groups?: PhotoGroupResponse[] | (() => PhotoGroupResponse[]);
   guests?: GuestListItem[];
   onWrite?: (path: string, options?: { method?: string }) => unknown;
@@ -108,9 +87,6 @@ function stubRequests({
     const method = (options as { method?: string } | undefined)?.method;
     if (onWrite && method && method !== "GET") {
       return Promise.resolve(onWrite(path, options as { method?: string }));
-    }
-    if (path === "/admin/events") {
-      return Promise.resolve({ items: events, total: events.length });
     }
     if (path === "/admin/photo-groups") {
       const items = typeof groups === "function" ? groups() : groups;
@@ -143,22 +119,16 @@ beforeEach(() => {
 });
 
 describe("AdminPhotoGroups list", () => {
-  it("renders each event's groups in order with positions and members", async () => {
+  it("renders one flat list in shooting order with positions and members", async () => {
     stubRequests({
-      events: [
-        makeEvent({ id: "e1", name: "Ceremony", date: "2026-10-17" }),
-        makeEvent({ id: "e2", name: "Reception", date: "2026-10-17" }),
-      ],
       groups: [
         makeGroup({
           id: "pg1",
-          event_id: "e1",
           name: "Bride's Family",
           guests: [makeMember({})],
         }),
         makeGroup({
           id: "pg2",
-          event_id: "e1",
           name: "College Friends",
           sort_order: 2,
         }),
@@ -167,10 +137,10 @@ describe("AdminPhotoGroups list", () => {
 
     renderPage();
 
-    const ceremony = await screen.findByRole("region", { name: "Ceremony" });
     // Rows render in shooting order, each position label tied to its row's
-    // group (not just present somewhere in the section).
-    const rows = within(ceremony).getAllByRole("listitem");
+    // group (not just present somewhere on the page).
+    await screen.findByText("Bride's Family");
+    const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("Bride's Family");
     expect(rows[0]).toHaveTextContent("Group 1 of 2");
@@ -180,35 +150,35 @@ describe("AdminPhotoGroups list", () => {
     expect(
       within(rows[0]).getByText("Alice Smith (The Smiths)"),
     ).toBeInTheDocument();
-    // The groupless event still renders, with its empty state.
-    const reception = screen.getByRole("region", { name: "Reception" });
-    expect(
-      within(reception).getByText(/no photo groups yet/i),
-    ).toBeInTheDocument();
+  });
+
+  it("shows the empty state when there are no groups", async () => {
+    stubRequests({ groups: [] });
+
+    renderPage();
+
+    expect(await screen.findByText(/no photo groups yet/i)).toBeInTheDocument();
   });
 });
 
 describe("AdminPhotoGroups create", () => {
-  it("POSTs the new group's event and name", async () => {
+  it("POSTs the new group's name", async () => {
     const onWrite = vi.fn().mockResolvedValue(makeGroup({ id: "pg-new" }));
     stubRequests({ onWrite });
 
     const user = userEvent.setup();
     renderPage();
 
-    const section = await screen.findByRole("region", { name: "Ceremony" });
     await user.type(
-      within(section).getByLabelText("New photo group name for Ceremony"),
+      await screen.findByLabelText("New photo group name"),
       "Bride's Family",
     );
-    await user.click(
-      within(section).getByRole("button", { name: "Add group to Ceremony" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Add group" }));
 
     await waitFor(() => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/photo-groups", {
         method: "POST",
-        body: { event_id: "e1", name: "Bride's Family" },
+        body: { name: "Bride's Family" },
       });
     });
   });
@@ -299,7 +269,7 @@ describe("AdminPhotoGroups reorder", () => {
     await waitFor(() => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/photo-groups/reorder", {
         method: "POST",
-        body: { event_id: "e1", photo_group_ids: ["pg2", "pg1"] },
+        body: { photo_group_ids: ["pg2", "pg1"] },
       });
     });
   });

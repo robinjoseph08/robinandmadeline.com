@@ -115,6 +115,7 @@ func registerGuest(g *echo.Group, mw *auth.Middleware, db *bun.DB) {
 	guest.Use(mw.RequireGuest)
 
 	rsvps.RegisterRoutes(guest, rsvps.NewService(db))
+	photogroups.RegisterGuestRoutes(guest, photogroups.NewService(db))
 }
 
 // registerHealth mounts the liveness endpoint. It reports database

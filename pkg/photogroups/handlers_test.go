@@ -12,7 +12,6 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/internal/databasetest"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
-	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/photogroups"
@@ -23,18 +22,17 @@ import (
 // fixtures bundles the services the handler tests build test data through.
 type fixtures struct {
 	photoGroups *photogroups.Service
-	events      *events.Service
 	parties     *parties.Service
 }
 
-// newAPI wires the photo-groups routes onto a bare Echo group with the shared
-// error handler AND the custom binder (no auth middleware: these tests
+// newAPI wires the photo-groups admin routes onto a bare Echo group with the
+// shared error handler AND the custom binder (no auth middleware: these tests
 // exercise the handlers, validation pipeline, and response shapes, while auth
 // enforcement is covered by the server package). It uses the package's
 // isolated Postgres test database; the returned fixtures build test data.
 func newAPI(t *testing.T) (*echo.Echo, fixtures) {
 	t.Helper()
-	svc, eventSvc, partySvc, _ := newServices(t)
+	svc, partySvc := newServices(t)
 	e := echo.New()
 	b, err := binder.New()
 	require.NoError(t, err)
@@ -42,7 +40,7 @@ func newAPI(t *testing.T) (*echo.Echo, fixtures) {
 	e.HTTPErrorHandler = errcodes.NewHandler().Handle
 	g := e.Group("/api/admin")
 	photogroups.RegisterRoutes(g, svc)
-	return e, fixtures{photoGroups: svc, events: eventSvc, parties: partySvc}
+	return e, fixtures{photoGroups: svc, parties: partySvc}
 }
 
 // do issues a JSON request against the handler and returns the recorder.
@@ -78,7 +76,6 @@ func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 // groupResponse is the decoded single-group shape the tests assert on.
 type groupResponse struct {
 	ID        string `json:"id"`
-	EventID   string `json:"event_id"`
 	Name      string `json:"name"`
 	SortOrder int    `json:"sort_order"`
 	Guests    []struct {
@@ -96,17 +93,15 @@ func decodeGroup(t *testing.T, rec *httptest.ResponseRecorder) groupResponse {
 	return resp
 }
 
-func TestCreatePhotoGroupHandler_AppendsAtEndOfEvent(t *testing.T) {
-	e, fx := newAPI(t)
-	event := createEventT(t, fx.events, "Ceremony")
+func TestCreatePhotoGroupHandler_AppendsAtEndOfList(t *testing.T) {
+	e, _ := newAPI(t)
 
 	rec := do(t, e, http.MethodPost, "/api/admin/photo-groups", map[string]any{
-		"event_id": event.ID, "name": "Bride's Family",
+		"name": "Bride's Family",
 	})
 	require.Equal(t, http.StatusCreated, rec.Code)
 	first := decodeGroup(t, rec)
 	assert.NotEmpty(t, first.ID)
-	assert.Equal(t, event.ID, first.EventID)
 	assert.Equal(t, "Bride's Family", first.Name)
 	assert.Equal(t, 1, first.SortOrder)
 	// guests is always present, an empty list for a fresh group, never null.
@@ -114,37 +109,16 @@ func TestCreatePhotoGroupHandler_AppendsAtEndOfEvent(t *testing.T) {
 	assert.Empty(t, first.Guests)
 
 	rec = do(t, e, http.MethodPost, "/api/admin/photo-groups", map[string]any{
-		"event_id": event.ID, "name": "College Friends",
+		"name": "College Friends",
 	})
 	require.Equal(t, http.StatusCreated, rec.Code)
 	assert.Equal(t, 2, decodeGroup(t, rec).SortOrder)
-
-	// The order is per event: a sibling event's first group starts at 1.
-	other := createEventT(t, fx.events, "Reception")
-	rec = do(t, e, http.MethodPost, "/api/admin/photo-groups", map[string]any{
-		"event_id": other.ID, "name": "Wedding Party",
-	})
-	require.Equal(t, http.StatusCreated, rec.Code)
-	assert.Equal(t, 1, decodeGroup(t, rec).SortOrder)
-}
-
-func TestCreatePhotoGroupHandler_UnknownEventIs422(t *testing.T) {
-	e, _ := newAPI(t)
-
-	rec := do(t, e, http.MethodPost, "/api/admin/photo-groups", map[string]any{
-		"event_id": "01933a3e-0000-7000-8000-000000000000", "name": "Bride's Family",
-	})
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 }
 
 func TestCreatePhotoGroupHandler_MissingNameIs422(t *testing.T) {
-	e, fx := newAPI(t)
-	event := createEventT(t, fx.events, "Ceremony")
+	e, _ := newAPI(t)
 
-	rec := do(t, e, http.MethodPost, "/api/admin/photo-groups", map[string]any{
-		"event_id": event.ID,
-	})
+	rec := do(t, e, http.MethodPost, "/api/admin/photo-groups", map[string]any{})
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 }
@@ -162,27 +136,23 @@ func decodeList(t *testing.T, rec *httptest.ResponseRecorder) listResponse {
 	return resp
 }
 
-func TestListPhotoGroupsHandler_FiltersByEventAndCarriesMembers(t *testing.T) {
+func TestListPhotoGroupsHandler_ListsInShootingOrderWithMembers(t *testing.T) {
 	e, fx := newAPI(t)
 
-	ceremony := createEventT(t, fx.events, "Ceremony")
-	reception := createEventT(t, fx.events, "Reception")
-	family := createGroupT(t, fx.photoGroups, ceremony.ID, "Bride's Family")
-	friends := createGroupT(t, fx.photoGroups, ceremony.ID, "College Friends")
-	createGroupT(t, fx.photoGroups, reception.ID, "Wedding Party")
+	family := createGroupT(t, fx.photoGroups, "Bride's Family")
+	friends := createGroupT(t, fx.photoGroups, "College Friends")
 
 	p := createPartyT(t, fx.parties, "The Smiths")
 	alice := addGuestT(t, fx.parties, p.ID, "Alice")
-	_, err := fx.photoGroups.AddGuest(ctx(), family.ID, photogroups.AddPhotoGroupGuestPayload{GuestID: alice.ID})
-	require.NoError(t, err)
+	assignGuestT(t, fx.photoGroups, family.ID, alice.ID)
 
-	rec := do(t, e, http.MethodGet, "/api/admin/photo-groups?event_id="+ceremony.ID, nil)
+	rec := do(t, e, http.MethodGet, "/api/admin/photo-groups", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	resp := decodeList(t, rec)
 	require.Equal(t, 2, resp.Total)
 	require.Len(t, resp.Items, 2)
-	// Shooting order within the event.
+	// Shooting order.
 	assert.Equal(t, family.ID, resp.Items[0].ID)
 	assert.Equal(t, friends.ID, resp.Items[1].ID)
 	// The member carries guest and party context for the admin UI.
@@ -197,31 +167,18 @@ func TestListPhotoGroupsHandler_FiltersByEventAndCarriesMembers(t *testing.T) {
 	assert.Empty(t, resp.Items[1].Guests)
 }
 
-func TestListPhotoGroupsHandler_NoFilterListsAllEvents(t *testing.T) {
-	e, fx := newAPI(t)
-
-	ceremony := createEventT(t, fx.events, "Ceremony")
-	reception := createEventT(t, fx.events, "Reception")
-	createGroupT(t, fx.photoGroups, ceremony.ID, "Bride's Family")
-	createGroupT(t, fx.photoGroups, reception.ID, "Wedding Party")
+func TestListPhotoGroupsHandler_EmptyListIsEmptyEnvelope(t *testing.T) {
+	e, _ := newAPI(t)
 
 	rec := do(t, e, http.MethodGet, "/api/admin/photo-groups", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, 2, decodeList(t, rec).Total)
-}
-
-func TestListPhotoGroupsHandler_MalformedEventIDIs422(t *testing.T) {
-	e, _ := newAPI(t)
-
-	rec := do(t, e, http.MethodGet, "/api/admin/photo-groups?event_id=nope", nil)
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+	// The uniform list envelope: items serializes as [], never null.
+	assert.JSONEq(t, `{"items":[],"total":0}`, rec.Body.String())
 }
 
 func TestUpdatePhotoGroupHandler_RenamesGroup(t *testing.T) {
 	e, fx := newAPI(t)
-	event := createEventT(t, fx.events, "Ceremony")
-	group := createGroupT(t, fx.photoGroups, event.ID, "Bride's Family")
+	group := createGroupT(t, fx.photoGroups, "Bride's Family")
 
 	rec := do(t, e, http.MethodPut, "/api/admin/photo-groups/"+group.ID, map[string]any{
 		"name": "Bride's Immediate Family",
@@ -259,12 +216,10 @@ func TestDeletePhotoGroupHandler_Returns204AndCascadesAssignments(t *testing.T) 
 	// persisted-state assertion below.
 	db := databasetest.NewIsolated(t, "robinandmadeline_photogroups_test")
 
-	event := createEventT(t, fx.events, "Ceremony")
-	group := createGroupT(t, fx.photoGroups, event.ID, "Bride's Family")
+	group := createGroupT(t, fx.photoGroups, "Bride's Family")
 	p := createPartyT(t, fx.parties, "The Smiths")
 	alice := addGuestT(t, fx.parties, p.ID, "Alice")
-	_, err := fx.photoGroups.AddGuest(ctx(), group.ID, photogroups.AddPhotoGroupGuestPayload{GuestID: alice.ID})
-	require.NoError(t, err)
+	assignGuestT(t, fx.photoGroups, group.ID, alice.ID)
 
 	rec := do(t, e, http.MethodDelete, "/api/admin/photo-groups/"+group.ID, nil)
 	assert.Equal(t, http.StatusNoContent, rec.Code)
@@ -285,20 +240,18 @@ func TestDeletePhotoGroupHandler_MissingGroupIs404(t *testing.T) {
 
 func TestReorderPhotoGroupsHandler_RewritesOrder(t *testing.T) {
 	e, fx := newAPI(t)
-	event := createEventT(t, fx.events, "Ceremony")
-	family := createGroupT(t, fx.photoGroups, event.ID, "Bride's Family")
-	friends := createGroupT(t, fx.photoGroups, event.ID, "College Friends")
-	party := createGroupT(t, fx.photoGroups, event.ID, "Wedding Party")
+	family := createGroupT(t, fx.photoGroups, "Bride's Family")
+	friends := createGroupT(t, fx.photoGroups, "College Friends")
+	wedding := createGroupT(t, fx.photoGroups, "Wedding Party")
 
 	rec := do(t, e, http.MethodPost, "/api/admin/photo-groups/reorder", map[string]any{
-		"event_id":        event.ID,
-		"photo_group_ids": []string{party.ID, family.ID, friends.ID},
+		"photo_group_ids": []string{wedding.ID, family.ID, friends.ID},
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	resp := decodeList(t, rec)
 	require.Len(t, resp.Items, 3)
-	assert.Equal(t, []string{party.ID, family.ID, friends.ID}, []string{
+	assert.Equal(t, []string{wedding.ID, family.ID, friends.ID}, []string{
 		resp.Items[0].ID, resp.Items[1].ID, resp.Items[2].ID,
 	})
 	assert.Equal(t, 1, resp.Items[0].SortOrder)
@@ -308,12 +261,10 @@ func TestReorderPhotoGroupsHandler_RewritesOrder(t *testing.T) {
 
 func TestReorderPhotoGroupsHandler_IncompleteSetIs422(t *testing.T) {
 	e, fx := newAPI(t)
-	event := createEventT(t, fx.events, "Ceremony")
-	family := createGroupT(t, fx.photoGroups, event.ID, "Bride's Family")
-	createGroupT(t, fx.photoGroups, event.ID, "College Friends")
+	family := createGroupT(t, fx.photoGroups, "Bride's Family")
+	createGroupT(t, fx.photoGroups, "College Friends")
 
 	rec := do(t, e, http.MethodPost, "/api/admin/photo-groups/reorder", map[string]any{
-		"event_id":        event.ID,
 		"photo_group_ids": []string{family.ID},
 	})
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
@@ -322,47 +273,40 @@ func TestReorderPhotoGroupsHandler_IncompleteSetIs422(t *testing.T) {
 
 func TestReorderPhotoGroupsHandler_DuplicateIDIs422(t *testing.T) {
 	e, fx := newAPI(t)
-	event := createEventT(t, fx.events, "Ceremony")
-	family := createGroupT(t, fx.photoGroups, event.ID, "Bride's Family")
-	createGroupT(t, fx.photoGroups, event.ID, "College Friends")
+	family := createGroupT(t, fx.photoGroups, "Bride's Family")
+	createGroupT(t, fx.photoGroups, "College Friends")
 
 	rec := do(t, e, http.MethodPost, "/api/admin/photo-groups/reorder", map[string]any{
-		"event_id":        event.ID,
 		"photo_group_ids": []string{family.ID, family.ID},
 	})
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 }
 
-func TestReorderPhotoGroupsHandler_OtherEventsGroupIs422(t *testing.T) {
+func TestReorderPhotoGroupsHandler_UnknownIDIs422(t *testing.T) {
 	e, fx := newAPI(t)
-	ceremony := createEventT(t, fx.events, "Ceremony")
-	reception := createEventT(t, fx.events, "Reception")
-	family := createGroupT(t, fx.photoGroups, ceremony.ID, "Bride's Family")
-	createGroupT(t, fx.photoGroups, ceremony.ID, "College Friends")
-	wedding := createGroupT(t, fx.photoGroups, reception.ID, "Wedding Party")
+	family := createGroupT(t, fx.photoGroups, "Bride's Family")
+	createGroupT(t, fx.photoGroups, "College Friends")
 
-	// The right count, but one id belongs to another event: rejected as a
-	// whole, so a reorder can never reach across events.
+	// The right count, but one id names no group: rejected as a whole, and the
+	// existing positions are untouched.
 	rec := do(t, e, http.MethodPost, "/api/admin/photo-groups/reorder", map[string]any{
-		"event_id":        ceremony.ID,
-		"photo_group_ids": []string{wedding.ID, family.ID},
+		"photo_group_ids": []string{"01933a3e-0000-7000-8000-000000000000", family.ID},
 	})
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 
-	// The foreign group's position is untouched.
-	rec = do(t, e, http.MethodGet, "/api/admin/photo-groups?event_id="+reception.ID, nil)
+	rec = do(t, e, http.MethodGet, "/api/admin/photo-groups", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	resp := decodeList(t, rec)
-	require.Len(t, resp.Items, 1)
+	require.Len(t, resp.Items, 2)
+	assert.Equal(t, family.ID, resp.Items[0].ID)
 	assert.Equal(t, 1, resp.Items[0].SortOrder)
 }
 
 func TestAddGuestHandler_ReturnsRefreshedMembersAndIsIdempotent(t *testing.T) {
 	e, fx := newAPI(t)
-	event := createEventT(t, fx.events, "Ceremony")
-	group := createGroupT(t, fx.photoGroups, event.ID, "Bride's Family")
+	group := createGroupT(t, fx.photoGroups, "Bride's Family")
 	p := createPartyT(t, fx.parties, "The Smiths")
 	alice := addGuestT(t, fx.parties, p.ID, "Alice")
 
@@ -397,8 +341,7 @@ func TestAddGuestHandler_ReturnsRefreshedMembersAndIsIdempotent(t *testing.T) {
 
 func TestAddGuestHandler_UnknownGuestIs422(t *testing.T) {
 	e, fx := newAPI(t)
-	event := createEventT(t, fx.events, "Ceremony")
-	group := createGroupT(t, fx.photoGroups, event.ID, "Bride's Family")
+	group := createGroupT(t, fx.photoGroups, "Bride's Family")
 
 	rec := do(t, e, http.MethodPost, "/api/admin/photo-groups/"+group.ID+"/guests", map[string]any{
 		"guest_id": "01933a3e-0000-7000-8000-000000000000",
@@ -421,26 +364,23 @@ func TestAddGuestHandler_MissingGroupIs404(t *testing.T) {
 
 func TestRemoveGuestHandler_Returns204(t *testing.T) {
 	e, fx := newAPI(t)
-	event := createEventT(t, fx.events, "Ceremony")
-	group := createGroupT(t, fx.photoGroups, event.ID, "Bride's Family")
+	group := createGroupT(t, fx.photoGroups, "Bride's Family")
 	p := createPartyT(t, fx.parties, "The Smiths")
 	alice := addGuestT(t, fx.parties, p.ID, "Alice")
-	_, err := fx.photoGroups.AddGuest(ctx(), group.ID, photogroups.AddPhotoGroupGuestPayload{GuestID: alice.ID})
-	require.NoError(t, err)
+	assignGuestT(t, fx.photoGroups, group.ID, alice.ID)
 
 	rec := do(t, e, http.MethodDelete, "/api/admin/photo-groups/"+group.ID+"/guests/"+alice.ID, nil)
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 
 	// The removal is visible in the list.
-	rec = do(t, e, http.MethodGet, "/api/admin/photo-groups?event_id="+event.ID, nil)
+	rec = do(t, e, http.MethodGet, "/api/admin/photo-groups", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Empty(t, decodeList(t, rec).Items[0].Guests)
 }
 
 func TestRemoveGuestHandler_MissingMembershipIs404(t *testing.T) {
 	e, fx := newAPI(t)
-	event := createEventT(t, fx.events, "Reception")
-	group := createGroupT(t, fx.photoGroups, event.ID, "Groom's Family")
+	group := createGroupT(t, fx.photoGroups, "Groom's Family")
 	p := createPartyT(t, fx.parties, "The Joneses")
 	riley := addGuestT(t, fx.parties, p.ID, "Riley")
 
