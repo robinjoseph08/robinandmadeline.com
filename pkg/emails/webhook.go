@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/golib/logger"
@@ -150,8 +151,10 @@ func (w *Webhook) handle(c echo.Context) error {
 func (w *Webhook) applyByRecipientID(c echo.Context, payload webhookPayload, applyEvent func(*bun.UpdateQuery) *bun.UpdateQuery, messageID string) {
 	log := logger.FromContext(c.Request().Context())
 	recipientID := payload.EventData.UserVariables.RecipientID
-	if recipientID == "" {
-		// Not an error: e.g. an event for a message sent outside this system.
+	// A missing variable is not an error (e.g. an event for a message sent
+	// outside this system), and a malformed one can never name a row, so
+	// neither should reach Postgres as a failing text-to-uuid cast.
+	if _, err := uuid.Parse(recipientID); err != nil {
 		log.Warn("mailgun webhook matched no recipient", logger.Data{
 			"mailgun_message_id": messageID,
 			"event":              payload.EventData.Event,

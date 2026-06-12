@@ -266,6 +266,36 @@ func TestWebhook_NoMessageIDMatchFallsBackToRecipientIDVariable(t *testing.T) {
 	assert.Equal(t, "late-mid@mg.example.test", *got.MailgunMessageID)
 }
 
+func TestWebhook_OverlongFailureReasonIsCapped(t *testing.T) {
+	e, f := newWebhookAPI(t, testSigningKey)
+	row := sentRecipient(t, f, "mid-11@mg.example.test")
+
+	rec := postWebhook(t, e, webhookBody(testSigningKey, "failed", "mid-11@mg.example.test", map[string]any{
+		"severity": "permanent",
+		"reason":   "generic",
+		"delivery-status": map[string]any{
+			"description": strings.Repeat("x", 5000),
+		},
+	}))
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+
+	got := reloadRecipient(t, f, row.ID)
+	assert.Equal(t, models.EmailFailed, got.Status)
+	require.NotNil(t, got.FailureReason)
+	assert.Len(t, *got.FailureReason, 1000)
+}
+
+func TestWebhook_MalformedRecipientIDVariableIsAcknowledged(t *testing.T) {
+	e, _ := newWebhookAPI(t, testSigningKey)
+
+	// A recipient_id that is not a UUID can never name a row; it must be
+	// acknowledged without reaching Postgres as a failing uuid cast.
+	rec := postWebhook(t, e, webhookBody(testSigningKey, "delivered", "unknown@mg.example.test", map[string]any{
+		"user-variables": map[string]any{"recipient_id": "not-a-uuid"},
+	}))
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+}
+
 func TestWebhook_OversizedBodyIsRejected(t *testing.T) {
 	e, _ := newWebhookAPI(t, testSigningKey)
 

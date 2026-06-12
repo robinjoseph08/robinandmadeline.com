@@ -20,9 +20,10 @@ import { useEmailSend } from "@/hooks/queries/emails";
 /**
  * One send's detail: the copy as sent, its delivery stats, and the
  * per-recipient delivery breakdown. Polls while any recipient is still in
- * flight (queued or sending) so statuses progress live as the background
- * worker and Mailgun's webhooks advance them, and stops once every row is
- * terminal.
+ * flight (queued or sending) so statuses progress live, and stops once the
+ * worker has dispatched everything; the webhook's later sent -> delivered or
+ * bounced upgrades arrive on the next focus refetch (polling on `sent` rows
+ * would never stop, since a delivery event is not guaranteed).
  */
 export default function AdminEmailSendDetail() {
   const { id } = useParams<{ id: string }>();

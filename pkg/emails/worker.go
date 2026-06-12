@@ -346,26 +346,32 @@ func (w *Worker) leaveForReconciliation(err error, row *models.EmailRecipient, m
 }
 
 // updateRow persists a row's status fields, guarded on the row still being
-// `sending`: every transition the worker writes starts from a claimed row,
-// and the guard keeps it from stomping an outcome someone else recorded
-// first. The delivery webhook can land via the recipient_id fallback before
-// the success path's write commits (downgrading a delivered or bounced row
-// back to sent would lose that outcome forever, since Mailgun never resends
-// an acknowledged event), and a stale reconciler racing an overlapping
-// instance must not requeue a row that instance already sent. The write
-// detaches from the batch context (a row whose send timed out still needs
-// its outcome written) and takes its own short deadline. Errors are logged,
-// not returned: an unwritten row stays `sending`, which the reconciler
-// resolves against Mailgun on a later cycle, so no email is ever double-sent
-// over a bookkeeping failure.
+// `sending` AND on the updated_at it was loaded with: every transition the
+// worker writes starts from a claimed or stuck-selected row, and the guards
+// keep it from stomping an outcome someone else recorded since. The status
+// guard covers the plain cases: the delivery webhook landing via the
+// recipient_id fallback before the success path's write commits (downgrading
+// a delivered or bounced row back to sent would lose that outcome forever,
+// since Mailgun never resends an acknowledged event), or a stale reconciler
+// racing a row another instance already sent. The updated_at guard closes
+// the ABA hole the status alone cannot see: a stale reconciler's requeue
+// landing after the row was already requeued and re-claimed (`sending` again,
+// but under a fresh claim) would otherwise pass the status check and queue a
+// third send. The write detaches from the batch context (a row whose send
+// timed out still needs its outcome written) and takes its own short
+// deadline. Errors are logged, not returned: an unwritten row stays
+// `sending`, which the reconciler resolves against Mailgun on a later cycle,
+// so no email is ever double-sent over a bookkeeping failure.
 func (w *Worker) updateRow(ctx context.Context, row *models.EmailRecipient) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
+	loadedAt := row.UpdatedAt
 	row.UpdatedAt = time.Now()
 	res, err := w.db.NewUpdate().Model(row).
 		Column("status", "mailgun_message_id", "failure_reason", "updated_at").
 		WherePK().
 		Where("status = ?", models.EmailSending).
+		Where("updated_at = ?", loadedAt).
 		Exec(ctx)
 	if err != nil {
 		w.log.Err(err).Error("email worker row update failed", logger.Data{"recipient_id": row.ID})

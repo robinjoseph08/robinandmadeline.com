@@ -663,6 +663,39 @@ func TestReconcileStuck_RowResolvedMidCheckIsNotClobbered(t *testing.T) {
 	assert.Equal(t, "won-the-race@test.mailgun", *got.MailgunMessageID)
 }
 
+func TestReconcileStuck_RequeueRacingAReclaimedRowIsNotApplied(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	strandRow(t, f, row.ID, 10*time.Minute)
+
+	// The ABA shape two overlapping reconcilers can produce: while this
+	// instance's Mailgun check is in flight, the other instance requeues the
+	// row AND its worker re-claims it, so the row is `sending` again but
+	// under a fresh claim (fresh updated_at). This instance's stale
+	// not-found answer must not requeue it: that would queue a third send on
+	// top of the one now in flight.
+	client := newFakeMailgun()
+	client.findHook = func(string) {
+		_, err := f.db.NewUpdate().Model((*models.EmailRecipient)(nil)).
+			Set("status = ?", models.EmailSending).
+			Set("updated_at = now()").
+			Where("id = ?", row.ID).Exec(ctx())
+		require.NoError(t, err)
+	}
+	w := newWorker(f, client, workerConfig())
+
+	n, err := w.ReconcileStuck(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	// The stale requeue was a no-op: the row still belongs to the fresh claim.
+	assert.Equal(t, models.EmailSending, recipientsForSend(t, f.db, send.ID)[alice.ID].Status)
+}
+
 func TestProcessBatch_ConcurrentWorkersNeverDoubleSend(t *testing.T) {
 	f := newFixtures(t)
 	p := createPartyT(t, f, "The Smiths", partyOpts{})
