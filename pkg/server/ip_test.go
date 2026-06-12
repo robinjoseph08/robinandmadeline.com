@@ -106,13 +106,16 @@ func TestRateLimiterIP_FlyClientIPWinsOverXFF(t *testing.T) {
 
 	// When both headers arrive, Fly-Client-IP is authoritative: rotating
 	// X-Forwarded-For values must not mint fresh buckets for the same client.
-	first := postLogin(t, srv.Handler, "", map[string]string{
+	// The connection comes from a trusted (private) proxy address so the XFF
+	// values would actually be honored if the precedence were inverted.
+	proxyAddr := "172.16.0.5:4242"
+	first := postLogin(t, srv.Handler, proxyAddr, map[string]string{
 		"Fly-Client-IP":   "203.0.113.1",
 		"X-Forwarded-For": "198.51.100.1",
 	})
 	require.Equal(t, http.StatusUnauthorized, first)
 
-	second := postLogin(t, srv.Handler, "", map[string]string{
+	second := postLogin(t, srv.Handler, proxyAddr, map[string]string{
 		"Fly-Client-IP":   "203.0.113.1",
 		"X-Forwarded-For": "198.51.100.2",
 	})

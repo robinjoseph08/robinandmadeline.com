@@ -17,12 +17,14 @@ import (
 // layer that sees the original Host and consolidates it.
 //
 // The health endpoint is exempt because Fly's checks hit the machine with an
-// internal Host and expect a 200, not a redirect.
+// internal Host and expect a 200, not a redirect. The exemption compares the
+// raw (still-encoded) path, the same form Echo routes on, so it is exactly as
+// wide as the route itself.
 func canonicalHostMiddleware(canonicalHost string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			req := c.Request()
-			if req.URL.Path == healthPath {
+			if req.URL.EscapedPath() == healthPath {
 				return next(c)
 			}
 			if strings.EqualFold(hostWithoutPort(req.Host), canonicalHost) {

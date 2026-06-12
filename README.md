@@ -66,7 +66,7 @@ by setting its environment variable: `DATABASE_URL`, `PORT`, `ADMIN_USERNAME`,
 
 Three settings exist only for production and default off so local dev is
 unaffected: `STATIC_DIR` (serve the built SPA from this directory),
-`CANONICAL_HOST` (301 every other host to this one), and
+`CANONICAL_HOST` (permanently redirect every other host to this one), and
 `TRUST_PROXY_HEADERS` (resolve client IPs from Fly's forwarded header).
 
 ## Deployment

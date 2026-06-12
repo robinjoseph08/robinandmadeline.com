@@ -20,8 +20,8 @@ and the one-time account setup a human has to perform.
   release keeps serving. The server never migrates at startup.
 - Host redirects in Go: when `CANONICAL_HOST` is set (it is, in `fly.toml`),
   any request for another host (madelineandrobin.com, robeline.co, www
-  variants) gets a permanent redirect (301, or 308 for non-GET methods) to
-  `https://robinandmadeline.com` preserving path and query. `/api/health` is
+  variants) gets a permanent redirect (301 for GET and HEAD, 308 otherwise)
+  to `https://robinandmadeline.com` preserving path and query. `/api/health` is
   exempt so Fly's checks pass on any Host. The value must be a bare hostname
   (no scheme, port, or path); config loading rejects anything else at boot to
   rule out redirect loops.
