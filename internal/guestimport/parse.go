@@ -205,6 +205,11 @@ func Parse(r io.Reader) (*Plan, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "read csv")
 	}
+	// An Excel round-trip prepends a UTF-8 BOM, which TrimSpace does not
+	// remove and which would misreport the first column as missing.
+	if len(header) > 0 {
+		header[0] = strings.TrimPrefix(header[0], "\ufeff")
+	}
 
 	idx, err := headerIndex(header)
 	if err != nil {
@@ -418,8 +423,9 @@ func (p *parser) buildPlan() *Plan {
 // buildParty derives one party and its guests from the party's rows, in sheet
 // order; the first row is the primary guest. The party-level details (the
 // mailing address and the RSVP code) are read from the primary row alone:
-// later rows normally leave them blank, and a repeat identical to the
-// primary's value is tolerated. A stray address value (differing, or present
+// later rows normally leave them blank (a RANDOM code cell counts as blank),
+// and a repeat identical to the primary's value is tolerated. A stray address
+// value (differing, or present
 // when the primary's is blank) warns and is ignored; a stray code is a
 // problem, because a code is a guest-facing credential and importing the wrong
 // one (or generating one while a personalized code sits ignored on a later

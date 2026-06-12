@@ -292,12 +292,14 @@ func TestParse_CodesAreUppercased(t *testing.T) {
 }
 
 func TestParse_CodeOnThePrimaryRowCoversTheParty(t *testing.T) {
-	// The primary row carries the code; a later blank row and a later identical
-	// repeat are both fine, with no warning.
+	// The primary row carries the code; a later blank cell, a later identical
+	// repeat, and a later RANDOM cell (which always means the same as blank)
+	// are all fine, with no warning.
 	plan := parseT(t,
 		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,PEPPER`,
 		`Eli,Cole,Eli Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,`,
 		`Fay,Cole,Fay Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,PEPPER`,
+		`Gus,Cole,Gus Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,RANDOM`,
 	)
 	require.Empty(t, plan.Warnings)
 	require.Equal(t, pointerutil.String("PEPPER"), plan.Parties[0].Party.RSVPCode)
@@ -357,6 +359,49 @@ func TestParse_AddressOnlyOnANonPrimaryRowIsIgnoredWithAWarning(t *testing.T) {
 	require.Nil(t, plan.Parties[0].Party.AddressLine1)
 	require.Len(t, plan.Warnings, 1)
 	require.Contains(t, plan.Warnings[0], `party "Cole": Address 1 value "99 Elm St" on a non-primary row was ignored; party address fields are read from the first row`)
+}
+
+func TestParse_GroupsInterleavedPartyRowsByFirstAppearance(t *testing.T) {
+	// Re-sorting the sheet can interleave one party's rows with another's; the
+	// party still groups on first appearance, and its primary row (the source
+	// of the party-level fields) stays its first row in the file, wherever the
+	// later rows land.
+	plan := parseT(t,
+		`Alice,Adams,Alice Adams,Robin,Family,Immediate,Sibling,Adams,1,,,123 Main St,,Springfield,IL,62704,United States,No,Yes,KALEL`,
+		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,1,,,,,,,,,No,Yes,`,
+		`Bob,Adams,Bob Adams,Robin,Family,Immediate,In-Law,Adams,1,,,,,,,,,No,No,KALEL`,
+	)
+	require.Len(t, plan.Parties, 2)
+	adams, brown := plan.Parties[0], plan.Parties[1]
+	require.Equal(t, "Adams", adams.Party.Name)
+	require.Equal(t, "Brown", brown.Party.Name)
+	require.Len(t, adams.Guests, 2)
+	require.Equal(t, "Alice Adams", adams.Guests[0].FullName)
+	require.True(t, adams.Guests[0].IsPrimary)
+	require.Equal(t, "Bob Adams", adams.Guests[1].FullName)
+	require.Equal(t, pointerutil.String("123 Main St"), adams.Party.AddressLine1)
+	require.Equal(t, pointerutil.String("KALEL"), adams.Party.RSVPCode)
+}
+
+func TestParse_EmptyAndHeaderOnlyFiles(t *testing.T) {
+	_, err := guestimport.Parse(strings.NewReader(""))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "csv is empty")
+
+	plan, err := guestimport.Parse(strings.NewReader(csvHeader + "\n"))
+	require.NoError(t, err)
+	require.Empty(t, plan.Parties)
+	require.Empty(t, plan.Warnings)
+}
+
+func TestParse_StripsLeadingByteOrderMark(t *testing.T) {
+	// An Excel round-trip prepends a UTF-8 BOM; without stripping it, the
+	// header check would misreport First as missing.
+	plan, err := guestimport.Parse(strings.NewReader("\ufeff" + buildCSV(
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,,,,,,,,,No,Yes,`,
+	)))
+	require.NoError(t, err)
+	require.Len(t, plan.Parties, 1)
 }
 
 func TestParse_LineNumbersStayAccurateAcrossMultilineQuotedCells(t *testing.T) {
