@@ -22,7 +22,11 @@ import { cn } from "@/libraries/utils";
  * real photos land in the content file).
  */
 export default function Photos() {
+  // `open` is tracked separately from `active` so the lightbox keeps showing
+  // the last-clicked photo while the close animation plays out; clearing
+  // `active` on close would blank the dialog mid-exit.
   const [active, setActive] = useState<GalleryPhoto | null>(null);
+  const [open, setOpen] = useState(false);
 
   return (
     <div className="py-12">
@@ -41,7 +45,10 @@ export default function Photos() {
               photo.aspectClass,
             )}
             key={photo.label}
-            onClick={() => setActive(photo)}
+            onClick={() => {
+              setActive(photo);
+              setOpen(true);
+            }}
             type="button"
           >
             <ImageIcon aria-hidden className="size-6 text-ink/30" />
@@ -49,12 +56,7 @@ export default function Photos() {
         ))}
       </div>
 
-      <Dialog
-        onOpenChange={(open) => {
-          if (!open) setActive(null);
-        }}
-        open={active !== null}
-      >
+      <Dialog onOpenChange={setOpen} open={open}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{active?.label}</DialogTitle>

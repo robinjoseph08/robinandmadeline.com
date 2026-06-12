@@ -6,17 +6,25 @@ import Photos from "@/components/pages/Photos";
 import { GALLERY_PHOTOS } from "@/components/pages/photos-content";
 
 describe("Photos", () => {
-  it("renders the page heading", () => {
+  it("renders the page heading and subtitle", () => {
     render(<Photos />);
 
     expect(
       screen.getByRole("heading", { name: /photos/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "A gallery of our favorite moments. Real photos are coming soon.",
+      ),
+    ).toBeInTheDocument();
   });
 
-  it("renders a gallery tile for every photo", () => {
+  it("renders exactly one gallery tile per photo", () => {
     render(<Photos />);
 
+    expect(screen.getAllByRole("button", { name: /^view /i })).toHaveLength(
+      GALLERY_PHOTOS.length,
+    );
     for (const photo of GALLERY_PHOTOS) {
       expect(
         screen.getByRole("button", { name: `View ${photo.label}` }),
