@@ -492,6 +492,19 @@ func TestGetLeaderboard_RejectsUnknownDifficulty(t *testing.T) {
 	assert.Equal(t, string(errcodes.CodeValidationError), errCodeOf(t, rec))
 }
 
+func TestGetLeaderboard_RejectsEmptyDifficulty(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+
+	// A present-but-empty difficulty binds to a non-nil pointer at "", which
+	// fails the oneof like any other garbage value: only a truly ABSENT
+	// parameter means the combined board. Pinned so a binder or tag change
+	// can't silently turn `difficulty=` into an empty-filter board.
+	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty="})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Equal(t, string(errcodes.CodeValidationError), errCodeOf(t, rec))
+}
+
 func TestGetLeaderboard_EmptyBoardSerializesItemsAsEmptyArray(t *testing.T) {
 	svc, _, _ := newServices(t)
 	e, _ := newGamesEcho(t, svc)

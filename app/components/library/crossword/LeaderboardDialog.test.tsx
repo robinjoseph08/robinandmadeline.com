@@ -95,7 +95,7 @@ describe("LeaderboardDialog", () => {
 
     renderDialog();
 
-    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    expect(screen.getByRole("button", { pressed: true })).toHaveTextContent(
       "Easy",
     );
     await waitFor(() =>
@@ -110,9 +110,9 @@ describe("LeaderboardDialog", () => {
 
     renderDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Medium" }));
+    fireEvent.click(screen.getByRole("button", { name: "Medium" }));
 
-    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    expect(screen.getByRole("button", { pressed: true })).toHaveTextContent(
       "Medium",
     );
     await waitFor(() =>
@@ -127,19 +127,19 @@ describe("LeaderboardDialog", () => {
 
     const { rerenderOpen } = renderDialog({ defaultDifficulty: "hard" });
 
-    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    expect(screen.getByRole("button", { pressed: true })).toHaveTextContent(
       "Hard",
     );
 
     // Wander to another tab, close, reopen: the dialog re-anchors to the
     // solve's own difficulty rather than remembering the wander.
-    fireEvent.click(screen.getByRole("tab", { name: "Easy" }));
-    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    fireEvent.click(screen.getByRole("button", { name: "Easy" }));
+    expect(screen.getByRole("button", { pressed: true })).toHaveTextContent(
       "Easy",
     );
     rerenderOpen(false);
     rerenderOpen(true);
-    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
+    expect(screen.getByRole("button", { pressed: true })).toHaveTextContent(
       "Hard",
     );
   });

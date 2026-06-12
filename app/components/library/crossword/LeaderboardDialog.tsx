@@ -69,14 +69,18 @@ export default function LeaderboardDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="py-4">
+          {/* Styled as tabs, exposed as a pressed-button group: the same
+              idiom as the other difficulty pickers (StartDialog, the
+              more-menu), which keeps plain Tab/Enter operation honest
+              instead of half-promising the ARIA tabs keyboard contract. */}
           <div
             aria-label="Leaderboard difficulty"
             className="flex gap-1 rounded-md bg-secondary/20 p-1"
-            role="tablist"
+            role="group"
           >
             {DIFFICULTIES.map((level) => (
               <button
-                aria-selected={difficulty === level}
+                aria-pressed={difficulty === level}
                 className={cn(
                   "flex-1 cursor-pointer rounded px-2 py-1 text-sm transition-colors",
                   difficulty === level
@@ -85,14 +89,13 @@ export default function LeaderboardDialog({
                 )}
                 key={level}
                 onClick={() => setDifficulty(level)}
-                role="tab"
                 type="button"
               >
                 {DIFFICULTY_LABELS[level]}
               </button>
             ))}
           </div>
-          <div className="mt-4" role="tabpanel">
+          <div className="mt-4">
             {isPending ? (
               <p className="text-sm text-muted-foreground">
                 Loading the fastest solvers...

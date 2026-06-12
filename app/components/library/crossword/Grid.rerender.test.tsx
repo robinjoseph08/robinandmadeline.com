@@ -56,10 +56,11 @@ describe("Grid re-renders while typing", () => {
     fireEvent.keyDown(grid, { key: "A" });
 
     // One keystroke touches the typed square, the next selected square, and
-    // nothing else. Allow a little headroom over the theoretical 2 so a
-    // harmless extra render doesn't flake the suite, while still failing
-    // loudly if the grid ever regresses to re-rendering all 225 squares.
-    expect(squareRenders.count).toBeLessThanOrEqual(6);
+    // nothing else. The bound allows one render of headroom over the actual
+    // 2 so a harmless extra doesn't flake the suite, while still failing if
+    // the grid regresses even to re-rendering the selected word, let alone
+    // all 225 squares.
+    expect(squareRenders.count).toBeLessThanOrEqual(3);
   });
 
   it("re-renders only the affected word when the selection moves", () => {
@@ -74,5 +75,15 @@ describe("Grid re-renders while typing", () => {
     // Jumping to the next word repaints the old word and the new word, but
     // never the whole 15x15.
     expect(squareRenders.count).toBeLessThanOrEqual(40);
+  });
+
+  it("keeps the real Square and Grid exports memoized", async () => {
+    // The counting wrapper above carries its own memo(), so the render
+    // counts stay low even if the REAL Square loses its memo; pin both
+    // production exports directly so removing either memo fails here.
+    const actual = await vi.importActual<typeof import("./Square")>("./Square");
+    const memoType = Symbol.for("react.memo");
+    expect((actual.default as { $$typeof?: symbol }).$$typeof).toBe(memoType);
+    expect((Grid as { $$typeof?: symbol }).$$typeof).toBe(memoType);
   });
 });
