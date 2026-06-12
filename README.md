@@ -25,10 +25,9 @@ mise.toml           Tool pins + tasks
 ## Getting started
 
 ```sh
-# Install pinned tools (go, node, pnpm, air, golangci-lint) and dependencies
-mise install
-pnpm install
-go mod download
+# Install pinned tools (go, node, pnpm, air, golangci-lint), dependencies, and
+# the Playwright Chromium browser used by the e2e tests
+mise setup
 
 # Start local Postgres
 docker compose up -d
