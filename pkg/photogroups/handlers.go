@@ -87,7 +87,9 @@ func (h *handler) deletePhotoGroup(c echo.Context) error {
 // reorderPhotoGroups handles POST /api/admin/photo-groups/reorder: rewrites
 // one event's shooting order from the payload's id sequence. It returns the
 // event's groups in their new order (the same shape as the filtered list) so
-// the UI can swap in the result without a second request.
+// callers get the authoritative resulting order back. (The admin UI still
+// refetches its unfiltered all-events list, which this one-event response
+// cannot replace.)
 func (h *handler) reorderPhotoGroups(c echo.Context) error {
 	var body ReorderPhotoGroupsPayload
 	if err := c.Bind(&body); err != nil {
@@ -101,8 +103,8 @@ func (h *handler) reorderPhotoGroups(c echo.Context) error {
 
 // addGuest handles POST /api/admin/photo-groups/:id/guests: adds one guest to
 // the group (an idempotent no-op when already a member). It returns the group
-// with its refreshed member list so the UI can show the change without a
-// second request.
+// with its refreshed member list so callers get the authoritative membership
+// back. (The admin UI relies on its list refetch rather than this response.)
 func (h *handler) addGuest(c echo.Context) error {
 	id, err := pathID(c, "id", "photo group")
 	if err != nil {
