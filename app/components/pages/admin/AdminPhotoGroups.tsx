@@ -5,6 +5,14 @@ import { toast } from "sonner";
 import { Combobox } from "@/components/library/Combobox";
 import { TooltipIconButton } from "@/components/pages/admin/grid/grid-buttons";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useGuests } from "@/hooks/queries/guests";
 import {
@@ -20,12 +28,13 @@ import type { GuestListItem } from "@/types/generated/parties";
 import type { PhotoGroupResponse } from "@/types/generated/photogroups";
 
 /**
- * Admin photo groups: the photographer's shot list for the one photo session
- * between the ceremony and the reception. One flat list in shooting order; the
- * admin can create, rename, and delete groups, move them up and down the
- * order, and assign or remove guests. The guest-facing schedule shows each
- * party the groups its guests are in, with their positions, so the order here
- * is what guests see.
+ * Admin "Group Photos" page (named to match the guest-facing schedule
+ * section): the photographer's shot list for the one photo session between
+ * the ceremony and the reception. One flat list in shooting order; the admin
+ * can create, rename, and delete groups (delete confirms through a dialog),
+ * move them up and down the order, and assign or remove guests. The
+ * guest-facing schedule shows each party the groups its guests are in, with
+ * their positions, so the order here is what guests see.
  */
 export default function AdminPhotoGroups() {
   const groupsQuery = usePhotoGroups();
@@ -33,8 +42,13 @@ export default function AdminPhotoGroups() {
   const guestsQuery = useGuests();
   const createGroup = useCreatePhotoGroup();
   const reorderGroups = useReorderPhotoGroups();
+  const deleteGroup = useDeletePhotoGroup();
 
   const [newName, setNewName] = useState("");
+  // The group the delete dialog is confirming for; null keeps it closed.
+  const [deleteTarget, setDeleteTarget] = useState<PhotoGroupResponse | null>(
+    null,
+  );
 
   const groups = groupsQuery.data?.items ?? [];
   const guests = guestsQuery.data?.items ?? [];
@@ -74,10 +88,25 @@ export default function AdminPhotoGroups() {
     }
   };
 
+  // Runs after the dialog's explicit confirm; the dialog (not window.confirm)
+  // is the gate, so the row's delete button only ever opens it.
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await deleteGroup.mutateAsync({ photoGroupId: deleteTarget.id });
+      toast.success("Photo group deleted");
+      setDeleteTarget(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete group",
+      );
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Photo Groups</h1>
+        <h1 className="text-2xl font-semibold">Group Photos</h1>
         <p className="text-sm text-muted-foreground">
           The photographer's shot list for the photo session between the
           ceremony and the reception, in shooting order. Guests see their groups
@@ -104,6 +133,7 @@ export default function AdminPhotoGroups() {
                   guests={guests}
                   index={index}
                   key={group.id}
+                  onDelete={() => setDeleteTarget(group)}
                   onMove={(direction) => handleMove(index, direction)}
                   reordering={reorderGroups.isPending}
                 />
@@ -135,6 +165,42 @@ export default function AdminPhotoGroups() {
           </form>
         </>
       )}
+
+      {/* The delete confirmation. One dialog for the whole page, pointed at
+          the row whose delete button opened it. */}
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        open={deleteTarget !== null}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {deleteTarget?.name}?</DialogTitle>
+            <DialogDescription>
+              This removes the group from the shooting order; its guest
+              assignments go with it.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              onClick={() => setDeleteTarget(null)}
+              type="button"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={deleteGroup.isPending}
+              onClick={() => void handleDelete()}
+              type="button"
+              variant="destructive"
+            >
+              Delete group
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -144,24 +210,28 @@ interface GroupRowProps {
   index: number;
   count: number;
   guests: GuestListItem[];
+  /** Opens the page's delete-confirmation dialog for this group. */
+  onDelete: () => void;
   onMove: (direction: -1 | 1) => void;
   reordering: boolean;
 }
 
 /**
  * One photo group: its position in the shooting order, reorder and
- * rename/delete controls, and its members with the add-guest picker.
+ * rename/delete controls, and its members with the add-guest picker. The
+ * delete button only opens the page's confirmation dialog; the dialog owns
+ * the actual delete.
  */
 function GroupRow({
   group,
   index,
   count,
   guests,
+  onDelete,
   onMove,
   reordering,
 }: GroupRowProps) {
   const updateGroup = useUpdatePhotoGroup();
-  const deleteGroup = useDeletePhotoGroup();
   const addGuest = useAddPhotoGroupGuest();
   const removeGuest = useRemovePhotoGroupGuest();
 
@@ -196,19 +266,6 @@ function GroupRow({
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to rename group",
-      );
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!window.confirm(`Delete ${group.name}? Its assignments go with it.`))
-      return;
-    try {
-      await deleteGroup.mutateAsync({ photoGroupId: group.id });
-      toast.success("Photo group deleted");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete group",
       );
     }
   };
@@ -306,11 +363,7 @@ function GroupRow({
           >
             <Pencil />
           </TooltipIconButton>
-          <TooltipIconButton
-            disabled={deleteGroup.isPending}
-            label={`Delete ${group.name}`}
-            onClick={() => void handleDelete()}
-          >
+          <TooltipIconButton label={`Delete ${group.name}`} onClick={onDelete}>
             <X />
           </TooltipIconButton>
         </div>

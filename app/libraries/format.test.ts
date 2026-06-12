@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { PartyPhotoGroup } from "@/types/generated/photogroups";
-
 import {
   formatEventDate,
   formatEventWhen,
+  formatGuestFirstNames,
   formatLongDate,
-  formatPhotoGroupLine,
   formatTime,
 } from "./format";
 
@@ -65,48 +63,22 @@ describe("formatEventWhen", () => {
   });
 });
 
-describe("formatPhotoGroupLine", () => {
-  const group = (
-    guestNames: string[],
-    overrides: Partial<PartyPhotoGroup> = {},
-  ): PartyPhotoGroup => ({
-    id: "pg-1",
-    name: "Family Photos",
-    position: 1,
-    total: 3,
-    guest_names: guestNames,
-    ...overrides,
+describe("formatGuestFirstNames", () => {
+  it("renders a single guest by first name", () => {
+    expect(formatGuestFirstNames(["Leon Smith"])).toBe("Leon");
   });
 
-  it("names a single guest by first name with the group's position", () => {
-    expect(formatPhotoGroupLine(group(["Leon Smith"]))).toBe(
-      "Family Photos (group 1 of 3): Leon",
-    );
-  });
-
-  it("lists several guests' first names in order", () => {
+  it("joins several guests' first names in order", () => {
     expect(
-      formatPhotoGroupLine(
-        group(["Leon Smith", "Leslie Smith", "Riley Smith"], {
-          name: "College Friends",
-          position: 2,
-          total: 12,
-        }),
-      ),
-    ).toBe("College Friends (group 2 of 12): Leon, Leslie, Riley");
+      formatGuestFirstNames(["Leon Smith", "Leslie Smith", "Riley Smith"]),
+    ).toBe("Leon, Leslie, Riley");
   });
 
   it("keeps a single-word name whole", () => {
-    expect(formatPhotoGroupLine(group(["Cher"]))).toBe(
-      "Family Photos (group 1 of 3): Cher",
-    );
+    expect(formatGuestFirstNames(["Cher"])).toBe("Cher");
   });
 
-  it("omits the guest list when there are no names", () => {
-    // The API only sends groups the party has members in, but an empty list
-    // must not render a dangling colon.
-    expect(formatPhotoGroupLine(group([]))).toBe(
-      "Family Photos (group 1 of 3)",
-    );
+  it("returns an empty string for no names", () => {
+    expect(formatGuestFirstNames([])).toBe("");
   });
 });

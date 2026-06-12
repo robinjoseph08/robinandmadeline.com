@@ -219,14 +219,13 @@ describe("AdminPhotoGroups rename", () => {
 });
 
 describe("AdminPhotoGroups delete", () => {
-  it("DELETEs the group after confirmation and drops it after the refetch", async () => {
+  it("DELETEs the group after the dialog's confirm and drops it after the refetch", async () => {
     let current = [makeGroup({})];
     const onWrite = vi.fn().mockImplementation(() => {
       current = [];
       return undefined;
     });
     stubRequests({ groups: () => current, onWrite });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const user = userEvent.setup();
     renderPage();
@@ -236,14 +235,57 @@ describe("AdminPhotoGroups delete", () => {
       screen.getByRole("button", { name: "Delete Bride's Family" }),
     );
 
+    // The row button only opens the confirmation dialog, which names the
+    // group; nothing is deleted yet.
+    const dialog = await screen.findByRole("dialog", {
+      name: "Delete Bride's Family?",
+    });
+    expect(adminRequest).not.toHaveBeenCalledWith("/admin/photo-groups/pg1", {
+      method: "DELETE",
+    });
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete group" }),
+    );
+
     await waitFor(() => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/photo-groups/pg1", {
         method: "DELETE",
       });
     });
-    // The mutation invalidates the list, so the empty state replaces the row.
+    // The dialog closes and the mutation invalidates the list, so the empty
+    // state replaces the row.
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
     expect(await screen.findByText(/no photo groups yet/i)).toBeInTheDocument();
     expect(screen.queryByText("Bride's Family")).not.toBeInTheDocument();
+  });
+
+  it("deletes nothing when the dialog is cancelled", async () => {
+    stubRequests({ groups: [makeGroup({})] });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("Bride's Family");
+    await user.click(
+      screen.getByRole("button", { name: "Delete Bride's Family" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Delete Bride's Family?",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    // The group is untouched and no DELETE ever went out.
+    expect(screen.getByText("Bride's Family")).toBeInTheDocument();
+    expect(adminRequest).not.toHaveBeenCalledWith(
+      "/admin/photo-groups/pg1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 });
 

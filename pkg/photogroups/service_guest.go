@@ -14,27 +14,25 @@ import (
 // each group names exactly which of the party's guests are in it (GuestNames,
 // in party order; another party's members in the same group never appear).
 //
-// Each group carries its 1-based position in the shooting order and the
-// overall group count, both ranked across ALL groups (not just the party's):
-// "group 3 of 12" must mean the same thing to every party. The rank is
-// computed (ROW_NUMBER over sort_order, with id as the stable tiebreak)
-// rather than read from sort_order, whose raw values may have gaps after
-// deletes. A party with no assignments gets an empty list.
+// Each group carries its 1-based position in the shooting order, ranked
+// across ALL groups (not just the party's): "group 3" must mean the same
+// thing to every party. The rank is computed (ROW_NUMBER over sort_order,
+// with id as the stable tiebreak) rather than read from sort_order, whose raw
+// values may have gaps after deletes. A party with no assignments gets an
+// empty list.
 func (s *Service) PartyPhotoGroups(ctx context.Context, partyID string) ([]PartyPhotoGroup, error) {
 	var rows []struct {
 		ID       string `bun:"id"`
 		Name     string `bun:"name"`
 		Position int    `bun:"position"`
-		Total    int    `bun:"total"`
 	}
-	// The window functions run in a subquery over every group so the party
-	// filter cannot shrink the positions or the total.
+	// The window function runs in a subquery over every group so the party
+	// filter cannot shrink the positions.
 	err := s.db.NewRaw(`
-		SELECT ranked.id, ranked.name, ranked.position, ranked.total
+		SELECT ranked.id, ranked.name, ranked.position
 		FROM (
 			SELECT pg.id, pg.name,
-				ROW_NUMBER() OVER (ORDER BY pg.sort_order ASC, pg.id ASC) AS position,
-				COUNT(*) OVER () AS total
+				ROW_NUMBER() OVER (ORDER BY pg.sort_order ASC, pg.id ASC) AS position
 			FROM photo_groups pg
 		) ranked
 		WHERE EXISTS (
@@ -94,7 +92,6 @@ func (s *Service) PartyPhotoGroups(ctx context.Context, partyID string) ([]Party
 			ID:         r.ID,
 			Name:       r.Name,
 			Position:   r.Position,
-			Total:      r.Total,
 			GuestNames: names,
 		})
 	}

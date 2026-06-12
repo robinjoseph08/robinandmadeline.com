@@ -49,6 +49,8 @@ whole-journey coverage through the browser.
   when a name is a prefix of another (for example the cell label "Name" versus
   "New guest name"). The grid cells are inputs, so match a row by a cell's
   `inputValue()` (see `partyRow` in `guest-management.spec.ts`), not by row text.
-- The delete buttons use `window.confirm`; accept it with a
-  `page.on("dialog", (d) => d.accept())` handler. The add row stays open after a
-  create (for rapid entry), so reuse it rather than reopening it.
+- The guest grid's delete buttons use `window.confirm`; accept it with a
+  `page.on("dialog", (d) => d.accept())` handler. Photo group deletes instead
+  open the app's Dialog component, so click its explicit confirm button (see
+  `photo-groups.spec.ts`). The add row stays open after a create (for rapid
+  entry), so reuse it rather than reopening it.

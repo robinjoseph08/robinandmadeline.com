@@ -11,10 +11,12 @@ import { runStamp } from "./stamp";
 
 // Issue #10's critical E2E flow: the admin manages the photo groups (the
 // photographer's shot list, one global shooting order for the session between
-// the ceremony and the reception) on the Photo Groups page, and the guest's
-// schedule gains a photos section naming which of their party's guests are in
-// which groups. The admin creates two groups, assigns the guest to one,
-// reorders, and the schedule section reflects the final order.
+// the ceremony and the reception) on the admin Group Photos page (still at
+// /admin/photo-groups), and the guest's schedule gains a Group Photos section
+// of cards naming which of their party's guests are in which groups. The
+// admin creates two groups, assigns the guest to one, reorders, deletes the
+// other through the confirmation dialog, and the schedule section reflects
+// the final order.
 //
 // Fixtures are seeded through the real admin API (no test-only endpoints);
 // the photo group management itself is driven through the UI, since that is
@@ -22,8 +24,8 @@ import { runStamp } from "./stamp";
 // every assertion is scoped to those names. The shooting order is GLOBAL, so
 // groups left by earlier runs in the shared e2e database shift this run's raw
 // positions; the assertions therefore read each group's rendered "Group X of
-// N" label and check relative order and admin/guest agreement, never absolute
-// numbers.
+// N" admin label and check relative order and admin/guest agreement, never
+// absolute numbers.
 
 const stamp = runStamp();
 const partyName = `E2E Photo Party ${stamp}`;
@@ -106,19 +108,17 @@ function groupRow(page: Page, name: string): Locator {
 }
 
 /**
- * Reads a group row's rendered "Group X of N" label. Positions are global
- * across runs in the shared database, so tests compare these instead of
- * asserting absolute numbers.
+ * Reads a group row's position from the admin page's "Group X of N" label.
+ * Positions are global across runs in the shared database, so tests compare
+ * these instead of asserting absolute numbers.
  */
-async function rowPosition(
-  row: Locator,
-): Promise<{ position: number; total: number }> {
+async function rowPosition(row: Locator): Promise<number> {
   const label = await row.getByText(/^Group \d+ of \d+$/).textContent();
-  const match = /^Group (\d+) of (\d+)$/.exec(label ?? "");
+  const match = /^Group (\d+) of \d+$/.exec(label ?? "");
   if (!match) {
     throw new Error(`unexpected position label: ${label ?? "(missing)"}`);
   }
-  return { position: Number(match[1]), total: Number(match[2]) };
+  return Number(match[1]);
 }
 
 test("admin builds the shot list and the guest's schedule names their guests per group", async ({
@@ -142,7 +142,7 @@ test("admin builds the shot list and the guest's schedule names their guests per
   // Creates append, so the friends group sits right after the family group.
   const familyBefore = await rowPosition(groupRow(page, familyGroupName));
   const friendsBefore = await rowPosition(groupRow(page, friendsGroupName));
-  expect(friendsBefore.position).toBe(familyBefore.position + 1);
+  expect(friendsBefore).toBe(familyBefore + 1);
 
   // --- Admin: assign the guest to the friends group --------------------------
   await page
@@ -160,21 +160,32 @@ test("admin builds the shot list and the guest's schedule names their guests per
     .getByRole("button", { name: `Move ${friendsGroupName} up` })
     .click();
   await expect(async () => {
-    const friendsAfter = await rowPosition(groupRow(page, friendsGroupName));
-    expect(friendsAfter.position).toBe(friendsBefore.position - 1);
+    const moved = await rowPosition(groupRow(page, friendsGroupName));
+    expect(moved).toBe(friendsBefore - 1);
   }).toPass();
   const familyAfter = await rowPosition(groupRow(page, familyGroupName));
-  expect(familyAfter.position).toBe(familyBefore.position + 1);
+  expect(familyAfter).toBe(familyBefore + 1);
   const friendsAfter = await rowPosition(groupRow(page, friendsGroupName));
 
-  // --- Anonymous: the schedule has no photos section -------------------------
+  // --- Admin: delete the family group through the confirmation dialog --------
+  // Deleting the group AFTER the friends group leaves the friends position
+  // untouched, so the guest-side assertion below stays valid.
+  await page.getByRole("button", { name: `Delete ${familyGroupName}` }).click();
+  const dialog = page.getByRole("dialog", {
+    name: `Delete ${familyGroupName}?`,
+  });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Delete group" }).click();
+  await expect(groupRow(page, familyGroupName)).not.toBeVisible();
+
+  // --- Anonymous: the schedule has no Group Photos section -------------------
   await page.goto("/schedule", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Schedule" })).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Group Photos" }),
   ).not.toBeVisible();
 
-  // --- Guest: the photos section names the party's guest with the position ---
+  // --- Guest: the Group Photos card names the party's guest and position -----
   await loginAsGuest(page, rsvpCode);
   await page.goto("/schedule", { waitUntil: "domcontentloaded" });
 
@@ -183,13 +194,20 @@ test("admin builds the shot list and the guest's schedule names their guests per
   await expect(
     photos.getByText(/group photos after the ceremony, before the reception/i),
   ).toBeVisible();
-  // The line carries the same global position the admin page showed, and the
-  // guest's first name. The family group holds none of this party's guests,
-  // so it never appears.
-  await expect(
-    photos.getByText(
-      `${friendsGroupName} (group ${friendsAfter.position} of ${friendsAfter.total}): Casey`,
-    ),
-  ).toBeVisible();
+  // One card for the friends group: the guest's first name and the same
+  // global position the admin page showed (the badge's sr-only wording). The
+  // total is deliberately absent, and the deleted family group never appears.
+  const friendsCard = photos
+    .getByRole("listitem")
+    .filter({ hasText: friendsGroupName });
+  await expect(friendsCard).toBeVisible();
+  await expect(friendsCard.getByText("Casey", { exact: true })).toBeVisible();
+  // The next char after the number must not be another digit (textContent
+  // runs the sr-only label straight into the group name, so "Group 5" is
+  // followed by a letter; \b would not catch "Group 51" when expecting 5).
+  await expect(friendsCard).toContainText(
+    new RegExp(`Group ${friendsAfter}(\\D|$)`),
+  );
+  await expect(friendsCard).not.toContainText(/group \d+ of/i);
   await expect(photos.getByText(familyGroupName)).not.toBeVisible();
 });

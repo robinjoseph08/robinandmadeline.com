@@ -64,17 +64,18 @@ type ListPhotoGroupsResponse struct {
 
 // PartyPhotoGroup is one photo group on the guest-facing view (GET
 // /api/guest/photo-groups): a group someone in the authenticated party is in.
-// Position is the group's 1-based rank in the shooting order and Total the
-// overall group count, both spanning ALL groups (not just the party's), so
-// the page can say "group 3 of 12"; Position is a computed rank, not the raw
-// sort_order, which may have gaps after deletes. GuestNames holds the full
-// names of THIS party's guests in the group (never another party's), in party
-// order, so the page can call out exactly who is needed.
+// Position is the group's 1-based rank in the shooting order, spanning ALL
+// groups (not just the party's), so "group 3" means the same thing to every
+// party; it is a computed rank, not the raw sort_order, which may have gaps
+// after deletes. (The overall group count is deliberately not exposed: guests
+// only need to know where their groups fall, not how long the whole shot list
+// is.) GuestNames holds the full names of THIS party's guests in the group
+// (never another party's), in party order, so the page can call out exactly
+// who is needed.
 type PartyPhotoGroup struct {
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
 	Position   int      `json:"position"`
-	Total      int      `json:"total"`
 	GuestNames []string `json:"guest_names"`
 }
 

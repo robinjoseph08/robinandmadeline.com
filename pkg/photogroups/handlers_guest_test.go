@@ -66,7 +66,6 @@ type partyGroupsResponse struct {
 		ID         string   `json:"id"`
 		Name       string   `json:"name"`
 		Position   int      `json:"position"`
-		Total      int      `json:"total"`
 		GuestNames []string `json:"guest_names"`
 	} `json:"items"`
 	Total int `json:"total"`
@@ -102,9 +101,9 @@ func TestPartyPhotoGroupsHandler_NamesThePartysGuestsPerGroup(t *testing.T) {
 
 	// Three groups in shooting order. The Smiths are in the first (both) and
 	// the third (Alice only); the second holds only Riley, so it stays off the
-	// Smiths' view but still counts toward positions and the total. The first
-	// group also holds Riley, proving guest_names is scoped to the requesting
-	// party even when a group mixes parties.
+	// Smiths' view but still counts toward positions. The first group also
+	// holds Riley, proving guest_names is scoped to the requesting party even
+	// when a group mixes parties.
 	family := createGroupT(t, api.photoGroups, "Bride's Family")
 	others := createGroupT(t, api.photoGroups, "Groom's Family")
 	friends := createGroupT(t, api.photoGroups, "College Friends")
@@ -128,7 +127,6 @@ func TestPartyPhotoGroupsHandler_NamesThePartysGuestsPerGroup(t *testing.T) {
 	assert.Equal(t, family.ID, first.ID)
 	assert.Equal(t, "Bride's Family", first.Name)
 	assert.Equal(t, 1, first.Position)
-	assert.Equal(t, 3, first.Total)
 	// Only the Smiths' guests, in party order (Zoe joined the party first);
 	// Riley is invisible to them.
 	assert.Equal(t, []string{"Zoe Smith", "Alice Smith"}, first.GuestNames)
@@ -136,7 +134,6 @@ func TestPartyPhotoGroupsHandler_NamesThePartysGuestsPerGroup(t *testing.T) {
 	second := resp.Items[1]
 	assert.Equal(t, friends.ID, second.ID)
 	assert.Equal(t, 3, second.Position)
-	assert.Equal(t, 3, second.Total)
 	assert.Equal(t, []string{"Alice Smith"}, second.GuestNames)
 }
 
@@ -168,7 +165,7 @@ func TestPartyPhotoGroupsHandler_PositionsReRankAfterADelete(t *testing.T) {
 	assignGuestT(t, api.photoGroups, third.ID, alice.ID)
 
 	// Deleting the middle group leaves a sort_order gap; positions are ranks,
-	// so the third group becomes group 2 of 2, not 3 of 2.
+	// so the third group becomes group 2, not group 3.
 	require.NoError(t, api.photoGroups.DeletePhotoGroup(ctx(), second.ID))
 
 	token, err := api.auth.GenerateGuestToken(smiths.ID)
@@ -181,5 +178,4 @@ func TestPartyPhotoGroupsHandler_PositionsReRankAfterADelete(t *testing.T) {
 	require.Len(t, resp.Items, 1)
 	assert.Equal(t, third.ID, resp.Items[0].ID)
 	assert.Equal(t, 2, resp.Items[0].Position)
-	assert.Equal(t, 2, resp.Items[0].Total)
 }

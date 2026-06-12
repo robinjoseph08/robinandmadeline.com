@@ -6,18 +6,18 @@ import { Button } from "@/components/ui/button";
 import { usePartyPhotoGroups } from "@/hooks/queries/photo-groups";
 import { useScheduleEvents } from "@/hooks/queries/schedule";
 import { downloadICS, googleCalendarUrl } from "@/libraries/calendar";
-import { formatEventWhen, formatPhotoGroupLine } from "@/libraries/format";
+import { formatEventWhen, formatGuestFirstNames } from "@/libraries/format";
 import type { ScheduleEvent } from "@/types/generated/events";
 
 /**
  * The schedule page, one page for both audiences: anonymous visitors see the
  * public events, and a visitor with a stored guest token also sees the
  * private events their party is invited to (marked with a badge) plus a
- * photos section naming which of their party's guests are in which photo
- * groups. Each event offers an .ics download and a prefilled Google Calendar
- * link, both built on the client from the event's fields. Visitors without a
- * token get a subtle pointer to code entry, where logging in unlocks their
- * full schedule.
+ * Group Photos section naming which of their party's guests are in which
+ * photo groups. Each event offers an .ics download and a prefilled Google
+ * Calendar link, both built on the client from the event's fields. Visitors
+ * without a token get a subtle pointer to code entry, where logging in
+ * unlocks their full schedule.
  */
 export default function Schedule() {
   const { data, error, isPending } = useScheduleEvents();
@@ -90,12 +90,15 @@ export default function Schedule() {
 }
 
 /**
- * The photos section: the photo groups the visitor's party is in, naming
- * which of the party's guests each group needs and where it falls in the
- * shooting order. Renders nothing until the data is in and only when the
- * party has at least one assignment, so parties outside the shot list never
- * see an empty shell (and a failed fetch quietly hides the section rather
- * than disturbing the schedule above it).
+ * The Group Photos section: the photo groups the visitor's party is in,
+ * naming which of the party's guests each group needs and where it falls in
+ * the shooting order. One card per group, in shooting order: a position badge
+ * (the number the photographer will call), the group's name as a quiet label,
+ * and the party's guests' first names carrying the visual weight, since "who
+ * needs to be there" is what a guest scans for. Renders nothing until the
+ * data is in and only when the party has at least one assignment, so parties
+ * outside the shot list never see an empty shell (and a failed fetch quietly
+ * hides the section rather than disturbing the schedule above it).
  */
 function PhotosSection() {
   const { data } = usePartyPhotoGroups();
@@ -106,15 +109,37 @@ function PhotosSection() {
   return (
     <section aria-label="Group Photos" className="mt-10">
       <h2 className="text-2xl font-semibold">Group Photos</h2>
-      <p className="mt-3">
+      <p className="mt-3 text-muted-foreground">
         We'll be taking group photos after the ceremony, before the reception.
         Here is where we need you:
       </p>
-      <ul className="mt-3 list-disc space-y-1 pl-5">
-        {groups.map((group) => (
-          <li key={group.id}>{formatPhotoGroupLine(group)}</li>
-        ))}
-      </ul>
+      <ol className="mt-4 flex flex-col gap-3">
+        {groups.map((group) => {
+          const names = formatGuestFirstNames(group.guest_names);
+          return (
+            <li
+              className="flex items-center gap-4 rounded-xl border border-ink/10 bg-primary/30 p-4"
+              key={group.id}
+            >
+              {/* The badge is the group's position in the photographer's
+                  shooting order; the sr-only text gives the bare number its
+                  meaning for screen readers. */}
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-secondary font-semibold">
+                <span aria-hidden>{group.position}</span>
+                <span className="sr-only">Group {group.position}</span>
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-sm font-medium text-ink/60">
+                  {group.name}
+                </h3>
+                {names ? (
+                  <p className="mt-0.5 text-lg font-semibold">{names}</p>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 }

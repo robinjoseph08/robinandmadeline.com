@@ -4,7 +4,6 @@
  */
 
 import type { Event } from "@/types/generated/models";
-import type { PartyPhotoGroup } from "@/types/generated/photogroups";
 
 /**
  * Converts a stored "HH:MM" wall-clock string to a 12-hour display value
@@ -67,15 +66,12 @@ export function formatEventWhen(
 }
 
 /**
- * One line of the schedule's photos section: a photo group with its position
- * in the shooting order and the first names of THIS party's guests in it
- * ("Family Photos (group 1 of 3): Leon, Leslie"). First names fit the
- * guest-facing tone, and the viewer only ever sees their own party's guests
- * (matching the InfoCollection greeting's first-name convention). An empty
- * guest list omits the trailing names rather than rendering a dangling colon.
+ * The first names of a photo group's guests, joined for display ("Leon,
+ * Leslie"). First names fit the guest-facing tone, and the viewer only ever
+ * sees their own party's guests (matching the InfoCollection greeting's
+ * first-name convention). The Group Photos cards on the schedule carry the
+ * rest of the structure (group name, position badge) in markup.
  */
-export function formatPhotoGroupLine(group: PartyPhotoGroup): string {
-  const label = `${group.name} (group ${group.position} of ${group.total})`;
-  const names = group.guest_names.map((name) => name.split(" ")[0]).join(", ");
-  return names === "" ? label : `${label}: ${names}`;
+export function formatGuestFirstNames(names: string[]): string {
+  return names.map((name) => name.split(" ")[0]).join(", ");
 }
