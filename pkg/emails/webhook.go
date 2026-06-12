@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -98,6 +99,12 @@ func (w *Webhook) handle(c echo.Context) error {
 	status, reason, tracked := mapDeliveryEvent(payload)
 	if !tracked {
 		return c.NoContent(http.StatusNoContent)
+	}
+	// Cap the stored reason like the worker's markFailed does; the JSON
+	// decoder already guarantees valid UTF-8, but the trailing rune can be
+	// split by the byte cap.
+	if len(reason) > maxFailureReason {
+		reason = strings.ToValidUTF8(reason[:maxFailureReason], "")
 	}
 
 	messageID := normalizeMessageID(payload.EventData.Message.Headers.MessageID)

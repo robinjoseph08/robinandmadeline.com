@@ -6,6 +6,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -228,6 +229,13 @@ func New() (*Config, error) {
 	canonicalHost := envStr("CANONICAL_HOST", "")
 	if strings.ContainsAny(canonicalHost, ":/ ") {
 		return nil, fmt.Errorf("invalid CANONICAL_HOST: %q must be a bare hostname without a scheme, port, or path", canonicalHost)
+	}
+
+	// An API key with no sending domain would start the worker against a
+	// malformed Mailgun URL: every claimed row would get a definitive non-2xx
+	// rejection and be permanently marked failed. Fail at startup instead.
+	if os.Getenv("MAILGUN_API_KEY") != "" && os.Getenv("MAILGUN_DOMAIN") == "" {
+		return nil, errors.New("MAILGUN_DOMAIN must be set when MAILGUN_API_KEY is set")
 	}
 
 	return &Config{

@@ -144,6 +144,16 @@ func TestNew(t *testing.T) {
 		assert.Error(t, err)
 	})
 
+	t.Run("errors on MAILGUN_API_KEY without MAILGUN_DOMAIN", func(t *testing.T) {
+		// A key with no sending domain would start the worker against a
+		// malformed Mailgun URL and permanently fail every queued email.
+		t.Setenv("MAILGUN_API_KEY", "key-test")
+		t.Setenv("MAILGUN_DOMAIN", "")
+
+		_, err := config.New()
+		assert.Error(t, err)
+	})
+
 	t.Run("errors on malformed PORT", func(t *testing.T) {
 		t.Setenv("PORT", "not-a-number")
 

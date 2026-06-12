@@ -44,6 +44,10 @@ type WorkerConfig struct {
 // while a row's send is still within its own timeout.
 const perSendBudget = 30 * time.Second
 
+// maxFailureReason caps a stored failure_reason (the worker's markFailed and
+// the webhook's event reason both apply it).
+const maxFailureReason = 1000
+
 // Worker drains the email_recipients queue through Mailgun (ADR 0004). Each
 // cycle reconciles stuck `sending` rows, then claims queued rows in batches
 // (flipping them to `sending` so a concurrent pickup can never double-send),
@@ -264,10 +268,11 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 // `sending` and is retried next cycle. Returns how many rows it examined.
 //
 // Mailgun's events API is eventually consistent: in rare cases an accepted
-// event can take longer than StuckThreshold to appear, in which case the
-// not-found answer here re-sends an accepted message. The threshold default
-// (five minutes) comfortably covers Mailgun's typical indexing lag, and the
-// API offers nothing stronger to ask.
+// event can take longer than the stuck threshold to appear, in which case
+// the not-found answer here re-sends an accepted message. The effective
+// threshold (six minutes under the default tuning) comfortably covers
+// Mailgun's typical indexing lag, and the API offers nothing stronger to
+// ask.
 func (w *Worker) ReconcileStuck(ctx context.Context) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.batchBudget())
 	defer cancel()
@@ -305,7 +310,10 @@ func (w *Worker) ReconcileStuck(ctx context.Context) (int, error) {
 // `sending` for up to the whole budget, and a threshold tuned below that
 // would let an overlapping instance's reconciler requeue (and double-send) a
 // row this worker is still going to reach. The floor keeps the two knobs
-// safe to tune independently.
+// safe to tune independently on one instance; it is computed from the LOCAL
+// batch size, so overlapping instances (a deploy handing off) must share the
+// same worker tuning or a small-batch instance could still requeue a row a
+// large-batch instance has claimed but not yet reached.
 func (w *Worker) effectiveStuckThreshold() time.Duration {
 	if floor := w.batchBudget() + time.Minute; w.cfg.StuckThreshold < floor {
 		return floor
@@ -319,9 +327,8 @@ func (w *Worker) effectiveStuckThreshold() time.Duration {
 // the cap) would make Postgres reject the write, stranding the row in a
 // reconcile-and-fail loop.
 func (w *Worker) markFailed(ctx context.Context, row *models.EmailRecipient, reason string) {
-	const maxReason = 1000
-	if len(reason) > maxReason {
-		reason = reason[:maxReason]
+	if len(reason) > maxFailureReason {
+		reason = reason[:maxFailureReason]
 	}
 	reason = strings.ToValidUTF8(reason, "")
 	row.Status = models.EmailFailed
