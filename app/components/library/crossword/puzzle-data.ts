@@ -27,14 +27,14 @@ export const weddingCrossword: CrosswordPuzzle = {
         "5": "The couple's first one is a reception highlight",
         "6": "Sleep disorder often treated with a CPAP machine",
         "7": "Used up, like a wedding budget",
-        "8": "Speedy rabbit that lost to the tortoise",
+        "8": "Rabbit's speedy cousin that lost to the tortoise",
       },
       down: {
         "1": "Greek letter after iota",
         "2": "Like some circles and voices",
         "3": "Section of a play",
-        "4": "Find yours on the reception chart",
-        "5": "Sprint, or a pinch of salt",
+        "4": "Chair for a wedding guest",
+        "5": "Sprint, or a quick shake of salt",
       },
     },
     medium: {
@@ -58,7 +58,7 @@ export const weddingCrossword: CrosswordPuzzle = {
         "1": "French connection?",
         "5": "Floor exercise at a reception?",
         "6": "Snorer's pause",
-        "7": "Like confetti after the send-off",
+        "7": "Like confetti after the send-off?",
         "8": "Animal that naps mid-race, famously",
       },
       down: {

@@ -75,6 +75,27 @@ describe("validatePuzzle", () => {
       "hard has a clue for 9 down, but the grid has no such word",
     ]);
   });
+
+  it("rejects a grid with a square that belongs to no word", () => {
+    // The C at row 1, col 2 is fenced in by blocks and the grid edge, so it
+    // is part of no across or down word and no clue could ever reach it:
+    //
+    //   A B .
+    //   . . C
+    //   D E .
+    const clueSet = { across: { "1": "AB", "2": "DE" }, down: {} };
+    const puzzle: CrosswordPuzzle = {
+      id: "isolated-square",
+      title: "Isolated Square",
+      width: 3,
+      height: 3,
+      solution: "AB...CDE.",
+      clues: { easy: clueSet, medium: clueSet, hard: clueSet },
+    };
+    expect(validatePuzzle(puzzle)).toEqual([
+      "the square at row 1, column 2 belongs to no across or down word, so it can never be clued",
+    ]);
+  });
 });
 
 describe("gridFromEntries", () => {
@@ -97,6 +118,17 @@ describe("gridFromEntries", () => {
   it("ignores entries with the wrong length", () => {
     const grid = gridFromEntries(weddingCrossword, ".K??");
     expect(grid.squares[1].solution).toBeUndefined();
+  });
+
+  it("restores unexpected characters as empty squares", () => {
+    // A save written by this app only contains letters, ".", and "?", but a
+    // hand-edited one can hold anything; junk must not render as content.
+    const entries = `.k1S!${"?".repeat(19)}.`;
+    const grid = gridFromEntries(weddingCrossword, entries);
+    expect(grid.squares[1].solution).toBeUndefined();
+    expect(grid.squares[2].solution).toBeUndefined();
+    expect(grid.squares[3].solution).toBe("S");
+    expect(grid.squares[4].solution).toBeUndefined();
   });
 
   it("ignores entries whose blocks do not match the puzzle", () => {
