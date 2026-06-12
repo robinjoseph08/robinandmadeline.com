@@ -9,7 +9,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
@@ -40,11 +43,19 @@ func sign(key, timestamp, token string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// webhookBody builds a Mailgun delivery event payload. messageID is the bare
-// (bracket-less) form Mailgun webhooks carry. extra merges additional
-// event-data fields (severity, reason, delivery-status).
+// webhookBody builds a Mailgun delivery event payload, signed with a current
+// timestamp (the handler rejects stale ones as replays). messageID is the
+// bare (bracket-less) form Mailgun webhooks carry. extra merges additional
+// event-data fields (severity, reason, delivery-status, user-variables).
 func webhookBody(key, event, messageID string, extra map[string]any) map[string]any {
-	const timestamp, token = "1718000000", "token-abc"
+	return webhookBodyAt(key, event, messageID, time.Now(), extra)
+}
+
+// webhookBodyAt is webhookBody with an explicit signature timestamp, for
+// replay tests.
+func webhookBodyAt(key, event, messageID string, signedAt time.Time, extra map[string]any) map[string]any {
+	timestamp := strconv.FormatInt(signedAt.Unix(), 10)
+	const token = "token-abc"
 	eventData := map[string]any{
 		"event":   event,
 		"message": map[string]any{"headers": map[string]any{"message-id": messageID}},
@@ -199,6 +210,76 @@ func TestWebhook_UnknownMessageIDIsAcknowledged(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
 
+func TestWebhook_StaleTimestampIsRejectedAsReplay(t *testing.T) {
+	e, f := newWebhookAPI(t, testSigningKey)
+	row := sentRecipient(t, f, "mid-9@mg.example.test")
+
+	// Correctly signed, but an hour old: a captured payload must not validate
+	// forever, so the freshness window rejects it.
+	body := webhookBodyAt(testSigningKey, "delivered", "mid-9@mg.example.test", time.Now().Add(-time.Hour), nil)
+	rec := postWebhook(t, e, body)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Equal(t, models.EmailSent, reloadRecipient(t, f, row.ID).Status)
+}
+
+func TestWebhook_SuppressBounceMapsToBounced(t *testing.T) {
+	e, f := newWebhookAPI(t, testSigningKey)
+	row := sentRecipient(t, f, "mid-10@mg.example.test")
+
+	rec := postWebhook(t, e, webhookBody(testSigningKey, "failed", "mid-10@mg.example.test", map[string]any{
+		"severity": "permanent",
+		"reason":   "suppress-bounce",
+		"delivery-status": map[string]any{
+			"message": "Not delivering to previously bounced address",
+		},
+	}))
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+
+	got := reloadRecipient(t, f, row.ID)
+	assert.Equal(t, models.EmailBounced, got.Status)
+	// With no description, the reason falls back to delivery-status.message.
+	require.NotNil(t, got.FailureReason)
+	assert.Equal(t, "Not delivering to previously bounced address", *got.FailureReason)
+}
+
+func TestWebhook_NoMessageIDMatchFallsBackToRecipientIDVariable(t *testing.T) {
+	e, f := newWebhookAPI(t, testSigningKey)
+	row := sentRecipient(t, f, "ignored@mg.example.test")
+	// The row is mid-crash: stuck in `sending` with no message id recorded
+	// (the worker died between Mailgun accepting and the status write). The
+	// delivered webhook can still land via the echoed recipient_id custom
+	// variable, and it backfills the missing message id.
+	_, err := f.db.NewUpdate().Model((*models.EmailRecipient)(nil)).
+		Set("status = ?", models.EmailSending).
+		Set("mailgun_message_id = NULL").
+		Where("id = ?", row.ID).Exec(ctx())
+	require.NoError(t, err)
+
+	rec := postWebhook(t, e, webhookBody(testSigningKey, "delivered", "late-mid@mg.example.test", map[string]any{
+		"user-variables": map[string]any{"recipient_id": row.ID},
+	}))
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+
+	got := reloadRecipient(t, f, row.ID)
+	assert.Equal(t, models.EmailDelivered, got.Status)
+	require.NotNil(t, got.MailgunMessageID)
+	assert.Equal(t, "late-mid@mg.example.test", *got.MailgunMessageID)
+}
+
+func TestWebhook_OversizedBodyIsRejected(t *testing.T) {
+	e, _ := newWebhookAPI(t, testSigningKey)
+
+	// The endpoint is unauthenticated, so the body is capped before any
+	// parsing: a payload larger than the cap reads as truncated JSON and is a
+	// 400, not a buffered megabyte-eating decode.
+	huge := `{"signature":{"timestamp":"x"},"padding":"` + strings.Repeat("a", 2<<20) + `"}`
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/webhooks/mailgun", strings.NewReader(huge))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func TestWebhook_MalformedJSONIs400(t *testing.T) {
 	e, _ := newWebhookAPI(t, testSigningKey)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/webhooks/mailgun", bytes.NewReader([]byte("{not json")))
@@ -211,12 +292,21 @@ func TestWebhook_MalformedJSONIs400(t *testing.T) {
 func TestWebhook_FailedThenDeliveredNeverHappensButStatusFollowsLatestEvent(t *testing.T) {
 	// Mailgun events arrive in order per message; the row simply tracks the
 	// most recent tracked event. This pins that there is no hidden ordering
-	// logic to keep in sync.
+	// logic to keep in sync, and that a delivery clears a stale failure
+	// reason rather than leaving it beside a delivered status.
 	e, f := newWebhookAPI(t, testSigningKey)
 	row := sentRecipient(t, f, "mid-8@mg.example.test")
 
+	postWebhook(t, e, webhookBody(testSigningKey, "failed", "mid-8@mg.example.test", map[string]any{
+		"severity": "permanent",
+		"reason":   "generic",
+	}))
+	require.NotNil(t, reloadRecipient(t, f, row.ID).FailureReason)
+
 	postWebhook(t, e, webhookBody(testSigningKey, "delivered", "mid-8@mg.example.test", nil))
-	assert.Equal(t, models.EmailDelivered, reloadRecipient(t, f, row.ID).Status)
+	got := reloadRecipient(t, f, row.ID)
+	assert.Equal(t, models.EmailDelivered, got.Status)
+	assert.Nil(t, got.FailureReason)
 }
 
 // Guard the fake against interface drift: if MailgunClient gains methods, the

@@ -39,11 +39,11 @@ type EmailTemplate struct {
 
 // RecipientFilter is the criteria a send targets, stored as JSONB on the send
 // for the audit trail. Every field is optional; absent fields don't constrain.
-// The semantics mirror the flat guest list filters: side/relation/circle
-// constrain through the guest's party, tags matches guests whose tags array
-// contains the value, event/rsvp_status constrain through the guest's Event
-// RSVP rows (a row is the invitation, ADR 0002), and info_collection_status
-// filters on the party's derived status (ADR 0005).
+// The semantics mirror the flat guest list filters: side/relation/circle/
+// invitation_type constrain through the guest's party, tags matches guests
+// whose tags array contains the value, event/rsvp_status constrain through
+// the guest's Event RSVP rows (a row is the invitation, ADR 0002), and
+// info_collection_status filters on the party's derived status (ADR 0005).
 //
 // It lives in pkg/models rather than pkg/emails because EmailSend stores it
 // (feature packages import models, never the reverse). The validate tags are

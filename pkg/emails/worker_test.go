@@ -27,6 +27,10 @@ type fakeMailgun struct {
 	failTo   map[string]error
 	accepted map[string]string // recipientID -> message id served by FindAcceptedMessageID
 	findErr  error
+	// findHook, when non-nil, runs at the start of every
+	// FindAcceptedMessageID call, letting a test mutate the row mid-check
+	// (simulating another worker instance resolving it concurrently).
+	findHook func(recipientID string)
 	// blockSends, when non-nil, makes every Send wait until the channel is
 	// closed, simulating an in-flight batch during shutdown.
 	blockSends chan struct{}
@@ -62,6 +66,12 @@ func (f *fakeMailgun) Send(_ context.Context, msg emails.Message) (string, error
 
 func (f *fakeMailgun) FindAcceptedMessageID(_ context.Context, recipientID, _ string) (string, bool, error) {
 	f.mu.Lock()
+	hook := f.findHook
+	f.mu.Unlock()
+	if hook != nil {
+		hook(recipientID)
+	}
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.findErr != nil {
 		return "", false, f.findErr
@@ -76,20 +86,22 @@ func (f *fakeMailgun) sentMessages() []emails.Message {
 	return append([]emails.Message(nil), f.sent...)
 }
 
+const testFrom = "Robin & Madeline <hello@example.test>"
+
 // workerConfig is the default test tuning: small batches, fast polling, and a
 // short stuck threshold so reconciliation tests do not wait minutes.
 func workerConfig() emails.WorkerConfig {
 	return emails.WorkerConfig{
+		From:           testFrom,
+		PublicBaseURL:  testBaseURL,
 		BatchSize:      10,
 		PollInterval:   10 * time.Millisecond,
 		StuckThreshold: time.Minute,
 	}
 }
 
-const testFrom = "Robin & Madeline <hello@example.test>"
-
 func newWorker(f fixtures, client emails.MailgunClient, cfg emails.WorkerConfig) *emails.Worker {
-	return emails.NewWorker(f.db, client, testFrom, testBaseURL, cfg, logger.New())
+	return emails.NewWorker(f.db, client, cfg, logger.New())
 }
 
 // queueSend creates a send via the service (so rows are enqueued exactly as
@@ -207,7 +219,7 @@ func TestProcessBatch_EventDeletedAfterQueueingRendersEventFieldsEmpty(t *testin
 	assert.Equal(t, "It is on .", msgs[0].Text)
 }
 
-func TestProcessBatch_MailgunFailureMarksRowFailed(t *testing.T) {
+func TestProcessBatch_MailgunRejectionMarksRowFailed(t *testing.T) {
 	f := newFixtures(t)
 	p := createPartyT(t, f, "The Smiths", partyOpts{})
 	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
@@ -215,8 +227,10 @@ func TestProcessBatch_MailgunFailureMarksRowFailed(t *testing.T) {
 
 	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
 
+	// A definitive rejection (Mailgun answered non-2xx) is the only send error
+	// that fails the row: the message provably never went out.
 	client := newFakeMailgun()
-	client.failTo["bob@example.com"] = errors.New("mailgun send failed: status 400")
+	client.failTo["bob@example.com"] = &emails.RejectionError{StatusCode: 400, Body: "'to' parameter is invalid"}
 	w := newWorker(f, client, workerConfig())
 
 	n, err := w.ProcessBatch(ctx())
@@ -230,6 +244,85 @@ func TestProcessBatch_MailgunFailureMarksRowFailed(t *testing.T) {
 	require.NotNil(t, rows[bob.ID].FailureReason)
 	assert.Contains(t, *rows[bob.ID].FailureReason, "status 400")
 	assert.Nil(t, rows[bob.ID].MailgunMessageID)
+}
+
+func TestProcessBatch_AmbiguousSendErrorLeavesRowSendingForReconciliation(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// A transport-level error (timeout, connection reset) is ambiguous:
+	// Mailgun may have accepted the message before the connection died.
+	// Failing the row would misreport a possibly-delivered email and invite a
+	// duplicate manual resend, so it must stay `sending` for the reconciler.
+	client := newFakeMailgun()
+	client.failTo["alice@example.com"] = errors.New("call mailgun send: context deadline exceeded")
+	w := newWorker(f, client, workerConfig())
+
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	assert.Equal(t, models.EmailSending, row.Status)
+	assert.Nil(t, row.FailureReason)
+	assert.Nil(t, row.MailgunMessageID)
+
+	// The row is not claimable while `sending`; only the reconciler may
+	// settle it (against Mailgun's event log) once it ages past the threshold.
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+}
+
+func TestProcessBatch_SendsToSnapshottedAddressNotTheGuestsCurrentOne(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// The guest's email changes between enqueue and pickup; the send must go
+	// to the snapshotted address the admin previewed.
+	_, err := f.db.NewUpdate().Model((*models.Guest)(nil)).
+		Set("email = ?", "changed@example.com").
+		Where("id = ?", alice.ID).Exec(ctx())
+	require.NoError(t, err)
+
+	client := newFakeMailgun()
+	w := newWorker(f, client, workerConfig())
+	_, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+
+	msgs := client.sentMessages()
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "alice@example.com", msgs[0].To)
+}
+
+func TestProcessBatch_RejectionReasonWithInvalidUTF8IsSanitized(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// A Mailgun error body can carry arbitrary bytes; if they reached Postgres
+	// unsanitized the status write itself would fail, stranding the row in a
+	// reconcile-and-fail loop.
+	client := newFakeMailgun()
+	client.failTo["alice@example.com"] = &emails.RejectionError{StatusCode: 400, Body: "bad \xff\xfe bytes"}
+	w := newWorker(f, client, workerConfig())
+
+	_, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	assert.Equal(t, models.EmailFailed, row.Status)
+	require.NotNil(t, row.FailureReason)
+	assert.Contains(t, *row.FailureReason, "status 400")
+	assert.Contains(t, *row.FailureReason, "bad")
 }
 
 func TestProcessBatch_RespectsBatchSize(t *testing.T) {
@@ -434,6 +527,111 @@ func TestReconcileStuck_FreshSendingRowsAreLeftAlone(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 	assert.Equal(t, models.EmailSending, recipientsForSend(t, f.db, send.ID)[alice.ID].Status)
+}
+
+func TestRun_ReconcilesStuckRowsWithoutADirectCall(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	strandRow(t, f, row.ID, 10*time.Minute)
+
+	// Pins that Run's cycle actually invokes the reconciler: the stranded row
+	// must be settled (here: already accepted, so marked sent) by Run alone,
+	// with no direct ReconcileStuck call. Dropping the reconcile step from the
+	// loop would leave crash-stranded rows in `sending` forever.
+	client := newFakeMailgun()
+	client.accepted[row.ID] = "recovered-id@test.mailgun"
+	w := newWorker(f, client, workerConfig())
+
+	runCtx, cancel := context.WithCancel(ctx())
+	go w.Run(runCtx)
+
+	require.Eventually(t, func() bool {
+		return recipientsForSend(t, f.db, send.ID)[alice.ID].Status == models.EmailSent
+	}, 5*time.Second, 20*time.Millisecond, "Run never reconciled the stranded row")
+	cancel()
+	<-w.Done()
+
+	assert.Empty(t, client.sentMessages())
+}
+
+func TestReconcileStuck_RowResolvedMidCheckIsNotClobbered(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	strandRow(t, f, row.ID, 10*time.Minute)
+
+	// While this reconciler is mid-check (its Mailgun lookup in flight),
+	// another worker instance requeues, claims, and sends the row. The stale
+	// not-found answer must not overwrite that outcome: requeueing a sent row
+	// would wipe its message id and queue a duplicate email.
+	client := newFakeMailgun()
+	client.findHook = func(string) {
+		_, err := f.db.NewUpdate().Model((*models.EmailRecipient)(nil)).
+			Set("status = ?", models.EmailSent).
+			Set("mailgun_message_id = ?", "won-the-race@test.mailgun").
+			Where("id = ?", row.ID).Exec(ctx())
+		require.NoError(t, err)
+	}
+	w := newWorker(f, client, workerConfig())
+
+	n, err := w.ReconcileStuck(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	got := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	assert.Equal(t, models.EmailSent, got.Status)
+	require.NotNil(t, got.MailgunMessageID)
+	assert.Equal(t, "won-the-race@test.mailgun", *got.MailgunMessageID)
+}
+
+func TestProcessBatch_ConcurrentWorkersNeverDoubleSend(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	const guests = 24
+	for i := 0; i < guests; i++ {
+		createGuestT(t, f, p.ID, fmt.Sprintf("Guest %02d", i), guestOpts{
+			email: emailOf(fmt.Sprintf("guest%02d@example.com", i)),
+		})
+	}
+	queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// Three workers (one shared recording client) drain the same queue
+	// concurrently, the deploy-overlap shape the SKIP LOCKED claim exists
+	// for: every row must be sent exactly once.
+	client := newFakeMailgun()
+	cfg := workerConfig()
+	cfg.BatchSize = 3
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		w := newWorker(f, client, cfg)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				n, err := w.ProcessBatch(ctx())
+				assert.NoError(t, err)
+				if n == 0 {
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	msgs := client.sentMessages()
+	assert.Len(t, msgs, guests)
+	seen := map[string]bool{}
+	for _, m := range msgs {
+		assert.False(t, seen[m.RecipientID], "recipient %s sent twice", m.RecipientID)
+		seen[m.RecipientID] = true
+	}
 }
 
 func TestReconcileStuck_CheckErrorLeavesRowSending(t *testing.T) {

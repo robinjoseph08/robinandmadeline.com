@@ -133,6 +133,16 @@ export default defineConfig({
         // Keep the e2e API off the dev server's tmp/api.port so a run never
         // hijacks a running `mise start` Vite proxy.
         API_PORT_FILE: path.join(e2e.tmpDir, "api.port"),
+        // The email specs rely on the queue worker being OFF (recipients stay
+        // deterministically Queued) and must never call the real Mailgun API.
+        // Pin the Mailgun vars empty so a key exported in the surrounding
+        // shell (e.g. while configuring production) cannot leak in.
+        MAILGUN_API_KEY: "",
+        MAILGUN_DOMAIN: "",
+        MAILGUN_WEBHOOK_SIGNING_KEY: "",
+        // Pinned so the email spec can assert the rendered {{rsvp_link}}
+        // merge field against a known origin.
+        PUBLIC_BASE_URL: "https://robinandmadeline.com",
       },
     },
     {

@@ -111,7 +111,8 @@ type Config struct {
 	EmailWorkerPollInterval time.Duration
 
 	// EmailWorkerStuckThreshold is how old a `sending` row must be before the
-	// restart reconciliation checks it against Mailgun (ADR 0004).
+	// worker's reconcile pass (run each cycle, including immediately on
+	// restart) checks it against Mailgun (ADR 0004).
 	EmailWorkerStuckThreshold time.Duration
 }
 
@@ -191,19 +192,32 @@ func New() (*Config, error) {
 		return nil, err
 	}
 
+	// The worker tuning knobs must be positive: a zero or negative batch size
+	// makes every claim query fail (and zero would claim nothing forever), and
+	// a non-positive poll interval turns the worker loop into a hot spin
+	// against the database. Failing at startup beats either failure mode.
 	emailWorkerBatchSize, err := envInt("EMAIL_WORKER_BATCH_SIZE", defaultEmailWorkerBatchSize)
 	if err != nil {
 		return nil, err
+	}
+	if emailWorkerBatchSize <= 0 {
+		return nil, fmt.Errorf("invalid EMAIL_WORKER_BATCH_SIZE: %d is not positive", emailWorkerBatchSize)
 	}
 
 	emailWorkerPollInterval, err := envDuration("EMAIL_WORKER_POLL_INTERVAL", defaultEmailWorkerPollInterval)
 	if err != nil {
 		return nil, err
 	}
+	if emailWorkerPollInterval <= 0 {
+		return nil, fmt.Errorf("invalid EMAIL_WORKER_POLL_INTERVAL: %s is not positive", emailWorkerPollInterval)
+	}
 
 	emailWorkerStuckThreshold, err := envDuration("EMAIL_WORKER_STUCK_THRESHOLD", defaultEmailWorkerStuckThreshold)
 	if err != nil {
 		return nil, err
+	}
+	if emailWorkerStuckThreshold <= 0 {
+		return nil, fmt.Errorf("invalid EMAIL_WORKER_STUCK_THRESHOLD: %s is not positive", emailWorkerStuckThreshold)
 	}
 
 	// A canonical host carrying a scheme, port, path, or whitespace would

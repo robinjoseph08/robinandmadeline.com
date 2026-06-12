@@ -26,12 +26,29 @@ type Message struct {
 	RecipientID string
 }
 
+// RejectionError marks a send Mailgun definitively rejected: a response came
+// back and it was not a 2xx, so the message was provably never accepted and
+// the row can be marked failed without risking a lost delivery. Every other
+// send error (timeout, connection reset, an unreadable or unparseable
+// response to what may have been a 2xx) is ambiguous: Mailgun may have
+// accepted the message anyway, so the worker leaves the row `sending` for the
+// reconciler to settle against Mailgun's event log instead.
+type RejectionError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *RejectionError) Error() string {
+	return fmt.Sprintf("mailgun send failed: status %d: %s", e.StatusCode, e.Body)
+}
+
 // MailgunClient is the seam between the queue and Mailgun. The Worker depends
 // on this interface; production wires the HTTP implementation below and tests
 // substitute a fake, so no test ever calls the real Mailgun API.
 type MailgunClient interface {
 	// Send submits one message and returns the Mailgun message id (normalized,
-	// without angle brackets) on acceptance.
+	// without angle brackets) on acceptance. A definitive rejection is returned
+	// as a *RejectionError; any other error means the outcome is unknown.
 	Send(ctx context.Context, msg Message) (string, error)
 	// FindAcceptedMessageID reports whether Mailgun already accepted a message
 	// for the given email_recipients row id (matched via the recipient_id
@@ -92,7 +109,7 @@ func (c *HTTPMailgunClient) Send(ctx context.Context, msg Message) (string, erro
 		return "", errors.Wrap(err, "read mailgun send response")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", errors.Errorf("mailgun send failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", errors.WithStack(&RejectionError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))})
 	}
 
 	var parsed struct {

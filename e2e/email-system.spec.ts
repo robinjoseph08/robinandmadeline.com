@@ -85,7 +85,15 @@ test("admin composes and sends a filtered email end to end", async ({
   await page.getByRole("button", { name: "Preview" }).click();
   await expect(page.getByText("1 recipient", { exact: true })).toBeVisible();
   await expect(page.getByText(`Hello ${stamp}, ${guestName}!`)).toBeVisible();
-  await expect(page.getByText(`Hi ${guestName} of ${partyName}`)).toBeVisible();
+  // The body asserts the full rendered sample including the {{rsvp_link}}
+  // URL, which observes the server's PublicBaseURL wiring end to end (the
+  // harness pins PUBLIC_BASE_URL; a transposed constructor argument would
+  // render a wrong link here).
+  await expect(
+    page.getByText(
+      `Hi ${guestName} of ${partyName}, save the date! RSVP at https://robinandmadeline.com/rsvp.`,
+    ),
+  ).toBeVisible();
   await expect(page.getByRole("cell", { name: guestEmail })).toBeVisible();
 
   // --- Send (confirmation auto-accepted) lands on the send detail ----------
@@ -94,6 +102,9 @@ test("admin composes and sends a filtered email end to end", async ({
   await expect(
     page.getByRole("heading", { name: `Hello ${stamp}, {{guest_name}}!` }),
   ).toBeVisible();
+  // "by admin" observes the sent_by audit wiring (the admin username from
+  // the server config records who dispatched the send).
+  await expect(page.getByText(/Sent .* by admin/)).toBeVisible();
   // The worker is off in e2e (no Mailgun key), so the recipient stays queued.
   await expect(page.getByRole("cell", { name: guestName })).toBeVisible();
   await expect(page.getByText("Queued", { exact: true })).toBeVisible();

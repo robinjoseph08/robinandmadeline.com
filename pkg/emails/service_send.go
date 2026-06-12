@@ -105,6 +105,12 @@ func (s *Service) CreateSend(ctx context.Context, in SendEmailPayload) (*models.
 			return errors.Wrap(err, "insert email send")
 		}
 		if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
+			// A guest deleted between resolving the recipients and this insert
+			// trips the guest_id foreign key; that is a stale-audience race the
+			// admin can retry, not an infrastructure failure.
+			if errcodes.IsForeignKeyViolation(err) {
+				return errcodes.ValidationError("A matching guest was just deleted; preview again and retry.")
+			}
 			return errors.Wrap(err, "insert email recipients")
 		}
 		return nil

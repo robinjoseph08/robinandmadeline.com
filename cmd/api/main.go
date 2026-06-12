@@ -69,7 +69,9 @@ func main() {
 	defer stopWorker()
 	if cfg.MailgunAPIKey != "" {
 		client := emails.NewMailgunClient(cfg.MailgunBaseURL, cfg.MailgunDomain, cfg.MailgunAPIKey)
-		worker = emails.NewWorker(db, client, cfg.EmailFrom, cfg.PublicBaseURL, emails.WorkerConfig{
+		worker = emails.NewWorker(db, client, emails.WorkerConfig{
+			From:           cfg.EmailFrom,
+			PublicBaseURL:  cfg.PublicBaseURL,
 			BatchSize:      cfg.EmailWorkerBatchSize,
 			PollInterval:   cfg.EmailWorkerPollInterval,
 			StuckThreshold: cfg.EmailWorkerStuckThreshold,

@@ -120,6 +120,30 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, "postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline_wt_my_feature?sslmode=disable", cfg.DatabaseURL)
 	})
 
+	// Non-positive worker knobs fail at startup: zero or negative values would
+	// otherwise surface as a failing claim query every cycle (batch size) or a
+	// hot poll loop against the database (poll interval).
+	t.Run("errors on non-positive EMAIL_WORKER_BATCH_SIZE", func(t *testing.T) {
+		t.Setenv("EMAIL_WORKER_BATCH_SIZE", "0")
+
+		_, err := config.New()
+		assert.Error(t, err)
+	})
+
+	t.Run("errors on non-positive EMAIL_WORKER_POLL_INTERVAL", func(t *testing.T) {
+		t.Setenv("EMAIL_WORKER_POLL_INTERVAL", "-1s")
+
+		_, err := config.New()
+		assert.Error(t, err)
+	})
+
+	t.Run("errors on non-positive EMAIL_WORKER_STUCK_THRESHOLD", func(t *testing.T) {
+		t.Setenv("EMAIL_WORKER_STUCK_THRESHOLD", "0s")
+
+		_, err := config.New()
+		assert.Error(t, err)
+	})
+
 	t.Run("errors on malformed PORT", func(t *testing.T) {
 		t.Setenv("PORT", "not-a-number")
 

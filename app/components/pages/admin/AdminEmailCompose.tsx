@@ -93,6 +93,11 @@ export default function AdminEmailCompose() {
   const [preview, setPreview] = useState<PreviewEmailResponse | undefined>(
     undefined,
   );
+  // True for the whole send flow (the re-resolve, the confirm, the send), not
+  // just the send mutation: the confirm count round-trip leaves a window where
+  // sendEmail.isPending is still false, and a double click there would
+  // dispatch the entire bulk send twice.
+  const [sending, setSending] = useState(false);
 
   const templates = templatesQuery.data?.items ?? [];
   const events = eventsQuery.data?.items ?? [];
@@ -141,6 +146,7 @@ export default function AdminEmailCompose() {
   };
 
   const handleSend = async () => {
+    setSending(true);
     try {
       // Re-resolve the audience at send time so the confirmed count can never
       // be stale relative to edits made after a preview.
@@ -171,12 +177,16 @@ export default function AdminEmailCompose() {
         body,
         filter: toRecipientFilter(filter),
       });
-      toast.success(`Email queued for ${sent.stats.total} recipients`);
+      toast.success(
+        `Email queued for ${sent.stats.total} recipient${sent.stats.total === 1 ? "" : "s"}`,
+      );
       navigate(`/admin/emails/sends/${sent.id}`);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to send email",
       );
+    } finally {
+      setSending(false);
     }
   };
 
@@ -307,22 +317,15 @@ export default function AdminEmailCompose() {
 
       <div className="flex gap-2">
         <Button
-          disabled={!canCompose || previewEmail.isPending}
+          disabled={!canCompose || previewEmail.isPending || sending}
           onClick={handlePreview}
           variant="outline"
         >
           {previewEmail.isPending && <Loader2 className="animate-spin" />}
           Preview
         </Button>
-        <Button
-          disabled={!canCompose || sendEmail.isPending}
-          onClick={handleSend}
-        >
-          {sendEmail.isPending ? (
-            <Loader2 className="animate-spin" />
-          ) : (
-            <Send />
-          )}
+        <Button disabled={!canCompose || sending} onClick={handleSend}>
+          {sending ? <Loader2 className="animate-spin" /> : <Send />}
           Send
         </Button>
       </div>

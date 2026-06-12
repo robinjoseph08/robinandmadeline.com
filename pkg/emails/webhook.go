@@ -5,7 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/pkg/errors"
@@ -14,6 +17,16 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/uptrace/bun"
 )
+
+// maxWebhookBody caps how much of an unauthenticated webhook body is read
+// before the signature check; a real Mailgun event is a few KB.
+const maxWebhookBody = 1 << 20
+
+// maxSignatureAge is how old (or how far in the future, allowing clock skew)
+// a webhook signature timestamp may be. Mailgun signs timestamp+token, so
+// without a freshness check a captured payload would validate forever; this
+// bounds the replay window, as Mailgun's own docs recommend.
+const maxSignatureAge = 5 * time.Minute
 
 // Webhook handles Mailgun delivery event callbacks: it verifies the webhook
 // signature, matches the recipient row by Mailgun message id, and upgrades its
@@ -60,6 +73,11 @@ type webhookPayload struct {
 				MessageID string `json:"message-id"`
 			} `json:"headers"`
 		} `json:"message"`
+		// UserVariables echoes back the custom variables attached at send
+		// time; recipient_id is the email_recipients row id (see Message).
+		UserVariables struct {
+			RecipientID string `json:"recipient_id"`
+		} `json:"user-variables"`
 	} `json:"event-data"`
 }
 
@@ -69,7 +87,7 @@ type webhookPayload struct {
 // without effect, since retrying them could never succeed differently.
 func (w *Webhook) handle(c echo.Context) error {
 	var payload webhookPayload
-	if err := json.NewDecoder(c.Request().Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(c.Request().Body, maxWebhookBody)).Decode(&payload); err != nil {
 		return errcodes.BadRequest("The webhook payload is not valid JSON.")
 	}
 
@@ -87,36 +105,89 @@ func (w *Webhook) handle(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	}
 
-	q := w.db.NewUpdate().Model((*models.EmailRecipient)(nil)).
-		Set("status = ?", status).
-		Set("updated_at = now()").
-		Where("mailgun_message_id = ?", messageID)
-	if reason != "" {
-		q = q.Set("failure_reason = ?", reason)
+	// applyEvent stamps the event's outcome onto whatever rows q selects. A
+	// delivery clears any stale failure reason (the worker's sent path does
+	// the same), so a failed-then-delivered pair cannot leave a reason next
+	// to a delivered status.
+	applyEvent := func(q *bun.UpdateQuery) *bun.UpdateQuery {
+		q = q.Set("status = ?", status).Set("updated_at = now()")
+		if status == models.EmailDelivered {
+			q = q.Set("failure_reason = NULL")
+		} else if reason != "" {
+			q = q.Set("failure_reason = ?", reason)
+		}
+		return q
 	}
-	res, err := q.Exec(c.Request().Context())
+
+	res, err := applyEvent(w.db.NewUpdate().Model((*models.EmailRecipient)(nil)).
+		Where("mailgun_message_id = ?", messageID)).
+		Exec(c.Request().Context())
 	if err != nil {
 		return errors.Wrap(err, "update email recipient from webhook")
 	}
 	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
-		// Not an error: e.g. an event for a message sent outside this system,
-		// or a recipient row removed with its guest. Log for visibility.
-		logger.FromContext(c.Request().Context()).Warn("mailgun webhook matched no recipient", logger.Data{
-			"mailgun_message_id": messageID,
-			"event":              payload.EventData.Event,
-		})
+		w.applyByRecipientID(c, payload, applyEvent, messageID)
 	}
 	return c.NoContent(http.StatusNoContent)
 }
 
+// applyByRecipientID is the fallback match when no row carries the event's
+// message id yet: a webhook can outrun the worker's own status write, or
+// arrive while a crashed send sits in `sending` with no message id, and
+// dropping the event would lose the delivery outcome for good (Mailgun does
+// not retry acknowledged events). The recipient_id custom variable echoed
+// back in the event identifies the row directly, and the same write records
+// the message id the row was missing. Failures are logged, not returned: by
+// this point the event is matched as well as it ever can be, and a non-2xx
+// would only make Mailgun retry into the same outcome.
+func (w *Webhook) applyByRecipientID(c echo.Context, payload webhookPayload, applyEvent func(*bun.UpdateQuery) *bun.UpdateQuery, messageID string) {
+	log := logger.FromContext(c.Request().Context())
+	recipientID := payload.EventData.UserVariables.RecipientID
+	if recipientID == "" {
+		// Not an error: e.g. an event for a message sent outside this system.
+		log.Warn("mailgun webhook matched no recipient", logger.Data{
+			"mailgun_message_id": messageID,
+			"event":              payload.EventData.Event,
+		})
+		return
+	}
+	res, err := applyEvent(w.db.NewUpdate().Model((*models.EmailRecipient)(nil)).
+		Set("mailgun_message_id = ?", messageID).
+		Where("id = ?", recipientID)).
+		Exec(c.Request().Context())
+	if err != nil {
+		log.Err(err).Error("mailgun webhook recipient-id update failed", logger.Data{
+			"recipient_id": recipientID,
+		})
+		return
+	}
+	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
+		// Not an error: e.g. a recipient row removed with its guest.
+		log.Warn("mailgun webhook matched no recipient", logger.Data{
+			"mailgun_message_id": messageID,
+			"recipient_id":       recipientID,
+			"event":              payload.EventData.Event,
+		})
+	}
+}
+
 // signatureValid checks Mailgun's webhook signature: HMAC-SHA256 of
 // timestamp+token under the signing key, hex-encoded, compared in constant
-// time. An unconfigured (empty) signing key validates nothing.
+// time, with the timestamp required to fall within maxSignatureAge of now so
+// a captured payload cannot be replayed indefinitely. An unconfigured (empty)
+// signing key validates nothing.
 func (w *Webhook) signatureValid(payload webhookPayload) bool {
 	if w.signingKey == "" {
 		return false
 	}
 	sig := payload.Signature
+	ts, err := strconv.ParseInt(sig.Timestamp, 10, 64)
+	if err != nil {
+		return false
+	}
+	if age := time.Since(time.Unix(ts, 0)); age > maxSignatureAge || age < -maxSignatureAge {
+		return false
+	}
 	mac := hmac.New(sha256.New, []byte(w.signingKey))
 	mac.Write([]byte(sig.Timestamp + sig.Token))
 	expected := hex.EncodeToString(mac.Sum(nil))

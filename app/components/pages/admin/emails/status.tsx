@@ -37,8 +37,8 @@ export function StatusBadge({ status }: { status: EmailRecipientStatus }) {
 }
 
 /**
- * One send's delivery stats as a compact "3 delivered / 1 bounced of 4"
- * summary, listing only the statuses that occur.
+ * One send's delivery stats as a compact "3 delivered, 1 bounced of 4
+ * recipients" summary, listing only the statuses that occur.
  */
 export function SendStatsSummary({ stats }: { stats: SendStats }) {
   const parts = (

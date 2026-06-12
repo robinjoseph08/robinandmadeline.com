@@ -110,6 +110,53 @@ describe("AdminEmailTemplates create", () => {
   });
 });
 
+describe("AdminEmailTemplates edit", () => {
+  it("seeds the dialog from the template and PUTs the edited payload", async () => {
+    adminRequest.mockImplementation((_path: string, options?: object) => {
+      const method = (options as { method?: string } | undefined)?.method;
+      if (method === "PUT") {
+        return Promise.resolve(makeTemplate({ id: "t1" }));
+      }
+      return Promise.resolve({
+        items: [makeTemplate({ id: "t1", name: "Save the date" })],
+        total: 1,
+      });
+    });
+
+    const user = userEvent.setup();
+    renderTemplates();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Edit Save the date" }),
+    );
+
+    // The dialog opens prefilled with the template being edited; a blank or
+    // wrong seed here would silently overwrite the template on save.
+    expect(screen.getByLabelText("Name")).toHaveValue("Save the date");
+    expect(screen.getByLabelText("Subject")).toHaveValue(
+      "Save the date, {{guest_name}}!",
+    );
+    expect(screen.getByLabelText("Body")).toHaveValue(
+      "Hi {{guest_name}}, we're getting married!",
+    );
+
+    await user.clear(screen.getByLabelText("Subject"));
+    await user.type(screen.getByLabelText("Subject"), "New subject");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/emails/templates/t1", {
+        method: "PUT",
+        body: {
+          name: "Save the date",
+          subject: "New subject",
+          body: "Hi {{guest_name}}, we're getting married!",
+        },
+      });
+    });
+  });
+});
+
 describe("AdminEmailTemplates delete", () => {
   it("DELETEs after confirmation", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);

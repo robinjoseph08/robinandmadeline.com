@@ -150,6 +150,21 @@ describe("AdminEmailCompose preview", () => {
       await screen.findByText(/2 matching guests skipped \(no email address\)/),
     ).toBeInTheDocument();
   });
+
+  it("clears the shown preview when the composed email changes", async () => {
+    setMock();
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    expect(await screen.findByText("Hi Alice")).toBeInTheDocument();
+
+    // Any edit invalidates the panel: what is shown must be what would send.
+    await user.type(screen.getByLabelText("Subject"), "!");
+    expect(screen.queryByText("Hi Alice")).not.toBeInTheDocument();
+  });
 });
 
 describe("AdminEmailCompose send", () => {
@@ -201,6 +216,48 @@ describe("AdminEmailCompose send", () => {
       "/admin/emails/send",
       expect.anything(),
     );
+  });
+
+  it("ignores a second Send click while the first is still resolving", async () => {
+    // The pre-send count re-resolve leaves a window before the send mutation
+    // starts; a second click there must not start a second flow (it would
+    // dispatch the whole bulk send twice). Hold the preview open to sit in
+    // that window.
+    let resolvePreview: ((v: PreviewEmailResponse) => void) | undefined;
+    adminRequest.mockImplementation((path: string) => {
+      if (path === "/admin/emails/preview") {
+        return new Promise((res) => {
+          resolvePreview = res;
+        });
+      }
+      if (path === "/admin/emails/send") {
+        return Promise.resolve({
+          id: "send-1",
+          subject: "s",
+          stats: { total: 1, queued: 1 },
+        });
+      }
+      return Promise.resolve({ items: [], total: 0 });
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    const send = screen.getByRole("button", { name: "Send" });
+    await user.click(send);
+
+    // Mid-re-resolve: the button is disabled, so this click is a no-op.
+    expect(send).toBeDisabled();
+    await user.click(send);
+
+    resolvePreview!(makePreview({}));
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(
+      adminRequest.mock.calls.filter(([path]) => path === "/admin/emails/send"),
+    ).toHaveLength(1);
   });
 
   it("refuses to send to zero recipients", async () => {

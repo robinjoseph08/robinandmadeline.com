@@ -203,6 +203,9 @@ func TestSendHistoryHandlers_ListAndDetail(t *testing.T) {
 	assert.Equal(t, "The Smiths", detail.Recipients[0].PartyName)
 	assert.Equal(t, "alice@example.com", detail.Recipients[0].EmailAddress)
 	assert.Equal(t, "queued", detail.Recipients[0].Status)
+	// The detail carries the same stats tally the list does; the header
+	// summary renders from it.
+	assert.Equal(t, emails.SendStats{Queued: 1, Total: 1}, detail.Stats)
 }
 
 func TestGetSendHandler_MissingIs404(t *testing.T) {
