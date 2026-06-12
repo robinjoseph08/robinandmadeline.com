@@ -173,6 +173,69 @@ func TestScheduleHandler_GuestTokenCarriesPartyPhotoGroupsWithPositions(t *testi
 	assert.Equal(t, 3, groups[1].Total)
 }
 
+func TestScheduleHandler_PhotoGroupPositionsRankPerEventAndSurviveDeletes(t *testing.T) {
+	api := newScheduleAPI(t)
+	photoSvc := photogroups.NewService(api.db)
+
+	p := createPartyT(t, api.parties, "The Smiths")
+	alice := addGuestT(t, api.parties, p.ID, "Alice")
+
+	reception := createEventT(t, api.events, publicEventInput())
+	dinner := createEventT(t, api.events, privateEventInput())
+	_, err := api.events.InviteParties(ctx(), dinner.ID, events.InvitePartiesPayload{PartyIDs: []string{p.ID}})
+	require.NoError(t, err)
+
+	// Reception: four groups, then the second is deleted, leaving a raw
+	// sort_order gap (1, _, 3, 4). Positions must rank the remaining groups
+	// (1, 2, 3) rather than echo the raw sort_order.
+	_, err = photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: reception.ID, Name: "Bride's Family"})
+	require.NoError(t, err)
+	grandparents, err := photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: reception.ID, Name: "Grandparents"})
+	require.NoError(t, err)
+	friends, err := photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: reception.ID, Name: "College Friends"})
+	require.NoError(t, err)
+	_, err = photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: reception.ID, Name: "Wedding Party"})
+	require.NoError(t, err)
+	require.NoError(t, photoSvc.DeletePhotoGroup(ctx(), grandparents.ID))
+	_, err = photoSvc.AddGuest(ctx(), friends.ID, photogroups.AddPhotoGroupGuestPayload{GuestID: alice.ID})
+	require.NoError(t, err)
+
+	// Rehearsal dinner: two groups of its own. Positions and totals partition
+	// per event, so they must count only this event's groups, not every group
+	// on the schedule.
+	_, err = photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: dinner.ID, Name: "Toast Speakers"})
+	require.NoError(t, err)
+	outOfTown, err := photoSvc.CreatePhotoGroup(ctx(), photogroups.CreatePhotoGroupPayload{EventID: dinner.ID, Name: "Out-of-Town Guests"})
+	require.NoError(t, err)
+	_, err = photoSvc.AddGuest(ctx(), outOfTown.ID, photogroups.AddPhotoGroupGuestPayload{GuestID: alice.ID})
+	require.NoError(t, err)
+
+	token, err := api.auth.GenerateGuestToken(p.ID)
+	require.NoError(t, err)
+
+	rec := getSchedule(t, api.echo, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	resp := decodeSchedule(t, rec)
+	require.Len(t, resp.Items, 2)
+
+	// Schedule order: the dinner (2026-10-16) precedes the reception
+	// (2026-10-17). Its total is its own two groups.
+	dinnerGroups := resp.Items[0].PhotoGroups
+	require.Len(t, dinnerGroups, 1)
+	assert.Equal(t, outOfTown.ID, dinnerGroups[0].ID)
+	assert.Equal(t, 2, dinnerGroups[0].Position)
+	assert.Equal(t, 2, dinnerGroups[0].Total)
+
+	// The friends group's raw sort_order is still 3; the delete promoted it
+	// to rank 2 of the reception's 3 remaining groups.
+	receptionGroups := resp.Items[1].PhotoGroups
+	require.Len(t, receptionGroups, 1)
+	assert.Equal(t, friends.ID, receptionGroups[0].ID)
+	assert.Equal(t, 2, receptionGroups[0].Position)
+	assert.Equal(t, 3, receptionGroups[0].Total)
+}
+
 func TestScheduleHandler_GuestWithNoAssignmentsGetsEmptyPhotoGroups(t *testing.T) {
 	api := newScheduleAPI(t)
 	photoSvc := photogroups.NewService(api.db)

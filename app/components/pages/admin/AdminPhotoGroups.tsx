@@ -49,8 +49,12 @@ export default function AdminPhotoGroups() {
     return byEvent;
   }, [groupItems]);
 
-  const isLoading = eventsQuery.isLoading || groupsQuery.isLoading;
-  const error = eventsQuery.error ?? groupsQuery.error;
+  // The guest list feeds every add-guest picker, so its loading and failure
+  // states are the page's too (otherwise a failed fetch would render as "No
+  // matching guests.").
+  const isLoading =
+    eventsQuery.isLoading || groupsQuery.isLoading || guestsQuery.isLoading;
+  const error = eventsQuery.error ?? groupsQuery.error ?? guestsQuery.error;
 
   return (
     <div className="space-y-6">
@@ -304,7 +308,7 @@ function GroupRow({
             }}
           >
             <Input
-              aria-label="Photo group name"
+              aria-label={`Photo group name for ${group.name}`}
               autoFocus
               className="w-64"
               onChange={(e) => setEditName(e.target.value)}

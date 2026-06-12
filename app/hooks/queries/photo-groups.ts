@@ -111,7 +111,11 @@ export const useReorderPhotoGroups = () => {
         body: payload,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({
+      // A move's payload is computed from the currently rendered order, so
+      // hold the mutation pending (keeping the move buttons disabled) until
+      // the refetched order lands; otherwise a quick second move would swap
+      // against the stale list.
+      return queryClient.invalidateQueries({
         queryKey: [QueryKey.ListPhotoGroups],
       });
     },

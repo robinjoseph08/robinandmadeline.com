@@ -118,6 +118,14 @@ func TestCreatePhotoGroupHandler_AppendsAtEndOfEvent(t *testing.T) {
 	})
 	require.Equal(t, http.StatusCreated, rec.Code)
 	assert.Equal(t, 2, decodeGroup(t, rec).SortOrder)
+
+	// The order is per event: a sibling event's first group starts at 1.
+	other := createEventT(t, fx.events, "Reception")
+	rec = do(t, e, http.MethodPost, "/api/admin/photo-groups", map[string]any{
+		"event_id": other.ID, "name": "Wedding Party",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code)
+	assert.Equal(t, 1, decodeGroup(t, rec).SortOrder)
 }
 
 func TestCreatePhotoGroupHandler_UnknownEventIs422(t *testing.T) {
@@ -326,6 +334,31 @@ func TestReorderPhotoGroupsHandler_DuplicateIDIs422(t *testing.T) {
 	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 }
 
+func TestReorderPhotoGroupsHandler_OtherEventsGroupIs422(t *testing.T) {
+	e, fx := newAPI(t)
+	ceremony := createEventT(t, fx.events, "Ceremony")
+	reception := createEventT(t, fx.events, "Reception")
+	family := createGroupT(t, fx.photoGroups, ceremony.ID, "Bride's Family")
+	createGroupT(t, fx.photoGroups, ceremony.ID, "College Friends")
+	wedding := createGroupT(t, fx.photoGroups, reception.ID, "Wedding Party")
+
+	// The right count, but one id belongs to another event: rejected as a
+	// whole, so a reorder can never reach across events.
+	rec := do(t, e, http.MethodPost, "/api/admin/photo-groups/reorder", map[string]any{
+		"event_id":        ceremony.ID,
+		"photo_group_ids": []string{wedding.ID, family.ID},
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+
+	// The foreign group's position is untouched.
+	rec = do(t, e, http.MethodGet, "/api/admin/photo-groups?event_id="+reception.ID, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	resp := decodeList(t, rec)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, 1, resp.Items[0].SortOrder)
+}
+
 func TestAddGuestHandler_ReturnsRefreshedMembersAndIsIdempotent(t *testing.T) {
 	e, fx := newAPI(t)
 	event := createEventT(t, fx.events, "Ceremony")
@@ -348,6 +381,18 @@ func TestAddGuestHandler_ReturnsRefreshedMembersAndIsIdempotent(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Len(t, decodeGroup(t, rec).Guests, 1)
+
+	// A second member appends after the first: members keep insertion order
+	// (created_at, then guest id), so the list never reshuffles.
+	bob := addGuestT(t, fx.parties, p.ID, "Bob")
+	rec = do(t, e, http.MethodPost, "/api/admin/photo-groups/"+group.ID+"/guests", map[string]any{
+		"guest_id": bob.ID,
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+	resp = decodeGroup(t, rec)
+	require.Len(t, resp.Guests, 2)
+	assert.Equal(t, alice.ID, resp.Guests[0].GuestID)
+	assert.Equal(t, bob.ID, resp.Guests[1].GuestID)
 }
 
 func TestAddGuestHandler_UnknownGuestIs422(t *testing.T) {

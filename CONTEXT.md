@@ -92,7 +92,7 @@ _Avoid_: Photo shoot, album (the photo gallery is unrelated)
 - A **Placeholder Guest** carries **Placeholder Text**; the slot is hidden during **Info Collection**, and naming it (during RSVP, until the deadline) never erases the descriptor, so the slot stays identifiable and re-nameable.
 - A **Party** has one **Info Token** and one **RSVP Code**.
 - A **Guest** has one **Event RSVP** per **Event** they are invited to.
-- A **Photo Group** belongs to one **Event** and contains one or more **Guests**.
+- A **Photo Group** belongs to one **Event** and contains zero or more **Guests** (it may sit empty while the shot list is drafted, and an empty group still counts toward every party's "of N" total).
 - A **Guest** carries individual email, phone, dietary restrictions, and RSVP responses; the mailing **address** lives on the **Party**.
 - A **Party** becomes **Info Collection Requested** once its info link is sent; requesting resets its **Info Collection Status** to incomplete.
 - A **Party**'s **Info Collection Status** can be complete only when all required fields are present; until collection is requested it is derived from whether those fields are present.

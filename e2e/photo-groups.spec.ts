@@ -17,10 +17,11 @@ import { ADMIN_PASSWORD, ADMIN_USERNAME, loginAsAdmin } from "./auth";
 // the photo group management itself is driven through the UI, since that is
 // the surface under test. All entities carry a per-run unique suffix and
 // every assertion is scoped to those names, so this spec neither breaks nor
-// is broken by data from other runs in the shared e2e database. The event is
-// private with only this run's party invited, so its photo-group positions
-// are fully owned by this run (a public event would share its shot list with
-// other runs' groups).
+// is broken by data from other runs in the shared e2e database. Photo groups
+// belong to their event, and this run's event is uniquely named and created
+// fresh, so the positions asserted here are fully owned by this run; the
+// event is also private with only this run's party invited, keeping it off
+// other concurrent guests' schedules.
 
 const stamp = Date.now().toString(36);
 const partyName = `E2E Photo Party ${stamp}`;

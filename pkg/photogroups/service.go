@@ -52,11 +52,13 @@ func loadGroup(ctx context.Context, db bun.IDB, id string) (*models.PhotoGroup, 
 }
 
 // CreatePhotoGroup inserts a photo group at the end of its event's shooting
-// order (sort_order = current max + 1, so the first group is 1). The insert
-// and the max read share a transaction so two creates cannot claim the same
-// position. An unknown event_id is a 422: the payload names the event, so a
-// stale id is a payload problem. The payload is already bound, trimmed, and
-// validated by the binder.
+// order (sort_order = current max + 1, so the first group is 1). The max read
+// and the insert share a transaction, but under READ COMMITTED two concurrent
+// creates can still both read the same max and claim the same raw position;
+// that is harmless, because every read ranks by (sort_order, id) rather than
+// trusting the raw values. An unknown event_id is a 422: the payload names
+// the event, so a stale id is a payload problem. The payload is already
+// bound, trimmed, and validated by the binder.
 func (s *Service) CreatePhotoGroup(ctx context.Context, in CreatePhotoGroupPayload) (*models.PhotoGroup, error) {
 	now := time.Now()
 	group := &models.PhotoGroup{
@@ -110,11 +112,20 @@ func (s *Service) UpdatePhotoGroup(ctx context.Context, id string, in UpdatePhot
 	group.Name = in.Name
 	group.UpdatedAt = time.Now()
 
-	_, err = s.db.NewUpdate().Model(group).
+	res, err := s.db.NewUpdate().Model(group).
 		Column("name", "updated_at").
 		WherePK().Exec(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "update photo group")
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, errors.Wrap(err, "update photo group rows affected")
+	}
+	if n == 0 {
+		// The group vanished between the load and the write; a 200 carrying the
+		// "renamed" group would be a lie.
+		return nil, errcodes.NotFound("photo group")
 	}
 	return group, nil
 }
@@ -154,7 +165,7 @@ func (s *Service) ReorderPhotoGroups(ctx context.Context, in ReorderPhotoGroupsP
 		}
 
 		if !sameIDSet(in.PhotoGroupIDs, existingIDs) {
-			return errcodes.ValidationError("The new order must include each of the event's photo groups exactly once.")
+			return errcodes.ValidationError("The new order must list exactly the event's photo groups, each exactly once.")
 		}
 
 		now := time.Now()

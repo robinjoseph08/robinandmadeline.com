@@ -90,7 +90,8 @@ function makeGuest(overrides: Partial<GuestListItem>): GuestListItem {
 /**
  * Stubs adminRequest with the page's three reads (events, photo groups,
  * guests) and captures writes through the optional handler, which wins when
- * it returns a value.
+ * it returns a value. `groups` may be a function so a write can change what
+ * the next list refetch returns (pinning the mutation's cache invalidation).
  */
 function stubRequests({
   events = [makeEvent({})],
@@ -99,7 +100,7 @@ function stubRequests({
   onWrite,
 }: {
   events?: EventResponse[];
-  groups?: PhotoGroupResponse[];
+  groups?: PhotoGroupResponse[] | (() => PhotoGroupResponse[]);
   guests?: GuestListItem[];
   onWrite?: (path: string, options?: { method?: string }) => unknown;
 }) {
@@ -112,7 +113,8 @@ function stubRequests({
       return Promise.resolve({ items: events, total: events.length });
     }
     if (path === "/admin/photo-groups") {
-      return Promise.resolve({ items: groups, total: groups.length });
+      const items = typeof groups === "function" ? groups() : groups;
+      return Promise.resolve({ items, total: items.length });
     }
     if (path === "/admin/guests") {
       return Promise.resolve({ items: guests, total: guests.length });
@@ -166,14 +168,17 @@ describe("AdminPhotoGroups list", () => {
     renderPage();
 
     const ceremony = await screen.findByRole("region", { name: "Ceremony" });
-    expect(within(ceremony).getByText("Bride's Family")).toBeInTheDocument();
-    expect(within(ceremony).getByText("College Friends")).toBeInTheDocument();
-    // Positions in the shooting order.
-    expect(within(ceremony).getByText("Group 1 of 2")).toBeInTheDocument();
-    expect(within(ceremony).getByText("Group 2 of 2")).toBeInTheDocument();
-    // Members with their party.
+    // Rows render in shooting order, each position label tied to its row's
+    // group (not just present somewhere in the section).
+    const rows = within(ceremony).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("Bride's Family");
+    expect(rows[0]).toHaveTextContent("Group 1 of 2");
+    expect(rows[1]).toHaveTextContent("College Friends");
+    expect(rows[1]).toHaveTextContent("Group 2 of 2");
+    // Members with their party, inside their group's row.
     expect(
-      within(ceremony).getByText("Alice Smith (The Smiths)"),
+      within(rows[0]).getByText("Alice Smith (The Smiths)"),
     ).toBeInTheDocument();
     // The groupless event still renders, with its empty state.
     const reception = screen.getByRole("region", { name: "Reception" });
@@ -210,11 +215,13 @@ describe("AdminPhotoGroups create", () => {
 });
 
 describe("AdminPhotoGroups rename", () => {
-  it("PUTs the edited name", async () => {
-    const onWrite = vi
-      .fn()
-      .mockResolvedValue(makeGroup({ name: "Bride's Immediate Family" }));
-    stubRequests({ groups: [makeGroup({})], onWrite });
+  it("PUTs the edited name and shows the renamed group after the refetch", async () => {
+    let current = [makeGroup({})];
+    const onWrite = vi.fn().mockImplementation(() => {
+      current = [makeGroup({ name: "Bride's Immediate Family" })];
+      return makeGroup({ name: "Bride's Immediate Family" });
+    });
+    stubRequests({ groups: () => current, onWrite });
 
     const user = userEvent.setup();
     renderPage();
@@ -223,7 +230,7 @@ describe("AdminPhotoGroups rename", () => {
     await user.click(
       screen.getByRole("button", { name: "Rename Bride's Family" }),
     );
-    const input = screen.getByLabelText("Photo group name");
+    const input = screen.getByLabelText("Photo group name for Bride's Family");
     await user.clear(input);
     await user.type(input, "Bride's Immediate Family");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -234,13 +241,21 @@ describe("AdminPhotoGroups rename", () => {
         body: { name: "Bride's Immediate Family" },
       });
     });
+    // The mutation invalidates the list, so the refetched name renders.
+    expect(
+      await screen.findByText("Bride's Immediate Family"),
+    ).toBeInTheDocument();
   });
 });
 
 describe("AdminPhotoGroups delete", () => {
-  it("DELETEs the group after confirmation", async () => {
-    const onWrite = vi.fn().mockResolvedValue(undefined);
-    stubRequests({ groups: [makeGroup({})], onWrite });
+  it("DELETEs the group after confirmation and drops it after the refetch", async () => {
+    let current = [makeGroup({})];
+    const onWrite = vi.fn().mockImplementation(() => {
+      current = [];
+      return undefined;
+    });
+    stubRequests({ groups: () => current, onWrite });
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const user = userEvent.setup();
@@ -256,6 +271,9 @@ describe("AdminPhotoGroups delete", () => {
         method: "DELETE",
       });
     });
+    // The mutation invalidates the list, so the empty state replaces the row.
+    expect(await screen.findByText(/no photo groups yet/i)).toBeInTheDocument();
+    expect(screen.queryByText("Bride's Family")).not.toBeInTheDocument();
   });
 });
 
