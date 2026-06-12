@@ -343,3 +343,6 @@ tags
 /playwright-report/
 /test-results/
 /blob-report/
+
+# wktr
+.wktr.local.yaml
