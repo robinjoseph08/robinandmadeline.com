@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -61,9 +62,11 @@ type Config struct {
 
 	// CanonicalHost is the one hostname the site should be served from
 	// (robinandmadeline.com in production). When set, requests for any other
-	// host (the alternate domains, www variants) are 301-redirected to it,
-	// preserving path and query. Empty (the default) disables host redirects so
-	// localhost dev and tests are unaffected.
+	// host (the alternate domains, www variants) are permanently redirected to
+	// it, preserving path and query. It must be a bare hostname: a scheme,
+	// port, or path would make the redirect target unreachable or loop, so
+	// config loading rejects them. Empty (the default) disables host redirects
+	// so localhost dev and tests are unaffected.
 	CanonicalHost string
 
 	// TrustProxyHeaders controls whether the server believes proxy-forwarded
@@ -131,6 +134,16 @@ func New() (*Config, error) {
 		return nil, err
 	}
 
+	// A canonical host carrying a scheme, port, path, or whitespace would
+	// produce redirect targets that never match the incoming Host again (an
+	// infinite redirect loop for the whole site), so it fails loudly at boot
+	// instead: a bad deploy aborts on its health check and the previous
+	// release keeps serving.
+	canonicalHost := envStr("CANONICAL_HOST", "")
+	if strings.ContainsAny(canonicalHost, ":/ ") {
+		return nil, fmt.Errorf("invalid CANONICAL_HOST: %q must be a bare hostname without a scheme, port, or path", canonicalHost)
+	}
+
 	return &Config{
 		DatabaseURL:          envStr("DATABASE_URL", defaultDatabaseURL),
 		ServerPort:           port,
@@ -142,7 +155,7 @@ func New() (*Config, error) {
 		LoginRatePerMinute:   loginRatePerMinute,
 		LoginRateBurst:       loginRateBurst,
 		StaticDir:            envStr("STATIC_DIR", ""),
-		CanonicalHost:        envStr("CANONICAL_HOST", ""),
+		CanonicalHost:        canonicalHost,
 		TrustProxyHeaders:    trustProxyHeaders,
 	}, nil
 }

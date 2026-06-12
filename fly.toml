@@ -11,6 +11,10 @@
 
 app = "robinandmadeline"
 primary_region = "sjc"
+# Headroom over the server's 5s graceful drain (cmd/api shutdownTimeout):
+# Fly's default kill_timeout is also 5s, which would SIGKILL a busy machine
+# mid-drain before the DB close and final logs.
+kill_timeout = "10s"
 
 [build]
   dockerfile = "Dockerfile"
@@ -43,9 +47,9 @@ primary_region = "sjc"
   processes = ["app"]
 
   [[http_service.checks]]
-    # The liveness endpoint always answers 200 (even with the database down)
-    # and is exempt from the canonical-host redirect, so this check never
-    # flaps on Host or DB state.
+    # The liveness endpoint always answers 200 quickly (the DB ping is
+    # bounded and only informs the body) and is exempt from the canonical-host
+    # redirect, so this check never flaps on Host or DB state.
     interval = "30s"
     timeout = "5s"
     grace_period = "10s"

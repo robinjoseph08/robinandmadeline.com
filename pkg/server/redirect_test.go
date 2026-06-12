@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
@@ -77,6 +78,23 @@ func TestHostRedirect_AlternateDomainsRedirectToCanonical(t *testing.T) {
 			target:       "/",
 			wantLocation: "https://robinandmadeline.com/",
 		},
+		{
+			// Only /api/health is exempt; every other API path consolidates
+			// onto the canonical host like the rest of the site.
+			name:         "non-health API path redirects",
+			host:         "robeline.co",
+			target:       "/api/schedule",
+			wantLocation: "https://robinandmadeline.com/api/schedule",
+		},
+		{
+			// The Location must keep the request's percent-encoding: decoding
+			// %3F into a literal "?" would truncate the path into a bogus
+			// query, and %0d%0a would put raw CRLF into the header.
+			name:         "encoded path segments stay encoded",
+			host:         "madelineandrobin.com",
+			target:       "/a%20b/sched%3Fule?x=1",
+			wantLocation: "https://robinandmadeline.com/a%20b/sched%3Fule?x=1",
+		},
 	}
 
 	for _, tt := range tests {
@@ -117,4 +135,38 @@ func TestHostRedirect_HealthCheckIsExempt(t *testing.T) {
 	// liveness endpoint must answer 200, not bounce them through a redirect.
 	rec := getWithHost(srv.Handler, "some-machine.internal:8080", "/api/health")
 	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestHostRedirect_NonGETMethodsUse308(t *testing.T) {
+	srv := server.New(newCanonicalHostConfig(t), nil)
+
+	// A 301 would let the client degrade a redirected POST to a GET, silently
+	// dropping the write; 308 requires the method and body to be kept.
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/admin/login", strings.NewReader(`{}`))
+	req.Host = "robeline.co"
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusPermanentRedirect, rec.Code)
+	assert.Equal(t, "https://robinandmadeline.com/api/auth/admin/login", rec.Header().Get("Location"))
+}
+
+func TestHostRedirect_WinsOverStaticServing(t *testing.T) {
+	// Production runs with both CANONICAL_HOST and STATIC_DIR set; the
+	// redirect must run before static serving or alternate domains would
+	// serve the site directly instead of consolidating onto the canonical
+	// host.
+	cfg := newCanonicalHostConfig(t)
+	cfg.StaticDir = newStaticDir(t)
+	srv := server.New(cfg, nil)
+
+	redirected := getWithHost(srv.Handler, "www.robinandmadeline.com", "/")
+	require.Equal(t, http.StatusMovedPermanently, redirected.Code)
+	assert.Equal(t, "https://robinandmadeline.com/", redirected.Header().Get("Location"))
+
+	// The canonical host itself is served, not redirected.
+	served := getWithHost(srv.Handler, "robinandmadeline.com", "/")
+	require.Equal(t, http.StatusOK, served.Code)
+	assert.Equal(t, "<html>spa shell</html>", served.Body.String())
 }

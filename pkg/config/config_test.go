@@ -112,4 +112,42 @@ func TestNew(t *testing.T) {
 		_, err := config.New()
 		assert.Error(t, err)
 	})
+
+	t.Run("accepts the common boolean spellings for TRUST_PROXY_HEADERS", func(t *testing.T) {
+		tests := []struct {
+			value string
+			want  bool
+		}{
+			{value: "1", want: true},
+			{value: "0", want: false},
+			{value: "false", want: false},
+		}
+		for _, tt := range tests {
+			t.Run(tt.value, func(t *testing.T) {
+				t.Setenv("TRUST_PROXY_HEADERS", tt.value)
+
+				cfg, err := config.New()
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, cfg.TrustProxyHeaders)
+			})
+		}
+	})
+
+	t.Run("errors when CANONICAL_HOST is not a bare hostname", func(t *testing.T) {
+		// A scheme, port, or path in the canonical host would build redirect
+		// targets that can never match the incoming Host again, looping the
+		// whole site; config loading must reject them at boot.
+		for _, value := range []string{
+			"https://robinandmadeline.com",
+			"robinandmadeline.com:443",
+			"robinandmadeline.com/path",
+		} {
+			t.Run(value, func(t *testing.T) {
+				t.Setenv("CANONICAL_HOST", value)
+
+				_, err := config.New()
+				assert.Error(t, err)
+			})
+		}
+	})
 }

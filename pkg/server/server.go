@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -154,7 +155,14 @@ func registerHealth(e *echo.Echo, db *bun.DB) {
 	e.GET(healthPath, func(c echo.Context) error {
 		dbStatus := "unknown"
 		if db != nil {
-			if err := db.PingContext(c.Request().Context()); err != nil {
+			// The ping is bounded so the 200 always arrives fast: a cold or
+			// unreachable database (Neon waking from idle) reports "down" in the
+			// body instead of stalling the response past Fly's check timeout,
+			// which would mark the only machine unhealthy and take the whole
+			// site down with it.
+			pingCtx, cancel := context.WithTimeout(c.Request().Context(), time.Second)
+			defer cancel()
+			if err := db.PingContext(pingCtx); err != nil {
 				dbStatus = "down"
 			} else {
 				dbStatus = "up"

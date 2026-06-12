@@ -36,7 +36,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN corepack enable && corepack install
 
 # Full install (including devDependencies): `pnpm build` runs `tsc -b`, which
-# type-checks the app and test projects exactly like CI before bundling.
+# type-checks all referenced projects (app, node, test) exactly like CI
+# before bundling.
 RUN pnpm install --frozen-lockfile
 
 COPY index.html vite.config.ts vitest.config.ts vitest.setup.ts ./

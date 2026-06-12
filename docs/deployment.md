@@ -1,9 +1,9 @@
 # Deployment runbook
 
 Production runs as a single Fly.io app: one Go binary serves the API and the
-built React SPA, backed by Neon Postgres, with Cloudflare providing DNS only
-(ADR 0001). This document covers what is already wired up in the repo and the
-one-time account setup a human has to perform.
+built React SPA, backed by Neon Postgres (ADR 0001), with Cloudflare
+providing DNS only. This document covers what is already wired up in the repo
+and the one-time account setup a human has to perform.
 
 ## Already done in this repo
 
@@ -20,8 +20,11 @@ one-time account setup a human has to perform.
   release keeps serving. The server never migrates at startup.
 - Host redirects in Go: when `CANONICAL_HOST` is set (it is, in `fly.toml`),
   any request for another host (madelineandrobin.com, robeline.co, www
-  variants) gets a 301 to `https://robinandmadeline.com` preserving path and
-  query. `/api/health` is exempt so Fly's checks pass on any Host.
+  variants) gets a permanent redirect (301, or 308 for non-GET methods) to
+  `https://robinandmadeline.com` preserving path and query. `/api/health` is
+  exempt so Fly's checks pass on any Host. The value must be a bare hostname
+  (no scheme, port, or path); config loading rejects anything else at boot to
+  rule out redirect loops.
 - Real client IPs behind Fly: `TRUST_PROXY_HEADERS=true` makes the login rate
   limiter (ADR 0006) key on `Fly-Client-IP` (falling back to
   `X-Forwarded-For`) instead of the proxy's address. Leave it unset anywhere

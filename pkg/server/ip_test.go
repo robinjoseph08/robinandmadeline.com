@@ -101,6 +101,24 @@ func TestRateLimiterIP_FallsBackToXFFWhenTrusted(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, sameClient)
 }
 
+func TestRateLimiterIP_FlyClientIPWinsOverXFF(t *testing.T) {
+	srv := server.New(newRateLimitedConfig(t, true), nil)
+
+	// When both headers arrive, Fly-Client-IP is authoritative: rotating
+	// X-Forwarded-For values must not mint fresh buckets for the same client.
+	first := postLogin(t, srv.Handler, "", map[string]string{
+		"Fly-Client-IP":   "203.0.113.1",
+		"X-Forwarded-For": "198.51.100.1",
+	})
+	require.Equal(t, http.StatusUnauthorized, first)
+
+	second := postLogin(t, srv.Handler, "", map[string]string{
+		"Fly-Client-IP":   "203.0.113.1",
+		"X-Forwarded-For": "198.51.100.2",
+	})
+	require.Equal(t, http.StatusTooManyRequests, second)
+}
+
 func TestRateLimiterIP_UnparseableFlyClientIPFallsThrough(t *testing.T) {
 	srv := server.New(newRateLimitedConfig(t, true), nil)
 
