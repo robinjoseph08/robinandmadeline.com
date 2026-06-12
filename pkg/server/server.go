@@ -17,6 +17,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/games"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/info"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/photogroups"
@@ -103,6 +104,11 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	// calls it, so there is no JWT; the HMAC signature on each payload is the
 	// authentication (an unconfigured signing key rejects everything).
 	emails.RegisterWebhookRoutes(api, emails.NewWebhook(db, cfg.MailgunWebhookSigningKey))
+	// The games endpoints mount on the open group too: the crossword requires
+	// no authentication, the session's UUID id is the bearer token for writes,
+	// and the session routes sit behind optional guest auth so a signed-in
+	// guest's party is attached to their solve opportunistically.
+	games.RegisterRoutes(api, authMiddleware, games.NewService(db))
 
 	return &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.ServerPort),
