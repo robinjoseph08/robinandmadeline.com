@@ -1,5 +1,5 @@
 import { Check, ChevronsUpDown, X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   Command,
@@ -61,6 +61,7 @@ export function Combobox({
   align = "start",
 }: ComboboxProps) {
   const [open, setOpen] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
   const selected = options.find((option) => option.value === value);
   const showClear = clearable && selected !== undefined;
 
@@ -122,8 +123,20 @@ export function Combobox({
         className={cn("w-48 p-0", contentClassName)}
       >
         <Command>
-          <CommandInput placeholder={searchPlaceholder} />
-          <CommandList>
+          {/* cmdk 1.1.x has a scroll race on search changes: it re-sorts the
+              DOM synchronously and scrolls the STALE selected item (which the
+              sort just pushed toward the bottom) into view, then moves the
+              selection to the new top match without correcting the scroll,
+              leaving the best match scrolled out of sight. Reset the list to
+              the top after cmdk's stale scroll (hence the rAF: it must run
+              after that scroll, not before). */}
+          <CommandInput
+            onValueChange={() =>
+              requestAnimationFrame(() => listRef.current?.scrollTo({ top: 0 }))
+            }
+            placeholder={searchPlaceholder}
+          />
+          <CommandList ref={listRef}>
             <CommandEmpty>{emptyText}</CommandEmpty>
             <CommandGroup>
               {options.map((option) => (
