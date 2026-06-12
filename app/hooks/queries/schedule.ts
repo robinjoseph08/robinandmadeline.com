@@ -30,8 +30,9 @@ export interface ScheduleView {
 async function fetchSchedule(): Promise<ScheduleView> {
   const token = readGuestToken();
   // Blank counts as absent: apiRequest only attaches a truthy token, so a
-  // stored "" would otherwise take this branch, fetch anonymously, and label
-  // the result authenticated forever (a 200, so no 401 ever clears it).
+  // stored "" would otherwise skip this early return, fetch header-less
+  // through the authenticated branch, and label the public view authenticated
+  // forever (a 200, so no 401 ever clears it).
   if (!token) {
     return {
       schedule: await apiRequest<ListScheduleEventsResponse>("/events"),

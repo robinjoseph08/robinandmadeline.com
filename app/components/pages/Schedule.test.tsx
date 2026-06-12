@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -28,13 +28,14 @@ function renderSchedule() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/schedule"]}>
         <Schedule />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { client, ...view };
 }
 
 /** Mocks fetch to return the given schedule body for GET /api/events. */
@@ -256,6 +257,50 @@ describe("Schedule", () => {
     expect(
       await screen.findByText(/schedule is still coming together/i),
     ).toBeInTheDocument();
+  });
+
+  it("keeps showing the cached schedule when a background refetch fails", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: [makeEvent()], total: 1 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "internal_server_error",
+              message: "Something went wrong.",
+              status_code: 500,
+            },
+          }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { client } = renderSchedule();
+
+    await screen.findByRole("article", { name: "Reception" });
+    await act(async () => {
+      await client.refetchQueries();
+      // React Query batches observer notifications on a timer, so give the
+      // error state a macrotask to reach the component before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // The refetch really failed and the component saw it...
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(client.getQueryCache().getAll()[0]?.state.status).toBe("error");
+    // ...but the visitor keeps the schedule they were already reading; the
+    // error page is only for having nothing to show.
+    expect(
+      screen.getByRole("article", { name: "Reception" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("shows an error message when the schedule fails to load", async () => {
