@@ -177,6 +177,17 @@ func TestImport_FailsCleanlyWhenPartiesAlreadyExist(t *testing.T) {
 func TestImport_TruncateWipesExistingDataFirst(t *testing.T) {
 	db := newDB(t)
 	seedParty(t, db, "Stale")
+	// A solve session affiliated with the stale party: the wipe must detach
+	// it (party_id is ON DELETE SET NULL), never delete the games history.
+	session := &models.GameSession{
+		ID:         "0197fc00-0000-7000-8000-00000000000a",
+		PuzzleID:   "wedding-mini-v1",
+		PartyID:    pointerutil.String("0197fc00-0000-7000-8000-000000000001"),
+		IPAddress:  "203.0.113.7",
+		Difficulty: models.GameDifficultyEasy,
+	}
+	_, err := db.NewInsert().Model(session).Exec(ctx())
+	require.NoError(t, err)
 	plan := parseT(t,
 		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,1,,,,,,,,,No,Yes,`,
 	)
@@ -188,6 +199,10 @@ func TestImport_TruncateWipesExistingDataFirst(t *testing.T) {
 	parties := loadParties(t, db)
 	require.Len(t, parties, 1)
 	require.Equal(t, "Brown", parties[0].Name)
+
+	survived := new(models.GameSession)
+	require.NoError(t, db.NewSelect().Model(survived).Where("gs.id = ?", session.ID).Scan(ctx()))
+	require.Nil(t, survived.PartyID, "the session survives the wipe, detached from the deleted party")
 }
 
 func TestImport_TruncateRefusesAnEmptyPlan(t *testing.T) {

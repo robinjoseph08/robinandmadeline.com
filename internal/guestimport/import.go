@@ -16,12 +16,12 @@ import (
 
 // Options controls how Import treats existing data.
 type Options struct {
-	// Truncate wipes the parties and guests tables, along with the guests'
-	// event_rsvps rows (inside the import's own transaction), before
-	// inserting, supporting iterate-and-re-run during setup. Events themselves
-	// are kept. Without it, Import refuses to run against a database that
-	// already has parties, so running the script twice cannot create
-	// duplicates.
+	// Truncate wipes every party (cascading to its guests and their
+	// event_rsvps rows, and detaching solve sessions) inside the import's own
+	// transaction before inserting, supporting iterate-and-re-run during
+	// setup. Events themselves are kept. Without it, Import refuses to run
+	// against a database that already has parties, so running the script
+	// twice cannot create duplicates.
 	Truncate bool
 }
 
@@ -59,13 +59,19 @@ func Import(ctx context.Context, db *bun.DB, plan *Plan, opts Options) (*Summary
 			if len(plan.Parties) == 0 {
 				return errors.New("refusing to truncate: the parsed plan has no parties to import")
 			}
-			// Every table is named explicitly (rather than CASCADE) so that if a
-			// future table ever references parties, this stale script fails loudly
-			// instead of silently wiping it. event_rsvps and photo_group_assignments
-			// go with the guests that own the rows; events and photo_groups
-			// themselves survive a re-import.
-			if _, err := tx.ExecContext(ctx, "TRUNCATE TABLE parties, guests, event_rsvps, photo_group_assignments"); err != nil {
-				return errors.Wrap(err, "truncate parties, guests, event rsvps, and photo group assignments")
+			// The wipe is DELETE rather than TRUNCATE so each referencing table's
+			// declared ON DELETE policy decides its fate: guests cascade away with
+			// their parties (and their Event RSVPs and photo group assignments
+			// cascade away with them in turn), while game_sessions rows survive
+			// with party_id set NULL (solve history outlives the guest list,
+			// exactly as deleting each party by hand would leave it). A future
+			// table referencing parties with the default NO ACTION still fails
+			// loudly here until its policy is chosen; TRUNCATE, by contrast,
+			// refuses to run at all once any outside table holds the FK. Events
+			// and photo groups themselves survive a re-import, and wedding-scale
+			// row counts make DELETE's row-by-row cost moot.
+			if _, err := tx.ExecContext(ctx, "DELETE FROM parties"); err != nil {
+				return errors.Wrap(err, "delete existing parties")
 			}
 		} else {
 			count, err := tx.NewSelect().Model((*models.Party)(nil)).Count(ctx)

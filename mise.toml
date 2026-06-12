@@ -58,7 +58,7 @@ run = "go run ./cmd/migrations status"
 [tasks.tygo]
 description = "Generate TypeScript types from Go structs"
 run = "tygo generate"
-sources = ["tygo.yaml", "pkg/models/*.go", "pkg/parties/types.go", "pkg/events/types.go", "pkg/photogroups/types.go", "pkg/rsvps/types.go", "pkg/info/types.go", "pkg/errcodes/errors.go", "pkg/auth/types.go", "pkg/server/types.go"]
+sources = ["tygo.yaml", "pkg/models/*.go", "pkg/parties/types.go", "pkg/events/types.go", "pkg/photogroups/types.go", "pkg/rsvps/types.go", "pkg/info/types.go", "pkg/games/types.go", "pkg/errcodes/errors.go", "pkg/auth/types.go", "pkg/server/types.go"]
 outputs = ["app/types/generated/**/*.ts"]
 
 # === Linting ===
