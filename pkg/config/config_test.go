@@ -79,4 +79,37 @@ func TestNew(t *testing.T) {
 		_, err := config.New()
 		assert.Error(t, err)
 	})
+
+	t.Run("deployment settings default off so local dev is unaffected", func(t *testing.T) {
+		cfg, err := config.New()
+		require.NoError(t, err)
+
+		// No static dir: the Vite dev server serves the frontend in dev.
+		assert.Empty(t, cfg.StaticDir)
+		// No canonical host: no host redirects on localhost.
+		assert.Empty(t, cfg.CanonicalHost)
+		// Direct connections only: forwarded-IP headers are spoofable without a
+		// trusted proxy in front, so they are ignored by default.
+		assert.False(t, cfg.TrustProxyHeaders)
+	})
+
+	t.Run("reads deployment settings from environment", func(t *testing.T) {
+		t.Setenv("STATIC_DIR", "/app/public")
+		t.Setenv("CANONICAL_HOST", "robinandmadeline.com")
+		t.Setenv("TRUST_PROXY_HEADERS", "true")
+
+		cfg, err := config.New()
+		require.NoError(t, err)
+
+		assert.Equal(t, "/app/public", cfg.StaticDir)
+		assert.Equal(t, "robinandmadeline.com", cfg.CanonicalHost)
+		assert.True(t, cfg.TrustProxyHeaders)
+	})
+
+	t.Run("errors on malformed TRUST_PROXY_HEADERS", func(t *testing.T) {
+		t.Setenv("TRUST_PROXY_HEADERS", "not-a-bool")
+
+		_, err := config.New()
+		assert.Error(t, err)
+	})
 }

@@ -1,0 +1,58 @@
+# Fly.io app configuration for robinandmadeline.com.
+#
+# The app scales to zero (ADR 0001): Fly's proxy stops the machine when idle
+# and starts it on the next request, which the sub-second Go cold start makes
+# invisible. Keep the app at a single machine (deploy with --ha=false): the
+# in-memory login rate limiter assumes one process (ADR 0006).
+#
+# Secrets (DATABASE_URL, ADMIN_USERNAME, ADMIN_PASSWORD, JWT_SECRET) are set
+# via `fly secrets set`, never here. See docs/deployment.md for the full
+# runbook.
+
+app = "robinandmadeline"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  # Migrations run once per deploy in a temporary machine before any new
+  # machine takes traffic; a failure aborts the deploy and leaves the previous
+  # release serving (ADR 0007). The server never migrates at startup.
+  release_command = "/app/migrations migrate"
+
+[env]
+  # Non-secret config only. PORT, LOG_FORMAT, and STATIC_DIR are also baked
+  # into the image; CANONICAL_HOST arms the host-redirect middleware and
+  # TRUST_PROXY_HEADERS makes the rate limiter key on Fly's forwarded
+  # client-IP header instead of the proxy's address.
+  PORT = "8080"
+  LOG_FORMAT = "json"
+  STATIC_DIR = "/app/public"
+  CANONICAL_HOST = "robinandmadeline.com"
+  TRUST_PROXY_HEADERS = "true"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Scale to zero: stop the machine when idle, start it on demand, and keep
+  # none running between visits (ADR 0001).
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    # The liveness endpoint always answers 200 (even with the database down)
+    # and is exempt from the canonical-host redirect, so this check never
+    # flaps on Host or DB state.
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "256mb"

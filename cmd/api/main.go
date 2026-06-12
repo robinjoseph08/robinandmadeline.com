@@ -34,15 +34,21 @@ func main() {
 	if err != nil {
 		log.Err(err).Fatal("database error")
 	}
-	// A failed ping is logged but non-fatal: the server should still start so
-	// the health endpoint is reachable and the DB can recover independently.
-	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
-	if err := database.Ping(pingCtx, db); err != nil {
-		log.Err(err).Warn("database not reachable at startup")
-	} else {
-		log.Info("database connected")
-	}
-	pingCancel()
+	// The startup connectivity probe is informational only, and it runs in the
+	// background: a failed ping is logged but non-fatal (the health endpoint
+	// stays reachable and the DB recovers independently), and keeping it off
+	// the startup path means a cold Neon database never delays the listener,
+	// preserving the sub-second cold start that scale-to-zero relies on
+	// (ADR 0001).
+	go func() {
+		pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer pingCancel()
+		if err := database.Ping(pingCtx, db); err != nil {
+			log.Err(err).Warn("database not reachable at startup")
+		} else {
+			log.Info("database connected")
+		}
+	}()
 
 	// The server does NOT migrate at startup. Production runs migrations via the
 	// Fly release_command (`cmd/migrations migrate`) before the new release takes

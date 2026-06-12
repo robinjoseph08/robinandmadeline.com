@@ -30,6 +30,11 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	e := echo.New()
 	e.HideBanner = true
 
+	// Resolve client IPs explicitly (never Echo's spoofable default) so the
+	// per-IP login rate limiter keys on the real client: the socket address
+	// when hit directly, Fly's forwarded header behind the production proxy.
+	e.IPExtractor = ipExtractor(cfg.TrustProxyHeaders)
+
 	// Custom binder: a single c.Bind(&payload) binds, runs mold modifiers,
 	// applies creasty defaults, and validates from struct tags, returning errcodes
 	// failures. binder.New only fails if a static validator fails to register,
@@ -47,17 +52,34 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 
 	// golib's logger.Middleware injects a request-scoped logger (with a request
 	// ID) into the request context and logs request metadata; recovery.Middleware
-	// funnels panics into the error handler as 500s. CORS stays echo's. Order
-	// mirrors the shisho reference: logger, recovery, CORS.
+	// funnels panics into the error handler as 500s. CORS stays echo's. The
+	// base order mirrors the shisho reference (logger, recovery, CORS), with
+	// the production-only host redirect and SPA middlewares slotted in.
 	e.Use(logger.Middleware())
 	e.Use(recovery.Middleware())
+
+	// In production every domain (the alternate apexes, www variants) resolves
+	// to this one app and the server consolidates them onto the canonical host
+	// with 301s. Dev leaves CanonicalHost empty and is never redirected. After
+	// logger/recovery so redirects are logged.
+	if cfg.CanonicalHost != "" {
+		e.Use(canonicalHostMiddleware(cfg.CanonicalHost))
+	}
+
 	e.Use(middleware.CORS())
+
+	// In production the binary serves the built SPA itself (ADR 0001: one
+	// scale-to-zero machine serves everything). Dev leaves StaticDir empty and
+	// runs the Vite dev server instead.
+	if cfg.StaticDir != "" {
+		e.Use(staticMiddleware(cfg.StaticDir))
+	}
 
 	authService := auth.NewService(cfg.JWTSecret, cfg.AdminSessionDuration, cfg.GuestSessionDuration, cfg.AdminUsername, cfg.AdminPassword)
 	authMiddleware := auth.NewMiddleware(authService)
 
 	api := e.Group("/api")
-	registerHealth(api, db)
+	registerHealth(e, db)
 	// Both login endpoints share one per-IP rate limiter (ADR 0006), the
 	// compensating control for the low-entropy RSVP codes.
 	auth.RegisterRoutes(api, authService, db, auth.RateLimit{
@@ -118,11 +140,18 @@ func registerGuest(g *echo.Group, mw *auth.Middleware, db *bun.DB) {
 	photogroups.RegisterGuestRoutes(guest, photogroups.NewService(db))
 }
 
+// healthPath is the liveness endpoint's absolute path. It is a constant
+// shared with the canonical-host redirect middleware, which exempts it so
+// Fly's health checks (which arrive with an internal Host) get their 200.
+const healthPath = "/api/health"
+
 // registerHealth mounts the liveness endpoint. It reports database
 // connectivity in the body but always returns 200 so the route stays a
-// reliable liveness signal even when the DB is unavailable.
-func registerHealth(g *echo.Group, db *bun.DB) {
-	g.GET("/health", func(c echo.Context) error {
+// reliable liveness signal even when the DB is unavailable. It registers on
+// the echo instance directly (with healthPath absolute) so the path has a
+// single definition for both routing and the redirect exemption.
+func registerHealth(e *echo.Echo, db *bun.DB) {
+	e.GET(healthPath, func(c echo.Context) error {
 		dbStatus := "unknown"
 		if db != nil {
 			if err := db.PingContext(c.Request().Context()); err != nil {

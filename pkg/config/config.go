@@ -51,6 +51,29 @@ type Config struct {
 	// before the per-minute rate applies, absorbing a fumbled code or two
 	// without throttling a legitimate guest.
 	LoginRateBurst int
+
+	// StaticDir is the directory holding the built frontend (the Vite bundle)
+	// for the server to serve with an SPA fallback. Empty (the default) disables
+	// static serving entirely: in local dev the Vite dev server serves the
+	// frontend and proxies /api to this server. Production sets it to the
+	// bundle directory baked into the Docker image.
+	StaticDir string
+
+	// CanonicalHost is the one hostname the site should be served from
+	// (robinandmadeline.com in production). When set, requests for any other
+	// host (the alternate domains, www variants) are 301-redirected to it,
+	// preserving path and query. Empty (the default) disables host redirects so
+	// localhost dev and tests are unaffected.
+	CanonicalHost string
+
+	// TrustProxyHeaders controls whether the server believes proxy-forwarded
+	// client-IP headers (Fly-Client-IP, X-Forwarded-For) when resolving the
+	// client IP that keys the login rate limiter (ADR 0006). Only enable this
+	// behind a trusted proxy (Fly's edge): on a direct connection these headers
+	// are attacker-controlled and trusting them would let a brute-forcer dodge
+	// the per-IP limit. Defaults to false, so dev and tests key on the socket
+	// peer address.
+	TrustProxyHeaders bool
 }
 
 // Default values used for local development when an env var is unset.
@@ -103,6 +126,11 @@ func New() (*Config, error) {
 		return nil, err
 	}
 
+	trustProxyHeaders, err := envBool("TRUST_PROXY_HEADERS", false)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		DatabaseURL:          envStr("DATABASE_URL", defaultDatabaseURL),
 		ServerPort:           port,
@@ -113,6 +141,9 @@ func New() (*Config, error) {
 		GuestSessionDuration: guestSessionDuration,
 		LoginRatePerMinute:   loginRatePerMinute,
 		LoginRateBurst:       loginRateBurst,
+		StaticDir:            envStr("STATIC_DIR", ""),
+		CanonicalHost:        envStr("CANONICAL_HOST", ""),
+		TrustProxyHeaders:    trustProxyHeaders,
 	}, nil
 }
 
@@ -136,6 +167,21 @@ func envInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("invalid %s: %q is not a valid integer: %w", key, v, err)
 	}
 	return n, nil
+}
+
+// envBool returns the environment variable parsed as a bool ("true"/"false",
+// "1"/"0") or a fallback when unset/empty. A malformed value is a
+// configuration error.
+func envBool(key string, fallback bool) (bool, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("invalid %s: %q is not a valid boolean: %w", key, v, err)
+	}
+	return b, nil
 }
 
 // envFloat returns the environment variable parsed as a float64 or a fallback
