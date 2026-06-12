@@ -38,10 +38,13 @@ const ClueList = memo(function ClueList({
 
   // Auto-scroll the active clue (selected, or crossing for the other
   // direction's list) into view as the selection moves through the grid.
+  // The clue set is a dependency too: swapping it (a difficulty switch)
+  // re-flows item heights, which can push the active clue out of the
+  // scrollport even though its number didn't change.
   const activeNumber = selectedNumber ?? crossingNumber;
   useEffect(() => {
     const list = listRef.current;
-    if (activeNumber === undefined || !list) {
+    if (activeNumber === undefined || !(activeNumber in clues) || !list) {
       return;
     }
     const item = list.querySelector(`[data-clue-number="${activeNumber}"]`);
@@ -64,7 +67,7 @@ const ClueList = memo(function ClueList({
     if (delta !== 0) {
       list.scrollTo({ behavior: "smooth", top: list.scrollTop + delta });
     }
-  }, [activeNumber]);
+  }, [activeNumber, clues]);
 
   return (
     <section>

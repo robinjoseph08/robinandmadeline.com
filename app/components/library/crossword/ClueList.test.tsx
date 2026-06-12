@@ -101,6 +101,22 @@ describe("ClueList", () => {
     expect(scrollTo).not.toHaveBeenCalled();
   });
 
+  it("re-measures when the clue set changes, keeping the active clue in view across a difficulty switch", () => {
+    const { rerenderWith, scrollTo } = renderWithGeometry("5", rect(150, 170));
+
+    rerenderWith({ selectedNumber: "5" });
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+
+    // Swapping clue text (same numbers, as a difficulty switch does)
+    // re-flows item heights, so the effect must re-run against the new
+    // geometry even though the active number is unchanged.
+    rerenderWith({
+      clues: { ...CLUES, "1": "Rewritten first clue" },
+      selectedNumber: "5",
+    });
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+  });
+
   it("stays memoized so the page's unrelated re-renders skip unchanged lists", () => {
     // The typing-performance work hangs off this export being memo-wrapped;
     // render counting cannot see it from the page (the component boundary is
