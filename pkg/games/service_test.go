@@ -363,6 +363,78 @@ func TestLeaderboard_ReturnsOnlyPostedEntriesFastestFirst(t *testing.T) {
 	assert.False(t, entries[0].CompletedAt.IsZero())
 }
 
+func TestLeaderboard_FiltersByDifficulty(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	// Published solves across every difficulty, seeded out of pace order so the
+	// fastest-first ordering is proven within the filtered set, not inherited
+	// from insertion order.
+	for _, fixture := range []struct {
+		name       string
+		difficulty string
+		elapsed    int
+	}{
+		{"EasySlow", models.GameDifficultyEasy, 90000},
+		{"HardFast", models.GameDifficultyHard, 20000},
+		{"EasyFast", models.GameDifficultyEasy, 40000},
+		{"MediumOnly", models.GameDifficultyMedium, 60000},
+		{"HardSlow", models.GameDifficultyHard, 70000},
+	} {
+		session := completeSessionT(t, svc, fixture.difficulty, fixture.elapsed)
+		_, err := svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: fixture.name}, "")
+		require.NoError(t, err)
+	}
+	// A faster easy solve on another puzzle: the difficulty filter must not
+	// loosen the puzzle scoping.
+	other, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
+		PuzzleID:   "wedding-full-v1",
+		Difficulty: models.GameDifficultyEasy,
+	}, "", "203.0.113.7")
+	require.NoError(t, err)
+	_, err = update(svc, other.ID, 500, nil, true)
+	require.NoError(t, err)
+	_, err = svc.PostToLeaderboard(ctx(), other.ID, games.PostLeaderboardPayload{DisplayName: "Dan"}, "")
+	require.NoError(t, err)
+
+	entries, total, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:   "wedding-mini-v1",
+		Difficulty: pointerutil.String(models.GameDifficultyEasy),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, total, "total counts only the filtered difficulty")
+	require.Len(t, entries, 2)
+	assert.Equal(t, "EasyFast", entries[0].DisplayName)
+	assert.Equal(t, "EasySlow", entries[1].DisplayName)
+	for _, entry := range entries {
+		assert.Equal(t, models.GameDifficultyEasy, entry.Difficulty)
+	}
+
+	entries, total, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:   "wedding-mini-v1",
+		Difficulty: pointerutil.String(models.GameDifficultyMedium),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "MediumOnly", entries[0].DisplayName)
+
+	entries, total, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:   "wedding-mini-v1",
+		Difficulty: pointerutil.String(models.GameDifficultyHard),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "HardFast", entries[0].DisplayName)
+	assert.Equal(t, "HardSlow", entries[1].DisplayName)
+
+	// An absent filter keeps the original behavior: every difficulty, one board.
+	entries, total, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
+	require.NoError(t, err)
+	assert.Equal(t, 5, total)
+	require.Len(t, entries, 5)
+}
+
 func TestLeaderboard_BreaksElapsedTiesByEarlierCompletion(t *testing.T) {
 	svc, _, db := newServices(t)
 
@@ -388,17 +460,21 @@ func TestLeaderboard_BreaksElapsedTiesByEarlierCompletion(t *testing.T) {
 func TestLeaderboard_CapsItemsButCountsEveryEntry(t *testing.T) {
 	svc, _, db := newServices(t)
 
-	// Bulk-insert 105 published solves directly; driving each through the API
-	// surface would dominate the test's runtime.
+	// Bulk-insert 105 published easy solves plus 3 faster medium ones directly;
+	// driving each through the API surface would dominate the test's runtime.
 	now := time.Now()
-	rows := make([]*models.GameSession, 0, 105)
-	for i := 0; i < 105; i++ {
+	rows := make([]*models.GameSession, 0, 108)
+	for i := 0; i < 108; i++ {
+		difficulty, elapsed := models.GameDifficultyEasy, 1000+i
+		if i >= 105 {
+			difficulty, elapsed = models.GameDifficultyMedium, 500+(i-105)
+		}
 		rows = append(rows, &models.GameSession{
 			ID:          "00000000-0000-4000-8000-" + fmtSerial(i),
 			PuzzleID:    "wedding-mini-v1",
 			IPAddress:   "203.0.113.7",
-			Difficulty:  models.GameDifficultyEasy,
-			ElapsedMS:   int64(1000 + i),
+			Difficulty:  difficulty,
+			ElapsedMS:   int64(elapsed),
 			CompletedAt: pointerutil.Time(now),
 			DisplayName: pointerutil.String("Solver"),
 			CreatedAt:   now,
@@ -410,10 +486,31 @@ func TestLeaderboard_CapsItemsButCountsEveryEntry(t *testing.T) {
 
 	entries, total, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
 	require.NoError(t, err)
-	assert.Equal(t, 105, total, "total counts past the cap")
+	assert.Equal(t, 108, total, "total counts past the cap")
 	require.Len(t, entries, 100, "items are capped at the top 100")
-	assert.EqualValues(t, 1000, entries[0].ElapsedMS, "the cap keeps the fastest entries")
+	assert.EqualValues(t, 500, entries[0].ElapsedMS, "the cap keeps the fastest entries")
+
+	// The cap and the total both apply within a filtered difficulty: easy still
+	// fills 100 items even though three faster medium entries exist, and the
+	// medium board ignores the 105 easy rows entirely.
+	entries, total, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:   "wedding-mini-v1",
+		Difficulty: pointerutil.String(models.GameDifficultyEasy),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 105, total, "the filtered total counts only easy entries, past the cap")
+	require.Len(t, entries, 100, "the cap applies within the difficulty")
+	assert.EqualValues(t, 1000, entries[0].ElapsedMS, "the cap keeps the fastest easy entries")
 	assert.EqualValues(t, 1099, entries[99].ElapsedMS)
+
+	entries, total, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:   "wedding-mini-v1",
+		Difficulty: pointerutil.String(models.GameDifficultyMedium),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, total)
+	require.Len(t, entries, 3)
+	assert.EqualValues(t, 500, entries[0].ElapsedMS)
 }
 
 func TestLeaderboard_EmptyBoardSerializesAsEmptyList(t *testing.T) {

@@ -204,14 +204,24 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 // Leaderboard reads one puzzle's published entries: completed, opted-in
 // sessions only, fastest first (ties broken by who completed earlier, then by
 // session id so even a full tie orders identically across requests), capped
-// at leaderboardLimit. The returned total counts every published entry for the
-// puzzle, beyond the cap. The slice is never nil, so it serializes as [].
+// at leaderboardLimit. An optional difficulty filter narrows the board to
+// sessions whose recorded (easiest-used) difficulty matches; the cap and the
+// returned total then both apply within that difficulty, so each per-difficulty
+// board independently holds its fastest hundred. The returned total counts
+// every matching published entry, beyond the cap. The slice is never nil, so
+// it serializes as []. The partial leaderboard index covers (puzzle_id,
+// elapsed_ms) without difficulty; the filter rides it as a row recheck, which
+// is plenty at wedding scale (a board holds at most a few hundred rows).
 func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]LeaderboardEntry, int, error) {
 	var sessions []*models.GameSession
-	total, err := s.db.NewSelect().Model(&sessions).
+	q := s.db.NewSelect().Model(&sessions).
 		Where("gs.puzzle_id = ?", in.PuzzleID).
 		Where("gs.display_name IS NOT NULL").
-		Where("gs.completed_at IS NOT NULL").
+		Where("gs.completed_at IS NOT NULL")
+	if in.Difficulty != nil {
+		q = q.Where("gs.difficulty = ?", *in.Difficulty)
+	}
+	total, err := q.
 		Order("gs.elapsed_ms ASC", "gs.completed_at ASC", "gs.id ASC").
 		Limit(leaderboardLimit).
 		ScanAndCount(ctx)
