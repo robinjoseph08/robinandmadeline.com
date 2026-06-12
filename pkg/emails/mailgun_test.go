@@ -131,3 +131,57 @@ func TestHTTPMailgunClient_FindAcceptedMessageIDNon2xxIsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status 500")
 }
+
+func TestRejectionError_IsQuotaLimited(t *testing.T) {
+	tests := []struct {
+		name      string
+		rejection emails.RejectionError
+		want      bool
+	}{
+		{
+			name:      "429 is always quota regardless of body",
+			rejection: emails.RejectionError{StatusCode: 429, Body: "anything"},
+			want:      true,
+		},
+		{
+			name:      "4xx body mentioning quota",
+			rejection: emails.RejectionError{StatusCode: 403, Body: "Monthly Quota exceeded"},
+			want:      true,
+		},
+		{
+			name:      "4xx body naming the sending limit phrase",
+			rejection: emails.RejectionError{StatusCode: 400, Body: "Domain has reached its daily Sending Limit"},
+			want:      true,
+		},
+		{
+			name:      "4xx body naming the daily limit phrase",
+			rejection: emails.RejectionError{StatusCode: 403, Body: "daily limit reached"},
+			want:      true,
+		},
+		{
+			name:      "ordinary message rejection is not quota",
+			rejection: emails.RejectionError{StatusCode: 400, Body: "'to' parameter is invalid"},
+			want:      false,
+		},
+		{
+			// The bare word "limit" is not enough: a parameter rejection like
+			// this would otherwise be requeued to the head of the queue and
+			// re-arm the day-long pause every day, starving the queue.
+			name:      "4xx body with a bare limit word is not quota",
+			rejection: emails.RejectionError{StatusCode: 400, Body: "'subject' length limit is 500"},
+			want:      false,
+		},
+		{
+			// Body matching is restricted to 4xx: a 5xx is a server-side
+			// failure, not a definitive quota answer.
+			name:      "5xx body mentioning quota is not quota",
+			rejection: emails.RejectionError{StatusCode: 500, Body: "quota service unavailable"},
+			want:      false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.rejection.IsQuotaLimited())
+		})
+	}
+}

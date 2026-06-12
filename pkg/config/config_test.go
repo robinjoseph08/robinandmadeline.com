@@ -38,6 +38,9 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, 10, cfg.EmailWorkerBatchSize)
 		assert.Equal(t, 5*time.Second, cfg.EmailWorkerPollInterval)
 		assert.Equal(t, 5*time.Minute, cfg.EmailWorkerStuckThreshold)
+		// Mailgun's free plan caps sends at 100 per UTC day, so that is the
+		// safe out-of-the-box budget.
+		assert.Equal(t, 100, cfg.EmailDailySendLimit)
 	})
 
 	t.Run("reads values from environment", func(t *testing.T) {
@@ -59,6 +62,7 @@ func TestNew(t *testing.T) {
 		t.Setenv("EMAIL_WORKER_BATCH_SIZE", "25")
 		t.Setenv("EMAIL_WORKER_POLL_INTERVAL", "1s")
 		t.Setenv("EMAIL_WORKER_STUCK_THRESHOLD", "10m")
+		t.Setenv("EMAIL_DAILY_SEND_LIMIT", "250")
 
 		cfg, err := config.New()
 		require.NoError(t, err)
@@ -81,6 +85,32 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, 25, cfg.EmailWorkerBatchSize)
 		assert.Equal(t, time.Second, cfg.EmailWorkerPollInterval)
 		assert.Equal(t, 10*time.Minute, cfg.EmailWorkerStuckThreshold)
+		assert.Equal(t, 250, cfg.EmailDailySendLimit)
+	})
+
+	// Unlike the worker tuning knobs, the daily limit accepts zero and negative
+	// values on purpose: they mean unlimited (a paid Mailgun plan with no cap).
+	t.Run("allows a zero EMAIL_DAILY_SEND_LIMIT meaning unlimited", func(t *testing.T) {
+		t.Setenv("EMAIL_DAILY_SEND_LIMIT", "0")
+
+		cfg, err := config.New()
+		require.NoError(t, err)
+		assert.Equal(t, 0, cfg.EmailDailySendLimit)
+	})
+
+	t.Run("allows a negative EMAIL_DAILY_SEND_LIMIT meaning unlimited", func(t *testing.T) {
+		t.Setenv("EMAIL_DAILY_SEND_LIMIT", "-1")
+
+		cfg, err := config.New()
+		require.NoError(t, err)
+		assert.Equal(t, -1, cfg.EmailDailySendLimit)
+	})
+
+	t.Run("errors on malformed EMAIL_DAILY_SEND_LIMIT", func(t *testing.T) {
+		t.Setenv("EMAIL_DAILY_SEND_LIMIT", "not-a-number")
+
+		_, err := config.New()
+		assert.Error(t, err)
 	})
 
 	t.Run("errors on malformed EMAIL_WORKER_POLL_INTERVAL", func(t *testing.T) {

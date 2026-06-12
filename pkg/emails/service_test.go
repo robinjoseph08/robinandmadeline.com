@@ -21,6 +21,10 @@ const testBaseURL = "https://example.test"
 // testSentBy is the admin username recorded on test sends.
 const testSentBy = "admin"
 
+// testDailySendLimit is the daily send budget the fixture service reports on
+// previews. High enough that no unrelated test ever brushes against it.
+const testDailySendLimit = 100
+
 // fixtures bundles the services the email tests build their data with.
 type fixtures struct {
 	emails  *emails.Service
@@ -38,7 +42,7 @@ func newFixtures(t *testing.T) fixtures {
 	db := databasetest.NewIsolated(t, "robinandmadeline_emails_test")
 	databasetest.Truncate(t, db, "email_templates", "email_sends", "events", "parties")
 	return fixtures{
-		emails:  emails.NewService(db, testBaseURL, testSentBy),
+		emails:  emails.NewService(db, testBaseURL, testSentBy, testDailySendLimit),
 		parties: parties.NewService(db),
 		events:  events.NewService(db),
 		db:      db,

@@ -27,6 +27,9 @@ type fakeMailgun struct {
 	failTo   map[string]error
 	accepted map[string]string // recipientID -> message id served by FindAcceptedMessageID
 	findErr  error
+	// sendCalls counts every Send call, successful or not, so tests can assert
+	// rows requeued for quota reasons were never dispatched at all.
+	sendCalls int
 	// findHook, when non-nil, runs at the start of every
 	// FindAcceptedMessageID call, letting a test mutate the row mid-check
 	// (simulating another worker instance resolving it concurrently).
@@ -57,11 +60,18 @@ func (f *fakeMailgun) Send(_ context.Context, msg emails.Message) (string, error
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.sendCalls++
 	if err, ok := f.failTo[msg.To]; ok {
 		return "", err
 	}
 	f.sent = append(f.sent, msg)
 	return fmt.Sprintf("msg-%d@test.mailgun", len(f.sent)), nil
+}
+
+func (f *fakeMailgun) sendCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sendCalls
 }
 
 func (f *fakeMailgun) FindAcceptedMessageID(_ context.Context, recipientID, _ string) (string, bool, error) {
@@ -737,6 +747,397 @@ func TestProcessBatch_ConcurrentWorkersNeverDoubleSend(t *testing.T) {
 		assert.False(t, seen[m.RecipientID], "recipient %s sent twice", m.RecipientID)
 		seen[m.RecipientID] = true
 	}
+}
+
+// fakeClock is a mutable injected clock for the daily-budget tests: the worker
+// computes UTC day boundaries from it, so tests can cross midnight without
+// waiting.
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *fakeClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = t
+}
+
+// setAttemptedAt backdates (or sets) a row's recorded dispatch attempt
+// straight in the DB, simulating an attempt made at a specific time.
+func setAttemptedAt(t *testing.T, f fixtures, rowID string, at time.Time) {
+	t.Helper()
+	_, err := f.db.NewUpdate().Model((*models.EmailRecipient)(nil)).
+		Set("attempted_at = ?", at).
+		Where("id = ?", rowID).Exec(ctx())
+	require.NoError(t, err)
+}
+
+// statusCounts tallies a send's recipient rows by status.
+func statusCounts(t *testing.T, f fixtures, sendID string) map[string]int {
+	t.Helper()
+	counts := map[string]int{}
+	for _, row := range recipientsForSend(t, f.db, sendID) {
+		counts[row.Status]++
+	}
+	return counts
+}
+
+func TestProcessBatch_DailyBudgetCapsTheClaimSize(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	for i := 0; i < 5; i++ {
+		createGuestT(t, f, p.ID, fmt.Sprintf("Guest %d", i), guestOpts{
+			email: emailOf(fmt.Sprintf("guest%d@example.com", i)),
+		})
+	}
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// Five queued, batch size 10, but only three daily sends left: the claim
+	// must stop at three.
+	cfg := workerConfig()
+	cfg.DailySendLimit = 3
+	client := newFakeMailgun()
+	w := newWorker(f, client, cfg)
+
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+	assert.Len(t, client.sentMessages(), 3)
+
+	counts := statusCounts(t, f, send.ID)
+	assert.Equal(t, 3, counts[models.EmailSent])
+	assert.Equal(t, 2, counts[models.EmailQueued])
+
+	// The budget is spent: further batches claim nothing and the leftover rows
+	// simply wait for the next UTC day.
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	assert.Len(t, client.sentMessages(), 3)
+	assert.Equal(t, 2, statusCounts(t, f, send.ID)[models.EmailQueued])
+}
+
+func TestProcessBatch_DailyBudgetResetsAtUTCMidnight(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	for i := 0; i < 3; i++ {
+		createGuestT(t, f, p.ID, fmt.Sprintf("Guest %d", i), guestOpts{
+			email: emailOf(fmt.Sprintf("guest%d@example.com", i)),
+		})
+	}
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	clock := &fakeClock{t: time.Date(2030, 5, 10, 23, 0, 0, 0, time.UTC)}
+	cfg := workerConfig()
+	cfg.DailySendLimit = 2
+	cfg.Now = clock.now
+	client := newFakeMailgun()
+	w := newWorker(f, client, cfg)
+
+	// Day one: the budget covers two of the three rows, then claims stop.
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+
+	// Just past UTC midnight the budget is fresh and the leftover row drains.
+	clock.set(time.Date(2030, 5, 11, 0, 5, 0, 0, time.UTC))
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	assert.Len(t, client.sentMessages(), 3)
+	assert.Equal(t, 3, statusCounts(t, f, send.ID)[models.EmailSent])
+}
+
+func TestProcessBatch_BudgetCountsAttemptsAgainstTheDayTheyHappened(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// Alice's row was attempted yesterday and requeued by the reconciler:
+	// yesterday's attempt consumed yesterday's budget, so today it costs a
+	// fresh slot but starts from a clean count.
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	setAttemptedAt(t, f, row.ID, time.Now().UTC().Add(-25*time.Hour))
+
+	cfg := workerConfig()
+	cfg.DailySendLimit = 1
+	client := newFakeMailgun()
+	w := newWorker(f, client, cfg)
+
+	// Yesterday's attempt does not count against today: one claim goes through.
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	// That claim was today's whole budget; the other row waits for tomorrow.
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	counts := statusCounts(t, f, send.ID)
+	assert.Equal(t, 1, counts[models.EmailSent])
+	assert.Equal(t, 1, counts[models.EmailQueued])
+}
+
+func TestProcessBatch_QuotaRejectionRequeuesAndPausesUntilNextUTCDay(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	bob := createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// The local count says budget remains, but Mailgun disagrees (e.g. manual
+	// dashboard sends spent the real quota): a 429 must requeue the row, not
+	// fail it, and stop further dispatches for the rest of the UTC day.
+	clock := &fakeClock{t: time.Date(2030, 5, 10, 22, 0, 0, 0, time.UTC)}
+	cfg := workerConfig()
+	cfg.DailySendLimit = 100
+	cfg.Now = clock.now
+	client := newFakeMailgun()
+	quota := &emails.RejectionError{StatusCode: 429, Body: "Quota exceeded"}
+	client.failTo["alice@example.com"] = quota
+	client.failTo["bob@example.com"] = quota
+	w := newWorker(f, client, cfg)
+
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	// Both rows are queued again (never failed), and only the first ever
+	// reached Mailgun: once the quota answer arrived, the rest of the claimed
+	// batch was requeued without another doomed call.
+	rows := recipientsForSend(t, f.db, send.ID)
+	for _, g := range []*models.Guest{alice, bob} {
+		assert.Equal(t, models.EmailQueued, rows[g.ID].Status, g.FullName)
+		assert.Nil(t, rows[g.ID].FailureReason, g.FullName)
+		assert.Nil(t, rows[g.ID].MailgunMessageID, g.FullName)
+	}
+	assert.Equal(t, 1, client.sendCallCount())
+
+	// Only the row that actually drew the quota answer accrues a requeue
+	// toward the fail-after cap; the batch-mate requeued precautionarily
+	// (without a Mailgun call) does not, so a long quota outage can never
+	// spuriously fail rows that were never rejected themselves.
+	assert.Equal(t, 1, rows[alice.ID].QuotaRequeues+rows[bob.ID].QuotaRequeues)
+
+	// The local budget is treated as exhausted for the rest of the UTC day,
+	// even though the local count would still allow claims.
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, 1, client.sendCallCount())
+
+	// Mailgun's quota resets at UTC midnight; so does the pause.
+	clock.set(time.Date(2030, 5, 11, 0, 5, 0, 0, time.UTC))
+	client.mu.Lock()
+	client.failTo = map[string]error{}
+	client.mu.Unlock()
+
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, 2, statusCounts(t, f, send.ID)[models.EmailSent])
+}
+
+func TestProcessBatch_QuotaWordingInRejectionBodyRequeuesInsteadOfFailing(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// Mailgun does not promise a 429 for quota problems: a 4xx whose body
+	// names the sending limit must get the same retry-tomorrow treatment, not
+	// a permanent failure.
+	cfg := workerConfig()
+	cfg.DailySendLimit = 100
+	client := newFakeMailgun()
+	client.failTo["alice@example.com"] = &emails.RejectionError{
+		StatusCode: 403,
+		Body:       "Domain mg.example.com has reached its daily sending limit",
+	}
+	w := newWorker(f, client, cfg)
+
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	assert.Equal(t, models.EmailQueued, row.Status)
+	assert.Nil(t, row.FailureReason)
+
+	// And the pause engaged: no more claims today.
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+}
+
+func TestProcessBatch_RepeatedQuotaRejectionsEventuallyFailTheRow(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// Mailgun answers quota on every attempt, day after day (each fresh
+	// worker models a new day, since the quota pause is in-memory per
+	// instance). The requeue loop must be bounded: a rejection misclassified
+	// as quota would otherwise sort back to the head of the queue and stall
+	// claims forever with no admin-visible signal.
+	cfg := workerConfig()
+	cfg.DailySendLimit = 100
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		client := newFakeMailgun()
+		client.failTo["alice@example.com"] = &emails.RejectionError{StatusCode: 429, Body: "Quota exceeded"}
+		w := newWorker(f, client, cfg)
+
+		n, err := w.ProcessBatch(ctx())
+		require.NoError(t, err)
+		require.Equal(t, 1, n, "attempt %d", attempt)
+
+		row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+		assert.Equal(t, models.EmailQueued, row.Status, "attempt %d", attempt)
+		assert.Equal(t, attempt, row.QuotaRequeues, "attempt %d", attempt)
+	}
+
+	// The fourth quota rejection exceeds the cap: the row fails with
+	// Mailgun's words so the admin can see it on the send detail page.
+	client := newFakeMailgun()
+	client.failTo["alice@example.com"] = &emails.RejectionError{StatusCode: 429, Body: "Quota exceeded"}
+	w := newWorker(f, client, cfg)
+
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	assert.Equal(t, models.EmailFailed, row.Status)
+	require.NotNil(t, row.FailureReason)
+	assert.Contains(t, *row.FailureReason, "Quota exceeded")
+
+	// With the poisoned row dispositioned, nothing is left queued: the
+	// queue is no longer starved behind it.
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+}
+
+func TestProcessBatch_ConcurrentClaimsNeverOverspendTheBudget(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	for i := 0; i < 4; i++ {
+		createGuestT(t, f, p.ID, fmt.Sprintf("Guest %d", i), guestOpts{
+			email: emailOf(fmt.Sprintf("guest%d@example.com", i)),
+		})
+	}
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// Four workers race for a budget of one (the deploy-overlap shape the
+	// advisory lock serializes). SKIP LOCKED alone would hand each racer a
+	// DIFFERENT row, so without the lock several could count the same "zero
+	// used" snapshot and overspend; exactly one attempt may ever be stamped.
+	cfg := workerConfig()
+	cfg.DailySendLimit = 1
+	client := newFakeMailgun()
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		w := newWorker(f, client, cfg)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := w.ProcessBatch(ctx())
+			assert.NoError(t, err)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	attempted, err := f.db.NewSelect().Model((*models.EmailRecipient)(nil)).
+		Where("attempted_at IS NOT NULL").Count(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, attempted)
+	assert.Len(t, client.sentMessages(), 1)
+
+	counts := statusCounts(t, f, send.ID)
+	assert.Equal(t, 1, counts[models.EmailSent])
+	assert.Equal(t, 3, counts[models.EmailQueued])
+}
+
+func TestProcessBatch_UnlimitedBudgetBypassesTheDailyCap(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	for i := 0; i < 3; i++ {
+		createGuestT(t, f, p.ID, fmt.Sprintf("Guest %d", i), guestOpts{
+			email: emailOf(fmt.Sprintf("guest%d@example.com", i)),
+		})
+	}
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// DailySendLimit zero (the paid-plan setting) disables the budget: every
+	// queued row drains in one batch regardless of today's attempt count.
+	cfg := workerConfig()
+	cfg.DailySendLimit = 0
+	client := newFakeMailgun()
+	w := newWorker(f, client, cfg)
+
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+	assert.Equal(t, 3, statusCounts(t, f, send.ID)[models.EmailSent])
+}
+
+func TestRun_ReconciliationStillRunsWhileBudgetIsExhausted(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	bob := createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	rows := recipientsForSend(t, f.db, send.ID)
+
+	// Alice's row is crash-stranded in `sending` (already accepted by Mailgun
+	// before the crash). Bob's row was attempted today and requeued, which
+	// spends the whole daily budget of one.
+	strandRow(t, f, rows[alice.ID].ID, 10*time.Minute)
+	setAttemptedAt(t, f, rows[bob.ID].ID, time.Now().UTC())
+
+	cfg := workerConfig()
+	cfg.DailySendLimit = 1
+	client := newFakeMailgun()
+	client.accepted[rows[alice.ID].ID] = "recovered-id@test.mailgun"
+	w := newWorker(f, client, cfg)
+
+	runCtx, cancel := context.WithCancel(ctx())
+	go w.Run(runCtx)
+
+	// The paused worker must still reconcile: Alice's stranded row settles to
+	// sent even though no claim budget remains.
+	require.Eventually(t, func() bool {
+		return recipientsForSend(t, f.db, send.ID)[alice.ID].Status == models.EmailSent
+	}, 5*time.Second, 20*time.Millisecond, "Run never reconciled the stranded row while paused")
+	cancel()
+	<-w.Done()
+
+	// Nothing was dispatched: Bob's row waits for tomorrow's budget.
+	assert.Empty(t, client.sentMessages())
+	assert.Equal(t, models.EmailQueued, recipientsForSend(t, f.db, send.ID)[bob.ID].Status)
 }
 
 func TestReconcileStuck_CheckErrorLeavesRowSending(t *testing.T) {

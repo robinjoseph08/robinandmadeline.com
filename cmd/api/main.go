@@ -75,6 +75,7 @@ func main() {
 			BatchSize:      cfg.EmailWorkerBatchSize,
 			PollInterval:   cfg.EmailWorkerPollInterval,
 			StuckThreshold: cfg.EmailWorkerStuckThreshold,
+			DailySendLimit: cfg.EmailDailySendLimit,
 		}, log)
 		go worker.Run(workerCtx)
 	} else {

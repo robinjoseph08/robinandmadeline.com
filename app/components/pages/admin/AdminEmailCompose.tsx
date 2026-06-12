@@ -56,6 +56,28 @@ interface FilterState {
 
 const EMPTY_FILTER: FilterState = { tags: "" };
 
+/**
+ * When the recipient count exceeds what is left of today's daily send budget,
+ * describes roughly how many days the queue will take to drain (the worker
+ * dispatches up to the limit per UTC day and the rest simply waits).
+ * Undefined when the limit is unlimited (zero) or today's remaining budget
+ * covers the whole send.
+ */
+function multiDaySendNote(preview: PreviewEmailResponse): string | undefined {
+  const limit = preview.daily_send_limit;
+  if (limit <= 0) return undefined;
+  const remainingToday = Math.max(limit - preview.daily_sends_used, 0);
+  if (preview.total <= remainingToday) return undefined;
+  // Today only counts as a day when it still contributes sends: with the
+  // budget already spent, the queue drains entirely on later days, so adding
+  // one for today would overstate the estimate.
+  const days =
+    remainingToday === 0
+      ? Math.ceil(preview.total / limit)
+      : Math.ceil((preview.total - remainingToday) / limit) + 1;
+  return `The daily send limit is ${limit} (${preview.daily_sends_used} used today), so it will go out over approximately ${days} day${days === 1 ? "" : "s"}.`;
+}
+
 /** Builds the wire filter, dropping unset criteria. */
 function toRecipientFilter(filter: FilterState): RecipientFilter {
   const tag = filter.tags.trim();
@@ -109,6 +131,7 @@ export default function AdminEmailCompose() {
   const eventOptions = events.map((e) => ({ value: e.id, label: e.name }));
 
   const canCompose = subject.trim().length > 0 && body.length > 0;
+  const previewDayNote = preview ? multiDaySendNote(preview) : undefined;
 
   const selectTemplate = (id: string | undefined) => {
     setTemplateId(id);
@@ -164,9 +187,10 @@ export default function AdminEmailCompose() {
         current.skipped_no_email > 0
           ? ` (${current.skipped_no_email} matching guest${current.skipped_no_email === 1 ? "" : "s"} without an email will be skipped)`
           : "";
+      const dayNote = multiDaySendNote(current);
       if (
         !window.confirm(
-          `Send this email to ${current.total} recipient${current.total === 1 ? "" : "s"}?${skippedNote}`,
+          `Send this email to ${current.total} recipient${current.total === 1 ? "" : "s"}?${skippedNote}${dayNote ? ` ${dayNote}` : ""}`,
         )
       )
         return;
@@ -339,6 +363,9 @@ export default function AdminEmailCompose() {
               {preview.skipped_no_email > 0 &&
                 `, ${preview.skipped_no_email} matching guest${preview.skipped_no_email === 1 ? "" : "s"} skipped (no email address)`}
             </p>
+            {previewDayNote && (
+              <p className="text-sm text-muted-foreground">{previewDayNote}</p>
+            )}
           </div>
 
           {preview.total > 0 && (

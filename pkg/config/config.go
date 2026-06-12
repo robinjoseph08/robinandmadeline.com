@@ -115,6 +115,13 @@ type Config struct {
 	// worker's reconcile pass (run each cycle, including immediately on
 	// restart) checks it against Mailgun (ADR 0004).
 	EmailWorkerStuckThreshold time.Duration
+
+	// EmailDailySendLimit caps how many emails the worker dispatches per UTC
+	// day, matching Mailgun's free-plan quota (100/day, resetting at midnight
+	// UTC). Zero or negative means unlimited (a paid plan). The count only
+	// covers sends made by this app; manual sends from the Mailgun dashboard
+	// are invisible to it.
+	EmailDailySendLimit int
 }
 
 // Default values used for local development when an env var is unset.
@@ -157,6 +164,9 @@ const (
 	// Comfortably longer than a worst-case in-flight batch, so a live
 	// worker's rows are never mistaken for crash leftovers.
 	defaultEmailWorkerStuckThreshold = 5 * time.Minute
+	// Mailgun's free plan allows 100 emails per UTC day with no overage, so
+	// the default budget matches it exactly.
+	defaultEmailDailySendLimit = 100
 )
 
 // New builds a Config from the environment, applying defaults for any unset
@@ -231,6 +241,13 @@ func New() (*Config, error) {
 		return nil, fmt.Errorf("invalid CANONICAL_HOST: %q must be a bare hostname without a scheme, port, or path", canonicalHost)
 	}
 
+	// Unlike the knobs above, zero and negative values are valid here: they
+	// mean unlimited, for months where the Mailgun plan has no daily cap.
+	emailDailySendLimit, err := envInt("EMAIL_DAILY_SEND_LIMIT", defaultEmailDailySendLimit)
+	if err != nil {
+		return nil, err
+	}
+
 	// An API key with no sending domain would start the worker against a
 	// malformed Mailgun URL: every claimed row would get a definitive non-2xx
 	// rejection and be permanently marked failed. Fail at startup instead.
@@ -262,6 +279,7 @@ func New() (*Config, error) {
 		EmailWorkerBatchSize:      emailWorkerBatchSize,
 		EmailWorkerPollInterval:   emailWorkerPollInterval,
 		EmailWorkerStuckThreshold: emailWorkerStuckThreshold,
+		EmailDailySendLimit:       emailDailySendLimit,
 	}, nil
 }
 

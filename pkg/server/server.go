@@ -131,7 +131,7 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.C
 	parties.RegisterRoutes(admin, parties.NewService(db))
 	events.RegisterRoutes(admin, events.NewService(db))
 	photogroups.RegisterRoutes(admin, photogroups.NewService(db))
-	emails.RegisterRoutes(admin, emails.NewService(db, cfg.PublicBaseURL, cfg.AdminUsername))
+	emails.RegisterRoutes(admin, emails.NewService(db, cfg.PublicBaseURL, cfg.AdminUsername, cfg.EmailDailySendLimit))
 }
 
 // registerGuest mounts the guest API surface behind the guest auth middleware.

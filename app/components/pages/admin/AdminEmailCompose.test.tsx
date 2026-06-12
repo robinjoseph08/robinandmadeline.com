@@ -46,6 +46,8 @@ function makePreview(
     sample_guest_name: "Alice",
     sample_subject: "Hi Alice",
     sample_body: "Welcome, The Smiths!",
+    daily_send_limit: 100,
+    daily_sends_used: 0,
     ...overrides,
   };
 }
@@ -149,6 +151,18 @@ describe("AdminEmailCompose preview", () => {
     expect(
       await screen.findByText(/2 matching guests skipped \(no email address\)/),
     ).toBeInTheDocument();
+  });
+
+  it("notes in the preview panel when the send will span multiple days", async () => {
+    setMock({ preview: makePreview({ total: 250, daily_sends_used: 50 }) });
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    expect(await screen.findByText(/approximately 3 days/)).toBeInTheDocument();
   });
 
   it("clears the shown preview when the composed email changes", async () => {
@@ -258,6 +272,86 @@ describe("AdminEmailCompose send", () => {
     expect(
       adminRequest.mock.calls.filter(([path]) => path === "/admin/emails/send"),
     ).toHaveLength(1);
+  });
+
+  it("warns in the confirm dialog when the send exceeds today's daily budget", async () => {
+    // 250 recipients against a limit of 100 with 50 already used: 50 go today,
+    // 100 tomorrow, 100 the day after, so roughly 3 days.
+    setMock({
+      preview: makePreview({ total: 250, daily_sends_used: 50 }),
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith(
+        expect.stringContaining("approximately 3 days"),
+      );
+    });
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringContaining("daily send limit is 100 (50 used today)"),
+    );
+  });
+
+  it("does not count today when its budget is already spent", async () => {
+    // 100 recipients with the whole limit of 100 already used: nothing goes
+    // out today, all 100 go out tomorrow, so the estimate is one day (not
+    // two, which counting today would claim).
+    setMock({
+      preview: makePreview({ total: 100, daily_sends_used: 100 }),
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith(
+        expect.stringContaining("approximately 1 day."),
+      );
+    });
+  });
+
+  it("does not mention multiple days when today's budget covers the send", async () => {
+    setMock({ preview: makePreview({ total: 3 }) });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.not.stringContaining("approximately"),
+    );
+  });
+
+  it("does not mention multiple days when the limit is unlimited", async () => {
+    setMock({
+      preview: makePreview({ total: 250, daily_send_limit: 0 }),
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.not.stringContaining("approximately"),
+    );
   });
 
   it("refuses to send to zero recipients", async () => {

@@ -59,6 +59,9 @@ type PreviewRecipient struct {
 // matched recipients, how many matching guests were skipped for having no
 // email address, and the subject/body with merge fields resolved for the first
 // recipient (the sample). With no recipients the sample fields are empty.
+// DailySendLimit and DailySendsUsed describe the worker's per-UTC-day dispatch
+// budget so the confirm step can warn when a send will span multiple days; a
+// non-positive limit means unlimited.
 type PreviewEmailResponse struct {
 	Recipients      []PreviewRecipient `json:"recipients"`
 	Total           int                `json:"total"`
@@ -66,6 +69,8 @@ type PreviewEmailResponse struct {
 	SampleGuestName string             `json:"sample_guest_name"`
 	SampleSubject   string             `json:"sample_subject"`
 	SampleBody      string             `json:"sample_body"`
+	DailySendLimit  int                `json:"daily_send_limit"`
+	DailySendsUsed  int                `json:"daily_sends_used"`
 }
 
 // SendEmailPayload is the body for POST /emails/send. template_id is

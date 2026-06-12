@@ -97,6 +97,20 @@ stay queued. Set `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, and
 `EMAIL_FROM`, `PUBLIC_BASE_URL`, and the `EMAIL_WORKER_*` tuning knobs) to
 enable real sending and delivery webhooks.
 
+Outbound volume is capped by `EMAIL_DAILY_SEND_LIMIT` (default 100, matching
+Mailgun's free plan). The worker counts dispatch attempts per UTC day, which
+is Mailgun's own reset boundary, and pauses until the next UTC day once the
+budget is spent; queued emails simply wait, so a 200-recipient send on the
+default limit drains over two days. Set it to 0 (or any negative value) for
+unlimited on a paid plan. The counter only tracks sends made by this app:
+manual sends from the Mailgun dashboard are invisible to it, so set a lower
+limit for margin if you ever send manually. As a backstop, a send Mailgun
+itself rejects for quota is requeued for the next day rather than failed, and
+sending pauses for the rest of the UTC day; after a few such rejections of
+the same email it is marked failed instead, so a rejection misread as quota
+surfaces in the send history within days instead of silently stalling the
+queue.
+
 ## Deployment
 
 Production is a single Fly.io app (Go binary serving the API and the built

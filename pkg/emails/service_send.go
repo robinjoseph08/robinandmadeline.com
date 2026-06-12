@@ -24,11 +24,19 @@ func (s *Service) Preview(ctx context.Context, in PreviewEmailPayload) (*Preview
 	if err != nil {
 		return nil, err
 	}
+	// Today's (UTC) dispatch count, so the confirm step can warn when the
+	// send exceeds what is left of the daily budget and will span days.
+	used, err := countAttemptsSince(ctx, s.db, startOfUTCDay(time.Now()))
+	if err != nil {
+		return nil, err
+	}
 
 	resp := &PreviewEmailResponse{
 		Recipients:     make([]PreviewRecipient, 0, len(recipients)),
 		Total:          len(recipients),
 		SkippedNoEmail: skipped,
+		DailySendLimit: s.dailySendLimit,
+		DailySendsUsed: used,
 	}
 	for _, g := range recipients {
 		item := PreviewRecipient{GuestID: g.ID, GuestName: g.FullName}

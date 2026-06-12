@@ -42,6 +42,35 @@ func (e *RejectionError) Error() string {
 	return fmt.Sprintf("mailgun send failed: status %d: %s", e.StatusCode, e.Body)
 }
 
+// IsQuotaLimited reports whether the rejection signals Mailgun's sending
+// quota rather than a problem with the message itself: HTTP 429 always, or a
+// 4xx whose body names a quota or a sending/daily limit. Such a rejection is
+// still definitive for the attempted message (it was provably never accepted,
+// so retrying cannot duplicate it), but the condition is the account's day,
+// not this email, so the worker requeues the row for the next UTC day instead
+// of failing it.
+//
+// The body match requires "quota" or a multi-word limit phrase, never the
+// bare word "limit": a quota-classified row is requeued (keeping its place at
+// the head of the claim order) and arms a day-long pause, so misreading an
+// ordinary rejection whose body merely says "limit is N" would stall the
+// whole queue day after day, not cost one retry. A residual false positive
+// is still bounded: the worker fails the row outright after maxQuotaRequeues
+// requeues (see the worker's quota branch), so the worst case is a few
+// stalled days ending in a visible failed row, never a starved queue.
+func (e *RejectionError) IsQuotaLimited() bool {
+	if e.StatusCode == http.StatusTooManyRequests {
+		return true
+	}
+	if e.StatusCode < 400 || e.StatusCode >= 500 {
+		return false
+	}
+	body := strings.ToLower(e.Body)
+	return strings.Contains(body, "quota") ||
+		strings.Contains(body, "sending limit") ||
+		strings.Contains(body, "daily limit")
+}
+
 // MailgunClient is the seam between the queue and Mailgun. The Worker depends
 // on this interface; production wires the HTTP implementation below and tests
 // substitute a fake, so no test ever calls the real Mailgun API.

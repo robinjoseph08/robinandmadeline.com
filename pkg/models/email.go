@@ -100,6 +100,18 @@ type EmailRecipient struct {
 	MailgunMessageID *string `bun:"mailgun_message_id" json:"mailgun_message_id"`
 	Status           string  `bun:"status" json:"status" tstype:"EmailRecipientStatus"`
 	FailureReason    *string `bun:"failure_reason" json:"failure_reason"`
+	// AttemptedAt is when the worker last claimed the row for a dispatch
+	// attempt; counting rows attempted since UTC midnight is the daily send
+	// budget (Mailgun's free-plan quota). NULL until the first attempt; a
+	// requeued row keeps its last attempt time until the next claim overwrites
+	// it.
+	AttemptedAt *time.Time `bun:"attempted_at" json:"attempted_at"`
+	// QuotaRequeues counts how many times a quota-classified Mailgun
+	// rejection has requeued this row. The worker fails the row once the
+	// count reaches its cap, bounding the retry loop a rejection misread as
+	// quota would otherwise spin in forever. Worker bookkeeping, omitted from
+	// the API surface.
+	QuotaRequeues int `bun:"quota_requeues" json:"-" tstype:"-"`
 
 	CreatedAt time.Time `bun:"created_at,nullzero" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero" json:"updated_at"`

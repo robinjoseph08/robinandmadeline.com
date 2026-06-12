@@ -2,6 +2,7 @@ package emails_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
@@ -68,6 +69,38 @@ func TestPreview_NoRecipientsHasEmptySample(t *testing.T) {
 	assert.Empty(t, resp.SampleGuestName)
 	assert.Empty(t, resp.SampleSubject)
 	assert.Empty(t, resp.SampleBody)
+}
+
+func TestPreview_ReportsTodaysDailySendBudget(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	bob := createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	rows := recipientsForSend(t, f.db, send.ID)
+	// Alice's row was attempted today, Bob's yesterday: only today's attempt
+	// counts toward the budget the compose page shows.
+	setAttemptedAt(t, f, rows[alice.ID].ID, time.Now().UTC())
+	setAttemptedAt(t, f, rows[bob.ID].ID, time.Now().UTC().Add(-25*time.Hour))
+
+	resp, err := f.emails.Preview(ctx(), emails.PreviewEmailPayload{Subject: "s", Body: "b"})
+	require.NoError(t, err)
+	assert.Equal(t, testDailySendLimit, resp.DailySendLimit)
+	assert.Equal(t, 1, resp.DailySendsUsed)
+}
+
+func TestPreview_UnlimitedDailyLimitIsReportedAsZero(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	// A non-positive configured limit means unlimited; the response carries it
+	// through as zero so the UI knows there is nothing to warn about.
+	unlimited := emails.NewService(f.db, testBaseURL, testSentBy, 0)
+	resp, err := unlimited.Preview(ctx(), emails.PreviewEmailPayload{Subject: "s", Body: "b"})
+	require.NoError(t, err)
+	assert.Equal(t, 0, resp.DailySendLimit)
 }
 
 func TestCreateSend_CreatesQueuedRecipientRows(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -36,6 +37,16 @@ type WorkerConfig struct {
 	// enforces that itself by flooring the effective threshold at the batch
 	// budget (see effectiveStuckThreshold).
 	StuckThreshold time.Duration
+	// DailySendLimit caps how many rows the worker dispatches per UTC day,
+	// matching Mailgun's free-plan quota (which resets at midnight UTC). Zero
+	// or negative disables the cap. When the budget is spent, claims pause
+	// until the next UTC day and queued rows simply wait; reconciliation
+	// keeps running.
+	DailySendLimit int
+	// Now returns the current time; nil means time.Now. The daily budget
+	// computes its UTC day boundaries from it, so tests inject a fake clock
+	// to cross midnight without waiting.
+	Now func() time.Time
 }
 
 // perSendBudget is the per-row slice of a batch's time budget: generously
@@ -48,11 +59,25 @@ const perSendBudget = 30 * time.Second
 // the webhook's event reason both apply it).
 const maxFailureReason = 1000
 
+// maxQuotaRequeues caps how many times a quota-classified rejection may
+// requeue one row before the worker fails it instead. The cap bounds the cost
+// of a rejection misclassified as quota: such a row sorts back to the head of
+// the claim order and re-arms the day-long quota pause on every attempt, so
+// without the cap it would starve the queue forever with no admin-visible
+// signal. Three requeues tolerates a genuinely quota-blocked stretch (e.g. a
+// weekend of manual dashboard sends) while keeping the worst case for a
+// misclassified row at maxQuotaRequeues+1 stalled days ending in a visible
+// failed row.
+const maxQuotaRequeues = 3
+
 // Worker drains the email_recipients queue through Mailgun (ADR 0004). Each
 // cycle reconciles stuck `sending` rows, then claims queued rows in batches
 // (flipping them to `sending` so a concurrent pickup can never double-send),
 // renders each recipient's merge fields, and records `sent` (with the Mailgun
-// message id) or `failed` per row.
+// message id) or `failed` per row. Claims are capped at what remains of the
+// daily send budget (DailySendLimit per UTC day, Mailgun's free-plan quota);
+// when it is spent, queued rows wait for the next UTC day while
+// reconciliation keeps running.
 //
 // Shutdown contract: cancel the context passed to Run. The worker stops
 // picking up new batches but finishes the batch in flight (its Mailgun and DB
@@ -63,6 +88,21 @@ type Worker struct {
 	cfg    WorkerConfig
 	log    logger.Logger
 	done   chan struct{}
+
+	// mu guards the two pause fields below. The worker itself is single
+	// goroutine, but the guard keeps the fields race-free if a test (or a
+	// future caller) drives ProcessBatch concurrently.
+	mu sync.Mutex
+	// quotaPauseUntil is set to the next UTC midnight when Mailgun rejects a
+	// send for quota: the local count evidently undercounts (e.g. manual
+	// dashboard sends), so every further dispatch today is doomed and claims
+	// stop until Mailgun's quota resets. In-memory on purpose: it is a
+	// defensive backstop, and after a restart the first doomed send simply
+	// re-arms it.
+	quotaPauseUntil time.Time
+	// pauseLoggedDay dedupes the budget-pause log line to once per UTC day;
+	// without it an exhausted budget would log every poll cycle.
+	pauseLoggedDay string
 }
 
 // NewWorker builds a Worker.
@@ -143,26 +183,17 @@ func (w *Worker) batchBudget() time.Duration {
 
 // ProcessBatch claims up to BatchSize queued rows (atomically flipping them to
 // `sending`, with SKIP LOCKED so a concurrent claimer can never grab the same
-// rows) and sends each through Mailgun, recording sent or failed per row. It
-// returns how many rows it claimed; zero means the queue is empty.
+// rows) and sends each through Mailgun, recording sent or failed per row. The
+// claim is additionally capped at what remains of today's daily send budget
+// (see claimBatch). It returns how many rows it claimed; zero means the queue
+// is empty or the budget is exhausted.
 func (w *Worker) ProcessBatch(ctx context.Context) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, w.batchBudget())
 	defer cancel()
 
-	var claimed []*models.EmailRecipient
-	err := w.db.NewRaw(`
-		UPDATE email_recipients SET status = ?, updated_at = now()
-		WHERE id IN (
-			SELECT id FROM email_recipients
-			WHERE status = ?
-			ORDER BY created_at ASC, id ASC
-			LIMIT ?
-			FOR UPDATE SKIP LOCKED
-		)
-		RETURNING *
-	`, models.EmailSending, models.EmailQueued, w.cfg.BatchSize).Scan(ctx, &claimed)
+	claimed, err := w.claimBatch(ctx)
 	if err != nil {
-		return 0, errors.Wrap(err, "claim queued email recipients")
+		return 0, err
 	}
 	if len(claimed) == 0 {
 		return 0, nil
@@ -172,9 +203,123 @@ func (w *Worker) ProcessBatch(ctx context.Context) (int, error) {
 	sends := map[string]*models.EmailSend{}
 	events := map[string]*models.Event{}
 	for _, row := range claimed {
+		// A quota rejection earlier in this batch means every further
+		// dispatch today is doomed to the same answer: requeue the rest of
+		// the claim for the next UTC day without hammering Mailgun.
+		if w.quotaPaused() {
+			w.requeue(ctx, row)
+			continue
+		}
 		w.sendOne(ctx, row, sends, events)
 	}
 	return len(claimed), nil
+}
+
+// emailBudgetLockID keys the advisory lock serializing budget-checked claims
+// across worker instances (nothing else in the app takes advisory locks). The
+// value is arbitrary but must stay stable across versions, since overlapping
+// instances during a deploy are exactly what it serializes.
+const emailBudgetLockID int64 = 0x656d6c627564 // "emlbud"
+
+// claimBatch claims up to BatchSize queued rows, capped at what remains of
+// today's (UTC) daily send budget, stamping each claim's attempted_at so the
+// attempt durably counts against today even if the row is later requeued.
+// The count and the claim run in one transaction under an advisory lock, so
+// two overlapping instances (a deploy handing off) can never both spend the
+// same remaining slots. With the budget exhausted (or the quota pause armed)
+// it claims nothing and logs the pause once per UTC day; queued rows simply
+// wait for the next day.
+func (w *Worker) claimBatch(ctx context.Context) ([]*models.EmailRecipient, error) {
+	if w.quotaPaused() {
+		w.logBudgetPaused(logger.Data{"reason": "mailgun quota rejection", "limit": w.cfg.DailySendLimit})
+		return nil, nil
+	}
+
+	// READ COMMITTED is explicit, not inherited from the server default: the
+	// budget math relies on the count seeing rows committed while this
+	// transaction waited on the advisory lock. Under a stricter default (e.g.
+	// REPEATABLE READ) a blocked waiter's snapshot would predate the lock
+	// holder's commit and both instances could spend the same remaining slots.
+	var claimed []*models.EmailRecipient
+	err := w.db.RunInTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, func(ctx context.Context, tx bun.Tx) error {
+		limit := w.cfg.BatchSize
+		if w.cfg.DailySendLimit > 0 {
+			// The transaction-scoped advisory lock releases on commit or
+			// rollback; it serializes only the count-and-claim, not the sends
+			// that follow it.
+			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(?)", emailBudgetLockID); err != nil {
+				return errors.Wrap(err, "acquire email budget lock")
+			}
+			used, err := countAttemptsSince(ctx, tx, startOfUTCDay(w.now()))
+			if err != nil {
+				return err
+			}
+			remaining := w.cfg.DailySendLimit - used
+			if remaining <= 0 {
+				w.logBudgetPaused(logger.Data{"used": used, "limit": w.cfg.DailySendLimit})
+				return nil
+			}
+			if remaining < limit {
+				limit = remaining
+			}
+		}
+		err := tx.NewRaw(`
+			UPDATE email_recipients SET status = ?, attempted_at = ?, updated_at = now()
+			WHERE id IN (
+				SELECT id FROM email_recipients
+				WHERE status = ?
+				ORDER BY created_at ASC, id ASC
+				LIMIT ?
+				FOR UPDATE SKIP LOCKED
+			)
+			RETURNING *
+		`, models.EmailSending, w.now(), models.EmailQueued, limit).Scan(ctx, &claimed)
+		return errors.Wrap(err, "claim queued email recipients")
+	})
+	if err != nil {
+		return nil, err
+	}
+	return claimed, nil
+}
+
+// now is the worker's clock: the injected cfg.Now when set (tests crossing
+// UTC midnight), time.Now otherwise.
+func (w *Worker) now() time.Time {
+	if w.cfg.Now != nil {
+		return w.cfg.Now()
+	}
+	return time.Now()
+}
+
+// pauseQuotaUntilTomorrow arms the quota pause: no more dispatches until the
+// next UTC midnight, when Mailgun's quota resets.
+func (w *Worker) pauseQuotaUntilTomorrow() {
+	until := nextUTCMidnight(w.now())
+	w.mu.Lock()
+	w.quotaPauseUntil = until
+	w.mu.Unlock()
+}
+
+// quotaPaused reports whether a Mailgun quota rejection has paused dispatches
+// for the rest of the current UTC day.
+func (w *Worker) quotaPaused() bool {
+	w.mu.Lock()
+	until := w.quotaPauseUntil
+	w.mu.Unlock()
+	return w.now().Before(until)
+}
+
+// logBudgetPaused logs that claims are paused until the next UTC day, at most
+// once per UTC day so an exhausted budget does not log every poll cycle.
+func (w *Worker) logBudgetPaused(data logger.Data) {
+	day := startOfUTCDay(w.now()).Format("2006-01-02")
+	w.mu.Lock()
+	already := w.pauseLoggedDay == day
+	w.pauseLoggedDay = day
+	w.mu.Unlock()
+	if !already {
+		w.log.Info("email worker daily send budget exhausted; pausing claims until the next UTC day", data)
+	}
 }
 
 // sendOne renders and dispatches a single claimed row, then records the
@@ -241,6 +386,31 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 	if err != nil {
 		var rejection *RejectionError
 		if errors.As(err, &rejection) {
+			if rejection.IsQuotaLimited() {
+				// Mailgun says the account's daily quota is spent, which the
+				// local count cannot always see (manual dashboard sends).
+				// The message was still provably never accepted, so a retry
+				// cannot duplicate it; but the problem is the day, not this
+				// email, so it goes back to the queue for the next UTC day
+				// and dispatches pause until then. The pause arms regardless
+				// of how this row is dispositioned below: the answer says the
+				// account is quota-limited either way.
+				w.pauseQuotaUntilTomorrow()
+				if row.QuotaRequeues >= maxQuotaRequeues {
+					// Requeue cap reached: fail the row so a rejection
+					// misclassified as quota (or a genuinely stuck account)
+					// surfaces as a visible failure with Mailgun's words on
+					// the send detail page, instead of stalling the head of
+					// the queue forever (see maxQuotaRequeues).
+					w.log.Err(err).Warn("mailgun rejected for quota repeatedly; marking row failed", logger.Data{"recipient_id": row.ID, "quota_requeues": row.QuotaRequeues})
+					w.markFailed(ctx, row, err.Error())
+					return
+				}
+				w.log.Err(err).Warn("mailgun rejected for quota; requeueing and pausing until the next UTC day", logger.Data{"recipient_id": row.ID, "quota_requeues": row.QuotaRequeues + 1})
+				row.QuotaRequeues++
+				w.requeue(ctx, row)
+				return
+			}
 			// Mailgun answered and said no: the message was provably never
 			// accepted, so failing the row cannot lose a delivered email.
 			w.markFailed(ctx, row, err.Error())
@@ -336,6 +506,18 @@ func (w *Worker) markFailed(ctx context.Context, row *models.EmailRecipient, rea
 	w.updateRow(ctx, row)
 }
 
+// requeue returns a claimed row to the queue for a later attempt (the quota
+// path), through the same guarded write as every other transition, so it can
+// never stomp an outcome another instance recorded since. The row keeps its
+// attempted_at: the attempt happened and counts against the day it was made
+// regardless of the requeue.
+func (w *Worker) requeue(ctx context.Context, row *models.EmailRecipient) {
+	row.Status = models.EmailQueued
+	row.MailgunMessageID = nil
+	row.FailureReason = nil
+	w.updateRow(ctx, row)
+}
+
 // leaveForReconciliation logs a row whose outcome could not be determined (or
 // whose context failed to load) and leaves it `sending` on purpose: once it
 // ages past the stuck threshold the reconciler settles it against Mailgun's
@@ -367,8 +549,12 @@ func (w *Worker) updateRow(ctx context.Context, row *models.EmailRecipient) {
 	defer cancel()
 	loadedAt := row.UpdatedAt
 	row.UpdatedAt = time.Now()
+	// quota_requeues rides along on every guarded transition: the quota path
+	// increments it before requeueing, and every other path writes back the
+	// value the row was loaded with, so the counter can never be lost or
+	// double-counted under the same guards that protect status.
 	res, err := w.db.NewUpdate().Model(row).
-		Column("status", "mailgun_message_id", "failure_reason", "updated_at").
+		Column("status", "mailgun_message_id", "failure_reason", "quota_requeues", "updated_at").
 		WherePK().
 		Where("status = ?", models.EmailSending).
 		Where("updated_at = ?", loadedAt).

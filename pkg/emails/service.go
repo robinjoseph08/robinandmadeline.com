@@ -31,13 +31,18 @@ type Service struct {
 	// sentBy is recorded on every send's audit row. There is a single admin
 	// account, so it is the configured admin username rather than a claim.
 	sentBy string
+	// dailySendLimit is the worker's per-UTC-day dispatch budget, surfaced on
+	// previews so the compose page can warn when a send will span multiple
+	// days. Zero or negative means unlimited.
+	dailySendLimit int
 }
 
 // NewService builds a Service backed by the given Bun DB. publicBaseURL is the
 // site origin used to build merge-field links; sentBy is the admin username
-// recorded on sends.
-func NewService(db *bun.DB, publicBaseURL, sentBy string) *Service {
-	return &Service{db: db, publicBaseURL: publicBaseURL, sentBy: sentBy}
+// recorded on sends; dailySendLimit is the worker's per-UTC-day dispatch
+// budget (zero or negative for unlimited), reported on previews.
+func NewService(db *bun.DB, publicBaseURL, sentBy string, dailySendLimit int) *Service {
+	return &Service{db: db, publicBaseURL: publicBaseURL, sentBy: sentBy, dailySendLimit: dailySendLimit}
 }
 
 // newID returns a fresh UUIDv7 string, time-ordered like the rest of the
