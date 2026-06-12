@@ -72,6 +72,22 @@ describe("Crossword", () => {
     expect(square(0, 1)).not.toHaveTextContent("K");
   });
 
+  it("does nothing when backspacing past the start of the grid", () => {
+    render(<Crossword />);
+
+    // Put a letter at the bottom-right open square, the spot a wrap-around
+    // backspace would land on.
+    fireEvent.mouseDown(square(4, 3));
+    fireEvent.keyDown(gridEl(), { key: "E" });
+
+    // Backspacing from the empty first square has nowhere to go backward; it
+    // must stop rather than wrap around the grid and clear that letter.
+    fireEvent.mouseDown(square(0, 1));
+    fireEvent.keyDown(gridEl(), { key: "Backspace" });
+
+    expect(square(4, 3)).toHaveTextContent("E");
+  });
+
   it("routes real keyboard input through the focused hidden input", async () => {
     const user = userEvent.setup();
     render(<Crossword />);
