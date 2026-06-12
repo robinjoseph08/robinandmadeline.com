@@ -18,6 +18,11 @@ import { Label } from "@/components/ui/label";
 import { CrosswordSettings } from "./settings";
 
 interface SettingsDialogProps {
+  /**
+   * Radix close-focus hook: the page uses it to put focus back in the grid
+   * so the guest can keep typing right after closing the dialog.
+   */
+  onCloseAutoFocus: (event: Event) => void;
   onOpenChange: (open: boolean) => void;
   onSettingsChange: (patch: Partial<CrosswordSettings>) => void;
   open: boolean;
@@ -25,6 +30,7 @@ interface SettingsDialogProps {
 }
 
 export default function SettingsDialog({
+  onCloseAutoFocus,
   onOpenChange,
   onSettingsChange,
   open,
@@ -32,7 +38,10 @@ export default function SettingsDialog({
 }: SettingsDialogProps) {
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent data-testid="crossword-settings-dialog">
+      <DialogContent
+        data-testid="crossword-settings-dialog"
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>

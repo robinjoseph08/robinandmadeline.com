@@ -1,5 +1,6 @@
-// The puzzle registry: maps the URL slug in /games/crossword/:puzzleSlug to
-// a puzzle definition. Progress in localStorage and solve sessions on the
+// The puzzle registry: maps the URL slug in /games/:puzzleSlug to a puzzle
+// definition, so the mini lives at /games/mini and the full 15x15 at
+// /games/crossword. Progress in localStorage and solve sessions on the
 // backend are keyed by the puzzle's id (not its slug), so a slug can be
 // renamed without orphaning anyone's saved grid.
 
@@ -9,7 +10,7 @@ import { weddingFull } from "./puzzle-data-full";
 
 export const PUZZLES_BY_SLUG: Record<string, CrosswordPuzzle> = {
   mini: weddingMini,
-  full: weddingFull,
+  crossword: weddingFull,
 };
 
 /**

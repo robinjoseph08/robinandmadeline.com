@@ -18,6 +18,7 @@ import type {
   PostLeaderboardPayload,
   UpdateGameSessionPayload,
 } from "@/types/generated/games";
+import type { GameDifficulty } from "@/types/generated/models";
 
 interface GameRequestOptions {
   method?: string;
@@ -77,13 +78,19 @@ export function postLeaderboardEntry(
   });
 }
 
-/** Reads a puzzle's leaderboard, fastest first: GET /api/games/leaderboard. */
+/**
+ * Reads a puzzle's leaderboard, fastest first, scoped to one difficulty:
+ * GET /api/games/leaderboard.
+ */
 export function fetchLeaderboard(
   puzzleId: string,
+  difficulty: GameDifficulty,
 ): Promise<ListLeaderboardEntriesResponse> {
-  return apiRequest(
-    `/games/leaderboard?puzzle_id=${encodeURIComponent(puzzleId)}`,
-  );
+  const params = new URLSearchParams({
+    puzzle_id: puzzleId,
+    difficulty,
+  });
+  return apiRequest(`/games/leaderboard?${params.toString()}`);
 }
 
 /**

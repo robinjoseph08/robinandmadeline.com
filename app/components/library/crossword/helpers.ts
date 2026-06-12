@@ -225,12 +225,19 @@ export function updateSquare(
   squareToUpdate: SquareModel,
   update: Partial<SquareModel>,
 ): GridModel {
+  // Only the changed square gets a new object. Untouched squares keep their
+  // identity so the memoized Square components can skip re-rendering them;
+  // before this, every keystroke re-rendered all 225 squares of the 15x15.
+  // recalculateNumbers re-derives numbers and the word map over the shared
+  // objects, which is safe in solve mode: blocks never move, so every number
+  // it writes is the value the square already holds.
   const newGrid = {
     ...grid,
-    squares: grid.squares.map((square) => ({
-      ...square,
-      ...(areSquaresEqual(square, squareToUpdate) ? update : {}),
-    })),
+    squares: grid.squares.map((square) =>
+      areSquaresEqual(square, squareToUpdate)
+        ? { ...square, ...update }
+        : square,
+    ),
   };
   recalculateNumbers(newGrid);
   return newGrid;

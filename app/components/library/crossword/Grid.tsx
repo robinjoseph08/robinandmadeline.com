@@ -8,6 +8,7 @@ import {
   ChangeEvent,
   forwardRef,
   KeyboardEvent,
+  memo,
   MouseEvent,
   useCallback,
   useEffect,
@@ -24,6 +25,7 @@ import {
   getNextInWordSkippingFilled,
   getNextWordSkippingCompleted,
   getPreviousWordSkippingCompleted,
+  getSelectedWord,
   isFirstLetterOfWord,
   nextSelections,
   updateSquare,
@@ -59,6 +61,17 @@ export interface GridHandle {
 // all, which would leave backspace dead on exactly the keyboards the hidden
 // input exists for.
 const HIDDEN_INPUT_SENTINEL = " ";
+
+function isSelectedSquare(
+  selections: Selection[],
+  square: SquareModel,
+): boolean {
+  return (
+    selections.length === 1 &&
+    selections[0].col === square.col &&
+    selections[0].row === square.row
+  );
+}
 
 const Grid = forwardRef<GridHandle, Props>(
   (
@@ -139,33 +152,38 @@ const Grid = forwardRef<GridHandle, Props>(
       onGridChange?.(grid);
     }, [grid, onGridChange]);
 
-    const handleMouseDown = (e: MouseEvent, square: SquareModel) => {
-      e.stopPropagation();
-      e.preventDefault();
+    // Stable across renders (functional updates, refs only) so the memoized
+    // squares never re-render because of it.
+    const handleMouseDown = useCallback(
+      (e: MouseEvent, square: SquareModel) => {
+        e.stopPropagation();
+        e.preventDefault();
 
-      // Block squares can't be selected
-      if (square.type === "block") {
-        return;
-      }
+        // Block squares can't be selected
+        if (square.type === "block") {
+          return;
+        }
 
-      setSelections((prev) => {
-        return [
-          {
-            col: square.col,
-            row: square.row,
-            direction:
-              prev[0]?.col === square.col && prev[0]?.row === square.row
-                ? inverseDirection[prev[0].direction]
-                : prev[0]?.direction || "across",
-          },
-        ];
-      });
+        setSelections((prev) => {
+          return [
+            {
+              col: square.col,
+              row: square.row,
+              direction:
+                prev[0]?.col === square.col && prev[0]?.row === square.row
+                  ? inverseDirection[prev[0].direction]
+                  : prev[0]?.direction || "across",
+            },
+          ];
+        });
 
-      // Focus the hidden input so typing works and mobile keyboards appear.
-      // This runs after the selection update is queued, so the bubbled focus
-      // handler above sees a selection and leaves it alone.
-      hiddenInputRef.current?.focus();
-    };
+        // Focus the hidden input so typing works and mobile keyboards appear.
+        // This runs after the selection update is queued, so the bubbled focus
+        // handler above sees a selection and leaves it alone.
+        hiddenInputRef.current?.focus();
+      },
+      [],
+    );
 
     // Enter a single character into the selected square and advance the cursor.
     const enterCharacter = useCallback(
@@ -512,6 +530,14 @@ const Grid = forwardRef<GridHandle, Props>(
       }
     };
 
+    // Computed once per grid render; each square then needs only a Set
+    // lookup, and the memoized squares receive plain booleans they can
+    // shallow-compare.
+    const selectedWord = getSelectedWord(grid, selections);
+    const selectedWordKeys = new Set(
+      (selectedWord ?? []).map((square) => `${square.row}:${square.col}`),
+    );
+
     return (
       <div
         aria-label="Crossword grid"
@@ -552,10 +578,13 @@ const Grid = forwardRef<GridHandle, Props>(
         />
         {grid.squares.map((square) => (
           <Square
-            grid={grid}
+            isInSelectedWord={
+              !isSelectedSquare(selections, square) &&
+              selectedWordKeys.has(`${square.row}:${square.col}`)
+            }
+            isSelected={isSelectedSquare(selections, square)}
             key={`${square.col}:${square.row}`}
-            onMouseDown={(e) => handleMouseDown(e, square)}
-            selections={selections}
+            onMouseDown={handleMouseDown}
             square={square}
           />
         ))}
@@ -566,4 +595,7 @@ const Grid = forwardRef<GridHandle, Props>(
 
 Grid.displayName = "Grid";
 
-export default Grid;
+// Memoized so the parent page's per-keystroke re-render (it mirrors grid
+// state for progress saving and clue highlighting) doesn't descend into the
+// grid again: every prop the page passes is referentially stable.
+export default memo(Grid);

@@ -3,6 +3,7 @@ import { useQuery, type UseQueryOptions } from "@tanstack/react-query";
 import { ApiError } from "@/libraries/api";
 import { fetchLeaderboard } from "@/libraries/games-api";
 import type { ListLeaderboardEntriesResponse } from "@/types/generated/games";
+import type { GameDifficulty } from "@/types/generated/models";
 
 /**
  * React Query hooks for the crossword games API. Only the leaderboard read
@@ -17,6 +18,7 @@ export enum QueryKey {
 
 export const useLeaderboard = (
   puzzleId: string,
+  difficulty: GameDifficulty,
   options: Omit<
     UseQueryOptions<ListLeaderboardEntriesResponse, ApiError>,
     "queryKey" | "queryFn"
@@ -24,7 +26,10 @@ export const useLeaderboard = (
 ) => {
   return useQuery<ListLeaderboardEntriesResponse, ApiError>({
     ...options,
-    queryKey: [QueryKey.GameLeaderboard, puzzleId],
-    queryFn: () => fetchLeaderboard(puzzleId),
+    // The difficulty is part of the key so each leaderboard tab caches its
+    // own list; invalidating the [QueryKey, puzzleId] prefix still sweeps
+    // all three.
+    queryKey: [QueryKey.GameLeaderboard, puzzleId, difficulty],
+    queryFn: () => fetchLeaderboard(puzzleId, difficulty),
   });
 };

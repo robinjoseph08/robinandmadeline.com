@@ -85,20 +85,37 @@ function renderCrossword(slug = "mini") {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[`/games/crossword/${slug}`]}>
+      <MemoryRouter initialEntries={[`/games/${slug}`]}>
         <Routes>
-          <Route Component={Crossword} path="/games/crossword/:puzzleSlug" />
+          <Route Component={Crossword} path="/games/:puzzleSlug" />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
+/**
+ * Flush Radix's deferred close-focus (a setTimeout(0) in its FocusScope),
+ * plus any queued telemetry promises, so the grid focus and selection that
+ * follow a dialog close have landed before assertions run.
+ */
+async function flushDialogClose() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 /** Dismiss the start dialog with the current selections, beginning the solve. */
 async function startGame() {
   fireEvent.click(screen.getByRole("button", { name: "Start solving" }));
-  // Let the queued session create resolve so no state update escapes act.
-  await act(async () => {});
+  await flushDialogClose();
+}
+
+/** Resume a solve that mounted paused (the return-paused behavior). */
+async function resumeGame() {
+  const dialog = screen.getByTestId("crossword-pause-dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Resume" }));
+  await flushDialogClose();
 }
 
 function gridEl() {
@@ -185,31 +202,45 @@ describe("Crossword", () => {
       expect(apiRequest).not.toHaveBeenCalled();
     });
 
-    it("keeps the grid obscured when dismissed, with a way back in", async () => {
+    it("blurs the entire play area, grid and clues, behind the start dialog", () => {
+      renderCrossword();
+
+      // The whole play area (grid AND clues) sits behind one blur and is
+      // inert: nothing readable, nothing focusable, no sliver peeking out.
+      const playArea = screen.getByTestId("crossword-play-area");
+      expect(playArea).toHaveAttribute("inert");
+      expect(playArea.className).toContain("blur");
+      expect(square(0, 1).closest("[inert]")).not.toBeNull();
+      expect(
+        screen.getByTestId("crossword-clues-across").closest("[inert]"),
+      ).not.toBeNull();
+    });
+
+    it("keeps the play area obscured when dismissed, with a way back in", async () => {
       renderCrossword();
 
       const dialog = screen.getByRole("dialog", { name: /ready to solve/i });
       fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
 
-      // The solving area is obscured and inert until the guest commits.
-      const overlay = screen.getByTestId("crossword-grid-overlay");
-      expect(overlay).toBeInTheDocument();
-      expect(
-        screen.getByTestId("crossword-square-0-1").closest("[inert]"),
-      ).not.toBeNull();
-
-      // The overlay's button reopens the dialog, and starting works from it.
+      // The play area stays blurred and inert until the guest commits, with
+      // a centered button back into the start dialog.
+      const playArea = screen.getByTestId("crossword-play-area");
+      expect(playArea).toHaveAttribute("inert");
+      expect(playArea.className).toContain("blur");
+      const overlay = screen.getByTestId("crossword-start-overlay");
       fireEvent.click(
         within(overlay).getByRole("button", { name: "Start solving" }),
       );
       await startGame();
       expect(
-        screen.queryByTestId("crossword-grid-overlay"),
+        screen.queryByTestId("crossword-start-overlay"),
       ).not.toBeInTheDocument();
+      expect(playArea).not.toHaveAttribute("inert");
+      expect(playArea.className).not.toContain("blur");
       expect(localStorage.getItem(PROGRESS_KEY)).not.toBeNull();
     });
 
-    it("skips the dialog for a returning guest with saved progress", () => {
+    it("skips the dialog for a returning guest and starts paused instead", async () => {
       localStorage.setItem(
         PROGRESS_KEY,
         JSON.stringify({ entries: EMPTY_ENTRIES, difficulty: "easy" }),
@@ -217,12 +248,24 @@ describe("Crossword", () => {
 
       renderCrossword();
 
+      // No start dialog, but no ticking clock either: the return lands on
+      // the centered pause dialog with the play area obscured behind it.
       expect(
         screen.queryByRole("dialog", { name: /ready to solve/i }),
       ).not.toBeInTheDocument();
+      expect(screen.getByTestId("crossword-pause-dialog")).toBeInTheDocument();
+      expect(screen.getByTestId("crossword-play-area")).toHaveAttribute(
+        "inert",
+      );
+
+      // Resuming is explicit, and uncovers the grid.
+      await resumeGame();
       expect(
-        screen.queryByTestId("crossword-grid-overlay"),
+        screen.queryByTestId("crossword-pause-dialog"),
       ).not.toBeInTheDocument();
+      expect(screen.getByTestId("crossword-play-area")).not.toHaveAttribute(
+        "inert",
+      );
       expect(gridEl()).toBeInTheDocument();
     });
 
@@ -232,7 +275,7 @@ describe("Crossword", () => {
         JSON.stringify({ entries: EMPTY_ENTRIES, difficulty: "easy" }),
       );
 
-      renderCrossword("full");
+      renderCrossword("crossword");
 
       expect(
         screen.getByRole("dialog", { name: /ready to solve/i }),
@@ -262,6 +305,59 @@ describe("Crossword", () => {
     });
   });
 
+  describe("focus", () => {
+    it("selects the first open square and focuses the grid on start", async () => {
+      const user = userEvent.setup();
+      renderCrossword();
+      await startGame();
+
+      // The first non-block square is selected...
+      expect(square(0, 1)).toHaveClass("bg-secondary");
+      // ...and the grid owns focus, so typing lands immediately without a
+      // click (userEvent sends keys to the focused element).
+      expect(hiddenInput()).toHaveFocus();
+      await user.keyboard("k");
+      expect(square(0, 1)).toHaveTextContent("K");
+    });
+
+    it("keeps the prior selection when resuming a paused solve", async () => {
+      const user = userEvent.setup();
+      renderCrossword();
+      await startGame();
+
+      // Move the cursor mid-word, then pause and resume.
+      fireEvent.mouseDown(square(1, 2));
+      fireEvent.click(screen.getByRole("button", { name: "Pause timer" }));
+      await resumeGame();
+
+      // The selection survived the pause and the grid has focus again.
+      expect(square(1, 2)).toHaveClass("bg-secondary");
+      expect(hiddenInput()).toHaveFocus();
+      await user.keyboard("n");
+      expect(square(1, 2)).toHaveTextContent("N");
+    });
+
+    it("returns focus to the grid when the settings dialog closes", async () => {
+      const user = userEvent.setup();
+      renderCrossword();
+      await startGame();
+
+      await user.keyboard("k");
+      expect(square(0, 1)).toHaveTextContent("K");
+
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+      const dialog = await screen.findByTestId("crossword-settings-dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await flushDialogClose();
+
+      // Typing works immediately: the cursor advanced to (0,2) before the
+      // dialog opened and is still there.
+      expect(hiddenInput()).toHaveFocus();
+      await user.keyboard("i");
+      expect(square(0, 2)).toHaveTextContent("I");
+    });
+  });
+
   describe("grid", () => {
     it("renders the full grid and the easy clues by default", async () => {
       renderCrossword();
@@ -284,7 +380,7 @@ describe("Crossword", () => {
     });
 
     it("renders the 15x15 puzzle at its own slug", async () => {
-      renderCrossword("full");
+      renderCrossword("crossword");
       await startGame();
 
       expect(
@@ -320,7 +416,7 @@ describe("Crossword", () => {
       renderCrossword();
       await startGame();
 
-      fireEvent.mouseDown(square(0, 1));
+      // Starting auto-selects the first open square, (0,1).
       fireEvent.keyDown(gridEl(), { key: "K" });
 
       // The square is a container query container and both spans derive their
@@ -338,7 +434,7 @@ describe("Crossword", () => {
       renderCrossword();
       await startGame();
 
-      fireEvent.mouseDown(square(0, 1));
+      // No click needed: starting selected (0,1) across.
       fireEvent.keyDown(gridEl(), { key: "K" });
       fireEvent.keyDown(gridEl(), { key: "I" });
 
@@ -350,7 +446,6 @@ describe("Crossword", () => {
       renderCrossword();
       await startGame();
 
-      fireEvent.mouseDown(square(0, 1));
       fireEvent.keyDown(gridEl(), { key: "K" });
       // The cursor advanced to (0,2), which is empty, so backspace moves back
       // to (0,1) and clears it.
@@ -395,7 +490,6 @@ describe("Crossword", () => {
       renderCrossword();
       await startGame();
 
-      fireEvent.mouseDown(square(0, 1));
       fireEvent.change(hiddenInput(), { target: { value: " k" } });
 
       expect(square(0, 1)).toHaveTextContent("K");
@@ -409,7 +503,6 @@ describe("Crossword", () => {
       renderCrossword();
       await startGame();
 
-      fireEvent.mouseDown(square(0, 1));
       fireEvent.keyDown(gridEl(), { key: "K" });
 
       // Mobile backspace never emits a usable key event; deleting the sentinel
@@ -423,7 +516,6 @@ describe("Crossword", () => {
       const { unmount } = renderCrossword();
       await startGame();
 
-      fireEvent.mouseDown(square(0, 1));
       fireEvent.keyDown(gridEl(), { key: "K" });
       fireEvent.keyDown(gridEl(), { key: "." });
       fireEvent.keyDown(gridEl(), { key: "1" });
@@ -446,14 +538,17 @@ describe("Crossword", () => {
       renderCrossword();
       await startGame();
 
-      fireEvent.mouseDown(square(0, 1));
-      fireEvent.mouseDown(square(0, 1));
-      fireEvent.keyDown(gridEl(), { key: "K" });
+      // Click a square that isn't the auto-selected (0,1): the first click
+      // selects it (across), the second toggles to down.
+      fireEvent.mouseDown(square(1, 1));
+      fireEvent.mouseDown(square(1, 1));
       fireEvent.keyDown(gridEl(), { key: "A" });
+      fireEvent.keyDown(gridEl(), { key: "P" });
 
-      // The second letter went down the column (1-Down), not across the row.
+      // The second letter went down the column, not across the row.
       expect(square(1, 1)).toHaveTextContent("A");
-      expect(square(0, 2)).not.toHaveTextContent("A");
+      expect(square(2, 1)).toHaveTextContent("P");
+      expect(square(1, 2)).not.toHaveTextContent("P");
     });
 
     it("selects the first open square when the grid itself gains focus", async () => {
@@ -471,7 +566,7 @@ describe("Crossword", () => {
       renderCrossword();
       await startGame();
 
-      fireEvent.mouseDown(square(0, 1)); // 1-Across, KISS
+      // Starting selected 1-Across (KISS).
       fireEvent.keyDown(gridEl(), { key: "Tab" });
 
       // The next across word, 5-Across (DANCE), starts at row 1, col 0.
@@ -494,6 +589,54 @@ describe("Crossword", () => {
       // Typing lands at the start of the chosen word.
       fireEvent.keyDown(gridEl(), { key: "D" });
       expect(square(1, 0)).toHaveTextContent("D");
+    });
+
+    it("accents the clue crossing the cursor in the other direction's list", async () => {
+      renderCrossword();
+      await startGame();
+
+      // Select 5-Across at (1,0); the down word through (1,0) is 5-Down.
+      fireEvent.mouseDown(square(1, 0));
+
+      const downList = screen.getByTestId("crossword-clues-down");
+      const crossing = within(downList)
+        .getAllByRole("listitem")
+        .find((item) => item.getAttribute("data-clue-number") === "5");
+      expect(crossing).toBeDefined();
+      expect(within(crossing!).getByRole("button").className).toContain(
+        "border-l-4",
+      );
+    });
+
+    it("keeps clue lists independently scrollable and scrolls the active clues into view", async () => {
+      const scrollSpy = vi
+        .spyOn(Element.prototype, "scrollIntoView")
+        .mockImplementation(() => {});
+      renderCrossword();
+      await startGame();
+      scrollSpy.mockClear();
+
+      // Each direction's list is its own scroll container (jsdom cannot
+      // scroll for real, so assert the mechanism: bounded overflow plus
+      // scrollIntoView on selection change).
+      for (const direction of ["across", "down"]) {
+        const list = screen.getByTestId(`crossword-clues-${direction}`);
+        expect(list.className).toContain("overflow-y-auto");
+        expect(list.className).toContain("max-h-");
+      }
+
+      // Moving the selection scrolls the selected clue's list AND the
+      // crossing clue's list.
+      fireEvent.mouseDown(square(1, 0));
+      const scrolledLists = scrollSpy.mock.instances.map((el) =>
+        (el as HTMLElement)
+          .closest("[data-testid^='crossword-clues-']")
+          ?.getAttribute("data-testid"),
+      );
+      expect(scrolledLists).toContain("crossword-clues-across");
+      expect(scrolledLists).toContain("crossword-clues-down");
+
+      scrollSpy.mockRestore();
     });
   });
 
@@ -569,6 +712,8 @@ describe("Crossword", () => {
       );
 
       renderCrossword();
+      // A restored in-progress solve mounts paused; resume to inspect it.
+      await resumeGame();
 
       expect(square(0, 1)).toHaveTextContent("K");
       expect(square(0, 2)).toHaveTextContent("I");
@@ -606,6 +751,7 @@ describe("Crossword", () => {
       );
 
       renderCrossword();
+      await resumeGame();
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
       fireEvent.mouseDown(square(4, 3));
@@ -635,6 +781,7 @@ describe("Crossword", () => {
       );
 
       renderCrossword();
+      await resumeGame();
 
       fireEvent.mouseDown(square(4, 3));
       fireEvent.keyDown(gridEl(), { key: "X" });
@@ -676,7 +823,7 @@ describe("Crossword", () => {
       renderCrossword();
       await startGame();
 
-      fireEvent.mouseDown(square(0, 1));
+      // Starting auto-selected (0,1) across.
       fireEvent.keyDown(gridEl(), { key: " " });
       fireEvent.keyDown(gridEl(), { key: "K" });
       fireEvent.keyDown(gridEl(), { key: "A" });
@@ -692,7 +839,6 @@ describe("Crossword", () => {
       renderCrossword();
       await startGame();
 
-      fireEvent.mouseDown(square(0, 1));
       fireEvent.keyDown(gridEl(), { key: "K" });
       fireEvent.keyDown(gridEl(), { key: "I" });
 
@@ -796,9 +942,9 @@ describe("Crossword", () => {
 
     it("stays at the end of a finished word by default, and jumps to the next clue when configured", async () => {
       // Default: manual advance, the cursor stays put after finishing KISS.
+      // Starting auto-selects (0,1) across, the start of KISS.
       const first = renderCrossword();
       await startGame();
-      fireEvent.mouseDown(square(0, 1));
       for (const key of ["K", "I", "S", "S"]) {
         fireEvent.keyDown(gridEl(), { key });
       }
@@ -813,7 +959,6 @@ describe("Crossword", () => {
       seedSettings({ jumpToNextClue: true });
       renderCrossword();
       await startGame();
-      fireEvent.mouseDown(square(0, 1));
       for (const key of ["K", "I", "S", "S"]) {
         fireEvent.keyDown(gridEl(), { key });
       }
@@ -824,9 +969,9 @@ describe("Crossword", () => {
 
     it("arrow keys stay in place after flipping direction by default, and move when configured", async () => {
       // Default: ArrowDown on an across selection only flips the direction.
+      // Starting auto-selects (0,1) across.
       const first = renderCrossword();
       await startGame();
-      fireEvent.mouseDown(square(0, 1));
       fireEvent.keyDown(gridEl(), { key: "ArrowDown" });
       fireEvent.keyDown(gridEl(), { key: "K" });
       expect(square(0, 1)).toHaveTextContent("K");
@@ -837,7 +982,6 @@ describe("Crossword", () => {
       seedSettings({ arrowKeyAfterDirectionChange: "move" });
       renderCrossword();
       await startGame();
-      fireEvent.mouseDown(square(0, 1));
       fireEvent.keyDown(gridEl(), { key: "ArrowDown" });
       fireEvent.keyDown(gridEl(), { key: "A" });
       // The flip also moved one square down, so the A landed at (1,1).
@@ -861,9 +1005,11 @@ describe("Crossword", () => {
       ) as { skipFilledSquares: boolean };
       expect(stored.skipFilledSquares).toBe(false);
 
-      // A fresh mount reads the stored settings back into the dialog.
+      // A fresh mount reads the stored settings back into the dialog. The
+      // remount restores the in-progress solve paused, so resume first.
       unmount();
       renderCrossword();
+      await resumeGame();
       fireEvent.click(screen.getByRole("button", { name: "Settings" }));
       const reopened = await screen.findByTestId("crossword-settings-dialog");
       expect(

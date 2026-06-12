@@ -43,6 +43,13 @@ interface UseSolveSessionOptions {
    * report may be sent for it.
    */
   initiallyFinished?: boolean;
+  /**
+   * Whether to mount in the explicit paused state. A page load that restores
+   * an in-progress solve starts paused so the guest is never dropped into
+   * the grid with the clock already ticking; only an explicit resume starts
+   * it. Ignored for solves that never started or are already finished.
+   */
+  initiallyPaused?: boolean;
 }
 
 export interface SolveSession {
@@ -85,6 +92,7 @@ export function useSolveSession({
   initiallyStarted,
   initialDifficulty,
   initiallyFinished = false,
+  initiallyPaused = false,
 }: UseSolveSessionOptions): SolveSession {
   // The persisted record is read once; from then on the refs are the source
   // of truth and persist() writes them back at every meaningful moment.
@@ -110,7 +118,13 @@ export function useSolveSession({
   const [finished, setFinished] = useState(
     (initialRecord?.completed ?? false) || initiallyFinished,
   );
-  const [paused, setPaused] = useState(false);
+  // The guards mirror pause(): a solve that never started has nothing to
+  // pause, and a finished one must never show the pause dialog again.
+  const [paused, setPaused] = useState(
+    initiallyPaused &&
+      initiallyStarted &&
+      !((initialRecord?.completed ?? false) || initiallyFinished),
+  );
   const [uiPaused, setUiPausedState] = useState(false);
   // Read the real visibility at mount: a page opened in a background tab
   // (cmd+click, session restore) must not accrue active time before its
