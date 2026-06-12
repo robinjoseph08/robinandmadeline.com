@@ -50,13 +50,18 @@ describe("googleCalendarUrl", () => {
     // timezone no matter where the guest opens the link.
     expect(url.searchParams.get("ctz")).toBe("America/Chicago");
     expect(url.searchParams.get("location")).toBe("The Grand Hall");
-    expect(url.searchParams.get("details")).toBe("Dinner and dancing.");
+    // The details always end with a link back to the schedule page.
+    expect(url.searchParams.get("details")).toBe(
+      "Dinner and dancing.\n\nhttps://robinandmadeline.com/schedule",
+    );
   });
 
-  it("omits location and details when the event has none", () => {
+  it("omits location and keeps only the site link as details when the event has neither", () => {
     const url = new URL(googleCalendarUrl(makeEvent({ start_time: "17:00" })));
     expect(url.searchParams.get("location")).toBeNull();
-    expect(url.searchParams.get("details")).toBeNull();
+    expect(url.searchParams.get("details")).toBe(
+      "https://robinandmadeline.com/schedule",
+    );
   });
 
   it("builds an all-day link when the event has no start time", () => {
@@ -134,7 +139,10 @@ describe("icsContent", () => {
     expect(ics).toContain("DTEND;TZID=America/Chicago:20261017T220000");
     expect(ics).toContain("SUMMARY:Reception");
     expect(ics).toContain("LOCATION:The Grand Hall");
-    expect(ics).toContain("DESCRIPTION:Dinner and dancing.");
+    // The description always ends with a link back to the schedule page.
+    expect(ics).toContain(
+      "DESCRIPTION:Dinner and dancing.\\n\\nhttps://robinandmadeline.com/schedule",
+    );
     // The referenced TZID is defined in the file so strict parsers resolve it.
     expect(ics).toContain("BEGIN:VTIMEZONE");
     expect(ics).toContain("TZID:America/Chicago");
@@ -157,10 +165,12 @@ describe("icsContent", () => {
     expect(ics).not.toContain("BEGIN:VTIMEZONE");
   });
 
-  it("omits LOCATION and DESCRIPTION when the event has none", () => {
+  it("omits LOCATION and keeps only the site link as DESCRIPTION when the event has neither", () => {
     const ics = icsContent(makeEvent({ start_time: "17:00" }), now);
     expect(ics).not.toContain("LOCATION:");
-    expect(ics).not.toContain("DESCRIPTION:");
+    expect(ics).toContain(
+      "DESCRIPTION:https://robinandmadeline.com/schedule\r\n",
+    );
   });
 
   it("escapes commas, semicolons, backslashes, and newlines in text", () => {
@@ -172,7 +182,9 @@ describe("icsContent", () => {
       now,
     );
     expect(ics).toContain("SUMMARY:Dinner\\; Dancing\\, Fun\\\\Stuff");
-    expect(ics).toContain("DESCRIPTION:Line one\\nLine two");
+    expect(ics).toContain(
+      "DESCRIPTION:Line one\\nLine two\\n\\nhttps://robinandmadeline.com/schedule",
+    );
   });
 
   it("folds CRLF and lone CR newlines to the escaped form too", () => {
@@ -182,7 +194,9 @@ describe("icsContent", () => {
       makeEvent({ description: "CRLF\r\nthen\rlone CR" }),
       now,
     );
-    expect(ics).toContain("DESCRIPTION:CRLF\\nthen\\nlone CR");
+    expect(ics).toContain(
+      "DESCRIPTION:CRLF\\nthen\\nlone CR\\n\\nhttps://robinandmadeline.com/schedule",
+    );
   });
 });
 

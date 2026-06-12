@@ -9,13 +9,31 @@
  * definition for .ics) and leave the daylight-saving math to the consuming
  * calendar. An event with no start time becomes an all-day event; a missing
  * end time defaults to one hour after the start; an end time before the start
- * is read as running past midnight into the next day.
+ * is read as running past midnight into the next day. Both outputs end the
+ * description with a link back to the schedule page so guests can return to
+ * the site for the latest details.
  */
 
 import { VENUE_TIME_ZONE } from "@/libraries/venue";
 import type { Event } from "@/types/generated/models";
 
 const MINUTES_PER_DAY = 24 * 60;
+
+/**
+ * Appended to every generated calendar entry's description so guests can get
+ * back to the site from their calendar.
+ */
+const SCHEDULE_URL = "https://robinandmadeline.com/schedule";
+
+/**
+ * The calendar-entry description: the event's own text (when it has any)
+ * followed by the schedule page link.
+ */
+function calendarDescription(event: Event): string {
+  return event.description
+    ? `${event.description}\n\n${SCHEDULE_URL}`
+    : SCHEDULE_URL;
+}
 
 /**
  * The RFC 5545 timezone definition for VENUE_TIME_ZONE, so the TZID the
@@ -118,7 +136,7 @@ export function googleCalendarUrl(event: Event): string {
     );
   }
 
-  if (event.description) params.set("details", event.description);
+  params.set("details", calendarDescription(event));
   if (event.location) params.set("location", event.location);
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
@@ -186,9 +204,7 @@ export function icsContent(event: Event, now: Date = new Date()): string {
 
   lines.push(`SUMMARY:${escapeText(event.name)}`);
   if (event.location) lines.push(`LOCATION:${escapeText(event.location)}`);
-  if (event.description) {
-    lines.push(`DESCRIPTION:${escapeText(event.description)}`);
-  }
+  lines.push(`DESCRIPTION:${escapeText(calendarDescription(event))}`);
   lines.push("END:VEVENT", "END:VCALENDAR");
 
   return `${lines.join("\r\n")}\r\n`;
