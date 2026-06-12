@@ -10,9 +10,15 @@ interface GameInfo {
 const GAMES: GameInfo[] = [
   {
     description:
-      "A five-by-five mini puzzle with easy, medium, and hard clues. Your progress saves in your browser, so come back any time.",
+      "A quick five-by-five warm-up with easy, medium, and hard clues. Your progress saves in your browser, so come back any time.",
+    title: "Mini Crossword",
+    to: "/games/crossword/mini",
+  },
+  {
+    description:
+      "The full-size fifteen-by-fifteen grid for a longer challenge, with the same three difficulty levels. Progress saves here too.",
     title: "Crossword",
-    to: "/games/crossword",
+    to: "/games/crossword/full",
   },
 ];
 

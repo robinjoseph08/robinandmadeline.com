@@ -56,12 +56,24 @@ const Square = ({ grid, onMouseDown, selections, square }: Props) => {
         gridColumn: `${square.col + 1} / span 1`,
       }}
     >
-      <div className="absolute flex h-full w-full flex-col p-[1px]">
-        <span className="text-[10px] leading-none">
-          {square.number !== undefined ? square.number : <>&nbsp;</>}
-        </span>
+      {/*
+        The inner @container makes the square an inline-size query container,
+        so the clue number and letter scale in cqw units (1cqw = 1% of the
+        square's width, which equals its height since squares keep a 1:1
+        aspect). Sizes stay proportional from a large 5x5 mini square down to
+        a small 15x15 square on a phone, where fixed pixel font sizes were
+        wrong at one extreme or the other.
+      */}
+      <div className="@container absolute inset-0">
+        {square.number !== undefined && (
+          // The 7px floor keeps numbers legible on a 15x15 at phone widths,
+          // where 24cqw alone would drop below readable size.
+          <span className="absolute left-[4cqw] top-[2cqw] text-[max(7px,24cqw)] leading-none">
+            {square.number}
+          </span>
+        )}
         {square.solution !== undefined && (
-          <span className="w-full grow text-center text-xl font-bold sm:text-2xl">
+          <span className="absolute inset-0 flex items-end justify-center pb-[6cqw] text-[60cqw] font-bold leading-none">
             {square.solution}
           </span>
         )}

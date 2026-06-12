@@ -1,10 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { weddingFull } from "@/components/library/crossword/puzzle-data-full";
 import Crossword from "@/components/pages/Crossword";
 
-// The shipped puzzle: ".KISSDANCEAPNEASPENTHARE." on a 5x5 grid with blocks
+// The shipped mini: ".KISSDANCEAPNEASPENTHARE." on a 5x5 grid with blocks
 // at the first and last squares. 1-Across is KISS, starting at row 0, col 1.
 const PROGRESS_KEY = "crossword:wedding-mini-v1:progress";
 const SOLUTION = ".KISSDANCEAPNEASPENTHARE.";
@@ -12,6 +14,17 @@ const EMPTY_ENTRIES = SOLUTION.replace(/[A-Z]/g, "?");
 
 /** The solution with every letter filled in except the last one (row 4, col 3). */
 const ALL_BUT_LAST = `${SOLUTION.slice(0, 23)}?.`;
+
+/** Mount the page the way the app router does, at the given puzzle slug. */
+function renderCrossword(slug = "mini") {
+  return render(
+    <MemoryRouter initialEntries={[`/games/crossword/${slug}`]}>
+      <Routes>
+        <Route Component={Crossword} path="/games/crossword/:puzzleSlug" />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
 
 function gridEl() {
   return screen.getByRole("application", { name: /crossword grid/i });
@@ -31,10 +44,10 @@ describe("Crossword", () => {
   });
 
   it("renders the full grid and the easy clues by default", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     expect(
-      screen.getByRole("heading", { name: /crossword/i }),
+      screen.getByRole("heading", { name: /the wedding mini/i }),
     ).toBeInTheDocument();
     expect(screen.getAllByTestId(/^crossword-square-/)).toHaveLength(25);
     // The two corner blocks from the puzzle definition.
@@ -49,8 +62,55 @@ describe("Crossword", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders the 15x15 puzzle at its own slug", () => {
+    renderCrossword("full");
+
+    expect(
+      screen.getByRole("heading", { name: weddingFull.title }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByTestId(/^crossword-square-/)).toHaveLength(225);
+    // Its first easy across clue shows, proving the clue sets are wired up.
+    const [number, text] = Object.entries(weddingFull.clues.easy.across).sort(
+      ([a], [b]) => parseInt(a, 10) - parseInt(b, 10),
+    )[0];
+    expect(
+      screen.getByRole("button", { name: `${number}. ${text}` }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the not-found message for an unknown puzzle slug", () => {
+    renderCrossword("does-not-exist");
+
+    expect(
+      screen.getByRole("heading", { name: /can't find that puzzle/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/no crossword/i);
+    expect(screen.getByRole("link", { name: /games page/i })).toHaveAttribute(
+      "href",
+      "/games",
+    );
+    expect(screen.queryByTestId(/^crossword-square-/)).not.toBeInTheDocument();
+  });
+
+  it("sizes letters and clue numbers relative to the square", () => {
+    renderCrossword();
+
+    fireEvent.mouseDown(square(0, 1));
+    fireEvent.keyDown(gridEl(), { key: "K" });
+
+    // The square is a container query container and both spans derive their
+    // font size from it (cqw units), so the letter stays proportional on any
+    // grid size. A fixed pixel font would be wrong at one extreme or the
+    // other, so lock the mechanism in.
+    const letter = within(square(0, 1)).getByText("K");
+    expect(letter.className).toContain("cqw]");
+    expect(letter.parentElement?.className).toContain("@container");
+    const clueNumber = within(square(0, 1)).getByText("1");
+    expect(clueNumber.className).toContain("cqw]");
+  });
+
   it("fills letters into squares as the guest types", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     fireEvent.mouseDown(square(0, 1));
     fireEvent.keyDown(gridEl(), { key: "K" });
@@ -61,7 +121,7 @@ describe("Crossword", () => {
   });
 
   it("clears letters with backspace", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     fireEvent.mouseDown(square(0, 1));
     fireEvent.keyDown(gridEl(), { key: "K" });
@@ -73,7 +133,7 @@ describe("Crossword", () => {
   });
 
   it("does nothing when backspacing past the start of the grid", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     // Put a letter at the bottom-right open square, the spot a wrap-around
     // backspace would land on.
@@ -90,7 +150,7 @@ describe("Crossword", () => {
 
   it("routes real keyboard input through the focused hidden input", async () => {
     const user = userEvent.setup();
-    render(<Crossword />);
+    renderCrossword();
 
     await user.click(square(0, 1));
     // userEvent sends keys to document.activeElement, so this only works if
@@ -103,7 +163,7 @@ describe("Crossword", () => {
   });
 
   it("enters letters that arrive only as input mutations, as on touch keyboards", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     fireEvent.mouseDown(square(0, 1));
     fireEvent.change(hiddenInput(), { target: { value: " k" } });
@@ -116,7 +176,7 @@ describe("Crossword", () => {
   });
 
   it("treats the hidden input shrinking as backspace, as on touch keyboards", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     fireEvent.mouseDown(square(0, 1));
     fireEvent.keyDown(gridEl(), { key: "K" });
@@ -129,7 +189,7 @@ describe("Crossword", () => {
   });
 
   it("ignores punctuation and digits so a stray keystroke cannot poison the save", () => {
-    const { unmount } = render(<Crossword />);
+    const { unmount } = renderCrossword();
 
     fireEvent.mouseDown(square(0, 1));
     fireEvent.keyDown(gridEl(), { key: "K" });
@@ -146,12 +206,12 @@ describe("Crossword", () => {
 
     // The save still fits the puzzle, so the K survives a reload.
     unmount();
-    render(<Crossword />);
+    renderCrossword();
     expect(square(0, 1)).toHaveTextContent("K");
   });
 
   it("toggles typing direction when the selected square is clicked again", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     fireEvent.mouseDown(square(0, 1));
     fireEvent.mouseDown(square(0, 1));
@@ -164,7 +224,7 @@ describe("Crossword", () => {
   });
 
   it("selects the first open square when the grid itself gains focus", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     fireEvent.focus(gridEl());
     fireEvent.keyDown(gridEl(), { key: "K" });
@@ -174,7 +234,7 @@ describe("Crossword", () => {
   });
 
   it("jumps to the next unfinished word with Tab", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     fireEvent.mouseDown(square(0, 1)); // 1-Across, KISS
     fireEvent.keyDown(gridEl(), { key: "Tab" });
@@ -184,7 +244,7 @@ describe("Crossword", () => {
   });
 
   it("selects a word from its clue and highlights the active clue", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     const clue = screen.getByRole("button", {
       name: /5\. The couple's first one is a reception highlight/,
@@ -201,7 +261,7 @@ describe("Crossword", () => {
   });
 
   it("switches clue sets without resetting entered letters", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     fireEvent.mouseDown(square(0, 1));
     fireEvent.keyDown(gridEl(), { key: "K" });
@@ -224,7 +284,7 @@ describe("Crossword", () => {
   });
 
   it("saves entered letters and difficulty to localStorage", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     fireEvent.mouseDown(square(0, 1));
     fireEvent.keyDown(gridEl(), { key: "K" });
@@ -247,7 +307,7 @@ describe("Crossword", () => {
       }),
     );
 
-    render(<Crossword />);
+    renderCrossword();
 
     expect(square(0, 1)).toHaveTextContent("K");
     expect(square(0, 2)).toHaveTextContent("I");
@@ -269,7 +329,7 @@ describe("Crossword", () => {
       JSON.stringify({ entries: "XYZ", difficulty: "easy" }),
     );
 
-    render(<Crossword />);
+    renderCrossword();
 
     expect(screen.getAllByTestId(/^crossword-square-/)).toHaveLength(25);
     expect(square(0, 1)).not.toHaveTextContent("X");
@@ -281,7 +341,7 @@ describe("Crossword", () => {
       JSON.stringify({ entries: ALL_BUT_LAST, difficulty: "easy" }),
     );
 
-    render(<Crossword />);
+    renderCrossword();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
     fireEvent.mouseDown(square(4, 3));
@@ -296,7 +356,7 @@ describe("Crossword", () => {
       JSON.stringify({ entries: ALL_BUT_LAST, difficulty: "easy" }),
     );
 
-    render(<Crossword />);
+    renderCrossword();
 
     fireEvent.mouseDown(square(4, 3));
     fireEvent.keyDown(gridEl(), { key: "X" });
@@ -318,7 +378,7 @@ describe("Crossword", () => {
       JSON.stringify({ entries: ALL_BUT_LAST, difficulty: "easy" }),
     );
 
-    render(<Crossword />);
+    renderCrossword();
     fireEvent.mouseDown(square(4, 3));
     fireEvent.keyDown(gridEl(), { key: "E" });
     expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
@@ -332,7 +392,7 @@ describe("Crossword", () => {
   });
 
   it("keeps an empty grid empty until the guest types", () => {
-    render(<Crossword />);
+    renderCrossword();
 
     const saved = localStorage.getItem(PROGRESS_KEY);
     // Mounting saves the blank state, which must match the empty entries.
