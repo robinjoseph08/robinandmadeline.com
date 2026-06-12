@@ -126,6 +126,9 @@ func (h *handler) postToLeaderboard(c echo.Context) error {
 
 // getLeaderboard handles GET /api/games/leaderboard?puzzle_id=...: one
 // puzzle's published entries, fastest first, capped (no pagination in v1).
+// An optional difficulty parameter narrows the board to one difficulty, with
+// the cap and total scoped to it; the binder validates the value, so an
+// unknown difficulty is a 422 before the service runs.
 func (h *handler) getLeaderboard(c echo.Context) error {
 	var query LeaderboardQuery
 	if err := c.Bind(&query); err != nil {

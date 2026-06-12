@@ -450,6 +450,48 @@ func TestGetLeaderboard_RequiresPuzzleID(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
+func TestGetLeaderboard_FiltersByDifficulty(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+
+	easy := completeSessionT(t, svc, models.GameDifficultyEasy, 30000)
+	_, err := svc.PostToLeaderboard(ctx(), easy.ID, games.PostLeaderboardPayload{DisplayName: "Edna"}, "")
+	require.NoError(t, err)
+	hard := completeSessionT(t, svc, models.GameDifficultyHard, 20000)
+	_, err = svc.PostToLeaderboard(ctx(), hard.ID, games.PostLeaderboardPayload{DisplayName: "Harriet"}, "")
+	require.NoError(t, err)
+
+	// The difficulty filter flows through c.Bind's query path: only the easy
+	// entry comes back, and total counts the filtered set.
+	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=easy"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var board games.ListLeaderboardEntriesResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &board))
+	assert.Equal(t, 1, board.Total)
+	require.Len(t, board.Items, 1)
+	assert.Equal(t, "Edna", board.Items[0].DisplayName)
+	assert.Equal(t, models.GameDifficultyEasy, board.Items[0].Difficulty)
+
+	// Without the filter the same board returns every difficulty, as before.
+	rec = doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1"})
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &board))
+	assert.Equal(t, 2, board.Total)
+	assert.Len(t, board.Items, 2)
+}
+
+func TestGetLeaderboard_RejectsUnknownDifficulty(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+
+	// Query filters are validated like bodies: an unknown difficulty is a 422
+	// from the binder's query path (gorilla/schema decode + validator), never
+	// silently ignored as an empty board.
+	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=brutal"})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Equal(t, string(errcodes.CodeValidationError), errCodeOf(t, rec))
+}
+
 func TestGetLeaderboard_EmptyBoardSerializesItemsAsEmptyArray(t *testing.T) {
 	svc, _, _ := newServices(t)
 	e, _ := newGamesEcho(t, svc)

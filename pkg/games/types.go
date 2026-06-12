@@ -50,9 +50,15 @@ type PostLeaderboardPayload struct {
 }
 
 // LeaderboardQuery is the query string of GET /api/games/leaderboard,
-// identifying which puzzle's leaderboard to read.
+// identifying which puzzle's leaderboard to read. Difficulty optionally
+// narrows the board to sessions whose recorded (easiest-used) difficulty
+// matches, so the client can render one board per difficulty tab; it is a
+// pointer so "absent" (every difficulty, the original single board) is
+// distinguishable, and an unknown value is a 422 from the binder, never
+// silently ignored.
 type LeaderboardQuery struct {
-	PuzzleID string `query:"puzzle_id" json:"puzzle_id" mod:"trim" validate:"required,max=100"`
+	PuzzleID   string  `query:"puzzle_id" json:"puzzle_id" mod:"trim" validate:"required,max=100"`
+	Difficulty *string `query:"difficulty" json:"difficulty" validate:"omitempty,oneof=easy medium hard" tstype:"models.GameDifficulty"`
 }
 
 // GameSessionResponse is the body every session endpoint returns: the solver's
@@ -75,7 +81,8 @@ type LeaderboardEntry struct {
 
 // ListLeaderboardEntriesResponse is the uniform list envelope for a puzzle's
 // leaderboard: the fastest entries first, capped at leaderboardLimit items.
-// Total counts every published entry for the puzzle, so a client can say
+// Total counts every published entry the query matched (the whole puzzle, or
+// just one difficulty when filtered), beyond the cap, so a client can say
 // "top 100 of 250" without a second request.
 type ListLeaderboardEntriesResponse struct {
 	Items []LeaderboardEntry `json:"items"`
