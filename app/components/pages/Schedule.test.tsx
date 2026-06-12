@@ -325,6 +325,51 @@ describe("Schedule", () => {
     );
   });
 
+  it("shows the photo-group line under events where the party has assignments", async () => {
+    localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, "a.guest.jwt");
+    mockScheduleFetch([
+      makeEvent({
+        photo_groups: [
+          { id: "pg-1", name: "Bride's Family", position: 3, total: 12 },
+          { id: "pg-2", name: "College Friends", position: 5, total: 12 },
+        ],
+      }),
+      makeEvent({ id: "e-brunch", name: "Brunch" }),
+    ]);
+
+    renderSchedule();
+
+    const card = await screen.findByRole("article", { name: "Reception" });
+    expect(
+      within(card).getByText(
+        "Stay for photos! You're in: Bride's Family, College Friends. Groups 3 and 5 of 12.",
+      ),
+    ).toBeInTheDocument();
+    // The event with no assignments gets no photo line.
+    const brunchCard = screen.getByRole("article", { name: "Brunch" });
+    expect(
+      within(brunchCard).queryByText(/stay for photos/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("never shows the photo-group line in the anonymous view", async () => {
+    // The API only sends assignments to authenticated guests, but even if one
+    // slipped through anonymously the line stays tied to authentication: it
+    // speaks as "you", which only makes sense for a logged-in party.
+    mockScheduleFetch([
+      makeEvent({
+        photo_groups: [
+          { id: "pg-1", name: "Bride's Family", position: 3, total: 12 },
+        ],
+      }),
+    ]);
+
+    renderSchedule();
+
+    await screen.findByRole("article", { name: "Reception" });
+    expect(screen.queryByText(/stay for photos/i)).not.toBeInTheDocument();
+  });
+
   it("never calls out private events in the anonymous view", async () => {
     // The API only sends private events to authenticated guests, but even if
     // one slipped through anonymously the badge stays tied to authentication.

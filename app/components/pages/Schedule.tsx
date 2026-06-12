@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useScheduleEvents } from "@/hooks/queries/schedule";
 import { downloadICS, googleCalendarUrl } from "@/libraries/calendar";
-import { formatEventWhen } from "@/libraries/format";
+import { formatEventWhen, formatPhotoGroupsLine } from "@/libraries/format";
 import type { ScheduleEvent } from "@/types/generated/events";
 
 /**
@@ -108,6 +108,16 @@ function EventCard({ event, authenticated }: EventCardProps) {
         <p className="mt-1 text-sm text-muted-foreground">{event.location}</p>
       ) : null}
       {event.description ? <p className="mt-3">{event.description}</p> : null}
+
+      {/* The party's photo groups for this event, with each group's position
+          in the shooting order. Gated on authentication like the invite
+          badge: the line speaks as "you", which only makes sense for a
+          logged-in party. */}
+      {authenticated && event.photo_groups.length > 0 ? (
+        <p className="mt-3 text-sm font-medium">
+          {formatPhotoGroupsLine(event.photo_groups)}
+        </p>
+      ) : null}
 
       <div className="mt-4 flex flex-wrap gap-2">
         <Button

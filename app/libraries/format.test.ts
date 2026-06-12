@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import type { SchedulePhotoGroup } from "@/types/generated/events";
+
 import {
   formatEventDate,
   formatEventWhen,
   formatLongDate,
+  formatPhotoGroupsLine,
   formatTime,
 } from "./format";
 
@@ -59,5 +62,46 @@ describe("formatEventWhen", () => {
         end_time: "22:00",
       }),
     ).toBe("Saturday, October 17, 2026 · 5:00 PM to 10:00 PM");
+  });
+});
+
+describe("formatPhotoGroupsLine", () => {
+  const group = (
+    name: string,
+    position: number,
+    total: number,
+  ): SchedulePhotoGroup => ({ id: `pg-${position}`, name, position, total });
+
+  it("names a single group with its position", () => {
+    expect(formatPhotoGroupsLine([group("Bride's Family", 3, 12)])).toBe(
+      "Stay for photos! You're in: Bride's Family. Group 3 of 12.",
+    );
+  });
+
+  it("joins two groups with their positions", () => {
+    expect(
+      formatPhotoGroupsLine([
+        group("Bride's Family", 3, 12),
+        group("College Friends", 5, 12),
+      ]),
+    ).toBe(
+      "Stay for photos! You're in: Bride's Family, College Friends. Groups 3 and 5 of 12.",
+    );
+  });
+
+  it("lists three or more positions with commas and a final and", () => {
+    expect(
+      formatPhotoGroupsLine([
+        group("Bride's Family", 2, 12),
+        group("College Friends", 5, 12),
+        group("Wedding Party", 7, 12),
+      ]),
+    ).toBe(
+      "Stay for photos! You're in: Bride's Family, College Friends, Wedding Party. Groups 2, 5, and 7 of 12.",
+    );
+  });
+
+  it("returns an empty string when there are no groups", () => {
+    expect(formatPhotoGroupsLine([])).toBe("");
   });
 });

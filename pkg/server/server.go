@@ -17,6 +17,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/info"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/photogroups"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/rsvps"
 	"github.com/uptrace/bun"
 )
@@ -101,6 +102,7 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB) {
 
 	parties.RegisterRoutes(admin, parties.NewService(db))
 	events.RegisterRoutes(admin, events.NewService(db))
+	photogroups.RegisterRoutes(admin, photogroups.NewService(db))
 }
 
 // registerGuest mounts the guest API surface behind the guest auth middleware.

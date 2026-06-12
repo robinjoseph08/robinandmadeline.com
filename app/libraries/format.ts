@@ -3,6 +3,7 @@
  * the admin dashboard.
  */
 
+import type { SchedulePhotoGroup } from "@/types/generated/events";
 import type { Event } from "@/types/generated/models";
 
 /**
@@ -63,4 +64,29 @@ export function formatEventWhen(
     ? `${formatTime(event.start_time)} to ${formatTime(event.end_time)}`
     : formatTime(event.start_time);
   return `${date} · ${time}`;
+}
+
+/**
+ * Joins values in prose: "3", "3 and 5", "2, 5, and 7".
+ */
+function joinWithAnd(values: string[]): string {
+  if (values.length <= 1) return values.join("");
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
+}
+
+/**
+ * The schedule's photo-group line for one event: the groups someone in the
+ * authenticated guest's party is in, with each group's position in the
+ * event's shooting order ("Stay for photos! You're in: Bride's Family.
+ * Group 3 of 12."). Positions and the total span all of the event's groups,
+ * so the guest knows how far down the photographer's list they are. Returns
+ * an empty string when there are no groups; the caller renders nothing.
+ */
+export function formatPhotoGroupsLine(groups: SchedulePhotoGroup[]): string {
+  if (groups.length === 0) return "";
+  const names = groups.map((g) => g.name).join(", ");
+  const positions = joinWithAnd(groups.map((g) => String(g.position)));
+  const label = groups.length === 1 ? "Group" : "Groups";
+  return `Stay for photos! You're in: ${names}. ${label} ${positions} of ${groups[0].total}.`;
 }
