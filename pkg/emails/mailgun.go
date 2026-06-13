@@ -13,12 +13,16 @@ import (
 	"github.com/pkg/errors"
 )
 
-// Message is one rendered outbound email, ready for the Mailgun send API.
+// Message is one rendered outbound email, ready for the Mailgun send API. Both
+// Text (a plaintext fallback) and HTML (the shell-wrapped body) are sent so a
+// client renders the designed email while a plaintext-only reader still gets
+// the content.
 type Message struct {
 	From    string
 	To      string
 	Subject string
 	Text    string
+	HTML    string
 	// RecipientID is the email_recipients row id, attached to the Mailgun
 	// message as a custom variable so a restart can reconcile a stuck
 	// `sending` row against Mailgun's event log without sending a duplicate
@@ -117,6 +121,7 @@ func (c *HTTPMailgunClient) Send(ctx context.Context, msg Message) (string, erro
 	form.Set("to", msg.To)
 	form.Set("subject", msg.Subject)
 	form.Set("text", msg.Text)
+	form.Set("html", msg.HTML)
 	form.Set("v:recipient_id", msg.RecipientID)
 
 	endpoint := fmt.Sprintf("%s/v3/%s/messages", c.baseURL, c.domain)

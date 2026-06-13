@@ -7,22 +7,25 @@ import (
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
 )
 
 // ResolveRecipients returns the guests a send with the given filter goes to
-// (each with its Party loaded, ordered by creation time) plus how many guests
+// (each with its Party loaded, ordered by creation time) plus the guests that
 // matched the filter but were skipped for having no email address. A guest
 // without an email cannot receive an email, so it is never a recipient; the
-// skipped count lets the compose page surface the gap instead of hiding it.
+// skipped list lets the compose page surface exactly who the send cannot reach
+// instead of hiding the gap. Both slices are non-nil so callers can range them
+// and report a count without a length guard.
 //
 // The filter semantics mirror the flat guest list (pkg/parties.ListGuests):
 // side/relation/circle/invitation_type constrain through the guest's party,
-// tags matches guests whose tags array contains the value, and event_id /
-// rsvp_status constrain through the guest's Event RSVP rows (a row is the
-// invitation, ADR 0002). info_collection_status filters on the party's derived
-// status, which cannot be expressed in SQL (ADR 0005), so like
+// tags matches guests whose tags array overlaps the selected tags (ANY of),
+// and event_id / rsvp_status constrain through the guest's Event RSVP rows (a
+// row is the invitation, ADR 0002). info_collection_status filters on the
+// party's derived status, which cannot be expressed in SQL (ADR 0005), so like
 // parties.ListParties it is applied in Go over the candidates.
-func (s *Service) ResolveRecipients(ctx context.Context, f models.RecipientFilter) ([]*models.Guest, int, error) {
+func (s *Service) ResolveRecipients(ctx context.Context, f models.RecipientFilter) (recipients, skipped []*models.Guest, err error) {
 	var guests []*models.Guest
 	q := s.db.NewSelect().Model(&guests).Relation("Party").Order("g.created_at ASC", "g.id ASC")
 
@@ -31,8 +34,9 @@ func (s *Service) ResolveRecipients(ctx context.Context, f models.RecipientFilte
 	if f.Side != nil || f.Relation != nil || f.Circle != nil || f.InvitationType != nil {
 		q = q.Where("EXISTS (?)", recipientPartySubquery(s.db, f))
 	}
-	if f.Tags != nil {
-		q = q.Where("? = ANY(g.tags)", *f.Tags)
+	if len(f.Tags) > 0 {
+		// Array overlap: the guest's tags include ANY of the selected tags.
+		q = q.Where("g.tags && ?", pgdialect.Array(f.Tags))
 	}
 	if f.EventID != nil || f.RSVPStatus != nil {
 		sub := s.db.NewSelect().Model((*models.EventRSVP)(nil)).Column("id").
@@ -47,26 +51,26 @@ func (s *Service) ResolveRecipients(ctx context.Context, f models.RecipientFilte
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, 0, errors.Wrap(err, "resolve email recipients")
+		return nil, nil, errors.Wrap(err, "resolve email recipients")
 	}
 
 	if f.InfoCollectionStatus != nil {
 		filtered, err := s.filterByInfoCollectionStatus(ctx, guests, *f.InfoCollectionStatus)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 		guests = filtered
 	}
 
 	// Partition on email presence: guests with one are recipients, the rest
-	// are tallied so the admin sees who the send cannot reach.
-	recipients := make([]*models.Guest, 0, len(guests))
-	skipped := 0
+	// are collected so the admin sees who the send cannot reach.
+	recipients = make([]*models.Guest, 0, len(guests))
+	skipped = make([]*models.Guest, 0)
 	for _, g := range guests {
 		if g.Email != nil && strings.TrimSpace(*g.Email) != "" {
 			recipients = append(recipients, g)
 		} else {
-			skipped++
+			skipped = append(skipped, g)
 		}
 	}
 	return recipients, skipped, nil

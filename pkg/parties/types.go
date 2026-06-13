@@ -240,11 +240,13 @@ type ListGuestsQuery struct {
 	Relation *string `query:"relation" json:"relation" validate:"omitempty,oneof=family friend"`
 	Circle   *string `query:"circle" json:"circle" validate:"omitempty,oneof=Immediate Extended College Work Childhood Other"`
 	// Tags is intentionally unvalidated: tags are an open set (no closed
-	// union), so any value is a legal filter that simply may match nothing. It
-	// matches guests whose tags array contains this value.
-	Tags       *string `query:"tags" json:"tags"`
-	IsDrinking *bool   `query:"is_drinking" json:"is_drinking"`
-	IsChild    *bool   `query:"is_child" json:"is_child"`
+	// union), so any value is a legal filter that simply may match nothing.
+	// Multiple tags are OR'd (a guest matches when its tags include ANY of
+	// them); the repeated ?tags=a&tags=b query form binds via the query alias,
+	// and omitempty keeps an absent filter from constraining.
+	Tags       []string `query:"tags,omitempty" json:"tags,omitempty"`
+	IsDrinking *bool    `query:"is_drinking" json:"is_drinking"`
+	IsChild    *bool    `query:"is_child" json:"is_child"`
 	// IsPlaceholder filters on the derived placeholder condition (true matches
 	// guests whose placeholder_text is set, false those where it is NULL);
 	// there is no stored boolean.

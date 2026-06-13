@@ -35,14 +35,34 @@ type Service struct {
 	// previews so the compose page can warn when a send will span multiple
 	// days. Zero or negative means unlimited.
 	dailySendLimit int
+
+	// The "Send test" capability (SendTest). The worker owns the queue's
+	// MailgunClient; the test endpoint sends synchronously, so it gets its own
+	// client injected via WithTestSend when Mailgun is configured. All three
+	// are zero when Mailgun is off, in which case SendTest cleanly 422s.
+	mailgunClient  MailgunClient
+	emailFrom      string
+	testRecipients []string
 }
 
 // NewService builds a Service backed by the given Bun DB. publicBaseURL is the
 // site origin used to build merge-field links; sentBy is the admin username
 // recorded on sends; dailySendLimit is the worker's per-UTC-day dispatch
-// budget (zero or negative for unlimited), reported on previews.
+// budget (zero or negative for unlimited), reported on previews. The test-send
+// capability is off until WithTestSend is called.
 func NewService(db *bun.DB, publicBaseURL, sentBy string, dailySendLimit int) *Service {
 	return &Service{db: db, publicBaseURL: publicBaseURL, sentBy: sentBy, dailySendLimit: dailySendLimit}
+}
+
+// WithTestSend enables the "Send test" endpoint by injecting the Mailgun client
+// it dispatches through, the From address, and the configured test recipients
+// (the couple's own inboxes). It returns the same Service for fluent wiring.
+// Called only when Mailgun is configured; without it SendTest 422s.
+func (s *Service) WithTestSend(client MailgunClient, from string, testRecipients []string) *Service {
+	s.mailgunClient = client
+	s.emailFrom = from
+	s.testRecipients = testRecipients
+	return s
 }
 
 // newID returns a fresh UUIDv7 string, time-ordered like the rest of the

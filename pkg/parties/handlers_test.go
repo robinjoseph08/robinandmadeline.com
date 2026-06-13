@@ -227,6 +227,44 @@ func TestListPartiesHandler_FilterByQueryParam(t *testing.T) {
 	assert.Equal(t, "R", resp.Items[0].Name)
 }
 
+func TestListGuestsHandler_MultiTagQueryParamFiltersAnyOf(t *testing.T) {
+	e := newAPI(t)
+	// One party with two guests carrying different tags, added through the
+	// nested guest endpoint so the tags persist on real rows.
+	createRec := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
+		"name": "P", "side": "robin", "relation": "friend", "invitation_type": "digital",
+	}))
+	require.Equal(t, http.StatusCreated, createRec.Code)
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &party))
+
+	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
+		map[string]any{"full_name": "Alice", "tags": []string{"Bridal Party"}}).Code)
+	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
+		map[string]any{"full_name": "Bob", "tags": []string{"Cousin"}}).Code)
+	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
+		map[string]any{"full_name": "Carol", "tags": []string{"UIUC"}}).Code)
+
+	// Repeated ?tags=a&tags=b binds to the slice and matches a guest with ANY
+	// of them (array overlap).
+	rec := do(t, e, http.MethodGet, "/api/admin/guests?tags=Bridal+Party&tags=Cousin", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Items []struct {
+			FullName string `json:"full_name"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	got := make([]string, 0, len(resp.Items))
+	for _, it := range resp.Items {
+		got = append(got, it.FullName)
+	}
+	assert.ElementsMatch(t, []string{"Alice", "Bob"}, got)
+}
+
 func TestCreatePartyHandler_OmittedCirclePersistsAsEmptyArray(t *testing.T) {
 	e := newAPI(t)
 	// Omitting circle entirely must persist (and read back) as an empty array, not

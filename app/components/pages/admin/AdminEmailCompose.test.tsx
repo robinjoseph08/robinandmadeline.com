@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -43,9 +44,12 @@ function makePreview(
     ],
     total: 1,
     skipped_no_email: 0,
+    skipped: [],
     sample_guest_name: "Alice",
     sample_subject: "Hi Alice",
-    sample_body: "Welcome, The Smiths!",
+    sample_body: "Welcome, friends!",
+    sample_html: "<!doctype html><p>Welcome, friends!</p>",
+    warnings: [],
     daily_send_limit: 100,
     daily_sends_used: 0,
     ...overrides,
@@ -131,10 +135,13 @@ describe("AdminEmailCompose preview", () => {
       });
     });
 
-    // The preview panel shows the sample resolved for the first recipient and
-    // the recipient list.
+    // The preview panel shows the resolved subject inline, the rendered HTML
+    // email in a sandboxed iframe, and the recipient list.
     expect(await screen.findByText("Hi Alice")).toBeInTheDocument();
-    expect(screen.getByText("Welcome, The Smiths!")).toBeInTheDocument();
+    const frame = screen.getByTitle(
+      "Email preview for Alice",
+    ) as HTMLIFrameElement;
+    expect(frame.getAttribute("srcdoc")).toContain("Welcome, friends!");
     expect(screen.getByText("alice@example.com")).toBeInTheDocument();
     expect(screen.getByText("1 recipient")).toBeInTheDocument();
   });
@@ -376,6 +383,123 @@ describe("AdminEmailCompose send", () => {
     expect(adminRequest).not.toHaveBeenCalledWith(
       "/admin/emails/send",
       expect.anything(),
+    );
+  });
+});
+
+describe("AdminEmailCompose merge-field warnings", () => {
+  it("shows a warning callout and disables Send when the preview warns", async () => {
+    setMock({
+      preview: makePreview({
+        warnings: [
+          {
+            field: "event_name",
+            message:
+              "uses {{event_name}}/{{event_date}} but no event is selected in the recipient filter.",
+          },
+        ],
+      }),
+    });
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "About {{event_name}}");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    // The warning is surfaced near the preview...
+    expect(
+      await screen.findByText(/no event is selected in the recipient filter/),
+    ).toBeInTheDocument();
+    // ...and Send is disabled so a blank merge field can never be dispatched.
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("keeps Send enabled when the preview has no warnings", async () => {
+    setMock({ preview: makePreview({}) });
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    expect(await screen.findByText("Hi Alice")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  });
+});
+
+describe("AdminEmailCompose recipient double-check", () => {
+  it("lists the included recipients with a count and the skipped guests separately", async () => {
+    setMock({
+      preview: makePreview({
+        total: 1,
+        skipped_no_email: 1,
+        skipped: [
+          {
+            guest_id: "g2",
+            guest_name: "Bob No-Email",
+            party_name: "The Joneses",
+          },
+        ],
+      }),
+    });
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    // The included list is headed with its count, and the recipient is shown.
+    expect(
+      await screen.findByText("Included recipients (1)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Alice")).toBeInTheDocument();
+
+    // The excluded guest is surfaced by name and party, not just a count, so the
+    // admin can verify the exclusion.
+    expect(
+      screen.getByText("Skipped (no email address) (1)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Bob No-Email")).toBeInTheDocument();
+    expect(screen.getByText("The Joneses")).toBeInTheDocument();
+  });
+});
+
+describe("AdminEmailCompose send test", () => {
+  it("POSTs the draft to the test endpoint and toasts the result", async () => {
+    setMock();
+    adminRequest.mockImplementation((path: string) => {
+      if (path === "/admin/emails/test") {
+        return Promise.resolve({ sent_to: 2 });
+      }
+      if (path === "/admin/emails/templates") {
+        return Promise.resolve({ items: [], total: 0 });
+      }
+      return Promise.resolve({ items: [], total: 0 });
+    });
+    const successSpy = vi.spyOn(toast, "success");
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Send test" }));
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/emails/test", {
+        method: "POST",
+        body: {
+          template_id: undefined,
+          subject: "Hello",
+          body: "Body",
+          filter: {},
+        },
+      });
+    });
+    expect(successSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Test email sent to 2 recipients"),
     );
   });
 });

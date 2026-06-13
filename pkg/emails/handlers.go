@@ -129,6 +129,35 @@ func (h *handler) send(c echo.Context) error {
 	return c.JSON(http.StatusCreated, newSendResponse(send, stats))
 }
 
+// sendTest handles POST /api/admin/emails/test: renders the draft against
+// sample merge data through the real HTML shell pipeline and dispatches it
+// synchronously to the configured test recipients (the couple's inboxes), so
+// the couple can eyeball the email. It creates no send/recipient rows and does
+// not touch the daily budget; a 422 results when no test recipients are
+// configured or Mailgun is off.
+func (h *handler) sendTest(c echo.Context) error {
+	var body TestEmailPayload
+	if err := c.Bind(&body); err != nil {
+		return errors.WithStack(err)
+	}
+	resp, err := h.service.SendTest(c.Request().Context(), body)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+// shellPreview handles GET /api/admin/emails/shell-preview. It is a dev/design
+// aid: it renders the HTML email shell with FIXED sample Markdown content and
+// sample merge values and returns it as text/html (NOT the typed-JSON envelope
+// the rest of the API uses), so a developer editing shell.html can refresh the
+// browser (air hot-reloads the API) and see the result. This text/html response
+// is a deliberate, commented exception to the typed-JSON rule precisely because
+// it previews an HTML email.
+func (h *handler) shellPreview(c echo.Context) error {
+	return c.HTML(http.StatusOK, h.service.ShellPreviewHTML())
+}
+
 // listSends handles GET /api/admin/emails/sends: every send, newest first,
 // each with its per-status recipient stats.
 func (h *handler) listSends(c echo.Context) error {

@@ -122,6 +122,15 @@ type Config struct {
 	// covers sends made by this app; manual sends from the Mailgun dashboard
 	// are invisible to it.
 	EmailDailySendLimit int
+
+	// EmailTestRecipients are the addresses the admin "Send test" button
+	// dispatches to (the couple's own inboxes), sourced from
+	// EMAIL_TEST_RECIPIENTS as a comma-separated list of RFC5322 addresses
+	// (e.g. "Robin <robin@example.com>, Madeline <madeline@example.com>").
+	// Configured via env so personal contact info is never committed; empty by
+	// default, in which case the test endpoint 422s. A test send consumes one
+	// of the daily Mailgun sends on the free plan.
+	EmailTestRecipients []string
 }
 
 // Default values used for local development when an env var is unset.
@@ -280,7 +289,25 @@ func New() (*Config, error) {
 		EmailWorkerPollInterval:   emailWorkerPollInterval,
 		EmailWorkerStuckThreshold: emailWorkerStuckThreshold,
 		EmailDailySendLimit:       emailDailySendLimit,
+		EmailTestRecipients:       envCSV("EMAIL_TEST_RECIPIENTS"),
 	}, nil
+}
+
+// envCSV splits a comma-separated environment variable into trimmed,
+// non-empty entries (so a trailing comma or a blank between commas is
+// ignored). An unset/empty variable yields a nil slice.
+func envCSV(key string) []string {
+	raw := os.Getenv(key)
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 // envStr returns the environment variable value or a fallback when unset/empty.

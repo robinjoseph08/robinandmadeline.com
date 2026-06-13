@@ -183,7 +183,16 @@ func TestListGuests_FlatFilters(t *testing.T) {
 		assert.False(t, ids[gb.ID])
 	})
 	t.Run("tags containment", func(t *testing.T) {
-		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Tags: pointerutil.String("Bridal Party")})
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Tags: []string{"Bridal Party"}})
+		require.NoError(t, err)
+		ids := guestIDs(got)
+		assert.True(t, ids[ga.ID])
+		assert.False(t, ids[gb.ID])
+	})
+	t.Run("tags any-of (OR across multiple tags)", func(t *testing.T) {
+		// gb carries neither tag; ga carries "UIUC". The multi-tag filter is OR,
+		// so a guest with ANY of the selected tags matches.
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Tags: []string{"UIUC", "Groomsman"}})
 		require.NoError(t, err)
 		ids := guestIDs(got)
 		assert.True(t, ids[ga.ID])

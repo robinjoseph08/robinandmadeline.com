@@ -22,12 +22,25 @@ type MergeContext struct {
 // optional whitespace inside the braces.
 var placeholderRE = regexp.MustCompile(`\{\{\s*([a-z_]+)\s*\}\}`)
 
+// knownMergeFields is the single source of truth for which placeholder names
+// resolve to a value: render's resolve, the merge-field emptiness validation
+// (service_validate.go), and usedMergeFields all read this one set. A name not
+// in here is an unknown placeholder, left intact by Render.
+var knownMergeFields = map[string]struct{}{
+	"guest_name": {},
+	"rsvp_code":  {},
+	"rsvp_link":  {},
+	"info_link":  {},
+	"event_name": {},
+	"event_date": {},
+}
+
 // Render resolves every known merge field placeholder in text against the
 // given context. Unknown placeholders are left intact so a typo stays visible
 // in the preview instead of silently vanishing from the sent email.
 //
-// Supported fields: {{guest_name}}, {{party_name}}, {{rsvp_code}},
-// {{rsvp_link}}, {{info_link}}, {{event_name}}, {{event_date}}.
+// Supported fields: {{guest_name}}, {{rsvp_code}}, {{rsvp_link}},
+// {{info_link}}, {{event_name}}, {{event_date}}.
 func Render(text string, mctx MergeContext) string {
 	return placeholderRE.ReplaceAllStringFunc(text, func(match string) string {
 		field := placeholderRE.FindStringSubmatch(match)[1]
@@ -39,14 +52,36 @@ func Render(text string, mctx MergeContext) string {
 	})
 }
 
+// usedMergeFields returns the distinct known merge fields referenced across the
+// given texts (typically a send's subject and body), in a stable order. It
+// shares knownMergeFields with Render so the validation in service_validate.go
+// and the rendering can never disagree on what counts as a field; unknown
+// placeholders are ignored here exactly as Render leaves them intact.
+func usedMergeFields(texts ...string) []string {
+	seen := map[string]struct{}{}
+	var used []string
+	for _, text := range texts {
+		for _, match := range placeholderRE.FindAllStringSubmatch(text, -1) {
+			field := match[1]
+			if _, ok := knownMergeFields[field]; !ok {
+				continue
+			}
+			if _, dup := seen[field]; dup {
+				continue
+			}
+			seen[field] = struct{}{}
+			used = append(used, field)
+		}
+	}
+	return used
+}
+
 // resolve maps one field name to its value, reporting false for unknown
 // fields. Absent values (no RSVP code, no event) resolve to "".
 func (m MergeContext) resolve(field string) (string, bool) {
 	switch field {
 	case "guest_name":
 		return m.Guest.FullName, true
-	case "party_name":
-		return m.Party.Name, true
 	case "rsvp_code":
 		if m.Party.RSVPCode == nil {
 			return "", true

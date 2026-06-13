@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigationType } from "react-router-dom";
 import { toast } from "sonner";
 
+import { ChipsCombobox } from "@/components/library/ChipsCombobox";
 import { GuestsGrid } from "@/components/pages/admin/grid/GuestsGrid";
 import {
   BoolFilterSelect,
@@ -37,6 +38,10 @@ import type {
 
 // Boolean guest filters, listed so useFilterParams parses them back from the URL.
 const BOOL_FILTERS = ["is_drinking", "is_child", "is_placeholder"] as const;
+
+// Multi-value guest filters, listed so useFilterParams reads/writes them as
+// repeated params (?tags=a&tags=b) and parses them back to a string[].
+const ARRAY_FILTERS = ["tags"] as const;
 
 // Filter keys (everything but the search box), counted for the "Filters" badge.
 const FILTER_KEYS = [
@@ -72,6 +77,7 @@ export default function AdminGuests() {
   const [filters, setFilter, clearAll] = useFilterParams<ListGuestsQuery>(
     QUERY_KEYS,
     BOOL_FILTERS,
+    ARRAY_FILTERS,
   );
   const [editGuest, setEditGuest] = useState<GuestListItem | undefined>(
     undefined,
@@ -169,6 +175,8 @@ export default function AdminGuests() {
     }
     return opts.sort((a, b) => a.label.localeCompare(b.label));
   }, [partiesQuery.data]);
+  // The same distinct tags as bare strings, for the multi-select chips filter.
+  const tagValues = useMemo(() => tagOptions.map((o) => o.value), [tagOptions]);
 
   const openEdit = (guest: GuestListItem) => {
     setEditGuest(guest);
@@ -264,12 +272,15 @@ export default function AdminGuests() {
             onChange={(v) => setFilter("is_placeholder", v)}
             value={filters.is_placeholder}
           />
-          <FilterSelect<string>
-            label="Tag"
-            onChange={(v) => setFilter("tags", v)}
-            options={tagOptions}
-            value={filters.tags}
-          />
+          <div className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">Tags</span>
+            <ChipsCombobox
+              ariaLabel="Tags"
+              onChange={(v) => setFilter("tags", v.length > 0 ? v : undefined)}
+              options={tagValues}
+              value={filters.tags ?? []}
+            />
+          </div>
           <FilterSelect<string>
             label="Event"
             onChange={(v) => setFilter("event_id", v)}

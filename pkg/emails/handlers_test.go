@@ -126,7 +126,7 @@ func TestPreviewHandler_ReturnsSampleAndRecipients(t *testing.T) {
 
 	rec := do(t, e, http.MethodPost, "/api/admin/emails/preview", map[string]any{
 		"subject": "Hi {{guest_name}}",
-		"body":    "From {{party_name}}",
+		"body":    "Welcome aboard",
 		"filter":  map[string]any{"side": "robin"},
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -134,7 +134,25 @@ func TestPreviewHandler_ReturnsSampleAndRecipients(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.Equal(t, 1, resp.Total)
 	assert.Equal(t, "Hi Alice", resp.SampleSubject)
-	assert.Equal(t, "From The Smiths", resp.SampleBody)
+	assert.Equal(t, "Welcome aboard", resp.SampleBody)
+}
+
+func TestPreviewHandler_WarningsAndSkippedSerializeAsArraysNotNull(t *testing.T) {
+	// The list-shaped fields must come back as [] (never null) so the compose
+	// page can read .length/.map without a guard. A draft with no emptiable
+	// fields and a recipient with an email produces neither warnings nor skips.
+	e, f := newAPI(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	rec := do(t, e, http.MethodPost, "/api/admin/emails/preview", map[string]any{
+		"subject": "Hi {{guest_name}}", "body": "Body",
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"warnings":[]`)
+	assert.Contains(t, rec.Body.String(), `"skipped":[]`)
+	assert.NotContains(t, rec.Body.String(), `"warnings":null`)
+	assert.NotContains(t, rec.Body.String(), `"skipped":null`)
 }
 
 func TestPreviewHandler_InvalidFilterValueIs422(t *testing.T) {
@@ -212,4 +230,47 @@ func TestGetSendHandler_MissingIs404(t *testing.T) {
 	e, _ := newAPI(t)
 	rec := do(t, e, http.MethodGet, "/api/admin/emails/sends/00000000-0000-0000-0000-000000000000", nil)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestSendTestHandler_MailgunOffIs422(t *testing.T) {
+	// The default fixture service has no test-send client injected (Mailgun
+	// off), so the endpoint refuses cleanly rather than erroring.
+	e, _ := newAPI(t)
+	rec := do(t, e, http.MethodPost, "/api/admin/emails/test", map[string]any{
+		"subject": "Hi {{guest_name}}", "body": "Body",
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
+func TestSendTestHandler_DispatchesToConfiguredRecipients(t *testing.T) {
+	f := newFixtures(t)
+	client := newFakeMailgun()
+	f.emails.WithTestSend(client, testFrom, []string{"robin@example.com"})
+
+	e := echo.New()
+	b, err := binder.New()
+	require.NoError(t, err)
+	e.Binder = b
+	e.HTTPErrorHandler = errcodes.NewHandler().Handle
+	emails.RegisterRoutes(e.Group("/api/admin"), f.emails)
+
+	rec := do(t, e, http.MethodPost, "/api/admin/emails/test", map[string]any{
+		"subject": "Hi {{guest_name}}", "body": "Body",
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp emails.TestEmailResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, 1, resp.SentTo)
+	assert.Len(t, client.sentMessages(), 1)
+}
+
+func TestShellPreviewHandler_ReturnsHTML(t *testing.T) {
+	e, _ := newAPI(t)
+	rec := do(t, e, http.MethodGet, "/api/admin/emails/shell-preview", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Header().Get(echo.HeaderContentType), "text/html")
+	assert.Contains(t, rec.Body.String(), "<!doctype html>")
+	// The sample content renders complete (no unresolved placeholders).
+	assert.NotContains(t, rec.Body.String(), "{{guest_name}}")
 }

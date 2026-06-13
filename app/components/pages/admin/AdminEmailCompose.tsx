@@ -1,8 +1,9 @@
-import { Loader2, Send } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, Loader2, Send } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
+import { ChipsCombobox } from "@/components/library/ChipsCombobox";
 import { Combobox } from "@/components/library/Combobox";
 import { MERGE_FIELDS_HINT } from "@/components/pages/admin/emails/merge-fields";
 import { FilterSelect } from "@/components/pages/admin/parties/FilterSelect";
@@ -30,8 +31,10 @@ import {
   useEmailTemplates,
   usePreviewEmail,
   useSendEmail,
+  useSendTestEmail,
 } from "@/hooks/queries/emails";
 import { useEvents } from "@/hooks/queries/events";
+import { useParties } from "@/hooks/queries/parties";
 import type { PreviewEmailResponse } from "@/types/generated/emails";
 import type {
   Circle,
@@ -47,14 +50,14 @@ interface FilterState {
   side?: Side;
   relation?: Relation;
   circle?: Circle;
-  tags: string;
+  tags: string[];
   eventId?: string;
   rsvpStatus?: EventRSVPStatus;
   invitationType?: InvitationType;
   infoCollectionStatus?: InfoCollectionStatus;
 }
 
-const EMPTY_FILTER: FilterState = { tags: "" };
+const EMPTY_FILTER: FilterState = { tags: [] };
 
 /**
  * When the recipient count exceeds what is left of today's daily send budget,
@@ -80,12 +83,11 @@ function multiDaySendNote(preview: PreviewEmailResponse): string | undefined {
 
 /** Builds the wire filter, dropping unset criteria. */
 function toRecipientFilter(filter: FilterState): RecipientFilter {
-  const tag = filter.tags.trim();
   return {
     side: filter.side,
     relation: filter.relation,
     circle: filter.circle,
-    tags: tag === "" ? undefined : tag,
+    tags: filter.tags.length > 0 ? filter.tags : undefined,
     event_id: filter.eventId,
     rsvp_status: filter.rsvpStatus,
     invitation_type: filter.invitationType,
@@ -105,8 +107,10 @@ export default function AdminEmailCompose() {
   const navigate = useNavigate();
   const templatesQuery = useEmailTemplates();
   const eventsQuery = useEvents();
+  const partiesQuery = useParties({});
   const previewEmail = usePreviewEmail();
   const sendEmail = useSendEmail();
+  const sendTestEmail = useSendTestEmail();
 
   const [templateId, setTemplateId] = useState<string | undefined>(undefined);
   const [subject, setSubject] = useState("");
@@ -130,8 +134,33 @@ export default function AdminEmailCompose() {
   }));
   const eventOptions = events.map((e) => ({ value: e.id, label: e.name }));
 
+  // Distinct tags across all guests, for the multi-select tag filter. The
+  // parties query already loads each party's guests, so this needs no extra
+  // fetch; tags are open-ended, so the options are whatever is currently used.
+  const tagValues = useMemo(() => {
+    const seen = new Set<string>();
+    const values: string[] = [];
+    for (const party of partiesQuery.data?.items ?? []) {
+      for (const guest of party.guests ?? []) {
+        for (const tag of guest.tags) {
+          const key = tag.toLowerCase();
+          if (!seen.has(key)) {
+            seen.add(key);
+            values.push(tag);
+          }
+        }
+      }
+    }
+    return values.sort((a, b) => a.localeCompare(b));
+  }, [partiesQuery.data]);
+
   const canCompose = subject.trim().length > 0 && body.length > 0;
   const previewDayNote = preview ? multiDaySendNote(preview) : undefined;
+  // A preview with merge-field warnings means the send would contain a blank
+  // field, which the backend hard-refuses; disable Send until it is resolved.
+  // The backend always sends warnings as [] (never null), but guard defensively
+  // since this gates the Send button.
+  const hasWarnings = (preview?.warnings?.length ?? 0) > 0;
 
   const selectTemplate = (id: string | undefined) => {
     setTemplateId(id);
@@ -211,6 +240,27 @@ export default function AdminEmailCompose() {
       );
     } finally {
       setSending(false);
+    }
+  };
+
+  // Sends the current draft to the couple's own inboxes (EMAIL_TEST_RECIPIENTS),
+  // rendered against sample data so it always looks complete; no merge-field
+  // warning gates it (it is sample data by design).
+  const handleSendTest = async () => {
+    try {
+      const result = await sendTestEmail.mutateAsync({
+        template_id: templateId,
+        subject: subject.trim(),
+        body,
+        filter: toRecipientFilter(filter),
+      });
+      toast.success(
+        `Test email sent to ${result.sent_to} recipient${result.sent_to === 1 ? "" : "s"}`,
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to send test email",
+      );
     }
   };
 
@@ -321,13 +371,11 @@ export default function AdminEmailCompose() {
             value={filter.infoCollectionStatus}
           />
           <div className="flex flex-col gap-1 text-sm">
-            <Label className="font-medium" htmlFor="compose-tag">
-              Tag
-            </Label>
-            <Input
-              className="w-40"
-              id="compose-tag"
-              onChange={(e) => updateFilter("tags", e.target.value)}
+            <span className="font-medium">Tags</span>
+            <ChipsCombobox
+              ariaLabel="Tags"
+              onChange={(v) => updateFilter("tags", v)}
+              options={tagValues}
               placeholder="Any tag"
               value={filter.tags}
             />
@@ -339,7 +387,7 @@ export default function AdminEmailCompose() {
         </p>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button
           disabled={!canCompose || previewEmail.isPending || sending}
           onClick={handlePreview}
@@ -348,7 +396,18 @@ export default function AdminEmailCompose() {
           {previewEmail.isPending && <Loader2 className="animate-spin" />}
           Preview
         </Button>
-        <Button disabled={!canCompose || sending} onClick={handleSend}>
+        <Button
+          disabled={!canCompose || sendTestEmail.isPending || sending}
+          onClick={handleSendTest}
+          variant="outline"
+        >
+          {sendTestEmail.isPending && <Loader2 className="animate-spin" />}
+          Send test
+        </Button>
+        <Button
+          disabled={!canCompose || sending || hasWarnings}
+          onClick={handleSend}
+        >
           {sending ? <Loader2 className="animate-spin" /> : <Send />}
           Send
         </Button>
@@ -368,39 +427,95 @@ export default function AdminEmailCompose() {
             )}
           </div>
 
+          {hasWarnings && (
+            <div className="space-y-1 rounded-md border border-destructive/40 bg-destructive/10 p-3">
+              <p className="flex items-center gap-2 text-sm font-medium text-destructive">
+                <AlertTriangle className="size-4" />
+                This email would send a blank merge field. Fix these before
+                sending:
+              </p>
+              <ul className="ml-6 list-disc text-sm text-destructive">
+                {preview.warnings.map((warning) => (
+                  <li key={warning.field}>{warning.message}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {preview.total > 0 && (
             <>
-              <div className="space-y-1 rounded-md bg-muted/40 p-3">
+              <div className="space-y-2 rounded-md bg-muted/40 p-3">
                 <p className="text-xs text-muted-foreground">
-                  As {preview.sample_guest_name} will see it:
+                  As {preview.sample_guest_name} will see it (subject:{" "}
+                  <span className="font-medium">{preview.sample_subject}</span>
+                  ):
                 </p>
-                <p className="font-medium">{preview.sample_subject}</p>
-                <p className="whitespace-pre-wrap text-sm">
-                  {preview.sample_body}
-                </p>
+                {/* The real HTML email rendered in a sandboxed iframe so the
+                    admin sees exactly what goes out. sandbox (no allow-*)
+                    blocks scripts and navigation; srcDoc renders the document
+                    string the backend built. */}
+                <iframe
+                  className="h-96 w-full rounded-md border border-ink/10 bg-white"
+                  sandbox=""
+                  srcDoc={preview.sample_html}
+                  title={`Email preview for ${preview.sample_guest_name}`}
+                />
               </div>
 
-              <div className="rounded-md border border-ink/10">
+              <div>
+                <h3 className="mb-2 text-sm font-medium">
+                  Included recipients ({preview.total})
+                </h3>
+                {/* Cap the height so a large audience stays usable; the list
+                    scrolls within the bordered container. */}
+                <div className="max-h-80 overflow-y-auto rounded-md border border-ink/10">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Guest</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Party</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {preview.recipients.map((recipient) => (
+                        <TableRow key={recipient.guest_id}>
+                          <TableCell>{recipient.guest_name}</TableCell>
+                          <TableCell>{recipient.email_address}</TableCell>
+                          <TableCell>{recipient.party_name}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </>
+          )}
+
+          {preview.skipped.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-muted-foreground">
+                Skipped (no email address) ({preview.skipped.length})
+              </h3>
+              <div className="max-h-48 overflow-y-auto rounded-md border border-ink/10">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Guest</TableHead>
-                      <TableHead>Email</TableHead>
                       <TableHead>Party</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {preview.recipients.map((recipient) => (
-                      <TableRow key={recipient.guest_id}>
-                        <TableCell>{recipient.guest_name}</TableCell>
-                        <TableCell>{recipient.email_address}</TableCell>
-                        <TableCell>{recipient.party_name}</TableCell>
+                    {preview.skipped.map((guest) => (
+                      <TableRow key={guest.guest_id}>
+                        <TableCell>{guest.guest_name}</TableCell>
+                        <TableCell>{guest.party_name}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </div>
-            </>
+            </div>
           )}
         </div>
       )}

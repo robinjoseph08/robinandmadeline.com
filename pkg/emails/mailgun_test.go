@@ -38,6 +38,7 @@ func TestHTTPMailgunClient_SendFormatsRequestAndParsesID(t *testing.T) {
 		To:          "alice@example.com",
 		Subject:     "Hi Alice",
 		Text:        "Body",
+		HTML:        "<p>Body</p>",
 		RecipientID: "rec-1",
 	})
 	require.NoError(t, err)
@@ -47,11 +48,13 @@ func TestHTTPMailgunClient_SendFormatsRequestAndParsesID(t *testing.T) {
 	assert.Equal(t, "/v3/mg.example.test/messages", gotPath)
 	assert.Equal(t, "api", gotUser)
 	assert.Equal(t, "key-secret", gotPass)
+	// Both the plaintext fallback and the HTML body are submitted.
 	assert.Equal(t, map[string]string{
 		"from":           "Robin & Madeline <hello@example.test>",
 		"to":             "alice@example.com",
 		"subject":        "Hi Alice",
 		"text":           "Body",
+		"html":           "<p>Body</p>",
 		"v:recipient_id": "rec-1",
 	}, gotForm)
 }

@@ -41,6 +41,9 @@ func TestNew(t *testing.T) {
 		// Mailgun's free plan caps sends at 100 per UTC day, so that is the
 		// safe out-of-the-box budget.
 		assert.Equal(t, 100, cfg.EmailDailySendLimit)
+		// Test recipients default to empty: the "Send test" button has nowhere
+		// to send until the couple's own addresses are configured.
+		assert.Empty(t, cfg.EmailTestRecipients)
 	})
 
 	t.Run("reads values from environment", func(t *testing.T) {
@@ -63,6 +66,7 @@ func TestNew(t *testing.T) {
 		t.Setenv("EMAIL_WORKER_POLL_INTERVAL", "1s")
 		t.Setenv("EMAIL_WORKER_STUCK_THRESHOLD", "10m")
 		t.Setenv("EMAIL_DAILY_SEND_LIMIT", "250")
+		t.Setenv("EMAIL_TEST_RECIPIENTS", "Robin <robin@example.com>, Madeline <madeline@example.com>")
 
 		cfg, err := config.New()
 		require.NoError(t, err)
@@ -86,6 +90,23 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, time.Second, cfg.EmailWorkerPollInterval)
 		assert.Equal(t, 10*time.Minute, cfg.EmailWorkerStuckThreshold)
 		assert.Equal(t, 250, cfg.EmailDailySendLimit)
+		// Comma-separated addresses are split and trimmed, RFC5322 display-name
+		// forms preserved.
+		assert.Equal(t, []string{"Robin <robin@example.com>", "Madeline <madeline@example.com>"}, cfg.EmailTestRecipients)
+	})
+
+	t.Run("parses and trims a single test recipient", func(t *testing.T) {
+		t.Setenv("EMAIL_TEST_RECIPIENTS", "  robin@example.com  ")
+		cfg, err := config.New()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"robin@example.com"}, cfg.EmailTestRecipients)
+	})
+
+	t.Run("ignores blank entries between commas in EMAIL_TEST_RECIPIENTS", func(t *testing.T) {
+		t.Setenv("EMAIL_TEST_RECIPIENTS", "robin@example.com, ,madeline@example.com,")
+		cfg, err := config.New()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"robin@example.com", "madeline@example.com"}, cfg.EmailTestRecipients)
 	})
 
 	// Unlike the worker tuning knobs, the daily limit accepts zero and negative

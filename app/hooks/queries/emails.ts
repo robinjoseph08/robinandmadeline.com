@@ -16,6 +16,8 @@ import type {
   SendEmailPayload,
   SendResponse,
   TemplateResponse,
+  TestEmailPayload,
+  TestEmailResponse,
   UpdateTemplatePayload,
 } from "@/types/generated/emails";
 
@@ -124,6 +126,17 @@ export const useSendEmail = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QueryKey.ListEmailSends] });
     },
+  });
+};
+
+// useSendTestEmail dispatches the current draft to the configured test inboxes
+// (EMAIL_TEST_RECIPIENTS) rendered against sample data, so the couple can
+// eyeball the email. It creates no send/recipient rows and does not invalidate
+// the history; it is a design aid.
+export const useSendTestEmail = () => {
+  return useMutation<TestEmailResponse, ApiError, TestEmailPayload>({
+    mutationFn: (payload) =>
+      adminRequest("/admin/emails/test", { method: "POST", body: payload }),
   });
 };
 

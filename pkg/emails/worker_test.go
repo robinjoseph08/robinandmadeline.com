@@ -161,6 +161,12 @@ func TestProcessBatch_SendsQueuedRowsWithRenderedMergeFields(t *testing.T) {
 	require.Contains(t, byTo, "alice@example.com")
 	assert.Equal(t, "Hi Alice", byTo["alice@example.com"].Subject)
 	assert.Equal(t, "Your code is KALEL; rsvp at "+testBaseURL+"/rsvp", byTo["alice@example.com"].Text)
+	// The HTML body carries the same resolved merge fields, wrapped in the shell
+	// (so a client renders the designed email, not just the plaintext fallback).
+	aliceHTML := byTo["alice@example.com"].HTML
+	assert.Contains(t, aliceHTML, "<!doctype html>")
+	assert.Contains(t, aliceHTML, "Your code is KALEL")
+	assert.Contains(t, aliceHTML, testBaseURL+"/rsvp")
 	assert.Equal(t, testFrom, byTo["alice@example.com"].From)
 	assert.Equal(t, rows[alice.ID].ID, byTo["alice@example.com"].RecipientID)
 	assert.Equal(t, "Hi Bob", byTo["bob@example.com"].Subject)

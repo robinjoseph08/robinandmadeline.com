@@ -95,7 +95,18 @@ default: without `MAILGUN_API_KEY` the queue worker never starts and sends
 stay queued. Set `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, and
 `MAILGUN_WEBHOOK_SIGNING_KEY` (plus optionally `MAILGUN_BASE_URL`,
 `EMAIL_FROM`, `PUBLIC_BASE_URL`, and the `EMAIL_WORKER_*` tuning knobs) to
-enable real sending and delivery webhooks.
+enable real sending and delivery webhooks. Emails go out as HTML (a Markdown
+body rendered into an in-repo, palette-matched shell) with a plaintext
+fallback.
+
+`EMAIL_TEST_RECIPIENTS` powers the compose page's "Send test" button only: set
+it to a comma-separated list of RFC5322 addresses (for example
+`Robin <robin@example.com>, Madeline <madeline@example.com>`) and the button
+sends the current draft, rendered against sample data, to those inboxes so the
+couple can eyeball it. It is empty by default (the button then 422s), and it is
+kept in the environment so personal contact info is never committed. A test
+send is a real Mailgun send, so on the free plan each one consumes one of the
+100 daily sends.
 
 Outbound volume is capped by `EMAIL_DAILY_SEND_LIMIT` (default 100, matching
 Mailgun's free plan). The worker counts dispatch attempts per UTC day, which

@@ -29,7 +29,9 @@ func TestResolveRecipients_EmptyFilterMatchesEveryGuestWithEmail(t *testing.T) {
 	recipients, skipped, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Alice"}, guestNames(recipients))
-	assert.Equal(t, 1, skipped)
+	// Skipped is now the guests themselves (name + party for the double-check
+	// list), not just a count.
+	assert.Equal(t, []string{"Bob"}, guestNames(skipped))
 	// The party rides along for merge-field rendering and display.
 	require.NotNil(t, recipients[0].Party)
 	assert.Equal(t, "The Smiths", recipients[0].Party.Name)
@@ -82,10 +84,26 @@ func TestResolveRecipients_FiltersByTags(t *testing.T) {
 	createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
 
 	recipients, _, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{
-		Tags: pointerutil.String("Bridal Party"),
+		Tags: []string{"Bridal Party"},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Alice"}, guestNames(recipients))
+}
+
+func TestResolveRecipients_FiltersByAnyOfMultipleTags(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	// Each guest carries exactly one of the two selected tags; the multi-tag
+	// filter is OR (array overlap), so a guest with ANY of them matches.
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com"), tags: []string{"Bridal Party"}})
+	createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com"), tags: []string{"Cousin"}})
+	createGuestT(t, f, p.ID, "Carol", guestOpts{email: emailOf("carol@example.com"), tags: []string{"UIUC"}})
+
+	recipients, _, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{
+		Tags: []string{"Bridal Party", "Cousin"},
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"Alice", "Bob"}, guestNames(recipients))
 }
 
 func TestResolveRecipients_FiltersByEventAndRSVPStatus(t *testing.T) {
@@ -184,5 +202,5 @@ func TestResolveRecipients_BlankEmailCountsAsSkipped(t *testing.T) {
 	recipients, skipped, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{})
 	require.NoError(t, err)
 	assert.Empty(t, recipients)
-	assert.Equal(t, 1, skipped)
+	assert.Equal(t, []string{"Blank"}, guestNames(skipped))
 }

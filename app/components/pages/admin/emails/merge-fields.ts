@@ -5,7 +5,6 @@
  */
 export const MERGE_FIELDS = [
   "{{guest_name}}",
-  "{{party_name}}",
   "{{rsvp_code}}",
   "{{rsvp_link}}",
   "{{info_link}}",

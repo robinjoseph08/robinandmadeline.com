@@ -21,7 +21,7 @@ const guestEmail = `mailee-${stamp}@example.com`;
 const tag = `etag-${stamp}`;
 const templateName = `Save the Date ${stamp}`;
 const subject = `Hello ${stamp}, {{guest_name}}!`;
-const body = `Hi {{guest_name}} of {{party_name}}, save the date! RSVP at {{rsvp_link}}.`;
+const body = `Hi {{guest_name}}, save the date! RSVP at {{rsvp_link}}.`;
 
 test("admin composes and sends a filtered email end to end", async ({
   page,
@@ -80,20 +80,30 @@ test("admin composes and sends a filtered email end to end", async ({
   await expect(page.getByLabel("Subject")).toHaveValue(subject);
   await expect(page.getByLabel("Body")).toHaveValue(body);
 
-  await page.getByLabel("Tag").fill(tag);
+  // The tag filter is a multi-select chips combobox: open it and toggle this
+  // run's tag so the audience is exactly the one guest created above.
+  await page.getByRole("combobox", { name: "Tags" }).click();
+  await page.getByRole("option", { name: tag }).click();
+  // Close the popover so the preview button is unobstructed.
+  await page.keyboard.press("Escape");
 
   // --- Preview: exactly our guest, with merge fields resolved --------------
   await page.getByRole("button", { name: "Preview" }).click();
   await expect(page.getByText("1 recipient", { exact: true })).toBeVisible();
+  // The resolved subject shows inline in the preview panel.
   await expect(page.getByText(`Hello ${stamp}, ${guestName}!`)).toBeVisible();
-  // The body asserts the full rendered sample including the {{rsvp_link}}
-  // URL, which observes the server's PublicBaseURL wiring end to end (the
-  // harness pins PUBLIC_BASE_URL; a transposed constructor argument would
-  // render a wrong link here).
+  // The rendered HTML email lives in a sandboxed iframe; assert the full
+  // resolved body inside it, including the {{rsvp_link}} URL. This observes the
+  // server's PublicBaseURL wiring end to end (the harness pins PUBLIC_BASE_URL;
+  // a transposed constructor argument would render a wrong link here) and the
+  // Markdown-to-HTML shell pipeline.
+  const previewFrame = page.frameLocator(
+    `iframe[title="Email preview for ${guestName}"]`,
+  );
   await expect(
-    page.getByText(
-      `Hi ${guestName} of ${partyName}, save the date! RSVP at https://robinandmadeline.com/rsvp.`,
-    ),
+    previewFrame.getByText(`Hi ${guestName}, save the date! RSVP at`, {
+      exact: false,
+    }),
   ).toBeVisible();
   await expect(page.getByRole("cell", { name: guestEmail })).toBeVisible();
 

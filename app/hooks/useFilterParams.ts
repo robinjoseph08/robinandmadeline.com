@@ -15,7 +15,11 @@ import { useSearchParams } from "react-router-dom";
  *
  * Query-string values are strings, so boolean filters are stored as
  * "true"/"false"; list their keys in boolKeys (also stable and module-level) so
- * they parse back to booleans. Every other value stays a plain string.
+ * they parse back to booleans. Multi-value filters (a chips combobox over
+ * guest tags) are repeated params (?tags=a&tags=b); list their keys in
+ * arrayKeys so they read back as a string[] and setFilter writes the whole set
+ * (clearing the param when the array is empty). Every other value stays a plain
+ * string.
  */
 // T is the page's list-query type (e.g. ListGuestsQuery). It is an interface, so
 // it is constrained to `object` rather than a Record (interfaces lack the index
@@ -24,6 +28,7 @@ import { useSearchParams } from "react-router-dom";
 export function useFilterParams<T extends object>(
   keys: readonly (keyof T)[],
   boolKeys: readonly (keyof T)[] = [],
+  arrayKeys: readonly (keyof T)[] = [],
 ) {
   const [searchParams, setSearchParams] = useSearchParams();
   // The writers below read the current params through this ref rather than
@@ -46,32 +51,55 @@ export function useFilterParams<T extends object>(
     () => new Set(boolKeys as readonly string[]),
     [boolKeys],
   );
+  const arraySet = useMemo(
+    () => new Set(arrayKeys as readonly string[]),
+    [arrayKeys],
+  );
 
   const filters = useMemo(() => {
-    const out: Record<string, string | boolean> = {};
+    const out: Record<string, string | boolean | string[]> = {};
     for (const key of keys as readonly string[]) {
+      if (arraySet.has(key)) {
+        // Repeated params (?tags=a&tags=b) read back as a string[]; an absent
+        // key stays undefined so it never constrains.
+        const values = searchParams.getAll(key);
+        if (values.length > 0) out[key] = values;
+        continue;
+      }
       const value = searchParams.get(key);
       if (value === null) continue;
       out[key] = boolSet.has(key) ? value === "true" : value;
     }
     return out as T;
-  }, [searchParams, keys, boolSet]);
+  }, [searchParams, keys, boolSet, arraySet]);
 
   const setFilter = useCallback(
     <K extends keyof T>(key: K, value: T[K]) => {
       const next = new URLSearchParams(searchParamsRef.current);
-      // undefined / empty clears the param; everything else (including the
-      // boolean false -> "false") is stored as a string.
-      const serialized = value === undefined ? "" : String(value);
-      if (serialized === "") {
-        next.delete(key as string);
+      const name = key as string;
+      if (arraySet.has(name)) {
+        // Replace the whole set: drop the prior values, then add the new ones.
+        // An empty (or missing) array clears the param entirely.
+        next.delete(name);
+        const values = (value ?? []) as readonly string[];
+        for (const v of values) next.append(name, v);
       } else {
-        next.set(key as string, serialized);
+        // undefined / empty clears the param; everything else (including the
+        // boolean false -> "false") is stored as a string.
+        const serialized = value === undefined ? "" : String(value);
+        if (serialized === "") {
+          next.delete(name);
+        } else {
+          next.set(name, serialized);
+        }
       }
+      // Write the result back into the ref synchronously (and pass it to
+      // react-router) so two writes landing before a render compose instead of
+      // the second erasing the first; array writes take the same path.
       searchParamsRef.current = next;
       setSearchParams(next, { replace: true });
     },
-    [setSearchParams],
+    [setSearchParams, arraySet],
   );
 
   // Drop every filter at once (the sheet's "Clear all"), optionally keeping a few

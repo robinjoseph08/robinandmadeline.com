@@ -131,7 +131,17 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.C
 	parties.RegisterRoutes(admin, parties.NewService(db))
 	events.RegisterRoutes(admin, events.NewService(db))
 	photogroups.RegisterRoutes(admin, photogroups.NewService(db))
-	emails.RegisterRoutes(admin, emails.NewService(db, cfg.PublicBaseURL, cfg.AdminUsername, cfg.EmailDailySendLimit))
+
+	emailService := emails.NewService(db, cfg.PublicBaseURL, cfg.AdminUsername, cfg.EmailDailySendLimit)
+	// The "Send test" endpoint dispatches synchronously, so it needs its own
+	// Mailgun client (the queue worker owns a separate one). Enable it only when
+	// Mailgun is configured, mirroring how the worker decides it is on; without
+	// a key the endpoint cleanly 422s.
+	if cfg.MailgunAPIKey != "" {
+		client := emails.NewMailgunClient(cfg.MailgunBaseURL, cfg.MailgunDomain, cfg.MailgunAPIKey)
+		emailService.WithTestSend(client, cfg.EmailFrom, cfg.EmailTestRecipients)
+	}
+	emails.RegisterRoutes(admin, emailService)
 }
 
 // registerGuest mounts the guest API surface behind the guest auth middleware.

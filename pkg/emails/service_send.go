@@ -31,10 +31,20 @@ func (s *Service) Preview(ctx context.Context, in PreviewEmailPayload) (*Preview
 		return nil, err
 	}
 
+	// Normalize the warnings to a non-nil slice so the JSON surface serializes
+	// [] rather than null (mergeFieldProblems returns a nil slice when there are
+	// none), matching the package's list-envelope convention and letting the
+	// compose page read .length without a guard.
+	warnings := mergeFieldProblems(in.Subject, in.Body, event, recipients)
+	if warnings == nil {
+		warnings = []MergeFieldWarning{}
+	}
 	resp := &PreviewEmailResponse{
 		Recipients:     make([]PreviewRecipient, 0, len(recipients)),
 		Total:          len(recipients),
-		SkippedNoEmail: skipped,
+		SkippedNoEmail: len(skipped),
+		Skipped:        make([]SkippedRecipient, 0, len(skipped)),
+		Warnings:       warnings,
 		DailySendLimit: s.dailySendLimit,
 		DailySendsUsed: used,
 	}
@@ -48,13 +58,26 @@ func (s *Service) Preview(ctx context.Context, in PreviewEmailPayload) (*Preview
 		}
 		resp.Recipients = append(resp.Recipients, item)
 	}
+	// Surface WHO is excluded for lacking an email, not just the count, so the
+	// admin can verify the exclusions.
+	for _, g := range skipped {
+		item := SkippedRecipient{GuestID: g.ID, GuestName: g.FullName}
+		if g.Party != nil {
+			item.PartyName = g.Party.Name
+		}
+		resp.Skipped = append(resp.Skipped, item)
+	}
 
 	if len(recipients) > 0 {
 		sample := recipients[0]
 		mctx := MergeContext{Guest: sample, Party: sample.Party, Event: event, PublicBaseURL: s.publicBaseURL}
 		resp.SampleGuestName = sample.FullName
 		resp.SampleSubject = Render(in.Subject, mctx)
+		// The plaintext sample is the merge-resolved Markdown source; the HTML
+		// sample is that source rendered to HTML and wrapped in the email shell,
+		// so the admin previews the real email (RenderEmail, shell.go).
 		resp.SampleBody = Render(in.Body, mctx)
+		resp.SampleHTML = RenderEmail(in.Subject, in.Body, mctx)
 	}
 	return resp, nil
 }
@@ -81,6 +104,18 @@ func (s *Service) CreateSend(ctx context.Context, in SendEmailPayload) (*models.
 	}
 	if len(recipients) == 0 {
 		return nil, SendStats{}, errcodes.ValidationError("No recipients with an email address match the filter.")
+	}
+
+	// The hard backstop behind the compose-page warnings: a blank merge field
+	// must be impossible to dispatch, so even a direct API call is refused when
+	// any referenced field would render empty (no event selected, or a
+	// recipient with no RSVP code). The event for merge fields is the filter's.
+	event, err := s.filterEvent(ctx, in.Filter)
+	if err != nil {
+		return nil, SendStats{}, err
+	}
+	if problems := mergeFieldProblems(in.Subject, in.Body, event, recipients); len(problems) > 0 {
+		return nil, SendStats{}, errcodes.ValidationError("This email would send a blank merge field: " + joinProblems(problems))
 	}
 
 	now := time.Now()

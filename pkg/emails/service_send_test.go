@@ -21,7 +21,7 @@ func TestPreview_RendersSampleForFirstRecipient(t *testing.T) {
 
 	resp, err := f.emails.Preview(ctx(), emails.PreviewEmailPayload{
 		Subject: "Hi {{guest_name}}",
-		Body:    "Party {{party_name}}, code {{rsvp_code}}, info {{info_link}}",
+		Body:    "Code {{rsvp_code}}, info {{info_link}}",
 	})
 	require.NoError(t, err)
 
@@ -30,11 +30,13 @@ func TestPreview_RendersSampleForFirstRecipient(t *testing.T) {
 	require.Len(t, resp.Recipients, 1)
 	assert.Equal(t, "Alice", resp.Recipients[0].GuestName)
 	assert.Equal(t, "alice@example.com", resp.Recipients[0].EmailAddress)
+	// PartyName is an internal admin aid in the recipient table, not a merge
+	// field; it still rides along on each preview recipient.
 	assert.Equal(t, "The Smiths", resp.Recipients[0].PartyName)
 
 	assert.Equal(t, "Alice", resp.SampleGuestName)
 	assert.Equal(t, "Hi Alice", resp.SampleSubject)
-	assert.Equal(t, "Party The Smiths, code KALEL, info "+testBaseURL+"/i/"+p.InfoToken, resp.SampleBody)
+	assert.Equal(t, "Code KALEL, info "+testBaseURL+"/i/"+p.InfoToken, resp.SampleBody)
 }
 
 func TestPreview_ResolvesEventFieldsFromFilterEvent(t *testing.T) {

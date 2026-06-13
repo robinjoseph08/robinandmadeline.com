@@ -41,9 +41,10 @@ type EmailTemplate struct {
 // for the audit trail. Every field is optional; absent fields don't constrain.
 // The semantics mirror the flat guest list filters: side/relation/circle/
 // invitation_type constrain through the guest's party, tags matches guests
-// whose tags array contains the value, event/rsvp_status constrain through
-// the guest's Event RSVP rows (a row is the invitation, ADR 0002), and
-// info_collection_status filters on the party's derived status (ADR 0005).
+// whose tags array overlaps the selected tags (the guest has ANY of them),
+// event/rsvp_status constrain through the guest's Event RSVP rows (a row is the
+// invitation, ADR 0002), and info_collection_status filters on the party's
+// derived status (ADR 0005).
 //
 // It lives in pkg/models rather than pkg/emails because EmailSend stores it
 // (feature packages import models, never the reverse). The validate tags are
@@ -53,12 +54,14 @@ type RecipientFilter struct {
 	Relation *string `json:"relation,omitempty" validate:"omitempty,oneof=family friend" tstype:"Relation"`
 	Circle   *string `json:"circle,omitempty" validate:"omitempty,oneof=Immediate Extended College Work Childhood Other" tstype:"Circle"`
 	// Tags is intentionally unvalidated: tags are an open set, so any value is
-	// a legal filter that simply may match nothing.
-	Tags                 *string `json:"tags,omitempty"`
-	EventID              *string `json:"event_id,omitempty" validate:"omitempty,uuid"`
-	RSVPStatus           *string `json:"rsvp_status,omitempty" validate:"omitempty,oneof=pending attending not_attending" tstype:"EventRSVPStatus"`
-	InvitationType       *string `json:"invitation_type,omitempty" validate:"omitempty,oneof=physical digital" tstype:"InvitationType"`
-	InfoCollectionStatus *string `json:"info_collection_status,omitempty" validate:"omitempty,oneof=complete incomplete" tstype:"InfoCollectionStatus"`
+	// a legal filter that simply may match nothing. Multiple tags are OR'd (a
+	// guest matches when it carries any of them); an empty/absent slice does
+	// not constrain. Stored as JSONB, so the slice shape needs no migration.
+	Tags                 []string `json:"tags,omitempty"`
+	EventID              *string  `json:"event_id,omitempty" validate:"omitempty,uuid"`
+	RSVPStatus           *string  `json:"rsvp_status,omitempty" validate:"omitempty,oneof=pending attending not_attending" tstype:"EventRSVPStatus"`
+	InvitationType       *string  `json:"invitation_type,omitempty" validate:"omitempty,oneof=physical digital" tstype:"InvitationType"`
+	InfoCollectionStatus *string  `json:"info_collection_status,omitempty" validate:"omitempty,oneof=complete incomplete" tstype:"InfoCollectionStatus"`
 }
 
 // EmailSend is one admin-triggered dispatch: the subject/body as sent (the

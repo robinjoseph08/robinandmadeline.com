@@ -28,13 +28,32 @@ func mergeFixture() MergeContext {
 
 func TestRender_ResolvesEveryMergeField(t *testing.T) {
 	mctx := mergeFixture()
-	in := "Hi {{guest_name}} of {{party_name}}: code {{rsvp_code}}, rsvp at {{rsvp_link}}, " +
+	in := "Hi {{guest_name}}: code {{rsvp_code}}, rsvp at {{rsvp_link}}, " +
 		"info at {{info_link}}, see you at {{event_name}} on {{event_date}}."
 	got := Render(in, mctx)
 	assert.Equal(t,
-		"Hi Alice Smith of The Smiths: code KALEL, rsvp at https://robinandmadeline.com/rsvp, "+
+		"Hi Alice Smith: code KALEL, rsvp at https://robinandmadeline.com/rsvp, "+
 			"info at https://robinandmadeline.com/i/tok123abc, see you at Reception on Saturday, October 17, 2026.",
 		got)
+}
+
+func TestRender_LeavesRemovedPartyNameFieldIntact(t *testing.T) {
+	// {{party_name}} was removed as a guest-facing field; it now falls through
+	// as an unknown placeholder (literal text) like any other typo, never
+	// resolving to the party's internal label.
+	got := Render("From {{party_name}}", mergeFixture())
+	assert.Equal(t, "From {{party_name}}", got)
+}
+
+func TestUsedMergeFields_ReturnsOnlyKnownReferencedFields(t *testing.T) {
+	// Scans subject and body together, de-duplicates, and ignores both unknown
+	// placeholders (the removed {{party_name}}) and a typo, sharing one field
+	// set with Render.
+	used := usedMergeFields(
+		"Hi {{guest_name}}, {{event_name}}",
+		"{{guest_name}} from {{party_name}}, code {{rsvp_code}}, {{guest_nam}}",
+	)
+	assert.ElementsMatch(t, []string{"guest_name", "event_name", "rsvp_code"}, used)
 }
 
 func TestRender_AllowsWhitespaceInsidePlaceholders(t *testing.T) {

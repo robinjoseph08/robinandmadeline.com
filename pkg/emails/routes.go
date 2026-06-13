@@ -18,6 +18,10 @@ import "github.com/labstack/echo/v4"
 //	Composing and sending (ADR 0004):
 //	  POST   /emails/preview            resolve recipients + render a sample
 //	  POST   /emails/send               record send, enqueue recipients, return
+//	  POST   /emails/test               send the draft to the configured test
+//	                                    inboxes (sample data, no rows enqueued)
+//	  GET    /emails/shell-preview      dev/design aid: the HTML shell rendered
+//	                                    with sample content (text/html, not JSON)
 //
 //	History:
 //	  GET    /emails/sends              list with per-status recipient stats
@@ -36,6 +40,8 @@ func RegisterRoutes(admin *echo.Group, service *Service) {
 	emails.DELETE("/templates/:id", h.deleteTemplate)
 	emails.POST("/preview", h.preview)
 	emails.POST("/send", h.send)
+	emails.POST("/test", h.sendTest)
+	emails.GET("/shell-preview", h.shellPreview)
 	emails.GET("/sends", h.listSends)
 	emails.GET("/sends/:id", h.getSend)
 }
