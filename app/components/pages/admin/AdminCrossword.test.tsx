@@ -107,7 +107,14 @@ describe("AdminCrossword list", () => {
     // Solver name: display_name when set, otherwise the Anonymous fallback.
     expect(screen.getByText("Ada")).toBeInTheDocument();
     // The completed-unposted and in-progress rows are both anonymous.
-    expect(screen.getAllByText("Anonymous")).toHaveLength(2);
+    const anonymous = screen.getAllByText("Anonymous");
+    expect(anonymous).toHaveLength(2);
+    // The Anonymous fallback reads as a derived placeholder: lightened and
+    // italic, not a literal entered name. A named solver renders plainly.
+    for (const cell of anonymous) {
+      expect(cell).toHaveClass("italic", "opacity-60");
+    }
+    expect(screen.getByText("Ada")).not.toHaveClass("italic");
 
     // Party: the party name when affiliated.
     expect(screen.getByText("The Lovelaces")).toBeInTheDocument();

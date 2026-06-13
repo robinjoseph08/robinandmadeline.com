@@ -320,11 +320,12 @@ function Row({
   return (
     <li
       className={cn(
-        "flex items-center gap-3 rounded text-sm",
-        // Pad podium rows too so the medal/badge has room and lines up with
-        // the viewer highlight when both apply.
-        (isViewer || podium) && "px-2 py-1",
-        isViewer && "bg-secondary/40 font-medium",
+        // Every row carries the same padding so the rank/name/time columns
+        // line up across plain, podium, and viewer rows; the viewer highlight
+        // below is a background + ring only, never extra padding, so it never
+        // shifts a row's contents out of alignment with its neighbors.
+        "flex items-center gap-3 rounded px-2 py-1 text-sm",
+        isViewer && "bg-secondary/40 font-medium ring-1 ring-secondary",
       )}
       ref={rowRef}
     >
@@ -332,15 +333,18 @@ function Row({
         <span
           aria-label={podium.label}
           className={cn(
-            "flex w-6 shrink-0 items-center justify-center gap-0.5 rounded-full px-1 py-0.5 text-xs font-semibold tabular-nums",
+            // A clearly visible medal is the rank's marker; the number sits
+            // beside it so the placing still reads at a glance. The pill shares
+            // the plain number's width so the name column stays aligned.
+            "flex w-11 shrink-0 items-center justify-center gap-1 rounded-full py-0.5 pl-1 pr-1.5 text-xs font-semibold tabular-nums",
             podium.badge,
           )}
         >
-          <Medal aria-hidden="true" className={cn("h-3 w-3", podium.medal)} />
+          <Medal aria-hidden="true" className={cn("h-5 w-5", podium.medal)} />
           {rank}
         </span>
       ) : (
-        <span className="w-6 shrink-0 text-right text-muted-foreground">
+        <span className="w-11 shrink-0 pr-1.5 text-right text-muted-foreground">
           {rank}.
         </span>
       )}

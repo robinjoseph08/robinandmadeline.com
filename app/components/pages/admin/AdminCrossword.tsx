@@ -99,7 +99,17 @@ export default function AdminCrossword() {
                 <TableRow key={session.id}>
                   <TableCell className="font-medium">
                     {session.display_name ?? (
-                      <span className="text-muted-foreground">Anonymous</span>
+                      // No name submitted: render the placeholder lighter and
+                      // italic so it reads as a derived fallback rather than a
+                      // literal entered name. The muted-foreground token is the
+                      // same ink as normal text in this theme, so opacity is
+                      // what actually does the muting here.
+                      <span
+                        className="italic opacity-60"
+                        title="No name submitted."
+                      >
+                        Anonymous
+                      </span>
                     )}
                   </TableCell>
                   <TableCell>

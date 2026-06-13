@@ -453,6 +453,44 @@ describe("LeaderboardDialog", () => {
     expect(screen.getAllByText("You")).toHaveLength(1);
   });
 
+  it("keeps the viewer row's box model identical to a normal row so columns stay aligned", async () => {
+    // The highlight must not change the row's padding: every row carries the
+    // same px/py, and the viewer is marked by a background + ring only. This
+    // pins the alignment fix so a future regression that reintroduces shifting
+    // padding on the highlighted row is caught.
+    apiRequest.mockResolvedValue({
+      items: [
+        entry({ display_name: "Alice", elapsed_ms: 61_000 }),
+        entry({ display_name: "Bob", elapsed_ms: 62_000 }),
+        entry({ display_name: "Carol", elapsed_ms: 63_000 }),
+        entry({ display_name: "Robin", elapsed_ms: 64_000 }),
+      ],
+      total: 4,
+      viewer: {
+        rank: 4,
+        entry: entry({ display_name: "Robin", elapsed_ms: 64_000 }),
+      },
+    });
+
+    renderDialog({ sessionId: "sess-7" });
+
+    const rows = await screen.findAllByRole("listitem");
+    const normalRow = rows[3 - 1]; // rank 3, a plain non-podium, non-viewer row
+    const viewerRow = rows[4 - 1]; // rank 4, the highlighted "You" row
+    expect(within(viewerRow).getByText("You")).toBeInTheDocument();
+
+    // Both rows share the same horizontal and vertical padding (same box
+    // model), so the rank/name/time columns line up across them.
+    for (const cls of ["px-2", "py-1"]) {
+      expect(normalRow).toHaveClass(cls);
+      expect(viewerRow).toHaveClass(cls);
+    }
+    // The viewer's distinction is a background + ring, not extra padding.
+    expect(viewerRow).toHaveClass("bg-secondary/40");
+    expect(viewerRow.className).toMatch(/ring-1/);
+    expect(normalRow).not.toHaveClass("bg-secondary/40");
+  });
+
   it("scrolls its own scrollport to center the viewer's row on open", async () => {
     // The viewer ranks deep in the list (below the scrollport), as a guest who
     // placed, say, 80th would. jsdom has no layout, so (as in the clue-list
