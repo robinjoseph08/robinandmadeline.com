@@ -217,6 +217,17 @@ fi
 [tasks.setup]
 description = "Install tools and dependencies, generate TypeScript types"
 run = '''
+# A fresh git worktree starts without a .env. If the main worktree has one,
+# copy it so this worktree inherits the local secrets (Mailgun keys,
+# EMAIL_TEST_RECIPIENTS) without setting them up again. Never overwrites an
+# existing .env, and is a no-op in the main worktree itself or when it has none.
+worktree_root="$(git rev-parse --show-toplevel)"
+main_root="$(cd "$(dirname "$(git rev-parse --git-common-dir)")" && pwd)"
+if [ "$main_root" != "$worktree_root" ] && [ -f "$main_root/.env" ] && [ ! -f "$worktree_root/.env" ]; then
+  cp "$main_root/.env" "$worktree_root/.env"
+  echo "Copied .env from the main worktree ($main_root)"
+fi
+
 mise install
 pnpm install
 go mod download
