@@ -30,10 +30,13 @@ func init() {
 		// records the EASIEST level used at any point during the solve (easy <
 		// medium < hard); the CHECK guards the closed set like other TEXT enums.
 		// elapsed_ms is the accumulated active-solving time the client reports;
-		// it only ever grows (enforced in the service). display_name being
-		// non-NULL is the leaderboard opt-in: it is set once, post-completion,
-		// and kept even for signed-in parties so an anonymous entry can be
-		// retroactively affiliated later.
+		// it only ever grows (enforced in the service). display_name is the
+		// name shown on the leaderboard, set once post-completion and kept
+		// even for signed-in parties so an anonymous entry can be retroactively
+		// affiliated later. (At this revision display_name being non-NULL was
+		// also the implicit leaderboard opt-in; migration 20260614010000 makes
+		// the opt-in an explicit on_leaderboard column, so display_name no
+		// longer gates visibility.)
 		_, err := db.ExecContext(ctx, `
 			CREATE TABLE game_sessions (
 				id UUID PRIMARY KEY,

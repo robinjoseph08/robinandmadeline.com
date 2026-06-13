@@ -50,10 +50,13 @@ func EasierDifficulty(a, b string) string {
 // at any point during the solve (see EasierDifficulty). ElapsedMS is the
 // accumulated active-solving milliseconds the client reports; the service only
 // lets it grow. CompletedAt is NULL for a started-but-never-finished solve and
-// set server-side exactly once. DisplayName being non-NULL is the leaderboard
-// opt-in: it is set once after completion and stored even for signed-in
-// parties, so an anonymous entry can be retroactively affiliated with a party
-// later.
+// set server-side exactly once. OnLeaderboard is the explicit leaderboard
+// opt-in: every completed solve is stored regardless, and this flag alone says
+// whether the solver chose to appear on the board (it replaces the old implicit
+// "display_name is set" rule, so an admin view can list the completed solves
+// that opted out). DisplayName is the name shown on the leaderboard, set when
+// opting in and stored even for signed-in parties so an anonymous entry can be
+// retroactively affiliated with a party later.
 //
 // IPAddress is a server-side abuse-tracing concern: it is excluded from JSON
 // (and so from every response and the generated TypeScript) on purpose.
@@ -67,8 +70,9 @@ type GameSession struct {
 	Difficulty string  `bun:"difficulty" json:"difficulty" tstype:"GameDifficulty"`
 	ElapsedMS  int64   `bun:"elapsed_ms" json:"elapsed_ms"`
 
-	CompletedAt *time.Time `bun:"completed_at" json:"completed_at"`
-	DisplayName *string    `bun:"display_name" json:"display_name"`
+	CompletedAt   *time.Time `bun:"completed_at" json:"completed_at"`
+	OnLeaderboard bool       `bun:"on_leaderboard" json:"on_leaderboard"`
+	DisplayName   *string    `bun:"display_name" json:"display_name"`
 
 	CreatedAt time.Time `bun:"created_at,nullzero" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero" json:"updated_at"`

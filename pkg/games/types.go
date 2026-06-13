@@ -39,12 +39,13 @@ type UpdateGameSessionPayload struct {
 }
 
 // PostLeaderboardPayload is the body of POST /api/games/sessions/:id/leaderboard,
-// the explicit opt-in that publishes a completed solve. DisplayName is what the
-// leaderboard shows: a signed-in guest's client confirms or prefills it from
-// their guest record, an anonymous guest types one, and either way it is stored
-// on the session so an anonymous entry can be retroactively affiliated with a
-// party later. Posting an uncompleted session is a 422; re-posting the same
-// name is an idempotent success, a different name a 409.
+// the request that opts a completed solve onto the leaderboard (it sets the
+// session's on_leaderboard flag). DisplayName is what the leaderboard shows: a
+// signed-in guest's client confirms or prefills it from their guest record, an
+// anonymous guest types one, and either way it is stored on the session so an
+// anonymous entry can be retroactively affiliated with a party later. Posting an
+// uncompleted session is a 422; re-posting the same name is an idempotent
+// success, a different name a 409.
 type PostLeaderboardPayload struct {
 	DisplayName string `json:"display_name" mod:"trim" validate:"required,min=1,max=50"`
 }
@@ -76,10 +77,11 @@ type GameSessionResponse struct {
 	models.GameSession `tstype:",extends"`
 }
 
-// LeaderboardEntry is one published solve on a puzzle's leaderboard. It
-// deliberately does NOT carry the session id: the id is the session's bearer
-// token, so exposing other solvers' ids would let anyone rewrite their rows.
-// Difficulty is the easiest level used at any point during the solve.
+// LeaderboardEntry is one opted-in solve on a puzzle's leaderboard (a completed
+// session whose solver set on_leaderboard). It deliberately does NOT carry the
+// session id: the id is the session's bearer token, so exposing other solvers'
+// ids would let anyone rewrite their rows. Difficulty is the easiest level used
+// at any point during the solve.
 type LeaderboardEntry struct {
 	DisplayName string    `json:"display_name"`
 	Difficulty  string    `json:"difficulty" tstype:"models.GameDifficulty"`
@@ -89,13 +91,14 @@ type LeaderboardEntry struct {
 
 // LeaderboardViewer is the requesting solver's own ranked entry, returned
 // when the leaderboard read carries that solver's session_id and the
-// session is a published, completed solve on the board being read (the same
+// session is an opted-in, completed solve on the board being read (the same
 // puzzle and, when filtered, the same difficulty). Rank is its 1-based
 // position in the full ordering, which may exceed the returned items when
-// the solver is slower than the displayed top 100. It lets the client
-// always show the solver their own row with the correct number, even off
-// the visible list. It is omitted (null) when no eligible session_id was
-// given.
+// the solver is slower than the displayed entries (the cap is a defensive
+// ceiling well above any real board, so this overflow only arises under
+// abuse). It lets the client always show the solver their own row with the
+// correct number, even off the visible list. It is omitted (null) when no
+// eligible session_id was given.
 type LeaderboardViewer struct {
 	Rank  int              `json:"rank"`
 	Entry LeaderboardEntry `json:"entry"`
@@ -103,11 +106,13 @@ type LeaderboardViewer struct {
 
 // ListLeaderboardEntriesResponse is the uniform list envelope for a puzzle's
 // leaderboard: the fastest entries first, capped at leaderboardLimit items.
-// Total counts every published entry the query matched (the whole puzzle, or
+// Total counts every opted-in entry the query matched (the whole puzzle, or
 // just one difficulty when filtered), beyond the cap, so a client can say
-// "top 100 of 250" without a second request. Viewer is an additive, nullable
-// field: when the read carries an eligible session_id it carries that solver's
-// own ranked entry (see LeaderboardViewer), so the client can always show the
+// "showing N of M" without a second request. The cap is a defensive ceiling
+// well above any real board, so at wedding scale Items holds every opted-in
+// entry and Total equals len(Items). Viewer is an additive, nullable field:
+// when the read carries an eligible session_id it carries that solver's own
+// ranked entry (see LeaderboardViewer), so the client can always show the
 // solver their own row with the correct rank, highlighting it when it is
 // already in items and appending it when it falls off the visible list. Items
 // and Total keep their original meaning regardless of Viewer.

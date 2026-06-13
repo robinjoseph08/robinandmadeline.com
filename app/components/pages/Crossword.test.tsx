@@ -42,6 +42,7 @@ function makeSession(overrides: Partial<GameSession> = {}): GameSession {
     difficulty: "easy",
     elapsed_ms: 0,
     completed_at: undefined,
+    on_leaderboard: false,
     display_name: undefined,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",

@@ -100,6 +100,7 @@ func TestPostGameSession_AnonymousCreates201WithNullParty(t *testing.T) {
 	assert.Equal(t, models.GameDifficultyMedium, resp.Difficulty)
 	assert.Nil(t, resp.PartyID)
 	assert.Nil(t, resp.CompletedAt)
+	assert.False(t, resp.OnLeaderboard, "a fresh session has not opted into the leaderboard")
 	assert.NotEmpty(t, sessionRow(t, db, resp.ID).IPAddress, "the IP is captured server-side")
 
 	// The IP is stored but never serialized: a session response carries no
@@ -357,6 +358,7 @@ func TestPostLeaderboard_FullFlowOverHTTP(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var resp games.GameSessionResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.True(t, resp.OnLeaderboard, "the response reflects the opt-in")
 	require.NotNil(t, resp.DisplayName)
 	assert.Equal(t, "Alice", *resp.DisplayName)
 

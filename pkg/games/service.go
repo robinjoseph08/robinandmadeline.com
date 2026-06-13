@@ -3,10 +3,14 @@
 // created when a guest starts a puzzle, updated with the client-reported
 // accumulated active-solving time (and any difficulty switches) as they solve,
 // and stamped with completed_at when they finish, so a row without one is
-// observable as started-but-never-completed. The server stamps created_at and
-// completed_at itself but only sanity-checks the reported elapsed_ms (it must
-// grow monotonically and stay under a 24-hour cap), so the ranked leaderboard
-// times are honor-system, not server-timed.
+// observable as started-but-never-completed. Every completed solve is stored
+// regardless of whether the solver posts; the leaderboard opt-in is a separate
+// explicit flag (on_leaderboard), so the collected times and the choice to
+// appear on the board are independent (an admin view can list the completed
+// solves that opted out). The server stamps created_at and completed_at itself
+// but only sanity-checks the reported elapsed_ms (it must grow monotonically
+// and stay under a 24-hour cap), so the ranked leaderboard times are
+// honor-system, not server-timed.
 //
 // The endpoints are public (the crossword needs no authentication); the
 // session's UUID id doubles as its bearer token, so holding the id is what
@@ -30,8 +34,10 @@ import (
 )
 
 // leaderboardLimit caps how many entries a leaderboard read returns. There is
-// no pagination in v1; the cap just keeps the response bounded.
-const leaderboardLimit = 100
+// no pagination in v1; the cap is a defensive ceiling against abuse, set well
+// above any real board (at wedding scale every entry is returned), so it bounds
+// the response without truncating a legitimate leaderboard.
+const leaderboardLimit = 500
 
 // Service is the games data layer over a Bun DB. Construct it with NewService.
 // Methods return errcodes errors directly; handlers pass them through to the
@@ -155,13 +161,14 @@ func isCompletedNoop(session *models.GameSession, in UpdateGameSessionPayload) b
 	return in.Difficulty == nil || models.EasierDifficulty(session.Difficulty, *in.Difficulty) == session.Difficulty
 }
 
-// PostToLeaderboard publishes a completed solve under the given display name,
-// the explicit opt-in that makes the session visible on the leaderboard.
-// Posting an uncompleted session is a 422. Re-posting is idempotent when the
-// name matches what was already published and a 409 otherwise (the leaderboard
-// is append-once; there is no rename in v1). Like UpdateSession, a party is
-// attached opportunistically, so a guest who signs in between completing and
-// posting still gets their entry affiliated.
+// PostToLeaderboard publishes a completed solve under the given display name:
+// it sets on_leaderboard (the explicit opt-in that makes the session visible)
+// and stores the display_name shown on the board. Posting an uncompleted
+// session is a 422. Re-posting is idempotent when the name matches what was
+// already published and a 409 otherwise (the leaderboard is append-once; there
+// is no rename in v1). Like UpdateSession, a party is attached opportunistically,
+// so a guest who signs in between completing and posting still gets their entry
+// affiliated.
 func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeaderboardPayload, partyID string) (*models.GameSession, error) {
 	session := new(models.GameSession)
 	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
@@ -172,7 +179,11 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 		if loaded.CompletedAt == nil {
 			return errcodes.ValidationError("The puzzle must be completed before posting to the leaderboard.")
 		}
-		if loaded.DisplayName != nil {
+		// on_leaderboard is the opt-in source of truth: a row already on the
+		// board carries a display_name too (this method sets both, and the
+		// backfill set the flag only where display_name was non-NULL), so the
+		// dereference below is safe.
+		if loaded.OnLeaderboard {
 			if *loaded.DisplayName != in.DisplayName {
 				return errcodes.Conflict("This solve is already on the leaderboard under a different name.")
 			}
@@ -180,6 +191,7 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 			return nil
 		}
 
+		loaded.OnLeaderboard = true
 		loaded.DisplayName = &in.DisplayName
 		if err := attachParty(ctx, tx, loaded, partyID); err != nil {
 			return err
@@ -187,7 +199,7 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 		loaded.UpdatedAt = dbNow()
 
 		_, err = tx.NewUpdate().Model(loaded).
-			Column("display_name", "party_id", "updated_at").
+			Column("on_leaderboard", "display_name", "party_id", "updated_at").
 			WherePK().Exec(ctx)
 		if err != nil {
 			return errors.Wrap(err, "post game session to leaderboard")
@@ -201,29 +213,31 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 	return session, nil
 }
 
-// Leaderboard reads one puzzle's published entries: completed, opted-in
-// sessions only, fastest first (ties broken by who completed earlier, then by
-// session id so even a full tie orders identically across requests), capped
+// Leaderboard reads one puzzle's opted-in entries: completed sessions with
+// on_leaderboard set, fastest first (ties broken by who completed earlier, then
+// by session id so even a full tie orders identically across requests), capped
 // at leaderboardLimit. An optional difficulty filter narrows the board to
 // sessions whose recorded (easiest-used) difficulty matches; the cap and the
 // returned total then both apply within that difficulty, so each per-difficulty
-// board independently holds its fastest hundred. The returned total counts
-// every matching published entry, beyond the cap. The slice is never nil, so
-// it serializes as []. The partial leaderboard index covers (puzzle_id,
-// elapsed_ms) without difficulty; the filter rides it as a row recheck, which
-// is plenty at wedding scale (a board holds at most a few hundred rows).
+// board is capped and counted independently. The returned total counts every
+// matching opted-in entry, beyond the cap. The cap is a defensive ceiling well
+// above any real board, so at wedding scale every opted-in entry is returned.
+// The slice is never nil, so it serializes as []. The partial leaderboard index
+// covers (puzzle_id, elapsed_ms) without difficulty; the filter rides it as a
+// row recheck, which is plenty at wedding scale (a board holds at most a few
+// hundred rows).
 //
 // When in.SessionID is set it also computes the viewer: the requesting solver's
 // own ranked entry (see leaderboardViewer), so the client can always show that
 // solver their own row with its true rank even when the solver falls off the
 // capped list. The viewer is nil when no session_id was given, when the id
-// names no row, or when the named session is not an eligible published solve on
+// names no row, or when the named session is not an eligible opted-in solve on
 // the board being read; none of those is an error.
 func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]LeaderboardEntry, int, *LeaderboardViewer, error) {
 	var sessions []*models.GameSession
 	q := s.db.NewSelect().Model(&sessions).
 		Where("gs.puzzle_id = ?", in.PuzzleID).
-		Where("gs.display_name IS NOT NULL").
+		Where("gs.on_leaderboard = ?", true).
 		Where("gs.completed_at IS NOT NULL")
 	if in.Difficulty != nil {
 		q = q.Where("gs.difficulty = ?", *in.Difficulty)
@@ -257,12 +271,12 @@ func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]Leade
 // Leaderboard read, or nil when there is none to show. It returns nil (never an
 // error) for every non-eligible case so a viewer that simply does not belong on
 // the board reads as "no viewer," not a failure: no session_id given, an id
-// that names no row, or a session that is not a published, completed solve on
+// that names no row, or a session that is not an opted-in, completed solve on
 // this exact board (the same puzzle, and the same difficulty when the read is
 // filtered, so a solver only appears on their own difficulty tab). The lookup
 // is a plain read with no row lock: this is read-only and outside any
 // transaction. When the session is eligible, the rank is one more than the
-// count of published entries that sort strictly before it in the list's
+// count of opted-in entries that sort strictly before it in the list's
 // (elapsed_ms ASC, completed_at ASC, id ASC) ordering, counted within the same
 // scope as the list, so the rank stays correct even past the returned cap. That
 // count rides the same partial (puzzle_id, elapsed_ms) index the list uses; no
@@ -282,7 +296,7 @@ func (s *Service) leaderboardViewer(ctx context.Context, in LeaderboardQuery) (*
 	}
 
 	eligible := session.PuzzleID == in.PuzzleID &&
-		session.DisplayName != nil &&
+		session.OnLeaderboard &&
 		session.CompletedAt != nil &&
 		(in.Difficulty == nil || session.Difficulty == *in.Difficulty)
 	if !eligible {
@@ -297,7 +311,7 @@ func (s *Service) leaderboardViewer(ctx context.Context, in LeaderboardQuery) (*
 	// session's id string, exactly like the existing gs.id = ? reads.
 	q := s.db.NewSelect().Model((*models.GameSession)(nil)).
 		Where("gs.puzzle_id = ?", in.PuzzleID).
-		Where("gs.display_name IS NOT NULL").
+		Where("gs.on_leaderboard = ?", true).
 		Where("gs.completed_at IS NOT NULL").
 		Where(
 			"(gs.elapsed_ms < ?0"+

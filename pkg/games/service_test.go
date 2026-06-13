@@ -121,6 +121,7 @@ func TestCreateSession_CapturesPuzzleDifficultyIPAndNullParty(t *testing.T) {
 	assert.Nil(t, row.PartyID, "an anonymous solve has no party")
 	assert.EqualValues(t, 0, row.ElapsedMS)
 	assert.Nil(t, row.CompletedAt, "a fresh session is started-but-not-completed")
+	assert.False(t, row.OnLeaderboard, "a fresh session has not opted into the leaderboard")
 	assert.Nil(t, row.DisplayName)
 	assert.False(t, row.CreatedAt.IsZero())
 }
@@ -285,7 +286,9 @@ func TestPostToLeaderboard_RequiresCompletion(t *testing.T) {
 
 	_, err := svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: "Alice"}, "")
 	assertErrCode(t, err, errcodes.CodeValidationError)
-	assert.Nil(t, sessionRow(t, db, session.ID).DisplayName)
+	row := sessionRow(t, db, session.ID)
+	assert.False(t, row.OnLeaderboard, "a rejected post does not opt the session in")
+	assert.Nil(t, row.DisplayName)
 }
 
 func TestPostToLeaderboard_UnknownSessionIs404(t *testing.T) {
@@ -300,18 +303,25 @@ func TestPostToLeaderboard_SetsNameIdempotentlyAndRejectsRenames(t *testing.T) {
 
 	posted, err := svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: "Alice"}, "")
 	require.NoError(t, err)
+	assert.True(t, posted.OnLeaderboard, "posting opts the session into the leaderboard")
 	require.NotNil(t, posted.DisplayName)
 	assert.Equal(t, "Alice", *posted.DisplayName)
+	stored := sessionRow(t, db, session.ID)
+	assert.True(t, stored.OnLeaderboard, "the opt-in flag is persisted")
+	assert.Equal(t, "Alice", *stored.DisplayName)
 
 	// A retry of the same post succeeds without change.
 	again, err := svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: "Alice"}, "")
 	require.NoError(t, err)
+	assert.True(t, again.OnLeaderboard)
 	assert.Equal(t, "Alice", *again.DisplayName)
 
 	// The leaderboard is append-once: posting a different name is a conflict.
 	_, err = svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: "Bob"}, "")
 	assertErrCode(t, err, errcodes.CodeConflict)
-	assert.Equal(t, "Alice", *sessionRow(t, db, session.ID).DisplayName)
+	row := sessionRow(t, db, session.ID)
+	assert.True(t, row.OnLeaderboard, "the conflicting rename leaves the opt-in intact")
+	assert.Equal(t, "Alice", *row.DisplayName)
 }
 
 func TestPostToLeaderboard_AttachesPartyOpportunistically(t *testing.T) {
@@ -324,6 +334,7 @@ func TestPostToLeaderboard_AttachesPartyOpportunistically(t *testing.T) {
 	_, err := svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: "Alice"}, p.ID)
 	require.NoError(t, err)
 	row := sessionRow(t, db, session.ID)
+	assert.True(t, row.OnLeaderboard, "the post opts the session in")
 	require.NotNil(t, row.PartyID)
 	assert.Equal(t, p.ID, *row.PartyID)
 	require.NotNil(t, row.DisplayName)
@@ -373,6 +384,36 @@ func TestLeaderboard_ReturnsOnlyPostedEntriesFastestFirst(t *testing.T) {
 	assert.EqualValues(t, 30000, entries[0].ElapsedMS)
 	assert.False(t, entries[0].CompletedAt.IsZero())
 	assert.Nil(t, viewer, "a read with no session_id carries no viewer")
+}
+
+func TestLeaderboard_CollectsCompletedTimesButOnlyShowsOptedIn(t *testing.T) {
+	svc, _, db := newServices(t)
+
+	// The "collect all times" guarantee: a completed solve that never opted in is
+	// still a full, queryable row (completed_at + elapsed_ms intact), it just
+	// carries on_leaderboard = false and stays off the board. This is what the
+	// upcoming admin view relies on to list completed-but-opted-out solves.
+	unposted := completeSessionT(t, svc, models.GameDifficultyEasy, 42000)
+	row := sessionRow(t, db, unposted.ID)
+	require.NotNil(t, row.CompletedAt, "the completed time is recorded even without opting in")
+	assert.EqualValues(t, 42000, row.ElapsedMS, "the elapsed time is kept")
+	assert.False(t, row.OnLeaderboard, "a completed-but-unposted solve has not opted in")
+	assert.Nil(t, row.DisplayName, "no name is stored until the solver opts in")
+
+	// One opted-in solve sits beside it; only that one is on the board.
+	postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+
+	entries, total, _, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "only the opted-in solve is counted")
+	require.Len(t, entries, 1)
+	assert.Equal(t, "Alice", entries[0].DisplayName)
+
+	// Both rows persist regardless of board membership: two completed solves exist.
+	completedCount, err := db.NewSelect().Model((*models.GameSession)(nil)).
+		Where("completed_at IS NOT NULL").Count(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 2, completedCount, "both completed solves are stored, opted in or not")
 }
 
 func TestLeaderboard_FiltersByDifficulty(t *testing.T) {
@@ -472,25 +513,26 @@ func TestLeaderboard_BreaksElapsedTiesByEarlierCompletion(t *testing.T) {
 func TestLeaderboard_CapsItemsButCountsEveryEntry(t *testing.T) {
 	svc, _, db := newServices(t)
 
-	// Bulk-insert 105 published easy solves plus 3 faster medium ones directly;
-	// driving each through the API surface would dominate the test's runtime.
+	// The cap (leaderboardLimit = 500) is a defensive ceiling, not a display
+	// choice, so it only bites past 500 eligible entries. Bulk-insert 501 opted-in
+	// easy solves in a single insert (driving each through the API, or seeding them
+	// one INSERT at a time, would dominate the test's runtime) and prove items stop
+	// at the cap while total still counts every row.
 	now := time.Now()
-	rows := make([]*models.GameSession, 0, 108)
-	for i := 0; i < 108; i++ {
-		difficulty, elapsed := models.GameDifficultyEasy, 1000+i
-		if i >= 105 {
-			difficulty, elapsed = models.GameDifficultyMedium, 500+(i-105)
-		}
+	const seeded = 501
+	rows := make([]*models.GameSession, 0, seeded)
+	for i := 0; i < seeded; i++ {
 		rows = append(rows, &models.GameSession{
-			ID:          "00000000-0000-4000-8000-" + fmtSerial(i),
-			PuzzleID:    "wedding-mini-v1",
-			IPAddress:   "203.0.113.7",
-			Difficulty:  difficulty,
-			ElapsedMS:   int64(elapsed),
-			CompletedAt: pointerutil.Time(now),
-			DisplayName: pointerutil.String("Solver"),
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:            "00000000-0000-4000-8000-" + fmtSerial(i),
+			PuzzleID:      "wedding-mini-v1",
+			IPAddress:     "203.0.113.7",
+			Difficulty:    models.GameDifficultyEasy,
+			ElapsedMS:     int64(1000 + i),
+			CompletedAt:   pointerutil.Time(now),
+			OnLeaderboard: true,
+			DisplayName:   pointerutil.String("Solver"),
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		})
 	}
 	_, err := db.NewInsert().Model(&rows).Exec(ctx())
@@ -498,31 +540,10 @@ func TestLeaderboard_CapsItemsButCountsEveryEntry(t *testing.T) {
 
 	entries, total, _, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
 	require.NoError(t, err)
-	assert.Equal(t, 108, total, "total counts past the cap")
-	require.Len(t, entries, 100, "items are capped at the top 100")
-	assert.EqualValues(t, 500, entries[0].ElapsedMS, "the cap keeps the fastest entries")
-
-	// The cap and the total both apply within a filtered difficulty: easy still
-	// fills 100 items even though three faster medium entries exist, and the
-	// medium board ignores the 105 easy rows entirely.
-	entries, total, _, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
-		PuzzleID:   "wedding-mini-v1",
-		Difficulty: pointerutil.String(models.GameDifficultyEasy),
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 105, total, "the filtered total counts only easy entries, past the cap")
-	require.Len(t, entries, 100, "the cap applies within the difficulty")
-	assert.EqualValues(t, 1000, entries[0].ElapsedMS, "the cap keeps the fastest easy entries")
-	assert.EqualValues(t, 1099, entries[99].ElapsedMS)
-
-	entries, total, _, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
-		PuzzleID:   "wedding-mini-v1",
-		Difficulty: pointerutil.String(models.GameDifficultyMedium),
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 3, total)
-	require.Len(t, entries, 3)
-	assert.EqualValues(t, 500, entries[0].ElapsedMS)
+	assert.Equal(t, seeded, total, "total counts every eligible entry, past the cap")
+	require.Len(t, entries, 500, "items are capped at leaderboardLimit")
+	assert.EqualValues(t, 1000, entries[0].ElapsedMS, "the cap keeps the fastest entries")
+	assert.EqualValues(t, 1499, entries[499].ElapsedMS, "the 500th item is the 500th-fastest")
 }
 
 func TestLeaderboard_EmptyBoardSerializesAsEmptyList(t *testing.T) {
@@ -555,8 +576,8 @@ func TestLeaderboard_ViewerUnknownSessionIsNil(t *testing.T) {
 func TestLeaderboard_ViewerNotOptedInIsNil(t *testing.T) {
 	svc, _, _ := newServices(t)
 
-	// Completed but never published (display_name nil): the solver has not opted
-	// in, so even their own session_id shows no leaderboard row.
+	// Completed but never opted in (on_leaderboard false): the solver is not on
+	// the board, so even their own session_id shows no leaderboard row.
 	unposted := completeSessionT(t, svc, models.GameDifficultyEasy, 30000)
 
 	_, _, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
@@ -663,29 +684,31 @@ func TestLeaderboard_ViewerInsideTopIsRankedAndPresentInItems(t *testing.T) {
 func TestLeaderboard_ViewerOutsideTopCarriesTrueRank(t *testing.T) {
 	svc, _, db := newServices(t)
 
-	// 120 faster published easy solves fill (and overflow) the capped list, so
-	// the viewer's own slower solve falls off the visible top 100 but must still
-	// report its true rank. Bulk-insert the fast field directly; driving each
-	// through the API would dominate the test's runtime.
+	// 500 faster opted-in easy solves exactly fill the capped list, so the
+	// viewer's own slower solve (rank 501) falls off the visible items yet must
+	// still report its true rank. Bulk-insert the fast field in a single insert;
+	// driving each through the API would dominate the test's runtime.
 	now := time.Now()
-	rows := make([]*models.GameSession, 0, 120)
-	for i := 0; i < 120; i++ {
+	const fast = 500
+	rows := make([]*models.GameSession, 0, fast)
+	for i := 0; i < fast; i++ {
 		rows = append(rows, &models.GameSession{
-			ID:          "00000000-0000-4000-8000-" + fmtSerial(i),
-			PuzzleID:    "wedding-mini-v1",
-			IPAddress:   "203.0.113.7",
-			Difficulty:  models.GameDifficultyEasy,
-			ElapsedMS:   int64(1000 + i), // all faster than the viewer below
-			CompletedAt: pointerutil.Time(now),
-			DisplayName: pointerutil.String("Solver"),
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:            "00000000-0000-4000-8000-" + fmtSerial(i),
+			PuzzleID:      "wedding-mini-v1",
+			IPAddress:     "203.0.113.7",
+			Difficulty:    models.GameDifficultyEasy,
+			ElapsedMS:     int64(1000 + i), // all faster than the viewer below
+			CompletedAt:   pointerutil.Time(now),
+			OnLeaderboard: true,
+			DisplayName:   pointerutil.String("Solver"),
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		})
 	}
 	_, err := db.NewInsert().Model(&rows).Exec(ctx())
 	require.NoError(t, err)
 
-	// The viewer's solve is slower than all 120, so its rank is 121.
+	// The viewer's solve is slower than all 500, so its rank is 501.
 	viewerSession := postSessionT(t, svc, "Zoe", models.GameDifficultyEasy, 999000)
 
 	entries, total, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
@@ -693,10 +716,10 @@ func TestLeaderboard_ViewerOutsideTopCarriesTrueRank(t *testing.T) {
 		SessionID: pointerutil.String(viewerSession.ID),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 121, total, "total counts every published entry")
-	require.Len(t, entries, 100, "items stay capped at the top 100")
+	assert.Equal(t, 501, total, "total counts every opted-in entry")
+	require.Len(t, entries, 500, "items stay capped at leaderboardLimit")
 	require.NotNil(t, viewer)
-	assert.Equal(t, 121, viewer.Rank, "the viewer's true rank exceeds the cap")
+	assert.Equal(t, 501, viewer.Rank, "the viewer's true rank exceeds the cap")
 	assert.Equal(t, "Zoe", viewer.Entry.DisplayName)
 	assert.EqualValues(t, 999000, viewer.Entry.ElapsedMS)
 
@@ -748,13 +771,13 @@ func TestLeaderboard_ViewerRankBreaksFullTiesByID(t *testing.T) {
 		{
 			ID: "00000000-0000-4000-8000-000000000001", PuzzleID: "wedding-mini-v1",
 			IPAddress: "203.0.113.7", Difficulty: models.GameDifficultyEasy, ElapsedMS: 30000,
-			CompletedAt: pointerutil.Time(stamp), DisplayName: pointerutil.String("Lower"),
+			CompletedAt: pointerutil.Time(stamp), OnLeaderboard: true, DisplayName: pointerutil.String("Lower"),
 			CreatedAt: stamp, UpdatedAt: stamp,
 		},
 		{
 			ID: "00000000-0000-4000-8000-000000000002", PuzzleID: "wedding-mini-v1",
 			IPAddress: "203.0.113.7", Difficulty: models.GameDifficultyEasy, ElapsedMS: 30000,
-			CompletedAt: pointerutil.Time(stamp), DisplayName: pointerutil.String("Higher"),
+			CompletedAt: pointerutil.Time(stamp), OnLeaderboard: true, DisplayName: pointerutil.String("Higher"),
 			CreatedAt: stamp, UpdatedAt: stamp,
 		},
 	}
