@@ -585,7 +585,7 @@ function AddGuestRow({
         onCommit={(value) => setDraftField("phone", value)}
         onEnter={handleCreate}
         onEscape={handleAddRowEscape}
-        placeholder="e.g. (555) 123-4567"
+        placeholder="e.g. (415) 555-2671"
         showStatus={false}
         value={draft.phone}
       />
