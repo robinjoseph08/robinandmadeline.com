@@ -196,7 +196,7 @@ export function GuestFormDialog({
               <Input
                 id="guest-phone"
                 onChange={(e) => update("phone", e.target.value)}
-                placeholder="(555) 123-4567"
+                placeholder="(415) 555-2671"
                 value={form.phone}
               />
             </div>
