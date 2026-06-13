@@ -58,6 +58,17 @@ packages:
     include_files:
       - types.go
 
+  # The games (crossword solve sessions + leaderboard) payload, query, and
+  # response types. Only types.go is emitted; the session response embeds
+  # GameSession and the difficulty fields reference the GameDifficulty enum,
+  # imported from the generated models module.
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/games"
+    output_path: "app/types/generated/games.ts"
+    frontmatter: |
+      import * as models from "@/types/generated/models";
+    include_files:
+      - types.go
+
   # The ErrorCode union shared by the API error envelope.
   - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
     output_path: "app/types/generated/errcodes.ts"

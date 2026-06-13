@@ -35,6 +35,11 @@ interface ApiRequestOptions {
   method?: string;
   body?: unknown;
   token?: string | null;
+  /**
+   * Forwarded to fetch so a request made while the page is going away
+   * survives the navigation instead of being aborted.
+   */
+  keepalive?: boolean;
 }
 
 /**
@@ -47,7 +52,7 @@ export async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {},
 ): Promise<T> {
-  const { method = "GET", body, token } = options;
+  const { method = "GET", body, token, keepalive } = options;
 
   const headers: Record<string, string> = {};
   if (body !== undefined) {
@@ -61,6 +66,7 @@ export async function apiRequest<T>(
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
+    keepalive,
   });
 
   if (!response.ok) {

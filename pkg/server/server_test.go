@@ -105,6 +105,25 @@ func TestProtectedAdminRoute_RequiresToken(t *testing.T) {
 	assert.Equal(t, http.StatusOK, authedRec.Code)
 }
 
+func TestGamesAdminRoutes_RequireToken(t *testing.T) {
+	srv := server.New(newTestConfig(t), nil)
+
+	// The games admin routes hang off the same protected group, so a tokenless
+	// request to either is a 401 (proving RegisterAdminRoutes mounted them
+	// behind the middleware, not beside it). A 401 here, before any handler
+	// runs, also keeps this wiring test db-free; the list/delete behavior is
+	// covered in pkg/games.
+	listReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/games/sessions", http.NoBody)
+	listRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(listRec, listReq)
+	require.Equal(t, http.StatusUnauthorized, listRec.Code)
+
+	deleteReq := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/api/admin/games/sessions/00000000-0000-0000-0000-000000000000", http.NoBody)
+	deleteRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(deleteRec, deleteReq)
+	require.Equal(t, http.StatusUnauthorized, deleteRec.Code)
+}
+
 func TestGuestRoute_RequiresGuestToken(t *testing.T) {
 	srv := server.New(newTestConfig(t), nil)
 
@@ -134,6 +153,28 @@ func TestScheduleRoute_WiredBehindOptionalGuestAuth(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestGamesRoutes_Wired(t *testing.T) {
+	srv := server.New(newTestConfig(t), nil)
+
+	// An invalid bearer token is rejected by the optional-guest middleware
+	// (401, not 404), which both proves POST /api/games/sessions is mounted
+	// behind it and keeps this wiring test db-free (games behavior is covered
+	// in pkg/games).
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/games/sessions", strings.NewReader(`{"puzzle_id":"wedding-mini-v1","difficulty":"easy"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer not-a-real-jwt")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	// A missing puzzle_id is rejected by the binder (422) before any database
+	// access, proving the public leaderboard read is mounted too.
+	boardReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/games/leaderboard", http.NoBody)
+	boardRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(boardRec, boardReq)
+	require.Equal(t, http.StatusUnprocessableEntity, boardRec.Code)
 }
 
 func TestGuestLoginRoute_Wired(t *testing.T) {

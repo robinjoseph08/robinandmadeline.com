@@ -1,12 +1,34 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatDateTime,
+  formatDuration,
   formatEventDate,
   formatEventWhen,
   formatGuestFirstNames,
   formatLongDate,
   formatTime,
 } from "./format";
+
+describe("formatDuration", () => {
+  it("renders minutes and zero-padded seconds", () => {
+    expect(formatDuration(0)).toBe("0:00");
+    expect(formatDuration(7_000)).toBe("0:07");
+    expect(formatDuration(65_000)).toBe("1:05");
+    expect(formatDuration(725_000)).toBe("12:05");
+  });
+
+  it("adds an hours segment past an hour", () => {
+    expect(formatDuration(3_600_000)).toBe("1:00:00");
+    expect(formatDuration(3_723_000)).toBe("1:02:03");
+  });
+
+  it("truncates sub-second remainders and clamps negatives", () => {
+    expect(formatDuration(999)).toBe("0:00");
+    expect(formatDuration(61_900)).toBe("1:01");
+    expect(formatDuration(-5)).toBe("0:00");
+  });
+});
 
 describe("formatTime", () => {
   it("converts stored 24-hour values to 12-hour display", () => {
@@ -26,6 +48,27 @@ describe("formatTime", () => {
 describe("formatLongDate", () => {
   it("renders an ISO timestamp as a long date", () => {
     expect(formatLongDate("2026-08-01T12:00:00Z")).toBe("August 1, 2026");
+  });
+});
+
+describe("formatDateTime", () => {
+  it("renders an ISO timestamp as a readable date and time", () => {
+    // Assert on the parts that are timezone-stable (the calendar date can
+    // shift by zone, but the month/year of a midday UTC instant cannot), so
+    // the test does not depend on the runner's timezone.
+    const formatted = formatDateTime("2026-10-17T12:00:00Z");
+    expect(formatted).toContain("Oct");
+    expect(formatted).toContain("2026");
+    // It carries a time component (the readout is date AND time); the exact
+    // hour shifts by zone, so match the clock shape, not a literal time. This
+    // catches dropping hour/minute from the format options.
+    expect(formatted).toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
+    // It is a friendly readout, not the raw ISO string.
+    expect(formatted).not.toBe("2026-10-17T12:00:00Z");
+  });
+
+  it("falls back to the raw value when it does not parse", () => {
+    expect(formatDateTime("not-a-date")).toBe("not-a-date");
   });
 });
 

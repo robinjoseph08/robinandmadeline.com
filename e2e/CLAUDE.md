@@ -43,8 +43,10 @@ whole-journey coverage through the browser.
   every entity with a per-run unique suffix from `runStamp()` in `./stamp` and
   scope all assertions to those names, so a spec is robust against data left by
   earlier runs in the shared e2e database. The stamp is letters-only by design
-  (its comment explains why digits would break guest-search isolation). Use the
-  guest search box to isolate a single row before acting on it.
+  (its comment explains why digits would break guest-search isolation). The
+  guest search box narrows the list, but never assume it isolates a single row:
+  scope row assertions to the entity, for example via its per-guest delete
+  button.
 - Prefer role-based selectors (`getByRole`, `getByLabel`); pass `exact: true`
   when a name is a prefix of another (for example the cell label "Name" versus
   "New guest name"). The grid cells are inputs, so match a row by a cell's

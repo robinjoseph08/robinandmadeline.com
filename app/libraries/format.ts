@@ -50,6 +50,42 @@ export function formatEventDate(date: string): string {
 }
 
 /**
+ * Formats an ISO timestamp as a readable date and time ("Oct 17, 2026, 4:05
+ * PM") for admin tables such as the crossword solve-times list. Falls back to
+ * the raw string when it does not parse, so a bad value is visible rather than
+ * hidden.
+ */
+export function formatDateTime(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed);
+}
+
+/**
+ * Formats a duration in milliseconds as a clock readout for the crossword
+ * timer and leaderboard: "0:07", "12:05", or "1:02:03" once it passes an
+ * hour. Sub-second remainders truncate (a solve shows 0:00 until a full
+ * second has passed).
+ */
+export function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const paddedSeconds = String(seconds).padStart(2, "0");
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${paddedSeconds}`;
+  }
+  return `${minutes}:${paddedSeconds}`;
+}
+
+/**
  * One line saying when an event happens: "Saturday, June 13, 2026 · 5:00 PM"
  * when a start time is set, with "5:00 PM to 10:00 PM" when an end time is
  * too, and just the date when the event has no start time.
