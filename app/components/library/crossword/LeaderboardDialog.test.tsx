@@ -458,25 +458,31 @@ describe("LeaderboardDialog", () => {
     // same px/py, and the viewer is marked by a background + ring only. This
     // pins the alignment fix so a future regression that reintroduces shifting
     // padding on the highlighted row is caught.
+    // Five entries so the normal row compared against is genuinely plain: the
+    // podium covers ranks 1-3 and the viewer is rank 5, leaving rank 4 as the
+    // one row that is neither a podium row nor the viewer. (A 4-entry fixture
+    // would make rank 3 the bronze podium and rank 4 the viewer, so the old
+    // "pad only podium/viewer rows" bug would slip through.)
     apiRequest.mockResolvedValue({
       items: [
         entry({ display_name: "Alice", elapsed_ms: 61_000 }),
         entry({ display_name: "Bob", elapsed_ms: 62_000 }),
         entry({ display_name: "Carol", elapsed_ms: 63_000 }),
-        entry({ display_name: "Robin", elapsed_ms: 64_000 }),
+        entry({ display_name: "Dave", elapsed_ms: 64_000 }),
+        entry({ display_name: "Robin", elapsed_ms: 65_000 }),
       ],
-      total: 4,
+      total: 5,
       viewer: {
-        rank: 4,
-        entry: entry({ display_name: "Robin", elapsed_ms: 64_000 }),
+        rank: 5,
+        entry: entry({ display_name: "Robin", elapsed_ms: 65_000 }),
       },
     });
 
     renderDialog({ sessionId: "sess-7" });
 
     const rows = await screen.findAllByRole("listitem");
-    const normalRow = rows[3 - 1]; // rank 3, a plain non-podium, non-viewer row
-    const viewerRow = rows[4 - 1]; // rank 4, the highlighted "You" row
+    const normalRow = rows[4 - 1]; // rank 4, a plain non-podium, non-viewer row
+    const viewerRow = rows[5 - 1]; // rank 5, the highlighted "You" row
     expect(within(viewerRow).getByText("You")).toBeInTheDocument();
 
     // Both rows share the same horizontal and vertical padding (same box

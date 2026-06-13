@@ -286,6 +286,21 @@ func TestPostGameSession_IgnoresSpoofedHeadersWithoutProxyTrust(t *testing.T) {
 	assert.Equal(t, "192.0.2.1", sessionRow(t, db, id).IPAddress)
 }
 
+func TestPostGameSession_DropsUnparseableExtractorValue(t *testing.T) {
+	_, _, db := newServices(t)
+	// clientIP guards the extractor's output with net.ParseIP before storage.
+	// The direct extractor returns the socket host verbatim (net.SplitHostPort
+	// of RemoteAddr), so a peer address with a non-IP host yields a non-IP from
+	// c.RealIP(); the guard must store "" rather than persisting that text as an
+	// "IP". This pins the guard itself: without it, the row would hold the
+	// garbage host.
+	h := newGamesServer(t, db, false)
+
+	id := createSessionOnServer(t, h, "not-an-ip:1234", nil)
+	assert.Empty(t, sessionRow(t, db, id).IPAddress,
+		"a non-IP from the extractor is dropped, never stored as the IP")
+}
+
 func TestPatchGameSession_UpdatesAndCompletes(t *testing.T) {
 	svc, _, db := newServices(t)
 	e, _ := newGamesEcho(t, svc)
