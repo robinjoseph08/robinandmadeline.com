@@ -2,9 +2,14 @@ package server_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +90,12 @@ func TestProtectedAdminRoute_RequiresToken(t *testing.T) {
 	srv.Handler.ServeHTTP(photoGroupsRec, photoGroupsReq)
 	require.Equal(t, http.StatusUnauthorized, photoGroupsRec.Code)
 
+	// Same for the emails routes.
+	emailsReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/emails/templates", http.NoBody)
+	emailsRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(emailsRec, emailsReq)
+	require.Equal(t, http.StatusUnauthorized, emailsRec.Code)
+
 	// Logging in then presenting the token grants access.
 	loginBody := `{"username":"admin","password":"correct-horse"}`
 	loginReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/admin/login", strings.NewReader(loginBody))
@@ -147,6 +158,48 @@ func TestGuestLoginRoute_Wired(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
+func TestMailgunWebhookRoute_WiredOnOpenGroup(t *testing.T) {
+	srv := server.New(newTestConfig(t), nil)
+
+	// No JWT is attached: the webhook lives on the open group (Mailgun is the
+	// caller). The test config has no signing key, so the signature check
+	// rejects the payload with 401, which both proves the route is mounted
+	// outside the admin middleware and that unsigned payloads cannot get in
+	// (full webhook behavior is covered in pkg/emails).
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/webhooks/mailgun", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestMailgunWebhookRoute_SignedPayloadPassesWithoutJWT(t *testing.T) {
+	// The 401 above could also come from the admin middleware; this proves it
+	// is the signature gate by getting a correctly signed payload through with
+	// no JWT at all. The event is untracked ("opened"), so the handler ACKs it
+	// before touching the database and the test stays db-free; with the
+	// signing key configured, the webhook's own config plumbing is observed
+	// too.
+	cfg := newTestConfig(t)
+	cfg.MailgunWebhookSigningKey = "server-test-signing-key"
+	srv := server.New(cfg, nil)
+
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	const token = "token-abc"
+	mac := hmac.New(sha256.New, []byte(cfg.MailgunWebhookSigningKey))
+	mac.Write([]byte(timestamp + token))
+	body := fmt.Sprintf(
+		`{"signature":{"timestamp":%q,"token":%q,"signature":%q},"event-data":{"event":"opened"}}`,
+		timestamp, token, hex.EncodeToString(mac.Sum(nil)),
+	)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/webhooks/mailgun", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNoContent, rec.Code)
 }
 
 func TestHealthEndpoint(t *testing.T) {

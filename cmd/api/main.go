@@ -12,11 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/golib/logger"
 	"github.com/robinjoseph08/golib/signals"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/server"
 )
 
@@ -27,6 +29,14 @@ const shutdownTimeout = 5 * time.Second
 func main() {
 	ctx := context.Background()
 	log := logger.New()
+
+	// Load a local .env if present so Mailgun keys and EMAIL_TEST_RECIPIENTS can
+	// be set for local testing without exporting them by hand. Load never
+	// overrides an already-set variable, so production (Fly secrets) and the
+	// pinned env in CI/e2e win; a missing file is a no-op (.env is gitignored).
+	if err := godotenv.Load(); err == nil {
+		log.Info("loaded .env")
+	}
 
 	cfg, err := config.New()
 	if err != nil {
@@ -59,6 +69,28 @@ func main() {
 	// on `db:migrate`.
 	srv := server.New(cfg, db)
 
+	// The email queue worker (ADR 0004) drains email_recipients through
+	// Mailgun. Without an API key (local dev, e2e) it stays off and queued
+	// emails simply wait, so nothing can ever call the real Mailgun API
+	// unconfigured.
+	var worker *emails.Worker
+	workerCtx, stopWorker := context.WithCancel(ctx)
+	defer stopWorker()
+	if cfg.MailgunAPIKey != "" {
+		client := emails.NewMailgunClient(cfg.MailgunBaseURL, cfg.MailgunDomain, cfg.MailgunAPIKey)
+		worker = emails.NewWorker(db, client, emails.WorkerConfig{
+			From:           cfg.EmailFrom,
+			PublicBaseURL:  cfg.PublicBaseURL,
+			BatchSize:      cfg.EmailWorkerBatchSize,
+			PollInterval:   cfg.EmailWorkerPollInterval,
+			StuckThreshold: cfg.EmailWorkerStuckThreshold,
+			DailySendLimit: cfg.EmailDailySendLimit,
+		}, log)
+		go worker.Run(workerCtx)
+	} else {
+		log.Warn("MAILGUN_API_KEY not set; email worker disabled, sends will stay queued")
+	}
+
 	listener, err := listen(ctx, cfg)
 	if err != nil {
 		log.Err(err).Fatal("failed to bind port")
@@ -85,6 +117,14 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Err(err).Error("server shutdown error")
+	}
+	// Stop the email worker: it picks up no new batches but finishes the one
+	// in flight (ADR 0004), so wait for it before closing the database. A
+	// genuinely stuck worker can be forced with a second signal, which
+	// signals.Setup turns into an immediate exit.
+	stopWorker()
+	if worker != nil {
+		<-worker.Done()
 	}
 	if err := db.Close(); err != nil {
 		log.Err(err).Error("database close error")

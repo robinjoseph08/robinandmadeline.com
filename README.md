@@ -90,6 +90,38 @@ unaffected: `STATIC_DIR` (serve the built SPA from this directory),
 `CANONICAL_HOST` (permanently redirect every other host to this one), and
 `TRUST_PROXY_HEADERS` (resolve client IPs from Fly's forwarded header).
 
+Email delivery (the admin email system) is configured separately and is off by
+default: without `MAILGUN_API_KEY` the queue worker never starts and sends
+stay queued. Set `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, and
+`MAILGUN_WEBHOOK_SIGNING_KEY` (plus optionally `MAILGUN_BASE_URL`,
+`EMAIL_FROM`, `PUBLIC_BASE_URL`, and the `EMAIL_WORKER_*` tuning knobs) to
+enable real sending and delivery webhooks. Emails go out as HTML (a Markdown
+body rendered into an in-repo, palette-matched shell) with a plaintext
+fallback.
+
+`EMAIL_TEST_RECIPIENTS` powers the compose page's "Send test" button only: set
+it to a comma-separated list of RFC5322 addresses (for example
+`Robin <robin@example.com>, Madeline <madeline@example.com>`) and the button
+sends the current draft, rendered against sample data, to those inboxes so the
+couple can eyeball it. It is empty by default (the button then 422s), and it is
+kept in the environment so personal contact info is never committed. A test
+send is a real Mailgun send, so on the free plan each one consumes one of the
+100 daily sends.
+
+Outbound volume is capped by `EMAIL_DAILY_SEND_LIMIT` (default 100, matching
+Mailgun's free plan). The worker counts dispatch attempts per UTC day, which
+is Mailgun's own reset boundary, and pauses until the next UTC day once the
+budget is spent; queued emails simply wait, so a 200-recipient send on the
+default limit drains over two days. Set it to 0 (or any negative value) for
+unlimited on a paid plan. The counter only tracks sends made by this app:
+manual sends from the Mailgun dashboard are invisible to it, so set a lower
+limit for margin if you ever send manually. As a backstop, a send Mailgun
+itself rejects for quota is requeued for the next day rather than failed, and
+sending pauses for the rest of the UTC day; after a few such rejections of
+the same email it is marked failed instead, so a rejection misread as quota
+surfaces in the send history within days instead of silently stalling the
+queue.
+
 ## Deployment
 
 Production is a single Fly.io app (Go binary serving the API and the built

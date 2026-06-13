@@ -16,13 +16,13 @@ import (
 // databasetest.NewIsolated): the import truncates and writes parties and
 // events, which the concurrently running pkg/parties binary uses in the shared
 // database, and two binaries truncating the same tables wipe each other's
-// fixtures mid-test. Truncating parties (cascading to guests and event_rsvps)
-// plus events gives each test a clean slate. Tests using it must not call
-// t.Parallel() (see databasetest).
+// fixtures mid-test. Truncating parties (cascading to guests, event_rsvps,
+// and email_recipients) plus events and email_sends gives each test a clean
+// slate. Tests using it must not call t.Parallel() (see databasetest).
 func newDB(t *testing.T) *bun.DB {
 	t.Helper()
 	db := databasetest.NewIsolated(t, "robinandmadeline_guestimport_test")
-	databasetest.Truncate(t, db, "parties", "events")
+	databasetest.Truncate(t, db, "parties", "events", "email_sends")
 	return db
 }
 
@@ -42,6 +42,38 @@ func seedParty(t *testing.T, db *bun.DB, name string) {
 		InfoToken:      "seed-token",
 	}
 	_, err := db.NewInsert().Model(party).Exec(ctx())
+	require.NoError(t, err)
+}
+
+// seedEmailHistory inserts a guest for the seeded party plus an email send
+// with one recipient row for that guest, to simulate email history existing
+// before a truncate-import runs.
+func seedEmailHistory(t *testing.T, db *bun.DB) {
+	t.Helper()
+	guest := &models.Guest{
+		ID:       "0197fc00-0000-7000-8000-000000000002",
+		PartyID:  "0197fc00-0000-7000-8000-000000000001",
+		FullName: "Stale Guest",
+		Tags:     []string{},
+	}
+	_, err := db.NewInsert().Model(guest).Exec(ctx())
+	require.NoError(t, err)
+	send := &models.EmailSend{
+		ID:      "0197fc00-0000-7000-8000-000000000003",
+		Subject: "Old send",
+		Body:    "Body",
+		SentBy:  "admin",
+	}
+	_, err = db.NewInsert().Model(send).Exec(ctx())
+	require.NoError(t, err)
+	recipient := &models.EmailRecipient{
+		ID:           "0197fc00-0000-7000-8000-000000000004",
+		SendID:       send.ID,
+		GuestID:      guest.ID,
+		EmailAddress: "stale@example.com",
+		Status:       models.EmailSent,
+	}
+	_, err = db.NewInsert().Model(recipient).Exec(ctx())
 	require.NoError(t, err)
 }
 
@@ -177,6 +209,10 @@ func TestImport_FailsCleanlyWhenPartiesAlreadyExist(t *testing.T) {
 func TestImport_TruncateWipesExistingDataFirst(t *testing.T) {
 	db := newDB(t)
 	seedParty(t, db, "Stale")
+	// A past email send with a recipient row for a stale guest: the recipient
+	// rows go with the guests (mirroring the FK cascade), while the send
+	// header survives as audit history, like events do.
+	seedEmailHistory(t, db)
 	plan := parseT(t,
 		`Cara,Brown,Cara Brown,Madeline,Friend,College,UIUC,Brown,1,,,,,,,,,No,Yes,`,
 	)
@@ -188,6 +224,13 @@ func TestImport_TruncateWipesExistingDataFirst(t *testing.T) {
 	parties := loadParties(t, db)
 	require.Len(t, parties, 1)
 	require.Equal(t, "Brown", parties[0].Name)
+
+	recipientCount, err := db.NewSelect().Model((*models.EmailRecipient)(nil)).Count(ctx())
+	require.NoError(t, err)
+	require.Zero(t, recipientCount, "recipient rows are wiped with their guests")
+	sendCount, err := db.NewSelect().Model((*models.EmailSend)(nil)).Count(ctx())
+	require.NoError(t, err)
+	require.Equal(t, 1, sendCount, "send headers survive a re-import")
 }
 
 func TestImport_TruncateRefusesAnEmptyPlan(t *testing.T) {

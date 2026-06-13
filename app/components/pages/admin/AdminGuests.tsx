@@ -1,8 +1,10 @@
 import { keepPreviousData } from "@tanstack/react-query";
 import { Loader2, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigationType } from "react-router-dom";
 import { toast } from "sonner";
 
+import { ChipsCombobox } from "@/components/library/ChipsCombobox";
 import { GuestsGrid } from "@/components/pages/admin/grid/GuestsGrid";
 import {
   BoolFilterSelect,
@@ -36,6 +38,10 @@ import type {
 
 // Boolean guest filters, listed so useFilterParams parses them back from the URL.
 const BOOL_FILTERS = ["is_drinking", "is_child", "is_placeholder"] as const;
+
+// Multi-value guest filters, listed so useFilterParams reads/writes them as
+// repeated params (?tags=a&tags=b) and parses them back to a string[].
+const ARRAY_FILTERS = ["tags"] as const;
 
 // Filter keys (everything but the search box), counted for the "Filters" badge.
 const FILTER_KEYS = [
@@ -71,6 +77,7 @@ export default function AdminGuests() {
   const [filters, setFilter, clearAll] = useFilterParams<ListGuestsQuery>(
     QUERY_KEYS,
     BOOL_FILTERS,
+    ARRAY_FILTERS,
   );
   const [editGuest, setEditGuest] = useState<GuestListItem | undefined>(
     undefined,
@@ -81,6 +88,7 @@ export default function AdminGuests() {
   // view stays shareable without firing a request on every keystroke.
   const [searchInput, setSearchInput] = useState(filters.search ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
+  const navigationType = useNavigationType();
   useEffect(() => {
     const handle = setTimeout(() => {
       const next = searchInput.trim() || undefined;
@@ -91,12 +99,19 @@ export default function AdminGuests() {
   // Resync the box when `search` changes in the URL from outside it (back/forward
   // navigation, or a shared link loaded into the mounted page). Guarded on focus
   // so it never clobbers what the user is actively typing; that direction is the
-  // debounced effect above.
+  // debounced effect above. Also restricted to non-REPLACE navigations: this
+  // page's own writes (the debounce and the filter sheet) are all replaces, and
+  // under a heavy render react-router can commit one hundreds of milliseconds
+  // late, by which time the box may hold newer typing; copying the page's own
+  // stale write back into the box would destroy that input, and the debounce's
+  // input == URL guard would then never write it. External navigations are
+  // POPs (back/forward) or PUSHes (a link), so they still resync.
   useEffect(() => {
+    if (navigationType === "REPLACE") return;
     if (searchRef.current !== document.activeElement) {
       setSearchInput(filters.search ?? "");
     }
-  }, [filters.search]);
+  }, [filters.search, navigationType]);
 
   const activeFilterCount = FILTER_KEYS.filter(
     (key) => filters[key] !== undefined,
@@ -160,6 +175,8 @@ export default function AdminGuests() {
     }
     return opts.sort((a, b) => a.label.localeCompare(b.label));
   }, [partiesQuery.data]);
+  // The same distinct tags as bare strings, for the multi-select chips filter.
+  const tagValues = useMemo(() => tagOptions.map((o) => o.value), [tagOptions]);
 
   const openEdit = (guest: GuestListItem) => {
     setEditGuest(guest);
@@ -255,12 +272,15 @@ export default function AdminGuests() {
             onChange={(v) => setFilter("is_placeholder", v)}
             value={filters.is_placeholder}
           />
-          <FilterSelect<string>
-            label="Tag"
-            onChange={(v) => setFilter("tags", v)}
-            options={tagOptions}
-            value={filters.tags}
-          />
+          <div className="flex flex-col gap-1 text-sm">
+            <span className="font-medium">Tags</span>
+            <ChipsCombobox
+              ariaLabel="Tags"
+              onChange={(v) => setFilter("tags", v.length > 0 ? v : undefined)}
+              options={tagValues}
+              value={filters.tags ?? []}
+            />
+          </div>
           <FilterSelect<string>
             label="Event"
             onChange={(v) => setFilter("event_id", v)}
