@@ -56,7 +56,11 @@ func EasierDifficulty(a, b string) string {
 // "display_name is set" rule, so an admin view can list the completed solves
 // that opted out). DisplayName is the name shown on the leaderboard, set when
 // opting in and stored even for signed-in parties so an anonymous entry can be
-// retroactively affiliated with a party later.
+// retroactively affiliated with a party later. An on-board row always carries a
+// DisplayName (a DB CHECK enforces "on_leaderboard implies display_name is set",
+// since the leaderboard reads filter on the flag and then read the name), but an
+// off-board row may have either: a name without the flag (collected, opted out)
+// or neither (in-progress or completed-but-unposted).
 //
 // IPAddress is a server-side abuse-tracing concern: it is excluded from JSON
 // (and so from every response and the generated TypeScript) on purpose.

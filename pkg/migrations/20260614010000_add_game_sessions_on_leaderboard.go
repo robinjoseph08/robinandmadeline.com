@@ -50,6 +50,24 @@ func init() {
 			return fmt.Errorf("backfill game_sessions on_leaderboard: %w", err)
 		}
 
+		// Enforce the cross-column invariant the reads depend on: an on-board row
+		// always carries a display_name. The list and viewer-rank reads filter on
+		// on_leaderboard and then dereference display_name, so this is the
+		// model-level guarantee (pkg/CLAUDE.md: a must-always-hold invariant
+		// belongs on a DB constraint, not in handlers) that keeps a stray future
+		// write from making a NULL name reachable as a 500. The backfill above
+		// just established it for every existing row, so the constraint validates
+		// cleanly. off-board rows (on_leaderboard false) are unconstrained, so the
+		// "collect every completed time" rows with no name are still allowed.
+		_, err = db.ExecContext(ctx, `
+			ALTER TABLE game_sessions
+			ADD CONSTRAINT game_sessions_on_leaderboard_needs_name
+			CHECK (NOT on_leaderboard OR display_name IS NOT NULL)
+		`)
+		if err != nil {
+			return fmt.Errorf("add game_sessions on_leaderboard display_name check: %w", err)
+		}
+
 		// Re-key the partial leaderboard index off the new flag so it still
 		// covers exactly the visible slice (opted-in, completed sessions for one
 		// puzzle, fastest first) and abandoned/unposted sessions never bloat it.
@@ -90,6 +108,15 @@ func init() {
 		`)
 		if err != nil {
 			return fmt.Errorf("recreate original game_sessions leaderboard index: %w", err)
+		}
+		// Drop the cross-column check before the column. Postgres would cascade it
+		// away with the column anyway (it references on_leaderboard), but dropping
+		// it explicitly keeps the down self-documenting and order-independent.
+		_, err = db.ExecContext(ctx, `
+			ALTER TABLE game_sessions DROP CONSTRAINT IF EXISTS game_sessions_on_leaderboard_needs_name
+		`)
+		if err != nil {
+			return fmt.Errorf("drop game_sessions on_leaderboard display_name check: %w", err)
 		}
 		_, err = db.ExecContext(ctx, `ALTER TABLE game_sessions DROP COLUMN on_leaderboard`)
 		if err != nil {
