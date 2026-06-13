@@ -10,7 +10,7 @@
 # runbook.
 
 app = "robinandmadeline"
-primary_region = "sjc"
+primary_region = "dfw"
 # Headroom over the server's 5s graceful drain (cmd/api shutdownTimeout):
 # Fly's default kill_timeout is also 5s, which would SIGKILL a busy machine
 # mid-drain before the DB close and final logs.
@@ -33,7 +33,7 @@ kill_timeout = "10s"
   PORT = "8080"
   LOG_FORMAT = "json"
   STATIC_DIR = "/app/public"
-  CANONICAL_HOST = "robinandmadeline.com"
+  CANONICAL_HOST = "www.robinandmadeline.com"
   TRUST_PROXY_HEADERS = "true"
 
 [http_service]

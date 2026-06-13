@@ -11,10 +11,11 @@ import (
 // canonicalHostMiddleware permanently redirects every request whose Host is
 // not canonicalHost to https://canonicalHost, preserving path and query: 301
 // for GET/HEAD, 308 for everything else so a redirected write keeps its
-// method and body instead of degrading to a GET. This is how the alternate
-// domains (madelineandrobin.com, robeline.co) and www variants all land on
-// the one canonical site: Cloudflare only does DNS, so the Go server is the
-// layer that sees the original Host and consolidates it.
+// method and body instead of degrading to a GET. This is how every other
+// host (the bare apex, the alternate domains madelineandrobin.com,
+// robeline.co, and robeline.com, and their www variants) lands on the one
+// canonical site, www.robinandmadeline.com: Cloudflare only does DNS, so the
+// Go server is the layer that sees the original Host and consolidates it.
 //
 // The health endpoint is exempt because Fly's checks hit the machine with an
 // internal Host and expect a 200, not a redirect. The exemption compares the

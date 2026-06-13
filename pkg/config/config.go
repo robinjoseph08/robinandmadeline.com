@@ -61,12 +61,12 @@ type Config struct {
 	StaticDir string
 
 	// CanonicalHost is the one hostname the site should be served from
-	// (robinandmadeline.com in production). When set, requests for any other
-	// host (the alternate domains, www variants) are permanently redirected to
-	// it, preserving path and query. It must be a bare hostname: a scheme,
-	// port, or path would make the redirect target unreachable or loop, so
-	// config loading rejects them. Empty (the default) disables host redirects
-	// so localhost dev and tests are unaffected.
+	// (www.robinandmadeline.com in production). When set, requests for any
+	// other host (the bare apex, the alternate domains, www variants) are
+	// permanently redirected to it, preserving path and query. It must be a
+	// bare hostname: a scheme, port, or path would make the redirect target
+	// unreachable or loop, so config loading rejects them. Empty (the default)
+	// disables host redirects so localhost dev and tests are unaffected.
 	CanonicalHost string
 
 	// TrustProxyHeaders controls whether the server believes proxy-forwarded

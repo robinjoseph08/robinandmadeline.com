@@ -95,14 +95,14 @@ func TestNew(t *testing.T) {
 
 	t.Run("reads deployment settings from environment", func(t *testing.T) {
 		t.Setenv("STATIC_DIR", "/app/public")
-		t.Setenv("CANONICAL_HOST", "robinandmadeline.com")
+		t.Setenv("CANONICAL_HOST", "www.robinandmadeline.com")
 		t.Setenv("TRUST_PROXY_HEADERS", "true")
 
 		cfg, err := config.New()
 		require.NoError(t, err)
 
 		assert.Equal(t, "/app/public", cfg.StaticDir)
-		assert.Equal(t, "robinandmadeline.com", cfg.CanonicalHost)
+		assert.Equal(t, "www.robinandmadeline.com", cfg.CanonicalHost)
 		assert.True(t, cfg.TrustProxyHeaders)
 	})
 

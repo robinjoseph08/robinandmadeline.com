@@ -44,18 +44,19 @@ proxying `/api/*` to the API.
 
 ## Common tasks
 
-| Command            | Description                                       |
-| ------------------ | ------------------------------------------------- |
-| `mise start`       | Run API (air hot reload) + Vite dev server        |
-| `mise start:api`   | Run the API directly (no hot reload)              |
-| `mise start:web`   | Run the Vite dev server                           |
-| `mise build`       | Build the production API binary                   |
-| `mise lint`        | Run golangci-lint                                 |
-| `mise lint:js`     | Run ESLint + Prettier + tsc                       |
-| `mise test`        | Run Go tests                                      |
-| `mise test:unit`   | Run frontend unit tests (Vitest)                  |
-| `mise check`       | Run all lint + test checks                        |
-| `mise check:quiet` | Run all checks, quiet on success, loud on failure |
+| Command             | Description                                       |
+| ------------------- | ------------------------------------------------- |
+| `mise start`        | Run API (air hot reload) + Vite dev server        |
+| `mise start:api`    | Run the API directly (no hot reload)              |
+| `mise start:web`    | Run the Vite dev server                           |
+| `mise build`        | Build the production API binary                   |
+| `mise build:docker` | Build the production Docker image                 |
+| `mise lint`         | Run golangci-lint                                 |
+| `mise lint:js`      | Run ESLint + Prettier + tsc                       |
+| `mise test`         | Run Go tests                                      |
+| `mise test:unit`    | Run frontend unit tests (Vitest)                  |
+| `mise check`        | Run all lint + test checks                        |
+| `mise check:quiet`  | Run all checks, quiet on success, loud on failure |
 
 ## Configuration
 
@@ -72,7 +73,10 @@ unaffected: `STATIC_DIR` (serve the built SPA from this directory),
 ## Deployment
 
 Production is a single Fly.io app (Go binary serving the API and the built
-SPA) backed by Neon Postgres, scaling to zero when idle. `docker build .`
-produces the production image; `fly deploy` ships it and runs migrations via
-the release command. See [docs/deployment.md](docs/deployment.md) for the
-full runbook, including the one-time Fly/Neon/Cloudflare setup.
+SPA) backed by Neon Postgres, scaling to zero when idle. The site serves from
+www.robinandmadeline.com; every other host (the bare apex,
+madelineandrobin.com, robeline.co, robeline.com, and www variants)
+permanently redirects there. `mise build:docker` produces the production
+image; `fly deploy` ships it and runs migrations via the release command. See
+[docs/deployment.md](docs/deployment.md) for the full runbook, including the
+one-time Fly/Neon/Cloudflare setup.

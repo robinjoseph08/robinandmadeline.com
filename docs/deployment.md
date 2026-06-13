@@ -19,12 +19,13 @@ and the one-time account setup a human has to perform.
   takes traffic. A failed migration aborts the deploy and the previous
   release keeps serving. The server never migrates at startup.
 - Host redirects in Go: when `CANONICAL_HOST` is set (it is, in `fly.toml`),
-  any request for another host (madelineandrobin.com, robeline.co, www
-  variants) gets a permanent redirect (301 for GET and HEAD, 308 otherwise)
-  to `https://robinandmadeline.com` preserving path and query. `/api/health` is
-  exempt so Fly's checks pass on any Host. The value must be a bare hostname
-  (no scheme, port, or path); config loading rejects anything else at boot to
-  rule out redirect loops.
+  any request for another host (the bare apex robinandmadeline.com,
+  madelineandrobin.com, robeline.co, robeline.com, and their www variants)
+  gets a permanent redirect (301 for GET and HEAD, 308 otherwise) to
+  `https://www.robinandmadeline.com` preserving path and query. `/api/health`
+  is exempt so Fly's checks pass on any Host. The value must be a bare
+  hostname (no scheme, port, or path); config loading rejects anything else
+  at boot to rule out redirect loops.
 - Real client IPs behind Fly: `TRUST_PROXY_HEADERS=true` makes the login rate
   limiter (ADR 0006) key on `Fly-Client-IP` (falling back to
   `X-Forwarded-For`) instead of the proxy's address. Leave it unset anywhere
@@ -79,6 +80,9 @@ enforce their own limit. If a second machine ever appears, remove it with
 
 ### 5. Custom domains and certs on Fly
 
+All four domains, apex and www each (the canonical host is
+www.robinandmadeline.com; everything else exists only to redirect to it):
+
 ```sh
 fly certs add robinandmadeline.com
 fly certs add www.robinandmadeline.com
@@ -86,6 +90,8 @@ fly certs add madelineandrobin.com
 fly certs add www.madelineandrobin.com
 fly certs add robeline.co
 fly certs add www.robeline.co
+fly certs add robeline.com
+fly certs add www.robeline.com
 ```
 
 `fly certs add` prints the DNS records each cert needs; `fly certs show
@@ -93,28 +99,35 @@ fly certs add www.robeline.co
 
 ### 6. Cloudflare DNS
 
-For each of the three domains (robinandmadeline.com, madelineandrobin.com,
-robeline.co), in its Cloudflare zone:
+For each of the four domains (robinandmadeline.com, madelineandrobin.com,
+robeline.co, robeline.com), in its Cloudflare zone:
 
-1. Add the records `fly certs add` asked for. Typically: an `A`/`AAAA` record
-   at the apex pointing at the app's IPv4/IPv6 from `fly ips list` (the
-   shared IPv4 works for custom domains), plus a `CNAME` for `www` to
-   `robinandmadeline.fly.dev`, and the `_acme-challenge` `CNAME` for cert
-   validation.
+1. Add the records `fly certs add` asked for. Typically: a `CNAME` for `www`
+   to `robinandmadeline.fly.dev` (this is the canonical
+   www.robinandmadeline.com record; the other www hostnames get the same
+   kind of CNAME and just redirect), an apex record pointing at the app
+   (either `A`/`AAAA` from `fly ips list`, where the shared IPv4 works for
+   custom domains, or a `CNAME` to `robinandmadeline.fly.dev`, which
+   Cloudflare flattens at the apex automatically), and the `_acme-challenge`
+   `CNAME` for cert validation.
 2. Set the records to DNS only (grey cloud), not proxied. Fly terminates TLS
    and needs to see the hostname directly; proxying through Cloudflare on top
    of Fly's certs causes cert validation and redirect-loop headaches.
 
-No Cloudflare redirect or page rules are needed: every domain points at the
-same Fly app and the Go server 301s non-canonical hosts itself.
+No Cloudflare redirect or page rules are needed: every hostname points at the
+same Fly app and the Go server permanently redirects everything that is not
+www.robinandmadeline.com itself, including the bare apex.
 
 ### 7. Verify
 
-- `https://robinandmadeline.com` serves the site.
+- `https://www.robinandmadeline.com` serves the site.
+- `https://robinandmadeline.com/anything?x=1` (the apex) 301s to
+  `https://www.robinandmadeline.com/anything?x=1`.
 - `https://madelineandrobin.com/anything?x=1` 301s to
-  `https://robinandmadeline.com/anything?x=1`.
-- `https://robeline.co/rsvp` 301s to `https://robinandmadeline.com/rsvp`.
-- `curl https://robinandmadeline.com/api/health` returns
+  `https://www.robinandmadeline.com/anything?x=1`.
+- `https://robeline.co/rsvp` and `https://robeline.com/rsvp` 301 to
+  `https://www.robinandmadeline.com/rsvp`.
+- `curl https://www.robinandmadeline.com/api/health` returns
   `{"status":"ok","database":"up"}`.
 - Scale-to-zero: `fly machine list` shows the machine `stopped` a few minutes
   after the last request, and the next request starts it again.
@@ -129,4 +142,5 @@ same Fly app and the Go server 301s non-canonical hosts itself.
   see a normally fast first load while Neon also wakes from idle.
 - **Logs**: `fly logs` (JSON via `LOG_FORMAT=json`).
 - **Rollback**: `fly releases` then `fly deploy --image <previous image ref>`.
-- **Local image check**: `docker build .` builds the exact production image.
+- **Local image check**: `mise build:docker` builds the exact production
+  image (CI builds it on every PR too).

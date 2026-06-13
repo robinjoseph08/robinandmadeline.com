@@ -14,11 +14,12 @@ import (
 )
 
 // newCanonicalHostConfig builds a config with the production canonical host
-// set, which is what arms the host-redirect middleware.
+// (the www subdomain, not the apex) set, which is what arms the host-redirect
+// middleware.
 func newCanonicalHostConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg := newTestConfig(t)
-	cfg.CanonicalHost = "robinandmadeline.com"
+	cfg.CanonicalHost = "www.robinandmadeline.com"
 	return cfg
 }
 
@@ -49,34 +50,48 @@ func TestHostRedirect_AlternateDomainsRedirectToCanonical(t *testing.T) {
 		wantLocation string
 	}{
 		{
+			// The bare apex of the canonical domain is itself non-canonical:
+			// www is the one host the site serves from.
+			name:         "apex of the canonical domain redirects to www",
+			host:         "robinandmadeline.com",
+			target:       "/schedule?guest=1",
+			wantLocation: "https://www.robinandmadeline.com/schedule?guest=1",
+		},
+		{
 			name:         "madelineandrobin.com preserves path and query",
 			host:         "madelineandrobin.com",
 			target:       "/schedule?guest=1",
-			wantLocation: "https://robinandmadeline.com/schedule?guest=1",
+			wantLocation: "https://www.robinandmadeline.com/schedule?guest=1",
 		},
 		{
 			name:         "robeline.co passes its path through",
 			host:         "robeline.co",
 			target:       "/rsvp",
-			wantLocation: "https://robinandmadeline.com/rsvp",
+			wantLocation: "https://www.robinandmadeline.com/rsvp",
 		},
 		{
-			name:         "www variant of the canonical domain",
-			host:         "www.robinandmadeline.com",
-			target:       "/",
-			wantLocation: "https://robinandmadeline.com/",
+			name:         "robeline.com passes its path through",
+			host:         "robeline.com",
+			target:       "/rsvp",
+			wantLocation: "https://www.robinandmadeline.com/rsvp",
 		},
 		{
 			name:         "www variant of an alternate domain",
 			host:         "www.madelineandrobin.com",
 			target:       "/photos",
-			wantLocation: "https://robinandmadeline.com/photos",
+			wantLocation: "https://www.robinandmadeline.com/photos",
+		},
+		{
+			name:         "www variant of robeline.com",
+			host:         "www.robeline.com",
+			target:       "/photos",
+			wantLocation: "https://www.robinandmadeline.com/photos",
 		},
 		{
 			name:         "host with port still redirects",
 			host:         "robeline.co:8080",
 			target:       "/",
-			wantLocation: "https://robinandmadeline.com/",
+			wantLocation: "https://www.robinandmadeline.com/",
 		},
 		{
 			// Only /api/health is exempt; every other API path consolidates
@@ -84,7 +99,7 @@ func TestHostRedirect_AlternateDomainsRedirectToCanonical(t *testing.T) {
 			name:         "non-health API path redirects",
 			host:         "robeline.co",
 			target:       "/api/schedule",
-			wantLocation: "https://robinandmadeline.com/api/schedule",
+			wantLocation: "https://www.robinandmadeline.com/api/schedule",
 		},
 		{
 			// The Location must keep the request's percent-encoding: decoding
@@ -93,7 +108,7 @@ func TestHostRedirect_AlternateDomainsRedirectToCanonical(t *testing.T) {
 			name:         "encoded path segments stay encoded",
 			host:         "madelineandrobin.com",
 			target:       "/a%20b/sched%3Fule?x=1",
-			wantLocation: "https://robinandmadeline.com/a%20b/sched%3Fule?x=1",
+			wantLocation: "https://www.robinandmadeline.com/a%20b/sched%3Fule?x=1",
 		},
 	}
 
@@ -113,9 +128,9 @@ func TestHostRedirect_CanonicalHostIsNotRedirected(t *testing.T) {
 		name string
 		host string
 	}{
-		{name: "exact match", host: "robinandmadeline.com"},
-		{name: "case-insensitive match", host: "RobinAndMadeline.com"},
-		{name: "match with port", host: "robinandmadeline.com:443"},
+		{name: "exact match", host: "www.robinandmadeline.com"},
+		{name: "case-insensitive match", host: "WWW.RobinAndMadeline.com"},
+		{name: "match with port", host: "www.robinandmadeline.com:443"},
 	}
 
 	for _, tt := range tests {
@@ -149,7 +164,7 @@ func TestHostRedirect_NonGETMethodsUse308(t *testing.T) {
 	srv.Handler.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusPermanentRedirect, rec.Code)
-	assert.Equal(t, "https://robinandmadeline.com/api/auth/admin/login", rec.Header().Get("Location"))
+	assert.Equal(t, "https://www.robinandmadeline.com/api/auth/admin/login", rec.Header().Get("Location"))
 }
 
 func TestHostRedirect_WinsOverStaticServing(t *testing.T) {
@@ -161,12 +176,12 @@ func TestHostRedirect_WinsOverStaticServing(t *testing.T) {
 	cfg.StaticDir = newStaticDir(t)
 	srv := server.New(cfg, nil)
 
-	redirected := getWithHost(srv.Handler, "www.robinandmadeline.com", "/")
+	redirected := getWithHost(srv.Handler, "robinandmadeline.com", "/")
 	require.Equal(t, http.StatusMovedPermanently, redirected.Code)
-	assert.Equal(t, "https://robinandmadeline.com/", redirected.Header().Get("Location"))
+	assert.Equal(t, "https://www.robinandmadeline.com/", redirected.Header().Get("Location"))
 
 	// The canonical host itself is served, not redirected.
-	served := getWithHost(srv.Handler, "robinandmadeline.com", "/")
+	served := getWithHost(srv.Handler, "www.robinandmadeline.com", "/")
 	require.Equal(t, http.StatusOK, served.Code)
 	assert.Equal(t, "<html>spa shell</html>", served.Body.String())
 }
