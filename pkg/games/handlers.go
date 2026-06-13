@@ -12,11 +12,6 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 )
 
-// flyClientIPHeader is the header Fly.io's proxy sets to the real client IP.
-// The app runs behind that proxy in production (ADR 0001), so it is the most
-// trustworthy source when present.
-const flyClientIPHeader = "Fly-Client-IP"
-
 // handler holds the dependencies for the games HTTP handlers. It is
 // unexported; routes are wired via RegisterRoutes. Handlers return errcodes
 // errors directly (and the *Error the service produces flows through), which
@@ -39,30 +34,20 @@ func pathID(c echo.Context) (string, error) {
 	return id.String(), nil
 }
 
-// clientIP extracts the real client IP for abuse tracing. In production the
-// app sits behind Fly.io's proxy, which sets Fly-Client-IP to the connecting
-// client (a header an end client cannot forge through the proxy, unlike an
-// appended X-Forwarded-For). Anywhere the app is reached without that proxy
-// (local dev, a direct hit) the headers are client-controlled text, so every
-// candidate must parse as an IP before it is stored; otherwise a client could
-// persist arbitrary text as its "IP" and defeat the tracing. The precedence is
-// the Fly header, then Echo's RealIP (X-Forwarded-For first, then X-Real-IP,
-// then the socket's RemoteAddr), then the socket's RemoteAddr host directly
-// (covering a garbage forwarded header), then "". Valid IPs are stored in
-// net.ParseIP's canonical form. A server-wide Echo IPExtractor for Fly (which
-// would also feed the login rate limiter, ADR 0006) is issue #15's scope; this
-// stays a local concern until that lands.
+// clientIP returns the real client IP for abuse tracing, resolved through the
+// server-wide, Fly-aware IPExtractor configured in pkg/server and surfaced via
+// c.RealIP(). Behind the production proxy that extractor reads Fly-Client-IP
+// (then X-Forwarded-For from the trusted hop), so the value is the connecting
+// client and not a header an end client can forge through the proxy; anywhere
+// the server is hit directly (local dev, tests) it is the socket peer address
+// and forwarded headers are ignored. The same resolution keys the login rate
+// limiter (ADR 0006), so the captured IP and the rate-limited IP always agree.
+// The result is validated with net.ParseIP before storage so an unparseable
+// value (improbable from the extractor) is never persisted as garbage, and a
+// valid IP is stored in canonical form.
 func clientIP(c echo.Context) string {
-	if ip := net.ParseIP(strings.TrimSpace(c.Request().Header.Get(flyClientIPHeader))); ip != nil {
-		return ip.String()
-	}
 	if ip := net.ParseIP(strings.TrimSpace(c.RealIP())); ip != nil {
 		return ip.String()
-	}
-	if host, _, err := net.SplitHostPort(c.Request().RemoteAddr); err == nil {
-		if ip := net.ParseIP(host); ip != nil {
-			return ip.String()
-		}
 	}
 	return ""
 }

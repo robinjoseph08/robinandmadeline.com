@@ -12,11 +12,14 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/games"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 )
 
 // newGamesEcho builds an Echo instance mirroring the production wiring of the
@@ -36,6 +39,52 @@ func newGamesEcho(t *testing.T, svc *games.Service) (*echo.Echo, *auth.Service) 
 
 	games.RegisterRoutes(e.Group("/api"), auth.NewMiddleware(authSvc), svc)
 	return e, authSvc
+}
+
+// newGamesServer builds the full production HTTP server via server.New against
+// the package test database, so the session-IP capture runs through the real,
+// server-wide IPExtractor (pkg/server) rather than Echo's default RealIP. That
+// is the only way these tests exercise the Fly path: the extractor reads
+// Fly-Client-IP (then X-Forwarded-For) only when trustProxyHeaders is on, and
+// ignores both headers when off. server.New builds its own games.Service from
+// db, but sessions land in the same database, so sessionRow reads them back.
+func newGamesServer(t *testing.T, db *bun.DB, trustProxyHeaders bool) http.Handler {
+	t.Helper()
+	srv := server.New(&config.Config{
+		ServerPort:           0,
+		AdminUsername:        "admin",
+		AdminPassword:        "password",
+		JWTSecret:            "test-secret",
+		AdminSessionDuration: time.Hour,
+		GuestSessionDuration: time.Hour,
+		LoginRatePerMinute:   6000,
+		LoginRateBurst:       1000,
+		TrustProxyHeaders:    trustProxyHeaders,
+	}, db)
+	return srv.Handler
+}
+
+// createSessionOnServer posts a session through an http.Handler (the full
+// server) with the given remote address and headers, and returns the new
+// session id. remoteAddr shapes the socket peer the IPExtractor sees; "" leaves
+// httptest's default 192.0.2.1:1234.
+func createSessionOnServer(t *testing.T, h http.Handler, remoteAddr string, headers map[string]string) string {
+	t.Helper()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/games/sessions",
+		strings.NewReader(`{"puzzle_id":"wedding-mini-v1","difficulty":"medium"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	if remoteAddr != "" {
+		req.RemoteAddr = remoteAddr
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var resp games.GameSessionResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	return resp.ID
 }
 
 // gamesRequest describes one request to the games surface; zero values mean
@@ -66,15 +115,16 @@ func doGamesRequest(t *testing.T, e *echo.Echo, r gamesRequest) *httptest.Respon
 }
 
 // createSessionHTTP posts a session through the HTTP surface and returns the
-// decoded response.
-func createSessionHTTP(t *testing.T, e *echo.Echo, token string, headers map[string]string) games.GameSessionResponse {
+// decoded response. Tests that need to shape the request headers (e.g. the
+// proxy-IP capture tests) drive the full server via createSessionOnServer
+// instead, so this stays a plain anonymous create.
+func createSessionHTTP(t *testing.T, e *echo.Echo, token string) games.GameSessionResponse {
 	t.Helper()
 	rec := doGamesRequest(t, e, gamesRequest{
-		method:  http.MethodPost,
-		path:    "/api/games/sessions",
-		body:    `{"puzzle_id":"wedding-mini-v1","difficulty":"medium"}`,
-		token:   token,
-		headers: headers,
+		method: http.MethodPost,
+		path:   "/api/games/sessions",
+		body:   `{"puzzle_id":"wedding-mini-v1","difficulty":"medium"}`,
+		token:  token,
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	var resp games.GameSessionResponse
@@ -94,7 +144,7 @@ func TestPostGameSession_AnonymousCreates201WithNullParty(t *testing.T) {
 	svc, _, db := newServices(t)
 	e, _ := newGamesEcho(t, svc)
 
-	resp := createSessionHTTP(t, e, "", nil)
+	resp := createSessionHTTP(t, e, "")
 	assert.NotEmpty(t, resp.ID)
 	assert.Equal(t, "wedding-mini-v1", resp.PuzzleID)
 	assert.Equal(t, models.GameDifficultyMedium, resp.Difficulty)
@@ -123,7 +173,7 @@ func TestPostGameSession_ValidGuestTokenAttachesParty(t *testing.T) {
 	token, err := authSvc.GenerateGuestToken(p.ID)
 	require.NoError(t, err)
 
-	resp := createSessionHTTP(t, e, token, nil)
+	resp := createSessionHTTP(t, e, token)
 	require.NotNil(t, resp.PartyID)
 	assert.Equal(t, p.ID, *resp.PartyID)
 }
@@ -141,7 +191,7 @@ func TestPostGameSession_DeletedPartyTokenCreatesAnonymousSession(t *testing.T) 
 	// the party FK with a 500.
 	require.NoError(t, partySvc.DeleteParty(ctx(), p.ID))
 
-	resp := createSessionHTTP(t, e, token, nil)
+	resp := createSessionHTTP(t, e, token)
 	assert.Nil(t, sessionRow(t, db, resp.ID).PartyID, "the stale claim degrades to an anonymous session")
 }
 
@@ -179,50 +229,67 @@ func TestPostGameSession_BinderRejectsBadPayloads(t *testing.T) {
 	}
 }
 
-func TestPostGameSession_CapturesFlyClientIPFirst(t *testing.T) {
-	svc, _, db := newServices(t)
-	e, _ := newGamesEcho(t, svc)
+func TestPostGameSession_CapturesFlyClientIPBehindTrustedProxy(t *testing.T) {
+	_, _, db := newServices(t)
+	// Built with TrustProxyHeaders on, so c.RealIP() runs the production
+	// Fly-aware extractor: this is the production path (TRUST_PROXY_HEADERS=true
+	// on Fly), where the request reaches the app from Fly's edge proxy carrying
+	// the real client in Fly-Client-IP. The same extractor keys the login rate
+	// limiter, so the captured IP and the rate-limited IP agree.
+	h := newGamesServer(t, db, true)
 
 	// Fly's proxy header wins over X-Forwarded-For when both are present.
-	resp := createSessionHTTP(t, e, "", map[string]string{
+	id := createSessionOnServer(t, h, "", map[string]string{
 		"Fly-Client-IP":   "198.51.100.9",
 		"X-Forwarded-For": "203.0.113.50",
 	})
-	assert.Equal(t, "198.51.100.9", sessionRow(t, db, resp.ID).IPAddress)
+	assert.Equal(t, "198.51.100.9", sessionRow(t, db, id).IPAddress)
 
-	// Without the Fly header, the standard forwarded header is used.
-	resp = createSessionHTTP(t, e, "", map[string]string{
+	// Without the Fly header, the extractor falls back to X-Forwarded-For. The
+	// socket is a private (trusted-proxy) address, so the forwarded client is
+	// honored rather than skipped as an untrusted hop.
+	id = createSessionOnServer(t, h, "172.16.0.5:4242", map[string]string{
 		"X-Forwarded-For": "203.0.113.50",
 	})
-	assert.Equal(t, "203.0.113.50", sessionRow(t, db, resp.ID).IPAddress)
+	assert.Equal(t, "203.0.113.50", sessionRow(t, db, id).IPAddress)
 
-	// With neither, the socket's remote address is the last resort (httptest
-	// stamps 192.0.2.1:1234 on every request).
-	resp = createSessionHTTP(t, e, "", nil)
-	assert.Equal(t, "192.0.2.1", sessionRow(t, db, resp.ID).IPAddress)
-
-	// Anywhere the app is reached without Fly's proxy the headers are
-	// client-controlled text, so a Fly header that does not parse as an IP is
-	// skipped, never stored.
-	resp = createSessionHTTP(t, e, "", map[string]string{
+	// A Fly-Client-IP that does not parse as an IP is skipped by the extractor,
+	// which falls through to X-Forwarded-For, so attacker-chosen text is never
+	// stored as the "IP".
+	id = createSessionOnServer(t, h, "172.16.0.5:4242", map[string]string{
 		"Fly-Client-IP":   "not-an-ip",
 		"X-Forwarded-For": "203.0.113.50",
 	})
-	assert.Equal(t, "203.0.113.50", sessionRow(t, db, resp.ID).IPAddress)
+	assert.Equal(t, "203.0.113.50", sessionRow(t, db, id).IPAddress)
+}
 
-	// Garbage in both headers falls back to the socket's address rather than
-	// persisting attacker-chosen text as the "IP".
-	resp = createSessionHTTP(t, e, "", map[string]string{
-		"Fly-Client-IP":   "not-an-ip",
-		"X-Forwarded-For": "also-not-an-ip",
+func TestPostGameSession_IgnoresSpoofedHeadersWithoutProxyTrust(t *testing.T) {
+	_, _, db := newServices(t)
+	// Built with TrustProxyHeaders off (dev, tests, and any direct hit): the
+	// extractor is ExtractIPDirect, so forwarded headers are ignored entirely
+	// and only the socket peer address counts. A direct client therefore cannot
+	// forge the IP stored against its solve by setting Fly-Client-IP or
+	// X-Forwarded-For. This mirrors the rate limiter's anti-spoofing guarantee
+	// (pkg/server/ip_test.go) at the games layer.
+	h := newGamesServer(t, db, false)
+
+	id := createSessionOnServer(t, h, "192.0.2.55:9999", map[string]string{
+		"Fly-Client-IP":   "203.0.113.1",
+		"X-Forwarded-For": "203.0.113.2",
 	})
-	assert.Equal(t, "192.0.2.1", sessionRow(t, db, resp.ID).IPAddress)
+	assert.Equal(t, "192.0.2.55", sessionRow(t, db, id).IPAddress,
+		"a spoofed Fly-Client-IP/X-Forwarded-For is ignored; the socket address is stored")
+
+	// With no remote address override, httptest stamps 192.0.2.1:1234, which is
+	// what the direct extractor returns.
+	id = createSessionOnServer(t, h, "", map[string]string{"Fly-Client-IP": "203.0.113.1"})
+	assert.Equal(t, "192.0.2.1", sessionRow(t, db, id).IPAddress)
 }
 
 func TestPatchGameSession_UpdatesAndCompletes(t *testing.T) {
 	svc, _, db := newServices(t)
 	e, _ := newGamesEcho(t, svc)
-	created := createSessionHTTP(t, e, "", nil)
+	created := createSessionHTTP(t, e, "")
 
 	rec := doGamesRequest(t, e, gamesRequest{
 		method: http.MethodPatch,
@@ -252,7 +319,7 @@ func TestPatchGameSession_ValidGuestTokenAttachesParty(t *testing.T) {
 	p := createPartyT(t, partySvc, "The Smiths")
 	token, err := authSvc.GenerateGuestToken(p.ID)
 	require.NoError(t, err)
-	created := createSessionHTTP(t, e, "", nil)
+	created := createSessionHTTP(t, e, "")
 
 	// The guest signed in mid-solve: a report carrying their token affiliates
 	// the previously anonymous session, proving OptionalGuest feeds the PATCH
@@ -272,7 +339,7 @@ func TestPatchGameSession_ValidGuestTokenAttachesParty(t *testing.T) {
 func TestPatchGameSession_InvalidTokenIs401(t *testing.T) {
 	svc, _, _ := newServices(t)
 	e, _ := newGamesEcho(t, svc)
-	created := createSessionHTTP(t, e, "", nil)
+	created := createSessionHTTP(t, e, "")
 
 	// As on create, OptionalGuest rejects a presented-but-invalid credential
 	// instead of silently downgrading the report to anonymous.
@@ -288,7 +355,7 @@ func TestPatchGameSession_InvalidTokenIs401(t *testing.T) {
 func TestPatchGameSession_BinderAndGuardFailures(t *testing.T) {
 	svc, _, _ := newServices(t)
 	e, _ := newGamesEcho(t, svc)
-	created := createSessionHTTP(t, e, "", nil)
+	created := createSessionHTTP(t, e, "")
 	path := "/api/games/sessions/" + created.ID
 
 	// Binder failures: elapsed_ms is required (omitted and null are 422, so an
@@ -324,7 +391,7 @@ func TestPatchGameSession_BinderAndGuardFailures(t *testing.T) {
 func TestPatchGameSession_CompletedSessionConflictsOverHTTP(t *testing.T) {
 	svc, _, _ := newServices(t)
 	e, _ := newGamesEcho(t, svc)
-	created := createSessionHTTP(t, e, "", nil)
+	created := createSessionHTTP(t, e, "")
 	path := "/api/games/sessions/" + created.ID
 
 	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodPatch, path: path, body: `{"elapsed_ms":9000,"completed":true}`})
@@ -343,7 +410,7 @@ func TestPatchGameSession_CompletedSessionConflictsOverHTTP(t *testing.T) {
 func TestPostLeaderboard_FullFlowOverHTTP(t *testing.T) {
 	svc, _, _ := newServices(t)
 	e, _ := newGamesEcho(t, svc)
-	created := createSessionHTTP(t, e, "", nil)
+	created := createSessionHTTP(t, e, "")
 	sessionPath := "/api/games/sessions/" + created.ID
 
 	// Posting before completion is a 422.
