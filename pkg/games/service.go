@@ -39,6 +39,14 @@ import (
 // the response without truncating a legitimate leaderboard.
 const leaderboardLimit = 500
 
+// adminSessionLimit caps how many rows the admin sessions list returns. The
+// admin surface is trusted and the data is bounded (one wedding's worth of
+// solves), so there is no pagination in v1; this is purely a defensive ceiling
+// so a runaway row count can never return an unbounded response. It is set far
+// above any plausible real total, so in practice every session is returned and
+// the total equals the item count.
+const adminSessionLimit = 10000
+
 // Service is the games data layer over a Bun DB. Construct it with NewService.
 // Methods return errcodes errors directly; handlers pass them through to the
 // shared error handler.
@@ -336,6 +344,83 @@ func (s *Service) leaderboardViewer(ctx context.Context, in LeaderboardQuery) (*
 			CompletedAt: *session.CompletedAt,
 		},
 	}, nil
+}
+
+// adminSessionRow is the scan target for ListSessions: the full session row
+// plus the affiliated party's name, joined in. It embeds models.GameSession so
+// every stored column (ip_address included, which the session's own JSON hides)
+// lands on the struct, and adds PartyName from the LEFT JOIN. PartyName is a
+// pointer so it stays NULL for an anonymous session, matching party_id. It
+// repeats the game_sessions table/alias so bun targets that table and the gs.*
+// / join clauses resolve, rather than deriving a table name from this struct.
+// It is an internal type, never serialized: the handler maps it to the
+// dedicated AdminGameSessionResponse.
+type adminSessionRow struct {
+	bun.BaseModel `bun:"table:game_sessions,alias:gs"`
+
+	models.GameSession
+	PartyName *string `bun:"party_name"`
+}
+
+// ListSessions returns every solve session for the admin view, newest first
+// (created_at DESC, then id as a stable tiebreak), and the total count. Unlike
+// the leaderboard read it filters nothing: completed and in-progress solves,
+// posted and unposted, all appear, since the admin view exists to see and clean
+// up every recorded time. The affiliated party's name rides a LEFT JOIN to
+// parties, so party_name is the party's name (parties.name) for an affiliated
+// solve and NULL for an anonymous one, exactly tracking party_id. The result is
+// capped at adminSessionLimit purely as a defensive ceiling; at wedding scale
+// every session is returned and the total equals the item count. The returned
+// slice is never nil, so it serializes as [].
+func (s *Service) ListSessions(ctx context.Context) ([]AdminGameSessionResponse, int, error) {
+	var rows []adminSessionRow
+	total, err := s.db.NewSelect().Model(&rows).
+		ColumnExpr("gs.*").
+		ColumnExpr("p.name AS party_name").
+		Join("LEFT JOIN parties AS p ON p.id = gs.party_id").
+		Order("gs.created_at DESC", "gs.id DESC").
+		Limit(adminSessionLimit).
+		ScanAndCount(ctx)
+	if err != nil {
+		return nil, 0, errors.Wrap(err, "list game sessions")
+	}
+
+	items := make([]AdminGameSessionResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, AdminGameSessionResponse{
+			ID:            row.ID,
+			PuzzleID:      row.PuzzleID,
+			Difficulty:    row.Difficulty,
+			ElapsedMS:     row.ElapsedMS,
+			CompletedAt:   row.CompletedAt,
+			OnLeaderboard: row.OnLeaderboard,
+			DisplayName:   row.DisplayName,
+			PartyID:       row.PartyID,
+			PartyName:     row.PartyName,
+			IPAddress:     row.IPAddress,
+			CreatedAt:     row.CreatedAt,
+			UpdatedAt:     row.UpdatedAt,
+		})
+	}
+	return items, total, nil
+}
+
+// DeleteSession hard-deletes one solve session by id. Deleting a non-existent
+// session is a 404. This is the admin's tool to remove a bad-actor or junk
+// solve outright; there is no soft delete.
+func (s *Service) DeleteSession(ctx context.Context, id string) error {
+	res, err := s.db.NewDelete().Model((*models.GameSession)(nil)).Where("id = ?", id).Exec(ctx)
+	if err != nil {
+		return errors.Wrap(err, "delete game session")
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return errors.Wrap(err, "delete game session rows affected")
+	}
+	if n == 0 {
+		return errcodes.NotFound("session")
+	}
+	return nil
 }
 
 // loadSessionForUpdate fetches a session by id with a row lock (FOR UPDATE)
