@@ -374,26 +374,26 @@ describe("Schedule", () => {
         /group photos after the ceremony, before the reception/i,
       ),
     ).toBeInTheDocument();
-    // One card per group in shooting order: the position (the badge's number,
-    // worded for screen readers), the group's name, and the party's guests'
-    // first names inside the same card.
+    // One card per group in shooting order: a tile carrying the visible word
+    // "Group" over the number the photographer calls, the group's name, and
+    // the party's guests' first names inside the same card.
     const cards = within(section).getAllByRole("listitem");
     expect(cards).toHaveLength(2);
-    expect(within(cards[0]).getByText("Group 1")).toBeInTheDocument();
+    expect(within(cards[0]).getByText("Group")).toBeInTheDocument();
+    expect(within(cards[0]).getByText("1")).toBeInTheDocument();
     expect(
       within(cards[0]).getByRole("heading", { name: /Family Photos/ }),
     ).toBeInTheDocument();
     expect(within(cards[0]).getByText("Leon, Leslie")).toBeInTheDocument();
-    expect(within(cards[1]).getByText("Group 3")).toBeInTheDocument();
+    expect(within(cards[1]).getByText("Group")).toBeInTheDocument();
+    expect(within(cards[1]).getByText("3")).toBeInTheDocument();
     expect(
       within(cards[1]).getByRole("heading", { name: /College Friends/ }),
     ).toBeInTheDocument();
     expect(within(cards[1]).getByText("Leslie")).toBeInTheDocument();
-    // The badge also shows the bare number to sighted users (aria-hidden, so
-    // screen readers hear only the worded "Group N" above); without these the
-    // number could become screen-reader-only and every test would still pass.
-    expect(within(cards[0]).getByText("1")).toHaveAttribute("aria-hidden");
-    expect(within(cards[1]).getByText("3")).toHaveAttribute("aria-hidden");
+    // The number sits beneath the visible "Group" label, shown plainly to
+    // everyone. Pinning both the word and the number means a refactor that
+    // drops the number (leaving a meaningless tile) fails instead of shipping.
     // The total number of groups is deliberately not shown.
     expect(section).not.toHaveTextContent(/of \d+/i);
     // The photos read is the authenticated guest endpoint.

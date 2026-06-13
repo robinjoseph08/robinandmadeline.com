@@ -195,20 +195,21 @@ test("admin builds the shot list and the guest's schedule names their guests per
     photos.getByText(/group photos after the ceremony, before the reception/i),
   ).toBeVisible();
   // One card for the friends group: the guest's first name and the same
-  // global position the admin page showed (the badge's sr-only wording). The
-  // total is deliberately absent, and the deleted family group never appears.
+  // global position the admin page showed (the tile's visible "Group" label
+  // over the number). The total is deliberately absent, and the deleted
+  // family group never appears.
   const friendsCard = photos
     .getByRole("listitem")
     .filter({ hasText: friendsGroupName });
   await expect(friendsCard).toBeVisible();
   await expect(friendsCard.getByText("Casey", { exact: true })).toBeVisible();
-  // The number must not be followed by another digit, or "Group 51" would
-  // satisfy an expected "Group 5". (\D|$) rather than \b: textContent runs
-  // the sr-only label straight into the group name ("Group 5Friends..."),
-  // and a digit-to-letter junction has no word boundary, so \b would reject
-  // that legitimate output.
+  // \s* because the tile stacks the "Group" label directly over the number
+  // with no separating text node ("Group1..."). (\D|$) rather than \b so the
+  // trailing guard holds at the number-to-name junction (the number runs
+  // straight into the group name, "Group1Friends...", where \b fails), while
+  // still rejecting a longer number like "Group 51" when 5 was expected.
   await expect(friendsCard).toContainText(
-    new RegExp(`Group ${friendsAfter}(\\D|$)`),
+    new RegExp(`Group\\s*${friendsAfter}(\\D|$)`),
   );
   await expect(friendsCard).not.toContainText(/group \d+ of/i);
   await expect(photos.getByText(familyGroupName)).not.toBeVisible();

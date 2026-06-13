@@ -92,13 +92,15 @@ export default function Schedule() {
 /**
  * The Group Photos section: the photo groups the visitor's party is in,
  * naming which of the party's guests each group needs and where it falls in
- * the shooting order. One card per group, in shooting order: a position badge
- * (the number the photographer will call), the group's name as a quiet label,
- * and the party's guests' first names carrying the visual weight, since "who
- * needs to be there" is what a guest scans for. Renders nothing until the
- * data is in and only when the party has at least one assignment, so parties
- * outside the shot list never see an empty shell (and a failed fetch quietly
- * hides the section rather than disturbing the schedule above it).
+ * the shooting order. One card per group, in shooting order: the group's
+ * number in the photographer's order (a big circled figure under a GROUP
+ * label, the intro copy teaching the order semantics once for all cards),
+ * the group's name as a quiet label, and the party's guests' first names
+ * carrying the visual weight, since "who needs to be there" is what a guest
+ * scans for. Renders nothing until the data is in and only when the party has
+ * at least one assignment, so parties outside the shot list never see an empty
+ * shell (and a failed fetch quietly hides the section rather than disturbing
+ * the schedule above it).
  */
 function PhotosSection() {
   const { data } = usePartyPhotoGroups();
@@ -111,7 +113,8 @@ function PhotosSection() {
       <h2 className="text-2xl font-semibold">Group Photos</h2>
       <p className="mt-3 text-muted-foreground">
         We'll be taking group photos after the ceremony, before the reception.
-        Here is where we need you:
+        Groups are called in number order, so you'll know when you're up. Here
+        is where we need you:
       </p>
       <ol className="mt-4 flex flex-col gap-3">
         {groups.map((group) => {
@@ -121,13 +124,18 @@ function PhotosSection() {
               className="flex items-center gap-4 rounded-xl border border-ink/10 bg-primary/30 p-4"
               key={group.id}
             >
-              {/* The badge is the group's position in the photographer's
-                  shooting order; the sr-only text gives the bare number its
-                  meaning for screen readers. */}
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-secondary font-semibold">
-                <span aria-hidden>{group.position}</span>
-                <span className="sr-only">Group {group.position}</span>
-              </span>
+              {/* The big number the photographer calls, circled under a
+                  visible GROUP label so the bare figure reads as "Group N"
+                  with no hover and no sr-only duplicate (the uppercase is
+                  CSS-only, so the DOM text stays "Group" then the number). */}
+              <div className="flex shrink-0 flex-col items-center gap-1">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-ink/70">
+                  Group
+                </span>
+                <span className="flex size-12 items-center justify-center rounded-full bg-secondary text-2xl font-bold leading-none">
+                  {group.position}
+                </span>
+              </div>
               <div className="min-w-0">
                 <h3 className="break-words text-sm font-medium text-ink/60">
                   {group.name}
