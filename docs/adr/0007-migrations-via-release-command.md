@@ -13,7 +13,7 @@ This fits scale-to-zero on Fly (ADR 0001). Machines stop when idle and start on 
 ## Consequences
 
 - The server no longer migrates. `cmd/api` boots against whatever schema exists; provisioning it is the deploy's job.
-- Production sets `release_command = "/app/migrations migrate"` in `fly.toml`. That config lands with the deployment work; there is no `fly.toml` yet.
+- Production sets `release_command = "/app/migrations migrate"` in `fly.toml`, and the Dockerfile builds the migrations binary into the image alongside the server.
 - Local development stays ergonomic: `mise start` depends on `db:migrate`, so a fresh checkout migrates before the servers come up.
 - `migrations.BringUpToDate` is still called directly by the test harness, which provisions a throwaway database per run.
 - A broken migration blocks the deploy rather than the running site.

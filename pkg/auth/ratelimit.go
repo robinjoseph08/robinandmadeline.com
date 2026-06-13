@@ -26,8 +26,9 @@ type RateLimit struct {
 // during an attack the container stays warm under the attacker's own traffic,
 // and with no traffic there is nothing to limit (ADR 0006). One store backs
 // both login endpoints, so guest and admin attempts draw from the same per-IP
-// budget. The identifier is Echo's RealIP, which the server's IPExtractor
-// (configured for Fly's forwarded header in issue #15) feeds.
+// budget. The identifier is Echo's RealIP, fed by the server's IPExtractor:
+// Fly's forwarded client-IP header when TRUST_PROXY_HEADERS is set, the
+// socket peer address otherwise.
 func loginRateLimiter(rl RateLimit) echo.MiddlewareFunc {
 	store := middleware.NewRateLimiterMemoryStoreWithConfig(middleware.RateLimiterMemoryStoreConfig{
 		Rate:  rate.Limit(rl.PerMinute / 60.0),

@@ -16,6 +16,10 @@ run = "CGO_ENABLED=0 go build -o ./build/api/api ./cmd/api"
 description = "Build development API binary (used by air)"
 run = "go build -o ./build/api/api-air ./cmd/api"
 
+[tasks."build:docker"]
+description = "Build the production Docker image (Go binary + built SPA)"
+run = "docker build -t robinandmadeline ."
+
 # === Dev Server ===
 
 [tasks.start]
