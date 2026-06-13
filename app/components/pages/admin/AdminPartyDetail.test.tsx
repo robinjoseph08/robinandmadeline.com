@@ -288,7 +288,11 @@ describe("AdminPartyDetail add guest", () => {
       ) => {
         const method = options?.method ?? "GET";
         if (path === "/admin/parties/p1" && method === "GET") {
-          return Promise.resolve(makeParty(created));
+          // Return a fresh copy each request, the way a real API serializes new
+          // JSON: React Query then sees the added guest and re-renders. Returning
+          // the mutated-in-place `created` array would be reference-equal to what
+          // the cache already holds, so the new row would never appear.
+          return Promise.resolve(makeParty(created.map((g) => ({ ...g }))));
         }
         if (path === "/admin/parties/p1/guests" && method === "POST") {
           const body = options?.body;

@@ -324,6 +324,82 @@ describe("AdminGuests flat list", () => {
     });
   });
 
+  it("discards the add row on Escape while it is still untouched", async () => {
+    setMock({ guests: [] });
+
+    const user = userEvent.setup();
+    renderGuests();
+
+    await user.click(await screen.findByRole("button", { name: "Add guest" }));
+    const nameField = screen.getByRole("textbox", { name: "New guest name" });
+    expect(nameField).toBeInTheDocument();
+
+    // Escape on a pristine row exits add mode and brings the affordance back.
+    await user.click(nameField);
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("textbox", { name: "New guest name" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("button", { name: "Add guest" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps an in-progress add row on Escape rather than discarding what was typed", async () => {
+    setMock({ guests: [] });
+
+    const user = userEvent.setup();
+    renderGuests();
+
+    await user.click(await screen.findByRole("button", { name: "Add guest" }));
+    const nameField = screen.getByRole("textbox", { name: "New guest name" });
+    await user.type(nameField, "Half Typed");
+
+    // A stray Escape on a dirty row must not throw away the entry.
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("textbox", { name: "New guest name" })).toHaveValue(
+      "Half Typed",
+    );
+  });
+
+  it("names the missing required fields when Enter is pressed too early", async () => {
+    const errorSpy = vi.spyOn(toast, "error");
+    setMock({ guests: [] });
+
+    const user = userEvent.setup();
+    renderGuests();
+
+    await user.click(await screen.findByRole("button", { name: "Add guest" }));
+    const nameField = screen.getByRole("textbox", { name: "New guest name" });
+
+    // The Add button is disabled while the row is incomplete, so Enter is the
+    // only way to submit early; it must report what is missing rather than
+    // silently doing nothing. With neither a name nor a party, both are named.
+    await user.click(nameField);
+    await user.keyboard("{Enter}");
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Missing required fields: name, party",
+    );
+    errorSpy.mockRestore();
+  });
+
+  it("uses a backend-valid example as the add-row phone placeholder", async () => {
+    setMock({ guests: [] });
+
+    const user = userEvent.setup();
+    renderGuests();
+
+    await user.click(await screen.findByRole("button", { name: "Add guest" }));
+    // The example must be a real, dialable number (area code 555 is not), so an
+    // admin who copies the placeholder verbatim is not rejected by the phone
+    // validator.
+    expect(
+      screen.getByRole("textbox", { name: "New guest phone" }),
+    ).toHaveAttribute("placeholder", "e.g. (415) 555-2671");
+  });
+
   it("applies a party filter from the URL, so a filtered view is shareable", async () => {
     setMock({ guests: [] });
     // Loading a URL that already carries the filter must apply it on the first

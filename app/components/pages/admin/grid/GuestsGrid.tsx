@@ -174,12 +174,7 @@ export function GuestsGrid<TGuest extends Guest>({
   addPartyId,
 }: GuestsGridProps<TGuest>) {
   const patchGuest = usePatchGuest();
-  const createGuest = useCreateGuest();
-  const createPartyWithGuest = useCreatePartyWithGuest();
   const deleteGuest = useDeleteGuest();
-
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState<GuestDraft>(EMPTY_DRAFT);
 
   const showPartyColumn = parties !== undefined;
   const canAdd = addPartyId !== undefined || parties !== undefined;
@@ -226,112 +221,6 @@ export function GuestsGrid<TGuest extends Guest>({
         throw error;
       },
     );
-
-  const setDraftField = <K extends keyof GuestDraft>(
-    key: K,
-    value: GuestDraft[K],
-  ) => setDraft((prev) => ({ ...prev, [key]: value }));
-
-  const isNewParty = draft.newPartyName !== undefined;
-  const draftExistingParty =
-    draft.partyId !== undefined ? partyById.get(draft.partyId) : undefined;
-  const targetExistingPartyId = addPartyId ?? draft.partyId;
-  const canCreate =
-    draft.fullName.trim() !== "" &&
-    (addPartyId !== undefined
-      ? true
-      : isNewParty
-        ? Boolean(draft.side) && Boolean(draft.relation)
-        : draft.partyId !== undefined);
-
-  // Names the required add-row fields still missing, for the Enter feedback
-  // below (mirrors the canCreate conditions).
-  const missingForCreate = (): string[] => {
-    const missing: string[] = [];
-    if (draft.fullName.trim() === "") missing.push("name");
-    if (addPartyId === undefined) {
-      if (isNewParty) {
-        if (!draft.side) missing.push("side");
-        if (!draft.relation) missing.push("relation");
-      } else if (draft.partyId === undefined) {
-        missing.push("party");
-      }
-    }
-    return missing;
-  };
-
-  const creating = createGuest.isPending || createPartyWithGuest.isPending;
-
-  const handleCreate = async () => {
-    // The Add button disables itself while a create is in flight, but the
-    // add-row Enter path lands here directly; ignore it rather than firing a
-    // duplicate POST.
-    if (creating) return;
-    if (!canCreate) {
-      // Only Enter lands here (the Add button is disabled while !canCreate), so
-      // name what is missing instead of silently doing nothing.
-      const missing = missingForCreate();
-      toast.error(
-        `Missing required field${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`,
-      );
-      return;
-    }
-    const guestFields = {
-      full_name: draft.fullName.trim(),
-      email: draft.email.trim() || undefined,
-      phone: draft.phone.trim() || undefined,
-      tags: draft.tags,
-      is_child: draft.isChild,
-      is_drinking: draft.isDrinking,
-      // A blank cell means a regular guest; the key is dropped so the API
-      // stores NULL rather than rejecting a blank descriptor.
-      placeholder_text: draft.placeholderText.trim() || undefined,
-    };
-    try {
-      if (isNewParty && draft.newPartyName) {
-        // Create the party together with this guest, who becomes its primary.
-        // Invitation defaults to physical (changed later on the parties grid).
-        await createPartyWithGuest.mutateAsync({
-          name: draft.newPartyName.trim(),
-          side: draft.side as Side,
-          relation: draft.relation as Relation,
-          invitation_type: "physical",
-          circle: [],
-          guest: guestFields,
-        });
-        toast.success(
-          `Added ${guestFields.full_name} to new party ${draft.newPartyName.trim()}`,
-        );
-      } else if (targetExistingPartyId) {
-        const payload: CreateGuestPayload = {
-          ...guestFields,
-          is_primary: draft.isPrimary,
-        };
-        await createGuest.mutateAsync({
-          partyId: targetExistingPartyId,
-          payload,
-        });
-        toast.success(`Added ${guestFields.full_name}`);
-      }
-      // Reset every field (party included) so the next guest starts clean.
-      setDraft(EMPTY_DRAFT);
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to add guest",
-      );
-    }
-  };
-
-  const cancelAdd = () => {
-    setAdding(false);
-    setDraft(EMPTY_DRAFT);
-  };
-
-  // Escape from a draft text cell exits add mode, but only while the row is still
-  // untouched, so an in-progress row is never discarded by a stray keypress.
-  const handleAddRowEscape = () => {
-    if (isDraftPristine(draft)) cancelAdd();
-  };
 
   const handleDelete = async (guest: TGuest) => {
     if (!window.confirm(`Delete ${guest.full_name}?`)) return;
@@ -491,182 +380,338 @@ export function GuestsGrid<TGuest extends Guest>({
           );
         })}
 
-        {canAdd && adding ? (
-          <TableRow className="bg-muted/30">
-            <GridTextCell
-              ariaLabel="New guest name"
-              autoFocus
-              commitOnChange
-              onCommit={(value) => setDraftField("fullName", value)}
-              onEnter={handleCreate}
-              onEscape={handleAddRowEscape}
-              placeholder="Guest name..."
-              showStatus={false}
-              value={draft.fullName}
-            />
-            <GridTextCell
-              ariaLabel="New guest email"
-              commitOnChange
-              onCommit={(value) => setDraftField("email", value)}
-              onEnter={handleCreate}
-              onEscape={handleAddRowEscape}
-              placeholder="Optional"
-              showStatus={false}
-              type="email"
-              value={draft.email}
-            />
-            <GridTextCell
-              ariaLabel="New guest phone"
-              commitOnChange
-              onCommit={(value) => setDraftField("phone", value)}
-              onEnter={handleCreate}
-              onEscape={handleAddRowEscape}
-              placeholder="Optional"
-              showStatus={false}
-              value={draft.phone}
-            />
-            <GridChipsCell
-              ariaLabel="New guest tags"
-              creatable
-              onCommit={(value) => setDraftField("tags", value)}
-              options={tagSuggestions}
-              placeholder="Optional"
-              showStatus={false}
-              value={draft.tags}
-            />
-            <GridFlagsCell
-              ariaLabel="New guest flags"
-              onCommit={(value) => {
-                setDraftField("isChild", value.is_child);
-                setDraftField("isDrinking", value.is_drinking);
-              }}
-              options={GUEST_FLAG_OPTIONS}
-              placeholder="Optional"
-              showStatus={false}
-              value={{
-                is_child: draft.isChild,
-                is_drinking: draft.isDrinking,
-              }}
-            />
-            <GridTextCell
-              ariaLabel="New guest placeholder text"
-              commitOnChange
-              onCommit={(value) => setDraftField("placeholderText", value)}
-              onEnter={handleCreate}
-              onEscape={handleAddRowEscape}
-              placeholder="Optional"
-              showStatus={false}
-              value={draft.placeholderText}
-            />
-            <GridBoolCell
-              ariaLabel="New guest primary"
-              // A brand-new party's first guest is always its primary, so the box
-              // is forced on and explained via a tooltip.
-              disabled={isNewParty}
-              onCommit={(value) => setDraftField("isPrimary", value)}
-              showStatus={false}
-              tooltip={isNewParty ? NEW_PARTY_PRIMARY_HINT : undefined}
-              value={isNewParty ? true : draft.isPrimary}
-            />
-            {showPartyColumn ? (
-              <>
-                <GridCreatablePartyCell
-                  newPartyName={draft.newPartyName}
-                  onCreateNew={(name) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      partyId: undefined,
-                      newPartyName: name,
-                    }))
-                  }
-                  onSelectExisting={(id) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      partyId: id,
-                      newPartyName: undefined,
-                      side: undefined,
-                      relation: undefined,
-                    }))
-                  }
-                  parties={parties ?? []}
-                  partyId={draft.partyId}
-                />
-                {isNewParty ? (
-                  <>
-                    <GridComboboxCell
-                      ariaLabel="New party side"
-                      onCommit={(value) => setDraftField("side", value as Side)}
-                      options={SIDE_OPTIONS}
-                      placeholder="Side..."
-                      showStatus={false}
-                      value={draft.side}
-                    />
-                    <GridComboboxCell
-                      ariaLabel="New party relation"
-                      onCommit={(value) =>
-                        setDraftField("relation", value as Relation)
-                      }
-                      options={RELATION_OPTIONS}
-                      placeholder="Relation..."
-                      showStatus={false}
-                      value={draft.relation}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <ReadOnlyAttr
-                      value={
-                        draftExistingParty
-                          ? labelFor(SIDE_OPTIONS, draftExistingParty.side)
-                          : ""
-                      }
-                    />
-                    <ReadOnlyAttr
-                      value={
-                        draftExistingParty
-                          ? labelFor(
-                              RELATION_OPTIONS,
-                              draftExistingParty.relation,
-                            )
-                          : ""
-                      }
-                    />
-                  </>
-                )}
-              </>
-            ) : null}
-            <GridReadOnlyCell className="p-0">
-              <div className="flex h-8 items-center justify-end gap-1 px-3">
-                <TooltipIconButton label="Cancel" onClick={cancelAdd}>
-                  <X />
-                </TooltipIconButton>
-                <Button
-                  disabled={!canCreate || creating}
-                  onClick={handleCreate}
-                  size="sm"
-                >
-                  <Plus />
-                  Add
-                </Button>
-              </div>
-            </GridReadOnlyCell>
-          </TableRow>
-        ) : canAdd ? (
-          <TableRow>
-            <TableCell className="p-0" colSpan={columnCount}>
-              <button
-                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-                onClick={() => setAdding(true)}
-                type="button"
-              >
-                <Plus className="size-4" />
-                Add guest
-              </button>
-            </TableCell>
-          </TableRow>
+        {canAdd ? (
+          <AddGuestRow
+            addPartyId={addPartyId}
+            columnCount={columnCount}
+            parties={parties}
+            partyById={partyById}
+            showPartyColumn={showPartyColumn}
+            tagSuggestions={tagSuggestions}
+          />
         ) : null}
       </TableBody>
     </Table>
+  );
+}
+
+interface AddGuestRowProps {
+  parties?: PartyOption[];
+  addPartyId?: string;
+  showPartyColumn: boolean;
+  partyById: Map<string, PartyOption>;
+  tagSuggestions: string[];
+  /** Span of the collapsed "Add guest" affordance, matching GuestsGrid's columns. */
+  columnCount: number;
+}
+
+/**
+ * The spreadsheet's add row, which owns its own draft. Keeping the draft here
+ * rather than in GuestsGrid means typing a new guest re-renders only this row, not
+ * the (potentially hundreds of) existing guest rows above it, so entry stays
+ * responsive on a long list.
+ *
+ * It renders the "Add guest" affordance until opened, then a full editable row
+ * whose cells write straight into the local draft (commitOnChange) and whose Enter
+ * submits the new guest. See GuestsGrid for the flat-list vs detail-page modes.
+ */
+function AddGuestRow({
+  parties,
+  addPartyId,
+  showPartyColumn,
+  partyById,
+  tagSuggestions,
+  columnCount,
+}: AddGuestRowProps) {
+  const createGuest = useCreateGuest();
+  const createPartyWithGuest = useCreatePartyWithGuest();
+
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState<GuestDraft>(EMPTY_DRAFT);
+
+  const setDraftField = <K extends keyof GuestDraft>(
+    key: K,
+    value: GuestDraft[K],
+  ) => setDraft((prev) => ({ ...prev, [key]: value }));
+
+  const isNewParty = draft.newPartyName !== undefined;
+  const draftExistingParty =
+    draft.partyId !== undefined ? partyById.get(draft.partyId) : undefined;
+  const targetExistingPartyId = addPartyId ?? draft.partyId;
+  const canCreate =
+    draft.fullName.trim() !== "" &&
+    (addPartyId !== undefined
+      ? true
+      : isNewParty
+        ? Boolean(draft.side) && Boolean(draft.relation)
+        : draft.partyId !== undefined);
+
+  // Names the required add-row fields still missing, for the Enter feedback
+  // below (mirrors the canCreate conditions).
+  const missingForCreate = (): string[] => {
+    const missing: string[] = [];
+    if (draft.fullName.trim() === "") missing.push("name");
+    if (addPartyId === undefined) {
+      if (isNewParty) {
+        if (!draft.side) missing.push("side");
+        if (!draft.relation) missing.push("relation");
+      } else if (draft.partyId === undefined) {
+        missing.push("party");
+      }
+    }
+    return missing;
+  };
+
+  const creating = createGuest.isPending || createPartyWithGuest.isPending;
+
+  const handleCreate = async () => {
+    // The Add button disables itself while a create is in flight, but the
+    // add-row Enter path lands here directly; ignore it rather than firing a
+    // duplicate POST.
+    if (creating) return;
+    if (!canCreate) {
+      // Only Enter lands here (the Add button is disabled while !canCreate), so
+      // name what is missing instead of silently doing nothing.
+      const missing = missingForCreate();
+      toast.error(
+        `Missing required field${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`,
+      );
+      return;
+    }
+    const guestFields = {
+      full_name: draft.fullName.trim(),
+      email: draft.email.trim() || undefined,
+      phone: draft.phone.trim() || undefined,
+      tags: draft.tags,
+      is_child: draft.isChild,
+      is_drinking: draft.isDrinking,
+      // A blank cell means a regular guest; the key is dropped so the API
+      // stores NULL rather than rejecting a blank descriptor.
+      placeholder_text: draft.placeholderText.trim() || undefined,
+    };
+    try {
+      if (isNewParty && draft.newPartyName) {
+        // Create the party together with this guest, who becomes its primary.
+        // Invitation defaults to physical (changed later on the parties grid).
+        await createPartyWithGuest.mutateAsync({
+          name: draft.newPartyName.trim(),
+          side: draft.side as Side,
+          relation: draft.relation as Relation,
+          invitation_type: "physical",
+          circle: [],
+          guest: guestFields,
+        });
+        toast.success(
+          `Added ${guestFields.full_name} to new party ${draft.newPartyName.trim()}`,
+        );
+      } else if (targetExistingPartyId) {
+        const payload: CreateGuestPayload = {
+          ...guestFields,
+          is_primary: draft.isPrimary,
+        };
+        await createGuest.mutateAsync({
+          partyId: targetExistingPartyId,
+          payload,
+        });
+        toast.success(`Added ${guestFields.full_name}`);
+      }
+      // Reset every field (party included) so the next guest starts clean.
+      setDraft(EMPTY_DRAFT);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to add guest",
+      );
+    }
+  };
+
+  const cancelAdd = () => {
+    setAdding(false);
+    setDraft(EMPTY_DRAFT);
+  };
+
+  // Escape from a draft text cell exits add mode, but only while the row is still
+  // untouched, so an in-progress row is never discarded by a stray keypress.
+  const handleAddRowEscape = () => {
+    if (isDraftPristine(draft)) cancelAdd();
+  };
+
+  if (!adding) {
+    return (
+      <TableRow>
+        <TableCell className="p-0" colSpan={columnCount}>
+          <button
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+            onClick={() => setAdding(true)}
+            type="button"
+          >
+            <Plus className="size-4" />
+            Add guest
+          </button>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
+  // Each placeholder shows an example of the column's contents rather than
+  // "Optional": when the add row sits below a long guest list the header has
+  // scrolled away, so the example is what identifies which field a cell is.
+  return (
+    <TableRow className="bg-muted/30">
+      <GridTextCell
+        ariaLabel="New guest name"
+        autoFocus
+        commitOnChange
+        onCommit={(value) => setDraftField("fullName", value)}
+        onEnter={handleCreate}
+        onEscape={handleAddRowEscape}
+        placeholder="e.g. Jane Smith"
+        showStatus={false}
+        value={draft.fullName}
+      />
+      <GridTextCell
+        ariaLabel="New guest email"
+        commitOnChange
+        onCommit={(value) => setDraftField("email", value)}
+        onEnter={handleCreate}
+        onEscape={handleAddRowEscape}
+        placeholder="e.g. jane@example.com"
+        showStatus={false}
+        type="email"
+        value={draft.email}
+      />
+      <GridTextCell
+        ariaLabel="New guest phone"
+        commitOnChange
+        onCommit={(value) => setDraftField("phone", value)}
+        onEnter={handleCreate}
+        onEscape={handleAddRowEscape}
+        placeholder="e.g. (415) 555-2671"
+        showStatus={false}
+        value={draft.phone}
+      />
+      <GridChipsCell
+        ariaLabel="New guest tags"
+        creatable
+        onCommit={(value) => setDraftField("tags", value)}
+        options={tagSuggestions}
+        placeholder="e.g. Cousin, Bridal Party"
+        showStatus={false}
+        value={draft.tags}
+      />
+      <GridFlagsCell
+        ariaLabel="New guest flags"
+        onCommit={(value) => {
+          setDraftField("isChild", value.is_child);
+          setDraftField("isDrinking", value.is_drinking);
+        }}
+        options={GUEST_FLAG_OPTIONS}
+        placeholder="e.g. Child, Drinking"
+        showStatus={false}
+        value={{
+          is_child: draft.isChild,
+          is_drinking: draft.isDrinking,
+        }}
+      />
+      <GridTextCell
+        ariaLabel="New guest placeholder text"
+        commitOnChange
+        onCommit={(value) => setDraftField("placeholderText", value)}
+        onEnter={handleCreate}
+        onEscape={handleAddRowEscape}
+        placeholder="e.g. Guest of Jane Smith"
+        showStatus={false}
+        value={draft.placeholderText}
+      />
+      <GridBoolCell
+        ariaLabel="New guest primary"
+        // A brand-new party's first guest is always its primary, so the box
+        // is forced on and explained via a tooltip.
+        disabled={isNewParty}
+        onCommit={(value) => setDraftField("isPrimary", value)}
+        showStatus={false}
+        tooltip={isNewParty ? NEW_PARTY_PRIMARY_HINT : undefined}
+        value={isNewParty ? true : draft.isPrimary}
+      />
+      {showPartyColumn ? (
+        <>
+          <GridCreatablePartyCell
+            newPartyName={draft.newPartyName}
+            onCreateNew={(name) =>
+              setDraft((prev) => ({
+                ...prev,
+                partyId: undefined,
+                newPartyName: name,
+              }))
+            }
+            onSelectExisting={(id) =>
+              setDraft((prev) => ({
+                ...prev,
+                partyId: id,
+                newPartyName: undefined,
+                side: undefined,
+                relation: undefined,
+              }))
+            }
+            parties={parties ?? []}
+            partyId={draft.partyId}
+          />
+          {isNewParty ? (
+            <>
+              <GridComboboxCell
+                ariaLabel="New party side"
+                onCommit={(value) => setDraftField("side", value as Side)}
+                options={SIDE_OPTIONS}
+                placeholder="Side..."
+                showStatus={false}
+                value={draft.side}
+              />
+              <GridComboboxCell
+                ariaLabel="New party relation"
+                onCommit={(value) =>
+                  setDraftField("relation", value as Relation)
+                }
+                options={RELATION_OPTIONS}
+                placeholder="Relation..."
+                showStatus={false}
+                value={draft.relation}
+              />
+            </>
+          ) : (
+            <>
+              <ReadOnlyAttr
+                value={
+                  draftExistingParty
+                    ? labelFor(SIDE_OPTIONS, draftExistingParty.side)
+                    : ""
+                }
+              />
+              <ReadOnlyAttr
+                value={
+                  draftExistingParty
+                    ? labelFor(RELATION_OPTIONS, draftExistingParty.relation)
+                    : ""
+                }
+              />
+            </>
+          )}
+        </>
+      ) : null}
+      <GridReadOnlyCell className="p-0">
+        <div className="flex h-8 items-center justify-end gap-1 px-3">
+          <TooltipIconButton label="Cancel" onClick={cancelAdd}>
+            <X />
+          </TooltipIconButton>
+          <Button
+            disabled={!canCreate || creating}
+            onClick={handleCreate}
+            size="sm"
+          >
+            <Plus />
+            Add
+          </Button>
+        </div>
+      </GridReadOnlyCell>
+    </TableRow>
   );
 }
 
