@@ -159,9 +159,9 @@ const (
 	// (ADR 0006). The e2e harness raises the rate so specs never trip it.
 	defaultLoginRatePerMinute = 5.0
 	defaultLoginRateBurst     = 5
-	// The production site origin; emails built locally still link to the real
-	// site, which is what a test send should show.
-	defaultPublicBaseURL = "https://robinandmadeline.com"
+	// The production site origin (the www canonical host, matching
+	// CANONICAL_HOST), so guest-facing email links never hit the apex redirect.
+	defaultPublicBaseURL = "https://www.robinandmadeline.com"
 	// Mailgun's US-region API origin (the EU one is api.eu.mailgun.net).
 	defaultMailgunBaseURL = "https://api.mailgun.net"
 	defaultEmailFrom      = "Robin & Madeline <hello@robinandmadeline.com>"

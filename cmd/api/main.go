@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/golib/logger"
 	"github.com/robinjoseph08/golib/signals"
@@ -28,6 +29,14 @@ const shutdownTimeout = 5 * time.Second
 func main() {
 	ctx := context.Background()
 	log := logger.New()
+
+	// Load a local .env if present so Mailgun keys and EMAIL_TEST_RECIPIENTS can
+	// be set for local testing without exporting them by hand. Load never
+	// overrides an already-set variable, so production (Fly secrets) and the
+	// pinned env in CI/e2e win; a missing file is a no-op (.env is gitignored).
+	if err := godotenv.Load(); err == nil {
+		log.Info("loaded .env")
+	}
 
 	cfg, err := config.New()
 	if err != nil {

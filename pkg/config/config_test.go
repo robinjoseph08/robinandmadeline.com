@@ -27,7 +27,7 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, 365*24*time.Hour, cfg.GuestSessionDuration)
 		assert.InDelta(t, 5.0, cfg.LoginRatePerMinute, 0)
 		assert.Equal(t, 5, cfg.LoginRateBurst)
-		assert.Equal(t, "https://robinandmadeline.com", cfg.PublicBaseURL)
+		assert.Equal(t, "https://www.robinandmadeline.com", cfg.PublicBaseURL)
 		// Mailgun credentials default to empty so the worker stays off and
 		// webhooks are rejected until they are explicitly configured.
 		assert.Empty(t, cfg.MailgunAPIKey)

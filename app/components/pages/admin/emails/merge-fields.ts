@@ -12,4 +12,4 @@ export const MERGE_FIELDS = [
   "{{event_date}}",
 ] as const;
 
-export const MERGE_FIELDS_HINT = `Merge fields: ${MERGE_FIELDS.join(", ")}. Resolved per recipient at send time; event fields use the event selected in the recipient filter.`;
+export const MERGE_FIELDS_HINT = `Merge fields: ${MERGE_FIELDS.join(", ")}. Resolved per recipient at send time; event fields use the event selected in the recipient filter. The body supports Markdown, and a single line break is kept as a line break.`;

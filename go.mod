@@ -10,6 +10,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/schema v1.4.1
 	github.com/iancoleman/strcase v0.3.0
+	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/nyaruka/phonenumbers v1.8.0
 	github.com/pkg/errors v0.9.1

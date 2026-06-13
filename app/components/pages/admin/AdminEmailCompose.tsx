@@ -455,7 +455,7 @@ export default function AdminEmailCompose() {
                     blocks scripts and navigation; srcDoc renders the document
                     string the backend built. */}
                 <iframe
-                  className="h-96 w-full rounded-md border border-ink/10 bg-white"
+                  className="h-[44rem] w-full rounded-md border border-ink/10 bg-white"
                   sandbox=""
                   srcDoc={preview.sample_html}
                   title={`Email preview for ${preview.sample_guest_name}`}

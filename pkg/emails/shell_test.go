@@ -34,6 +34,16 @@ func TestRenderEmail_WrapsResolvedMarkdownInShell(t *testing.T) {
 	assert.Contains(t, html, "<title>Hi Alice Smith</title>")
 }
 
+func TestRenderEmail_SingleNewlineBecomesLineBreak(t *testing.T) {
+	mctx := mergeFixture()
+	// Hard wraps: two lines typed next to each other (one newline between them)
+	// render as a line break, not collapsed onto one line, so a "Thanks,\nRobin"
+	// sign-off keeps its two lines without needing a blank line between them.
+	html := RenderEmail("s", "Thanks,\nRobin", mctx)
+	assert.Contains(t, html, "Thanks,<br>")
+	assert.Contains(t, html, "Robin")
+}
+
 func TestRenderEmail_DropsRawHTMLInTheBody(t *testing.T) {
 	mctx := mergeFixture()
 	// goldmark's safe defaults do not pass raw HTML through; a stray tag in the

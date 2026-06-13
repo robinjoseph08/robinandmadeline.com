@@ -6,6 +6,7 @@ import (
 	"html/template"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/renderer/html"
 )
 
 // The HTML email shell: one in-repo, email-client-safe layout (a centered
@@ -24,8 +25,15 @@ var shellHTML string
 // (a programming error in an in-repo asset, never a runtime condition).
 var shellTemplate = template.Must(template.New("emailShell").Parse(shellHTML))
 
-// markdown is the goldmark renderer, kept at its default (safe) options.
-var markdown = goldmark.New()
+// markdown renders the body to HTML. Hard wraps are on: a single newline in the
+// compose box becomes a <br>, so two lines typed next to each other (for example
+// a "Thanks,\nRobin" sign-off) stay on separate lines without the blank line a
+// Markdown paragraph break would need; a blank line still starts a new, spaced
+// paragraph. Otherwise goldmark keeps its safe defaults (raw HTML is dropped,
+// not injected).
+var markdown = goldmark.New(
+	goldmark.WithRendererOptions(html.WithHardWraps()),
+)
 
 // shellData is the shell template's data: the plain-text subject (for the
 // <title>) and the body already rendered to HTML (injected verbatim).
