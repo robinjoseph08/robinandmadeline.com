@@ -14,7 +14,12 @@
 # runbook.
 
 app = "robinandmadeline"
-primary_region = "dfw"
+# Co-located with the Neon database in AWS us-east-1 (N. Virginia): iad is
+# Fly's Ashburn region, the same metro, so app-to-DB round trips stay ~1-2ms.
+# Per-request DB latency (multiplied across queries) dominates the single
+# app-to-user hop for a low-traffic, JWT-authenticated, mostly-cached site,
+# so co-locating app and DB beats placing the app nearer central-US visitors.
+primary_region = "iad"
 # Headroom over the server's 5s graceful drain (cmd/api shutdownTimeout):
 # Fly's default kill_timeout is also 5s, which would SIGKILL a busy machine
 # mid-drain before the DB close and final logs.

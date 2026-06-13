@@ -54,7 +54,11 @@ If the name is taken, pick another and update `app` in `fly.toml`.
 
 ### 2. Provision Neon
 
-1. Create a Neon project (any name) with a Postgres database.
+1. Create a Neon project (any name) with a Postgres database in **AWS US East
+   (N. Virginia), us-east-1**. This is the same metro as Fly's `iad`
+   (`primary_region` in `fly.toml`), so app-to-database round trips stay near
+   1-2ms. Per-query DB latency matters more here than app-to-user distance, so
+   keep the two co-located: if you ever move one, move the other.
 2. Copy the pooled connection string and make sure it ends with
    `?sslmode=require`. It looks like:
    `postgres://USER:PASSWORD@ep-xxx-pooler.REGION.aws.neon.tech/DBNAME?sslmode=require`
