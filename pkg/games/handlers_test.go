@@ -505,11 +505,94 @@ func TestGetLeaderboard_RejectsEmptyDifficulty(t *testing.T) {
 	assert.Equal(t, string(errcodes.CodeValidationError), errCodeOf(t, rec))
 }
 
+func TestGetLeaderboard_RejectsMalformedSessionID(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+
+	// session_id is validated like difficulty: a value that is not a well-formed
+	// UUID is a 422 from the binder's query path, never silently ignored.
+	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1&session_id=not-a-uuid"})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Equal(t, string(errcodes.CodeValidationError), errCodeOf(t, rec))
+}
+
+func TestGetLeaderboard_UnknownSessionIDReturnsNullViewer(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+	easy := completeSessionT(t, svc, models.GameDifficultyEasy, 30000)
+	_, err := svc.PostToLeaderboard(ctx(), easy.ID, games.PostLeaderboardPayload{DisplayName: "Edna"}, "")
+	require.NoError(t, err)
+
+	// A well-formed but unknown session_id is a 200 with a null viewer (not a 404
+	// or 500): the board still renders, just without a viewer to highlight.
+	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1&session_id=00000000-0000-0000-0000-000000000000"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var board games.ListLeaderboardEntriesResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &board))
+	assert.Equal(t, 1, board.Total)
+	assert.Nil(t, board.Viewer, "an unknown session_id yields a null viewer")
+}
+
+func TestGetLeaderboard_ReturnsViewerForSolversOwnSession(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+
+	// Three published solves; the viewer asks for its own (middle) row. The
+	// session id is a real UUIDv7, which proves the version-agnostic `uuid`
+	// validator accepts it: a `uuid4` rule would 422 every real id here.
+	_, err := svc.PostToLeaderboard(ctx(), completeSessionT(t, svc, models.GameDifficultyEasy, 30000).ID, games.PostLeaderboardPayload{DisplayName: "Alice"}, "")
+	require.NoError(t, err)
+	bob := completeSessionT(t, svc, models.GameDifficultyEasy, 60000)
+	_, err = svc.PostToLeaderboard(ctx(), bob.ID, games.PostLeaderboardPayload{DisplayName: "Bob"}, "")
+	require.NoError(t, err)
+	_, err = svc.PostToLeaderboard(ctx(), completeSessionT(t, svc, models.GameDifficultyEasy, 90000).ID, games.PostLeaderboardPayload{DisplayName: "Carol"}, "")
+	require.NoError(t, err)
+
+	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1&session_id=" + bob.ID})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var board games.ListLeaderboardEntriesResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &board))
+	assert.Equal(t, 3, board.Total)
+	require.Len(t, board.Items, 3)
+	require.NotNil(t, board.Viewer, "the solver's own session is returned as the viewer")
+	assert.Equal(t, 2, board.Viewer.Rank)
+	assert.Equal(t, "Bob", board.Viewer.Entry.DisplayName)
+	assert.EqualValues(t, 60000, board.Viewer.Entry.ElapsedMS)
+	// The viewer is returned even though it is already in items at index rank-1.
+	assert.Equal(t, "Bob", board.Items[board.Viewer.Rank-1].DisplayName)
+}
+
+func TestGetLeaderboard_ViewerScopedToDifficultyTabOverHTTP(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+
+	// A hard solve is the viewer on the hard tab but not on the easy tab: the
+	// difficulty scoping flows through c.Bind's query path end to end.
+	hard := completeSessionT(t, svc, models.GameDifficultyHard, 30000)
+	_, err := svc.PostToLeaderboard(ctx(), hard.ID, games.PostLeaderboardPayload{DisplayName: "Harriet"}, "")
+	require.NoError(t, err)
+
+	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=easy&session_id=" + hard.ID})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var board games.ListLeaderboardEntriesResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &board))
+	assert.Nil(t, board.Viewer, "the viewer does not appear on a difficulty tab that is not its own")
+
+	rec = doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=hard&session_id=" + hard.ID})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &board))
+	require.NotNil(t, board.Viewer)
+	assert.Equal(t, 1, board.Viewer.Rank)
+	assert.Equal(t, "Harriet", board.Viewer.Entry.DisplayName)
+}
+
 func TestGetLeaderboard_EmptyBoardSerializesItemsAsEmptyArray(t *testing.T) {
 	svc, _, _ := newServices(t)
 	e, _ := newGamesEcho(t, svc)
 
 	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1"})
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.JSONEq(t, `{"items":[],"total":0}`, rec.Body.String())
+	// viewer is an always-present, nullable field: with no session_id it is null,
+	// and items still serializes as [] (never null) on an empty board.
+	assert.JSONEq(t, `{"items":[],"total":0,"viewer":null}`, rec.Body.String())
 }

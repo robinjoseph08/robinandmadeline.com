@@ -212,7 +212,14 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 // it serializes as []. The partial leaderboard index covers (puzzle_id,
 // elapsed_ms) without difficulty; the filter rides it as a row recheck, which
 // is plenty at wedding scale (a board holds at most a few hundred rows).
-func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]LeaderboardEntry, int, error) {
+//
+// When in.SessionID is set it also computes the viewer: the requesting solver's
+// own ranked entry (see leaderboardViewer), so the client can always show that
+// solver their own row with its true rank even when the solver falls off the
+// capped list. The viewer is nil when no session_id was given, when the id
+// names no row, or when the named session is not an eligible published solve on
+// the board being read; none of those is an error.
+func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]LeaderboardEntry, int, *LeaderboardViewer, error) {
 	var sessions []*models.GameSession
 	q := s.db.NewSelect().Model(&sessions).
 		Where("gs.puzzle_id = ?", in.PuzzleID).
@@ -226,7 +233,7 @@ func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]Leade
 		Limit(leaderboardLimit).
 		ScanAndCount(ctx)
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "list leaderboard entries")
+		return nil, 0, nil, errors.Wrap(err, "list leaderboard entries")
 	}
 
 	entries := make([]LeaderboardEntry, 0, len(sessions))
@@ -238,7 +245,83 @@ func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]Leade
 			CompletedAt: *session.CompletedAt,
 		})
 	}
-	return entries, total, nil
+
+	viewer, err := s.leaderboardViewer(ctx, in)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	return entries, total, viewer, nil
+}
+
+// leaderboardViewer resolves the requesting solver's own ranked entry for a
+// Leaderboard read, or nil when there is none to show. It returns nil (never an
+// error) for every non-eligible case so a viewer that simply does not belong on
+// the board reads as "no viewer," not a failure: no session_id given, an id
+// that names no row, or a session that is not a published, completed solve on
+// this exact board (the same puzzle, and the same difficulty when the read is
+// filtered, so a solver only appears on their own difficulty tab). The lookup
+// is a plain read with no row lock: this is read-only and outside any
+// transaction. When the session is eligible, the rank is one more than the
+// count of published entries that sort strictly before it in the list's
+// (elapsed_ms ASC, completed_at ASC, id ASC) ordering, counted within the same
+// scope as the list, so the rank stays correct even past the returned cap. That
+// count rides the same partial (puzzle_id, elapsed_ms) index the list uses; no
+// new index is needed at wedding scale.
+func (s *Service) leaderboardViewer(ctx context.Context, in LeaderboardQuery) (*LeaderboardViewer, error) {
+	if in.SessionID == nil {
+		return nil, nil
+	}
+
+	session := new(models.GameSession)
+	err := s.db.NewSelect().Model(session).Where("gs.id = ?", *in.SessionID).Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, errors.Wrap(err, "load viewer session")
+	}
+
+	eligible := session.PuzzleID == in.PuzzleID &&
+		session.DisplayName != nil &&
+		session.CompletedAt != nil &&
+		(in.Difficulty == nil || session.Difficulty == *in.Difficulty)
+	if !eligible {
+		return nil, nil
+	}
+
+	// "Strictly before the viewer" in the list's (elapsed_ms ASC, completed_at
+	// ASC, id ASC) ordering, with the same base predicates as the list. The ?N
+	// placeholders are 0-indexed into this clause's own args, so the viewer's
+	// (elapsed_ms, completed_at, id) tuple binds once each and is reused across
+	// the three OR branches. The id comparison is the uuid column against the
+	// session's id string, exactly like the existing gs.id = ? reads.
+	q := s.db.NewSelect().Model((*models.GameSession)(nil)).
+		Where("gs.puzzle_id = ?", in.PuzzleID).
+		Where("gs.display_name IS NOT NULL").
+		Where("gs.completed_at IS NOT NULL").
+		Where(
+			"(gs.elapsed_ms < ?0"+
+				" OR (gs.elapsed_ms = ?0 AND gs.completed_at < ?1)"+
+				" OR (gs.elapsed_ms = ?0 AND gs.completed_at = ?1 AND gs.id < ?2))",
+			session.ElapsedMS, *session.CompletedAt, session.ID,
+		)
+	if in.Difficulty != nil {
+		q = q.Where("gs.difficulty = ?", *in.Difficulty)
+	}
+	ahead, err := q.Count(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "count entries ahead of viewer")
+	}
+
+	return &LeaderboardViewer{
+		Rank: ahead + 1,
+		Entry: LeaderboardEntry{
+			DisplayName: *session.DisplayName,
+			Difficulty:  session.Difficulty,
+			ElapsedMS:   session.ElapsedMS,
+			CompletedAt: *session.CompletedAt,
+		},
+	}, nil
 }
 
 // loadSessionForUpdate fetches a session by id with a row lock (FOR UPDATE)

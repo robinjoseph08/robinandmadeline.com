@@ -86,6 +86,17 @@ func completeSessionT(t *testing.T, svc *games.Service, difficulty string, elaps
 	return completed
 }
 
+// postSessionT drives a fresh session to completion and publishes it under the
+// given name, returning the published session (whose id doubles as the viewer
+// session_id in the leaderboard tests).
+func postSessionT(t *testing.T, svc *games.Service, name, difficulty string, elapsed int) *models.GameSession {
+	t.Helper()
+	session := completeSessionT(t, svc, difficulty, elapsed)
+	posted, err := svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: name}, "")
+	require.NoError(t, err)
+	return posted
+}
+
 // sessionRow reads one game_sessions row straight from the DB.
 func sessionRow(t *testing.T, db *bun.DB, id string) *models.GameSession {
 	t.Helper()
@@ -351,7 +362,7 @@ func TestLeaderboard_ReturnsOnlyPostedEntriesFastestFirst(t *testing.T) {
 	_, err = svc.PostToLeaderboard(ctx(), other.ID, games.PostLeaderboardPayload{DisplayName: "Dan"}, "")
 	require.NoError(t, err)
 
-	entries, total, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
+	entries, total, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
 	require.NoError(t, err)
 	assert.Equal(t, 3, total)
 	require.Len(t, entries, 3)
@@ -361,6 +372,7 @@ func TestLeaderboard_ReturnsOnlyPostedEntriesFastestFirst(t *testing.T) {
 	assert.Equal(t, models.GameDifficultyHard, entries[0].Difficulty)
 	assert.EqualValues(t, 30000, entries[0].ElapsedMS)
 	assert.False(t, entries[0].CompletedAt.IsZero())
+	assert.Nil(t, viewer, "a read with no session_id carries no viewer")
 }
 
 func TestLeaderboard_FiltersByDifficulty(t *testing.T) {
@@ -396,7 +408,7 @@ func TestLeaderboard_FiltersByDifficulty(t *testing.T) {
 	_, err = svc.PostToLeaderboard(ctx(), other.ID, games.PostLeaderboardPayload{DisplayName: "Dan"}, "")
 	require.NoError(t, err)
 
-	entries, total, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+	entries, total, _, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
 		PuzzleID:   "wedding-mini-v1",
 		Difficulty: pointerutil.String(models.GameDifficultyEasy),
 	})
@@ -409,7 +421,7 @@ func TestLeaderboard_FiltersByDifficulty(t *testing.T) {
 		assert.Equal(t, models.GameDifficultyEasy, entry.Difficulty)
 	}
 
-	entries, total, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+	entries, total, _, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
 		PuzzleID:   "wedding-mini-v1",
 		Difficulty: pointerutil.String(models.GameDifficultyMedium),
 	})
@@ -418,7 +430,7 @@ func TestLeaderboard_FiltersByDifficulty(t *testing.T) {
 	require.Len(t, entries, 1)
 	assert.Equal(t, "MediumOnly", entries[0].DisplayName)
 
-	entries, total, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+	entries, total, _, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
 		PuzzleID:   "wedding-mini-v1",
 		Difficulty: pointerutil.String(models.GameDifficultyHard),
 	})
@@ -429,7 +441,7 @@ func TestLeaderboard_FiltersByDifficulty(t *testing.T) {
 	assert.Equal(t, "HardSlow", entries[1].DisplayName)
 
 	// An absent filter keeps the original behavior: every difficulty, one board.
-	entries, total, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
+	entries, total, _, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
 	require.NoError(t, err)
 	assert.Equal(t, 5, total)
 	require.Len(t, entries, 5)
@@ -450,7 +462,7 @@ func TestLeaderboard_BreaksElapsedTiesByEarlierCompletion(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	entries, _, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
+	entries, _, _, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	assert.Equal(t, "First", entries[0].DisplayName)
@@ -484,7 +496,7 @@ func TestLeaderboard_CapsItemsButCountsEveryEntry(t *testing.T) {
 	_, err := db.NewInsert().Model(&rows).Exec(ctx())
 	require.NoError(t, err)
 
-	entries, total, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
+	entries, total, _, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
 	require.NoError(t, err)
 	assert.Equal(t, 108, total, "total counts past the cap")
 	require.Len(t, entries, 100, "items are capped at the top 100")
@@ -493,7 +505,7 @@ func TestLeaderboard_CapsItemsButCountsEveryEntry(t *testing.T) {
 	// The cap and the total both apply within a filtered difficulty: easy still
 	// fills 100 items even though three faster medium entries exist, and the
 	// medium board ignores the 105 easy rows entirely.
-	entries, total, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+	entries, total, _, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
 		PuzzleID:   "wedding-mini-v1",
 		Difficulty: pointerutil.String(models.GameDifficultyEasy),
 	})
@@ -503,7 +515,7 @@ func TestLeaderboard_CapsItemsButCountsEveryEntry(t *testing.T) {
 	assert.EqualValues(t, 1000, entries[0].ElapsedMS, "the cap keeps the fastest easy entries")
 	assert.EqualValues(t, 1099, entries[99].ElapsedMS)
 
-	entries, total, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+	entries, total, _, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
 		PuzzleID:   "wedding-mini-v1",
 		Difficulty: pointerutil.String(models.GameDifficultyMedium),
 	})
@@ -516,11 +528,284 @@ func TestLeaderboard_CapsItemsButCountsEveryEntry(t *testing.T) {
 func TestLeaderboard_EmptyBoardSerializesAsEmptyList(t *testing.T) {
 	svc, _, _ := newServices(t)
 
-	entries, total, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
+	entries, total, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
 	require.NoError(t, err)
 	assert.Equal(t, 0, total)
 	assert.NotNil(t, entries, "items must serialize as [], never null")
 	assert.Empty(t, entries)
+	assert.Nil(t, viewer, "an empty board with no session_id carries no viewer")
+}
+
+func TestLeaderboard_ViewerUnknownSessionIsNil(t *testing.T) {
+	svc, _, _ := newServices(t)
+	postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+
+	// A well-formed id that names no row is simply "no viewer", never an error:
+	// the list still comes back, just without a viewer to highlight.
+	entries, total, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String("00000000-0000-0000-0000-000000000000"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, entries, 1)
+	assert.Nil(t, viewer, "an unknown session_id is no viewer, not an error")
+}
+
+func TestLeaderboard_ViewerNotOptedInIsNil(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	// Completed but never published (display_name nil): the solver has not opted
+	// in, so even their own session_id shows no leaderboard row.
+	unposted := completeSessionT(t, svc, models.GameDifficultyEasy, 30000)
+
+	_, _, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String(unposted.ID),
+	})
+	require.NoError(t, err)
+	assert.Nil(t, viewer, "a session that never opted in has no viewer row")
+}
+
+func TestLeaderboard_ViewerNotCompletedIsNil(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	// An in-progress session (no completed_at, and therefore not publishable) is
+	// not an eligible viewer either.
+	started := startSessionT(t, svc, models.GameDifficultyEasy)
+
+	_, _, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String(started.ID),
+	})
+	require.NoError(t, err)
+	assert.Nil(t, viewer, "an uncompleted session has no viewer row")
+}
+
+func TestLeaderboard_ViewerWrongPuzzleIsNil(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	// A published solve on a different puzzle must never surface as the viewer of
+	// this puzzle's board (the defensive puzzle gate).
+	other, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
+		PuzzleID:   "wedding-full-v1",
+		Difficulty: models.GameDifficultyEasy,
+	}, "", "203.0.113.7")
+	require.NoError(t, err)
+	_, err = update(svc, other.ID, 500, nil, true)
+	require.NoError(t, err)
+	_, err = svc.PostToLeaderboard(ctx(), other.ID, games.PostLeaderboardPayload{DisplayName: "Dan"}, "")
+	require.NoError(t, err)
+
+	_, _, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String(other.ID),
+	})
+	require.NoError(t, err)
+	assert.Nil(t, viewer, "a solve on another puzzle is not this board's viewer")
+}
+
+func TestLeaderboard_ViewerOffItsDifficultyTabIsNil(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	// A solver whose recorded difficulty is hard appears on the hard board but
+	// not on the easy tab: the viewer only returns on its own difficulty board.
+	hard := postSessionT(t, svc, "Harriet", models.GameDifficultyHard, 30000)
+
+	_, _, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:   "wedding-mini-v1",
+		Difficulty: pointerutil.String(models.GameDifficultyEasy),
+		SessionID:  pointerutil.String(hard.ID),
+	})
+	require.NoError(t, err)
+	assert.Nil(t, viewer, "the viewer does not appear on a difficulty tab that is not its own")
+
+	// On its own tab the same session is the viewer, ranked first.
+	_, _, viewer, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:   "wedding-mini-v1",
+		Difficulty: pointerutil.String(models.GameDifficultyHard),
+		SessionID:  pointerutil.String(hard.ID),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, viewer)
+	assert.Equal(t, 1, viewer.Rank)
+	assert.Equal(t, "Harriet", viewer.Entry.DisplayName)
+}
+
+func TestLeaderboard_ViewerInsideTopIsRankedAndPresentInItems(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	// Three published solves; the viewer is the middle one (rank 2).
+	postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	bob := postSessionT(t, svc, "Bob", models.GameDifficultyEasy, 60000)
+	postSessionT(t, svc, "Carol", models.GameDifficultyEasy, 90000)
+
+	entries, total, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String(bob.ID),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, total)
+	require.NotNil(t, viewer)
+	assert.Equal(t, 2, viewer.Rank, "Bob is the second-fastest solve")
+	assert.Equal(t, "Bob", viewer.Entry.DisplayName)
+	assert.Equal(t, models.GameDifficultyEasy, viewer.Entry.Difficulty)
+	assert.EqualValues(t, 60000, viewer.Entry.ElapsedMS)
+	assert.False(t, viewer.Entry.CompletedAt.IsZero())
+
+	// The viewer is returned even though it is already in items: the same entry
+	// sits at index rank-1, so the client can highlight the in-list row.
+	require.Len(t, entries, 3)
+	assert.Equal(t, viewer.Entry.DisplayName, entries[viewer.Rank-1].DisplayName)
+	assert.Equal(t, viewer.Entry.ElapsedMS, entries[viewer.Rank-1].ElapsedMS)
+}
+
+func TestLeaderboard_ViewerOutsideTopCarriesTrueRank(t *testing.T) {
+	svc, _, db := newServices(t)
+
+	// 120 faster published easy solves fill (and overflow) the capped list, so
+	// the viewer's own slower solve falls off the visible top 100 but must still
+	// report its true rank. Bulk-insert the fast field directly; driving each
+	// through the API would dominate the test's runtime.
+	now := time.Now()
+	rows := make([]*models.GameSession, 0, 120)
+	for i := 0; i < 120; i++ {
+		rows = append(rows, &models.GameSession{
+			ID:          "00000000-0000-4000-8000-" + fmtSerial(i),
+			PuzzleID:    "wedding-mini-v1",
+			IPAddress:   "203.0.113.7",
+			Difficulty:  models.GameDifficultyEasy,
+			ElapsedMS:   int64(1000 + i), // all faster than the viewer below
+			CompletedAt: pointerutil.Time(now),
+			DisplayName: pointerutil.String("Solver"),
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		})
+	}
+	_, err := db.NewInsert().Model(&rows).Exec(ctx())
+	require.NoError(t, err)
+
+	// The viewer's solve is slower than all 120, so its rank is 121.
+	viewerSession := postSessionT(t, svc, "Zoe", models.GameDifficultyEasy, 999000)
+
+	entries, total, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String(viewerSession.ID),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 121, total, "total counts every published entry")
+	require.Len(t, entries, 100, "items stay capped at the top 100")
+	require.NotNil(t, viewer)
+	assert.Equal(t, 121, viewer.Rank, "the viewer's true rank exceeds the cap")
+	assert.Equal(t, "Zoe", viewer.Entry.DisplayName)
+	assert.EqualValues(t, 999000, viewer.Entry.ElapsedMS)
+
+	// The viewer is genuinely off the visible list: none of the capped items is
+	// the viewer's own slow entry.
+	for _, e := range entries {
+		assert.NotEqual(t, viewer.Entry.ElapsedMS, e.ElapsedMS, "the viewer's row is not in the capped items")
+	}
+}
+
+func TestLeaderboard_ViewerRankBreaksTiesLikeTheOrdering(t *testing.T) {
+	svc, _, db := newServices(t)
+
+	// Two solves at the same elapsed time; the one that completed earlier ranks
+	// ahead. Force a deterministic gap so the tie-break is unambiguous.
+	early := postSessionT(t, svc, "Early", models.GameDifficultyEasy, 30000)
+	late := postSessionT(t, svc, "Late", models.GameDifficultyEasy, 30000)
+	_, err := db.NewUpdate().Model((*models.GameSession)(nil)).
+		Set("completed_at = completed_at - INTERVAL '1 minute'").
+		Where("id = ?", early.ID).Exec(ctx())
+	require.NoError(t, err)
+
+	_, _, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String(early.ID),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, viewer)
+	assert.Equal(t, 1, viewer.Rank, "the earlier completion ranks first at equal elapsed time")
+
+	_, _, viewer, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String(late.ID),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, viewer)
+	assert.Equal(t, 2, viewer.Rank, "the later completion ranks after at equal elapsed time")
+}
+
+func TestLeaderboard_ViewerRankBreaksFullTiesByID(t *testing.T) {
+	svc, _, db := newServices(t)
+
+	// Two published solves identical on elapsed_ms AND completed_at: the only
+	// remaining tie-break is the id, so the larger id ranks after. Synthetic ids
+	// make the ordering unambiguous (…0001 < …0002), and a shared completed_at
+	// stamp collapses the second-level tie-break onto the id.
+	stamp := time.Now()
+	rows := []*models.GameSession{
+		{
+			ID: "00000000-0000-4000-8000-000000000001", PuzzleID: "wedding-mini-v1",
+			IPAddress: "203.0.113.7", Difficulty: models.GameDifficultyEasy, ElapsedMS: 30000,
+			CompletedAt: pointerutil.Time(stamp), DisplayName: pointerutil.String("Lower"),
+			CreatedAt: stamp, UpdatedAt: stamp,
+		},
+		{
+			ID: "00000000-0000-4000-8000-000000000002", PuzzleID: "wedding-mini-v1",
+			IPAddress: "203.0.113.7", Difficulty: models.GameDifficultyEasy, ElapsedMS: 30000,
+			CompletedAt: pointerutil.Time(stamp), DisplayName: pointerutil.String("Higher"),
+			CreatedAt: stamp, UpdatedAt: stamp,
+		},
+	}
+	_, err := db.NewInsert().Model(&rows).Exec(ctx())
+	require.NoError(t, err)
+
+	_, _, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String("00000000-0000-4000-8000-000000000001"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, viewer)
+	assert.Equal(t, 1, viewer.Rank, "the lower id ranks first on a full tie")
+
+	_, _, viewer, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String("00000000-0000-4000-8000-000000000002"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, viewer)
+	assert.Equal(t, 2, viewer.Rank, "the higher id ranks after on a full tie")
+}
+
+func TestLeaderboard_ViewerRankRespectsDifficultyScope(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	// Faster entries recorded at a DIFFERENT difficulty must not inflate the
+	// viewer's rank on its own difficulty board: two fast easy solves exist, but
+	// on the hard tab the lone hard viewer is rank 1, not rank 3.
+	postSessionT(t, svc, "EasyFast1", models.GameDifficultyEasy, 1000)
+	postSessionT(t, svc, "EasyFast2", models.GameDifficultyEasy, 2000)
+	hard := postSessionT(t, svc, "Harriet", models.GameDifficultyHard, 50000)
+
+	_, _, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:   "wedding-mini-v1",
+		Difficulty: pointerutil.String(models.GameDifficultyHard),
+		SessionID:  pointerutil.String(hard.ID),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, viewer)
+	assert.Equal(t, 1, viewer.Rank, "faster solves at another difficulty do not inflate the rank on this tab")
+
+	// Without a difficulty filter the same two fast easy solves DO rank ahead, so
+	// the hard solve is rank 3 on the combined board: the scope tracks the filter.
+	_, _, viewer, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String(hard.ID),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, viewer)
+	assert.Equal(t, 3, viewer.Rank, "on the combined board the two faster easy solves rank ahead")
 }
 
 func TestSessions_AbandonedSolvesAreObservable(t *testing.T) {

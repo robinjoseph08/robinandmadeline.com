@@ -56,9 +56,17 @@ type PostLeaderboardPayload struct {
 // pointer so "absent" (every difficulty, the original single board) is
 // distinguishable, and an unknown value is a 422 from the binder, never
 // silently ignored.
+//
+// SessionID optionally identifies the requesting solver's own session so the
+// response can carry that solver's rank (see LeaderboardViewer); absent means
+// no viewer. It is the version-agnostic uuid validator, not uuid4, because
+// session ids are UUIDv7 and uuid4 would 422 every real id. A malformed value
+// is a 422 from the binder (consistent with how Difficulty is handled), while
+// a well-formed but unknown id is simply no viewer, not an error.
 type LeaderboardQuery struct {
 	PuzzleID   string  `query:"puzzle_id" json:"puzzle_id" mod:"trim" validate:"required,max=100"`
 	Difficulty *string `query:"difficulty" json:"difficulty" validate:"omitempty,oneof=easy medium hard" tstype:"models.GameDifficulty"`
+	SessionID  *string `query:"session_id" json:"session_id" validate:"omitempty,uuid"`
 }
 
 // GameSessionResponse is the body every session endpoint returns: the solver's
@@ -79,12 +87,32 @@ type LeaderboardEntry struct {
 	CompletedAt time.Time `json:"completed_at"`
 }
 
+// LeaderboardViewer is the requesting solver's own ranked entry, returned
+// when the leaderboard read carries that solver's session_id and the
+// session is a published, completed solve on the board being read (the same
+// puzzle and, when filtered, the same difficulty). Rank is its 1-based
+// position in the full ordering, which may exceed the returned items when
+// the solver is slower than the displayed top 100. It lets the client
+// always show the solver their own row with the correct number, even off
+// the visible list. It is omitted (null) when no eligible session_id was
+// given.
+type LeaderboardViewer struct {
+	Rank  int              `json:"rank"`
+	Entry LeaderboardEntry `json:"entry"`
+}
+
 // ListLeaderboardEntriesResponse is the uniform list envelope for a puzzle's
 // leaderboard: the fastest entries first, capped at leaderboardLimit items.
 // Total counts every published entry the query matched (the whole puzzle, or
 // just one difficulty when filtered), beyond the cap, so a client can say
-// "top 100 of 250" without a second request.
+// "top 100 of 250" without a second request. Viewer is an additive, nullable
+// field: when the read carries an eligible session_id it carries that solver's
+// own ranked entry (see LeaderboardViewer), so the client can always show the
+// solver their own row with the correct rank, highlighting it when it is
+// already in items and appending it when it falls off the visible list. Items
+// and Total keep their original meaning regardless of Viewer.
 type ListLeaderboardEntriesResponse struct {
-	Items []LeaderboardEntry `json:"items"`
-	Total int                `json:"total"`
+	Items  []LeaderboardEntry `json:"items"`
+	Total  int                `json:"total"`
+	Viewer *LeaderboardViewer `json:"viewer"`
 }

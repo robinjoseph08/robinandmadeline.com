@@ -20,7 +20,8 @@ import (
 //	PATCH /games/sessions/:id              report progress (elapsed, difficulty switch, completion)
 //	POST  /games/sessions/:id/leaderboard  opt in to publish a completed solve
 //	GET   /games/leaderboard?puzzle_id=    one puzzle's entries, fastest first, capped
-//	                                       (&difficulty= narrows to one difficulty's board)
+//	                                       (&difficulty= narrows to one difficulty's board;
+//	                                       &session_id= adds that solver's own ranked row)
 func RegisterRoutes(api *echo.Group, mw *auth.Middleware, service *Service) {
 	h := &handler{service: service}
 
