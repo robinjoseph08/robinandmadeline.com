@@ -1,9 +1,24 @@
 # Deployment runbook
 
 Production runs as a single Fly.io app: one Go binary serves the API and the
-built React SPA, backed by Neon Postgres (ADR 0001), with Cloudflare
-providing DNS only. This document covers what is already wired up in the repo
-and the one-time account setup a human has to perform.
+built React SPA, backed by Neon Postgres (ADR 0001), with Cloudflare providing
+DNS only. Initial setup is complete (see the dated note below); this document
+is the live topology, the day-to-day operations reference, and the record of
+how production was built should it ever need rebuilding.
+
+## Current production topology
+
+- **App**: Fly.io app `robinandmadeline`, a single `shared-cpu-1` / 256MB
+  machine in `iad` (Ashburn), scaling to zero when idle.
+- **Database**: Neon Postgres in AWS `us-east-1` (N. Virginia), co-located with
+  `iad` so app-to-database round trips stay near 1-2ms.
+- **Domains**: the site serves from **www.robinandmadeline.com**. The bare apex
+  and the alternate domains (madelineandrobin.com, robeline.co, robeline.com,
+  and every www variant) permanently redirect there. Cloudflare is DNS only
+  (grey cloud); the Go server does the redirecting.
+- **Deploys**: zero-downtime bluegreen, run automatically by CI on every merge
+  to `master`, with migrations applied first via the Fly `release_command`.
+  Steady state is one machine.
 
 ## Already done in this repo
 
@@ -42,7 +57,11 @@ and the one-time account setup a human has to perform.
   secret absent the job is green and does nothing, so it stays dormant until
   the human setup below is complete, then deploys automatically from then on.
 
-## Human setup, in order
+## Human setup (completed 2026-06-13)
+
+These one-time steps are done. They are kept as the record of how production
+was provisioned, so it can be rebuilt from scratch (a fresh Fly app, a restored
+Neon database, a domain change) by walking through them again.
 
 ### 1. Create the Fly app
 
@@ -116,20 +135,23 @@ fly certs add www.robeline.com
 
 ### 6. Cloudflare DNS
 
-For each of the four domains (robinandmadeline.com, madelineandrobin.com,
-robeline.co, robeline.com), in its Cloudflare zone:
+In each of the four domains' Cloudflare zones, add an **A and an AAAA record,
+DNS only (grey cloud)**, for both the apex and the `www` host, pointing at the
+Fly app. These are the addresses `fly certs add` prints (and `fly ips list`
+confirms): the IPv4 is Fly's shared address, the IPv6 is the app's dedicated
+one. Re-check them with `fly ips list` if the app is ever recreated.
 
-1. Add the records `fly certs add` asked for. Typically: a `CNAME` for `www`
-   to `robinandmadeline.fly.dev` (this is the canonical
-   www.robinandmadeline.com record; the other www hostnames get the same
-   kind of CNAME and just redirect), an apex record pointing at the app
-   (either `A`/`AAAA` from `fly ips list`, where the shared IPv4 works for
-   custom domains, or a `CNAME` to `robinandmadeline.fly.dev`, which
-   Cloudflare flattens at the apex automatically), and the `_acme-challenge`
-   `CNAME` for cert validation.
-2. Set the records to DNS only (grey cloud), not proxied. Fly terminates TLS
-   and needs to see the hostname directly; proxying through Cloudflare on top
-   of Fly's certs causes cert validation and redirect-loop headaches.
+```
+A     66.241.124.114
+AAAA  2a09:8280:1::129:ec8:0
+```
+
+That is one A and one AAAA for each of the eight hostnames, sixteen records in
+all. No `_acme-challenge` record is needed: once a hostname resolves to Fly,
+Fly completes certificate validation itself. Keep every record DNS only (grey
+cloud), never proxied. Fly terminates TLS and needs to see the hostname
+directly; proxying through Cloudflare on top of Fly's certs causes cert
+validation and redirect-loop headaches.
 
 No Cloudflare redirect or page rules are needed: every hostname points at the
 same Fly app and the Go server permanently redirects everything that is not
