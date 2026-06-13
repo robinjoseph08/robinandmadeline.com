@@ -135,6 +135,51 @@ describe("AdminCrossword list", () => {
     expect(screen.getByText("3 solve times")).toBeInTheDocument();
   });
 
+  it("shows the completion time for a finished solve and the start time for one still in progress", async () => {
+    // The Date cell prefers completed_at and falls back to created_at, so a
+    // finished solve reads as when it was finished and an in-progress one as
+    // when it started. Distinct months keep the assertion timezone-robust.
+    adminRequest.mockResolvedValue({
+      items: [
+        makeSession({
+          id: "s-finished",
+          completed_at: "2026-08-20T12:00:00Z",
+          created_at: "2026-07-01T12:00:00Z",
+        }),
+        makeSession({
+          id: "s-running",
+          completed_at: undefined,
+          created_at: "2026-09-05T12:00:00Z",
+        }),
+      ],
+      total: 2,
+    });
+
+    renderCrossword();
+
+    // The finished row reflects its completion month (Aug), not its creation
+    // month (Jul); the in-progress row falls back to its creation month (Sep).
+    expect(await screen.findByText(/Aug.*2026/)).toBeInTheDocument();
+    expect(screen.getByText(/Sep.*2026/)).toBeInTheDocument();
+    expect(screen.queryByText(/Jul.*2026/)).not.toBeInTheDocument();
+  });
+
+  it("shows a dash for a solve with no captured IP", async () => {
+    // clientIP returns "" when no header parses as an IP (a direct, non-proxied
+    // hit), so the cell must read as a plain dash rather than rendering blank.
+    adminRequest.mockResolvedValue({
+      items: [makeSession({ id: "s-noip", ip_address: "" })],
+      total: 1,
+    });
+
+    renderCrossword();
+
+    await screen.findByText("The Wedding Mini");
+    expect(document.body.textContent).not.toContain("—");
+    // Two dashes: the empty party cell and the empty IP cell.
+    expect(screen.getAllByText("-")).toHaveLength(2);
+  });
+
   it("falls back to the raw puzzle id for an id not in the registry", async () => {
     adminRequest.mockResolvedValue({
       items: [makeSession({ id: "s-unknown", puzzle_id: "retired-puzzle-v0" })],
@@ -180,18 +225,28 @@ describe("AdminCrossword states", () => {
 });
 
 describe("AdminCrossword delete", () => {
-  it("DELETEs the session after confirmation", async () => {
+  it("DELETEs the session after confirmation and refetches so the row disappears", async () => {
+    // The list returns the row until the DELETE lands, then comes back empty.
+    // The row only leaves the table if the delete invalidates and refetches the
+    // list on success, so asserting it disappears pins that invalidation, not
+    // just the DELETE call.
+    let deleted = false;
     adminRequest.mockImplementation((path: string, options?: object) => {
       if (
         path === "/admin/games/sessions/s1" &&
         (options as { method?: string } | undefined)?.method === "DELETE"
       ) {
+        deleted = true;
         return Promise.resolve(undefined);
       }
-      return Promise.resolve({
-        items: [makeSession({ id: "s1", display_name: "Ada" })],
-        total: 1,
-      });
+      return Promise.resolve(
+        deleted
+          ? { items: [], total: 0 }
+          : {
+              items: [makeSession({ id: "s1", display_name: "Ada" })],
+              total: 1,
+            },
+      );
     });
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
@@ -206,6 +261,11 @@ describe("AdminCrossword delete", () => {
         method: "DELETE",
       });
     });
+    // The success invalidation refetches the now-empty list, so the row goes.
+    await waitFor(() => {
+      expect(screen.queryByText("Ada")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText(/No solve times yet/)).toBeInTheDocument();
   });
 
   it("does nothing when the delete is not confirmed", async () => {

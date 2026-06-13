@@ -59,6 +59,10 @@ describe("formatDateTime", () => {
     const formatted = formatDateTime("2026-10-17T12:00:00Z");
     expect(formatted).toContain("Oct");
     expect(formatted).toContain("2026");
+    // It carries a time component (the readout is date AND time); the exact
+    // hour shifts by zone, so match the clock shape, not a literal time. This
+    // catches dropping hour/minute from the format options.
+    expect(formatted).toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
     // It is a friendly readout, not the raw ISO string.
     expect(formatted).not.toBe("2026-10-17T12:00:00Z");
   });

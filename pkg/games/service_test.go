@@ -416,6 +416,52 @@ func TestLeaderboard_CollectsCompletedTimesButOnlyShowsOptedIn(t *testing.T) {
 	assert.Equal(t, 2, completedCount, "both completed solves are stored, opted in or not")
 }
 
+func TestLeaderboard_VisibilityKeysOffTheFlagNotTheName(t *testing.T) {
+	svc, _, db := newServices(t)
+
+	// The opt-in is now the explicit on_leaderboard flag, NOT the old implicit
+	// "display_name is set" rule. The service never sets one without the other,
+	// so a divergent row can only be made by inserting it directly; do that to
+	// prove the list and the viewer-rank both filter on the flag. A revert of
+	// either query back to `display_name IS NOT NULL` would resurrect the ghost
+	// row below (a completed solve that carries a name but opted out, e.g. a
+	// future "remove from board but keep the time" action) and fail this test.
+	now := time.Now().Truncate(time.Microsecond)
+	ghost := &models.GameSession{
+		ID:            "00000000-0000-4000-8000-000000000abc",
+		PuzzleID:      "wedding-mini-v1",
+		IPAddress:     "203.0.113.7",
+		Difficulty:    models.GameDifficultyEasy,
+		ElapsedMS:     5000, // faster than the real entry, so an implicit-rule read would rank it first
+		CompletedAt:   pointerutil.Time(now),
+		OnLeaderboard: false,
+		DisplayName:   pointerutil.String("Ghost"),
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	_, err := db.NewInsert().Model(ghost).Exec(ctx())
+	require.NoError(t, err)
+
+	// A genuinely opted-in solve sits beside the ghost.
+	postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+
+	// The list shows only the opted-in entry; the faster ghost is absent.
+	entries, total, _, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "only the opted-in solve is counted, not the named-but-opted-out ghost")
+	require.Len(t, entries, 1)
+	assert.Equal(t, "Alice", entries[0].DisplayName)
+
+	// The ghost's own session_id yields no viewer: eligibility keys off the flag,
+	// so a named-but-opted-out solve is not on the board even to itself.
+	_, _, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String(ghost.ID),
+	})
+	require.NoError(t, err)
+	assert.Nil(t, viewer, "an opted-out solve shows no viewer even with its own session_id")
+}
+
 func TestLeaderboard_FiltersByDifficulty(t *testing.T) {
 	svc, _, _ := newServices(t)
 
