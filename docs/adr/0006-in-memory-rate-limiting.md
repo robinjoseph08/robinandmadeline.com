@@ -7,5 +7,5 @@ Short-window rate-limit state is ephemeral by nature, so the scale-to-zero tensi
 ## Consequences
 
 - The rate limiter is the compensating control for the low-entropy, memorable RSVP codes from ADR 0003: keep the codes memorable and defend at the login instead of lengthening them.
-- This assumes a single running machine. If the app is ever scaled to multiple machines, per-process counters stop sharing state and the effective limit multiplies by machine count; revisit with a shared store (Postgres or Redis) at that point.
+- This assumes a single running machine. If the app is ever scaled to multiple machines, per-process counters stop sharing state and the effective limit multiplies by machine count; revisit with a shared store (Postgres or Redis) at that point. The one routine exception is a deploy: the bluegreen strategy (see `fly.toml` and the deployment runbook) runs the old and new machines together for the few seconds between the new machine passing its health check and the old one being destroyed, so the limit is briefly doubled. A deploy is infrequent and the window is short, so this is accepted rather than worked around.
 - The client IP must be extracted from Fly's forwarded header via Echo's `IPExtractor`, or every caller collapses into a single bucket and legitimate guests get throttled together.

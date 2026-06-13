@@ -76,7 +76,8 @@ Production is a single Fly.io app (Go binary serving the API and the built
 SPA) backed by Neon Postgres, scaling to zero when idle. The site serves from
 www.robinandmadeline.com; every other host (the bare apex,
 madelineandrobin.com, robeline.co, robeline.com, and www variants)
-permanently redirects there. `mise build:docker` produces the production
-image; `fly deploy` ships it and runs migrations via the release command. See
-[docs/deployment.md](docs/deployment.md) for the full runbook, including the
-one-time Fly/Neon/Cloudflare setup.
+permanently redirects there. Merging to `master` deploys automatically once
+CI passes (bluegreen, so the single machine is replaced with no downtime, and
+migrations run via the release command first). `mise build:docker` produces
+the production image locally. See [docs/deployment.md](docs/deployment.md) for
+the full runbook, including the one-time Fly/Neon/Cloudflare setup.

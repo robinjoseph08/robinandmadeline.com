@@ -2,8 +2,12 @@
 #
 # The app scales to zero (ADR 0001): Fly's proxy stops the machine when idle
 # and starts it on the next request, which the sub-second Go cold start makes
-# invisible. Keep the app at a single machine (deploy with --ha=false): the
-# in-memory login rate limiter assumes one process (ADR 0006).
+# invisible. Steady state is a single machine because the in-memory login rate
+# limiter assumes one process (ADR 0006): the first deploy uses --ha=false so
+# Fly adds no standby, and every deploy after that uses the bluegreen strategy
+# below, which boots one replacement, waits for its health check, switches
+# traffic over, then destroys the old machine. Deploys are zero-downtime and
+# still settle back onto a single machine.
 #
 # Secrets (DATABASE_URL, ADMIN_USERNAME, ADMIN_PASSWORD, JWT_SECRET) are set
 # via `fly secrets set`, never here. See docs/deployment.md for the full
@@ -20,9 +24,19 @@ kill_timeout = "10s"
   dockerfile = "Dockerfile"
 
 [deploy]
+  # Boot the new machine alongside the old one, wait for it to pass the
+  # /api/health check below, switch traffic to it, then destroy the old one:
+  # zero-downtime deploys that still settle back onto one machine. The brief
+  # overlap is the one window where two processes serve at once, so the
+  # in-memory login rate limiter is momentarily split (ADR 0006); that is an
+  # acceptable trade for an infrequent deploy.
+  strategy = "bluegreen"
   # Migrations run once per deploy in a temporary machine before any new
   # machine takes traffic; a failure aborts the deploy and leaves the previous
-  # release serving (ADR 0007). The server never migrates at startup.
+  # release serving (ADR 0007). The server never migrates at startup. Because
+  # the old machine keeps serving until cutover, each migration must stay
+  # backward-compatible with the currently-running release (expand first,
+  # contract in a later deploy).
   release_command = "/app/migrations migrate"
 
 [env]

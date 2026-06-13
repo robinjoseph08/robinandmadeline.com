@@ -31,6 +31,16 @@ and the one-time account setup a human has to perform.
   `X-Forwarded-For`) instead of the proxy's address. Leave it unset anywhere
   the server is reached directly; the headers are spoofable without a trusted
   proxy in front.
+- Zero-downtime deploys: `fly.toml` sets `[deploy] strategy = "bluegreen"`, so
+  each deploy boots a replacement machine, waits for it to pass the
+  `/api/health` check, switches traffic to it, and only then destroys the old
+  machine. Steady state stays at one machine (the rate-limiter invariant,
+  ADR 0006); the two run together only during the cutover.
+- Deploy on merge: the `deploy` job in `.github/workflows/ci.yml` runs
+  `flyctl deploy` on every push to `master`, after all the lint/test/build/e2e
+  jobs pass. It is gated on the `FLY_API_TOKEN` repository secret: with the
+  secret absent the job is green and does nothing, so it stays dormant until
+  the human setup below is complete, then deploys automatically from then on.
 
 ## Human setup, in order
 
@@ -73,10 +83,13 @@ that work lands.
 fly deploy --ha=false
 ```
 
-`--ha=false` keeps the app at one machine. This matters: the in-memory login
-rate limiter assumes a single process (ADR 0006), and two machines would each
-enforce their own limit. If a second machine ever appears, remove it with
-`fly scale count 1`.
+`--ha=false` keeps the first deploy at one machine. This matters: the
+in-memory login rate limiter assumes a single process (ADR 0006), and two
+always-on machines would each enforce their own limit. If a second machine
+ever appears, remove it with `fly scale count 1`. Every deploy after this one
+uses the bluegreen strategy from `fly.toml`, which keeps the steady-state
+count at one (it boots a replacement, cuts over, then destroys the old
+machine), so `--ha=false` is only needed on this first deploy.
 
 ### 5. Custom domains and certs on Fly
 
@@ -132,10 +145,30 @@ www.robinandmadeline.com itself, including the bare apex.
 - Scale-to-zero: `fly machine list` shows the machine `stopped` a few minutes
   after the last request, and the next request starts it again.
 
+### 8. Enable deploy on merge
+
+Create a deploy-scoped Fly token and add it to the repository so the `deploy`
+job in CI can ship every merge to `master`:
+
+```sh
+fly tokens create deploy --expiry 8760h   # app-scoped deploy token
+gh secret set FLY_API_TOKEN                # paste the token (the FlyV1 ... string)
+```
+
+Until this secret exists the `deploy` job runs green and skips, so nothing
+deploys before the app, database, and secrets above are in place. Once it is
+set, each merge to `master` runs the full CI suite and then `flyctl deploy`
+(bluegreen, migrations first). Rotate or revoke the token with
+`fly tokens list` / `fly tokens revoke`. To pause auto-deploy, remove the
+secret with `gh secret delete FLY_API_TOKEN`.
+
 ## Day-to-day operations
 
-- **Deploy**: `fly deploy`. The release_command migrates first; watch with
-  `fly logs`. A migration failure aborts the deploy.
+- **Deploy**: normally automatic. Merging to `master` runs CI and then
+  `flyctl deploy` (bluegreen; the release_command migrates first). Watch a
+  deploy in the GitHub Actions run or with `fly logs`. A migration failure
+  aborts the deploy and the previous release keeps serving. To deploy by hand
+  (for a rollback or when CI is unavailable), run `fly deploy` locally.
 - **Scale-to-zero behavior**: Fly's proxy stops the machine when idle and
   boots it on the next request. The Go cold start is sub-second (static
   binary, no startup migrations, background-only DB ping), so visitors just

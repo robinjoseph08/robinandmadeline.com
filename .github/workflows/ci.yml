@@ -245,3 +245,41 @@ jobs:
             test-results
           retention-days: 7
           if-no-files-found: ignore
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    # Production deploys only from master, and only once every check job above
+    # has passed. The pre-merge PR run (even one targeting master) is a
+    # pull_request event, so it never reaches this job.
+    needs: [go-lint, go-test, js-lint, js-test, build, docker, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    # Serialize deploys: if two master pushes land close together, the second
+    # deploy waits for the first to finish rather than racing it or cancelling
+    # it mid-flight (a half-applied bluegreen cutover is worse than a queue).
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      # The deploy is gated on the FLY_API_TOKEN secret. Until the human
+      # creates the Fly app and adds the token (docs/deployment.md), this job
+      # is green but does nothing; the day the secret lands, merges to master
+      # start deploying automatically with no change to this workflow. A
+      # job-level `if` cannot read secrets, so the gate is a step here.
+      - id: guard
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "FLY_API_TOKEN is not set; skipping deploy." >&2
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      # Strategy (bluegreen) and the migrations release_command come from
+      # fly.toml; --remote-only builds the image on Fly's builders so this
+      # runner only needs flyctl.
+      - if: steps.guard.outputs.skip != 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only
