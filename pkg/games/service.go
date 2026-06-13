@@ -188,9 +188,10 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 			return errcodes.ValidationError("The puzzle must be completed before posting to the leaderboard.")
 		}
 		// on_leaderboard is the opt-in source of truth: a row already on the
-		// board carries a display_name too (this method sets both, and the
-		// backfill set the flag only where display_name was non-NULL), so the
-		// dereference below is safe.
+		// board carries a display_name too (this method sets both, the backfill
+		// set the flag only where display_name was non-NULL, and a DB CHECK,
+		// game_sessions_on_leaderboard_needs_name, enforces the coupling on every
+		// path), so the dereference below is safe.
 		if loaded.OnLeaderboard {
 			if *loaded.DisplayName != in.DisplayName {
 				return errcodes.Conflict("This solve is already on the leaderboard under a different name.")

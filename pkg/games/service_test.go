@@ -462,6 +462,33 @@ func TestLeaderboard_VisibilityKeysOffTheFlagNotTheName(t *testing.T) {
 	assert.Nil(t, viewer, "an opted-out solve shows no viewer even with its own session_id")
 }
 
+func TestGameSession_OnLeaderboardRequiresDisplayName(t *testing.T) {
+	_, _, db := newServices(t)
+
+	// The list and viewer-rank reads filter on on_leaderboard and then
+	// dereference display_name, so an on-board row with a NULL name would be a
+	// 500 waiting to happen. A DB CHECK enforces the coupling regardless of code
+	// path: a direct write that opts a session onto the board without a name is
+	// rejected. (The safe divergent direction, a name with the flag off, is
+	// allowed and covered above.)
+	now := time.Now().Truncate(time.Microsecond)
+	bad := &models.GameSession{
+		ID:            "00000000-0000-4000-8000-000000000bad",
+		PuzzleID:      "wedding-mini-v1",
+		IPAddress:     "203.0.113.7",
+		Difficulty:    models.GameDifficultyEasy,
+		ElapsedMS:     5000,
+		CompletedAt:   pointerutil.Time(now),
+		OnLeaderboard: true,
+		DisplayName:   nil, // on the board but nameless: must be rejected
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	_, err := db.NewInsert().Model(bad).Exec(ctx())
+	require.Error(t, err, "the DB rejects an on-board row with no display_name")
+	assert.Contains(t, err.Error(), "game_sessions_on_leaderboard_needs_name", "the cross-column check is what rejects it")
+}
+
 func TestLeaderboard_FiltersByDifficulty(t *testing.T) {
 	svc, _, _ := newServices(t)
 
