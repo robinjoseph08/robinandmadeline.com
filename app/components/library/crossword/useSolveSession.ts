@@ -70,8 +70,10 @@ export interface SolveSession {
   /** Whether the solve is finished (solved now, or in an earlier visit). */
   finished: boolean;
   /**
-   * The difficulty the solve is recorded at: the easiest level used at any
-   * point, preferring the server's value when it has responded.
+   * The difficulty the solve is recorded at: the easiest level used DURING
+   * the solve, preferring the server's value when it has responded. It is
+   * locked once the solve completes, so post-completion clue browsing (which
+   * the page allows for fun) never moves it.
    */
   recordedDifficulty: Difficulty;
   /** Whether this solve has been posted to the leaderboard. */
@@ -81,7 +83,11 @@ export interface SolveSession {
   resume: () => void;
   /** Pause/resume around UI that interrupts solving (the settings dialog). */
   setUiPaused: (paused: boolean) => void;
-  /** Record a mid-solve difficulty switch and flush it to the backend. */
+  /**
+   * Record a mid-solve difficulty switch and flush it to the backend. A no-op
+   * once the solve has completed (the recorded difficulty is locked then), so
+   * the page can call it unconditionally for cosmetic clue switches.
+   */
   reportDifficulty: (difficulty: Difficulty) => void;
   /** Stop the clock for good and report the solve as completed. */
   complete: () => void;
@@ -402,10 +408,18 @@ export function useSolveSession({
 
   const reportDifficulty = useCallback(
     (difficulty: Difficulty) => {
+      // Only a switch made DURING the solve counts toward the recorded
+      // difficulty. Once finished, the recorded difficulty is locked (the
+      // server 409s further changes anyway): post-completion clue browsing is
+      // purely cosmetic, so it must not fold into the easiest tracking, move
+      // the recorded value, persist, or fire a pointless report.
+      if (finishedRef.current) {
+        return;
+      }
       easiestRef.current = easierDifficulty(easiestRef.current, difficulty);
       setRecordedDifficulty(easiestRef.current);
       persist();
-      if (startedRef.current && !finishedRef.current) {
+      if (startedRef.current) {
         enqueue(() => sendReport());
       }
     },

@@ -96,9 +96,13 @@ export default function Crossword() {
  * One puzzle's solve view. One grid with one set of answers; switching
  * difficulty (tucked behind the "more" menu, so the easy clues aren't a
  * standing temptation) only swaps the clue text and never touches entered
- * letters. Progress persists to localStorage (keyed by puzzle id) so a guest
- * can refresh or come back later and resume; the solve clock and its
- * best-effort backend session live in useSolveSession.
+ * letters. The displayed clue set and the RECORDED difficulty are distinct: a
+ * mid-solve switch tracks the easiest level used (the recorded difficulty),
+ * but once the solve is done a switch is purely cosmetic, letting a finished
+ * guest re-read the puzzle with other clues without disturbing their recorded
+ * time. Progress persists to localStorage (keyed by puzzle id) so a guest can
+ * refresh or come back later and resume; the solve clock and its best-effort
+ * backend session live in useSolveSession.
  */
 function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   // Restore any saved progress once, at mount. After this, the grid and the
@@ -237,13 +241,21 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     }
   };
 
+  // Switching the displayed clue set. Before completion this also reports the
+  // switch so the recorded difficulty tracks the easiest level used; after
+  // completion it is purely cosmetic (a finished solver may re-read the puzzle
+  // with other clues for fun), so only the displayed clues change and the
+  // recorded difficulty stays locked. reportDifficulty is itself a no-op once
+  // finished, so the guard here is for clarity, not safety.
   const handleDifficultySwitch = (level: Difficulty) => {
     setDifficultyMenuOpen(false);
     if (level === difficulty) {
       return;
     }
     setDifficulty(level);
-    session.reportDifficulty(level);
+    if (!solved) {
+      session.reportDifficulty(level);
+    }
   };
 
   // Prefill the leaderboard name for signed-in guests from their RSVP
@@ -394,7 +406,12 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
           >
             <SettingsIcon />
           </Button>
-          {session.started && !solved && (
+          {/* The clue-difficulty switcher stays tucked behind the "more" menu
+              (the easy clues aren't a standing temptation), and stays
+              reachable after the solve too: a finished guest can re-read the
+              puzzle with other clues for fun. Mid-solve it reports the switch;
+              afterward it only changes the displayed clues. */}
+          {session.started && (
             <Popover
               onOpenChange={setDifficultyMenuOpen}
               open={difficultyMenuOpen}
@@ -431,8 +448,9 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
                   ))}
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Switch any time; your letters stay put. Your time is recorded
-                  at the easiest difficulty you use.
+                  {solved
+                    ? "Re-read the puzzle with other clues. Your recorded time stays as it is."
+                    : "Switch any time; your letters stay put. Your time is recorded at the easiest difficulty you use."}
                 </p>
               </PopoverContent>
             </Popover>

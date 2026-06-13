@@ -222,6 +222,18 @@ async function solveLastLetter() {
   await flushAsync();
 }
 
+/** Open the de-emphasized "more" menu and switch to the given difficulty. */
+async function switchDifficulty(label: string) {
+  fireEvent.click(screen.getByRole("button", { name: "More options" }));
+  fireEvent.click(await screen.findByRole("button", { name: label }));
+  await flushAsync();
+}
+
+/** The number of difficulty-bearing PATCH reports sent so far. */
+function difficultyPatchCount(): number {
+  return patchBodies().filter((body) => body.difficulty !== undefined).length;
+}
+
 describe("Crossword solve sessions", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -1372,6 +1384,233 @@ describe("Crossword solve sessions", () => {
       expect(
         screen.queryByRole("button", { name: "Post your time" }),
       ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("post-completion clue browsing", () => {
+    it("keeps reporting a mid-solve difficulty switch before completion", async () => {
+      // The baseline the post-completion behavior is carved out of: while the
+      // solve is still going, switching clues reports to the session exactly
+      // as before, carrying the easiest level used so far.
+      renderCrossword();
+      await startGame();
+
+      const before = difficultyPatchCount();
+      await switchDifficulty("Medium");
+
+      // The medium clues are live...
+      expect(
+        screen.getByRole("button", {
+          name: /1\. It often seals the deal at a ceremony/,
+        }),
+      ).toBeInTheDocument();
+      // ...and the switch reported, with the easiest level (easy, the start).
+      expect(difficultyPatchCount()).toBeGreaterThan(before);
+      expect(lastPatchBody()).toMatchObject({
+        difficulty: "easy",
+        completed: false,
+      });
+    });
+
+    it("lets a finished solver browse other clues without reporting or relocking", async () => {
+      // Solved on hard in an earlier visit; the recorded difficulty is hard.
+      seedProgress(SOLUTION, "hard");
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        difficulty: "hard",
+      });
+
+      renderCrossword();
+      await flushAsync();
+
+      // The solved summary shows the recorded (hard) difficulty, and the
+      // hard clues render to start.
+      expect(screen.getByRole("status")).toHaveTextContent(/hard clues/i);
+      expect(
+        screen.getByRole("button", { name: /1\. French connection\?/ }),
+      ).toBeInTheDocument();
+
+      // The de-emphasized switcher is reachable even now that the solve is
+      // done, so the guest can re-read the puzzle with other clues for fun.
+      const patchesBefore = difficultyPatchCount();
+      await switchDifficulty("Easy");
+
+      // The easy clues are now displayed in place of the hard ones...
+      expect(
+        screen.getByRole("button", { name: /1\. Smooch shared at the altar/ }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /1\. French connection\?/ }),
+      ).not.toBeInTheDocument();
+      // ...but nothing was reported to the server (no pointless 409 PATCH)...
+      expect(difficultyPatchCount()).toBe(patchesBefore);
+      // ...and the recorded difficulty did not move to easy: the solved
+      // summary still reads hard.
+      expect(screen.getByRole("status")).toHaveTextContent(/hard clues/i);
+      expect(screen.getByRole("status")).not.toHaveTextContent(/easy clues/i);
+    });
+
+    it("keeps the solved grid intact when switching clues after completion", async () => {
+      seedProgress(SOLUTION, "medium");
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        difficulty: "medium",
+      });
+
+      renderCrossword();
+      await flushAsync();
+
+      // The grid is fully solved going in.
+      expect(square(0, 1)).toHaveTextContent("K");
+      expect(square(4, 3)).toHaveTextContent("E");
+
+      await switchDifficulty("Easy");
+
+      // Switching clues is purely cosmetic: every entered letter stays put and
+      // the solve stays solved (no state reset).
+      expect(square(0, 1)).toHaveTextContent("K");
+      expect(square(4, 3)).toHaveTextContent("E");
+      expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
+    });
+
+    it("posts at the recorded difficulty even after browsing easier clues", async () => {
+      // Recorded on medium; the guest then browses the easy clues and only
+      // afterward decides to post. The post must record medium, not easy.
+      seedProgress(SOLUTION, "medium");
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        difficulty: "medium",
+      });
+      const base = apiRequest.getMockImplementation()!;
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string }) => {
+          if (path === "/games/sessions/sess-1/leaderboard") {
+            return Promise.resolve(makeSession({ display_name: "Robin" }));
+          }
+          return base(path, options);
+        },
+      );
+
+      renderCrossword();
+      await flushAsync();
+
+      // Browse the easy clues post-completion.
+      await switchDifficulty("Easy");
+      expect(
+        screen.getByRole("button", { name: /1\. Smooch shared at the altar/ }),
+      ).toBeInTheDocument();
+
+      // Now post: the completion dialog still describes the recorded (medium)
+      // difficulty, not the easy clues currently on screen.
+      fireEvent.click(screen.getByRole("button", { name: "Post your time" }));
+      const dialog = await screen.findByTestId("crossword-completion-dialog");
+      expect(dialog).toHaveTextContent(/with the medium clues/i);
+
+      fireEvent.change(await screen.findByLabelText("Display name"), {
+        target: { value: "Robin" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
+
+      // The post lands against the locked session (difficulty is server-side),
+      // and the handoff opens the leaderboard on the recorded (medium) tab,
+      // never the easy clues the guest was browsing.
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("crossword-leaderboard-dialog"),
+        ).toBeInTheDocument(),
+      );
+      await waitFor(() =>
+        expect(apiRequest).toHaveBeenCalledWith(
+          "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=medium&session_id=sess-1",
+        ),
+      );
+      const leaderboard = screen.getByTestId("crossword-leaderboard-dialog");
+      const picker = within(leaderboard).getByRole("group", {
+        name: "Leaderboard difficulty",
+      });
+      expect(
+        within(picker).getByRole("button", { pressed: true }),
+      ).toHaveTextContent("Medium");
+    });
+
+    it("opens the leaderboard on the recorded tab after browsing easier clues", async () => {
+      // The plain "Leaderboard" affordance (not via a post) must also anchor
+      // on the recorded difficulty, regardless of the clues being browsed.
+      seedProgress(SOLUTION, "hard");
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        difficulty: "hard",
+        postedName: "Robin",
+      });
+      apiRequest.mockImplementation((path: string) => {
+        if (path.startsWith("/games/leaderboard")) {
+          return Promise.resolve({ items: [], total: 0, viewer: null });
+        }
+        return Promise.resolve(makeSession());
+      });
+
+      renderCrossword();
+      await flushAsync();
+
+      await switchDifficulty("Easy");
+      fireEvent.click(screen.getByRole("button", { name: /leaderboard/i }));
+
+      const dialog = await screen.findByTestId("crossword-leaderboard-dialog");
+      const picker = within(dialog).getByRole("group", {
+        name: "Leaderboard difficulty",
+      });
+      expect(
+        within(picker).getByRole("button", { pressed: true }),
+      ).toHaveTextContent("Hard");
+    });
+
+    it("freezes the recorded difficulty at the live completion before browsing", async () => {
+      // Solve on hard in THIS visit (the live-completion path), then browse
+      // the easy clues from the completion dialog's own session: the recorded
+      // difficulty was frozen to hard at completion and browsing cannot move
+      // it, so no easy report is ever sent.
+      seedProgress(ALL_BUT_LAST, "hard");
+      seedSession({ id: "sess-1", elapsedMs: 90_000, difficulty: "hard" });
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string }) => {
+          if (options?.method === "PATCH") {
+            return Promise.resolve(
+              makeSession({
+                difficulty: "hard",
+                completed_at: "2026-06-12T00:00:00Z",
+              }),
+            );
+          }
+          if (path.startsWith("/games/leaderboard")) {
+            return Promise.resolve({ items: [], total: 0, viewer: null });
+          }
+          return Promise.reject(new Error(`unexpected ${path}`));
+        },
+      );
+
+      renderCrossword();
+      await solveLastLetter();
+
+      // The completion dialog opened on the recorded (hard) difficulty.
+      const dialog = await screen.findByTestId("crossword-completion-dialog");
+      expect(dialog).toHaveTextContent(/with the hard clues/i);
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "No thanks" }),
+      );
+
+      // Browsing easy clues post-completion sends no further difficulty report.
+      const patchesBefore = difficultyPatchCount();
+      await switchDifficulty("Easy");
+      expect(difficultyPatchCount()).toBe(patchesBefore);
+      expect(screen.getByRole("status")).toHaveTextContent(/hard clues/i);
     });
   });
 });
