@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { flushGameSession } from "./games-api";
+import { fetchLeaderboard, flushGameSession } from "./games-api";
 
 describe("flushGameSession", () => {
   beforeEach(() => {
@@ -60,5 +60,53 @@ describe("flushGameSession", () => {
       }),
     ).not.toThrow();
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  });
+});
+
+describe("fetchLeaderboard", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  function stubOkJson(body: unknown) {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify(body)),
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("requests the puzzle and difficulty without a session id by default", async () => {
+    const fetchMock = stubOkJson({ items: [], total: 0 });
+
+    await fetchLeaderboard("wedding-mini-v1", "easy");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=easy",
+      expect.any(Object),
+    );
+  });
+
+  it("threads the session id into the session_id query param when given", async () => {
+    const fetchMock = stubOkJson({
+      items: [],
+      total: 0,
+      viewer: null,
+    });
+
+    await fetchLeaderboard("wedding-mini-v1", "medium", "sess-7");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=medium&session_id=sess-7",
+      expect.any(Object),
+    );
   });
 });

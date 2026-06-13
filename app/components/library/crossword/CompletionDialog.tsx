@@ -1,7 +1,9 @@
 // The post-solve dialog: final time, the difficulty the solve is recorded at
-// (the easiest used, per the server), and the leaderboard opt-in. Declining
-// is a first-class path; the page keeps a "Post your time" affordance around
-// so a guest can change their mind later.
+// (the easiest used, per the server), and the leaderboard opt-in. A successful
+// post hands off to the parent, which closes this dialog and opens the
+// leaderboard on the solver's row; this dialog has no post-success state of
+// its own. Declining is a first-class path; the page keeps a "Post your time"
+// affordance around so a guest can change their mind later.
 
 import { useState } from "react";
 
@@ -30,11 +32,13 @@ interface CompletionDialogProps {
   /** Whether a guest token is present (affects the helper copy only). */
   isSignedIn: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Publish the solve. Resolves on success (the parent then closes this
+   * dialog and opens the leaderboard) and rejects with a guest-facing Error
+   * the dialog surfaces inline.
+   */
   onPost: (displayName: string) => Promise<void>;
-  onViewLeaderboard: () => void;
   open: boolean;
-  /** Whether this solve is already on the leaderboard. */
-  posted: boolean;
   /** Name to suggest for signed-in guests (from their RSVP record). */
   prefillName?: string;
   puzzleTitle: string;
@@ -46,9 +50,7 @@ export default function CompletionDialog({
   isSignedIn,
   onOpenChange,
   onPost,
-  onViewLeaderboard,
   open,
-  posted,
   prefillName,
   puzzleTitle,
 }: CompletionDialogProps) {
@@ -109,77 +111,51 @@ export default function CompletionDialog({
             {DIFFICULTY_LABELS[difficulty].toLowerCase()} clues.
           </DialogDescription>
         </DialogHeader>
-        {posted ? (
-          <>
-            <DialogBody className="py-4">
-              <p className="text-sm">
-                Your time is on the leaderboard. See you on the dance floor!
+        <DialogBody className="space-y-3 py-4">
+          <p className="text-sm">Want to post your time to the leaderboard?</p>
+          <div className="space-y-1.5">
+            <Label htmlFor="leaderboard-name">Display name</Label>
+            <Input
+              id="leaderboard-name"
+              onChange={(e) => {
+                setTypedName(e.target.value);
+                setTouched(true);
+              }}
+              value={name}
+            />
+            <p className="text-xs text-muted-foreground">
+              {isSignedIn
+                ? "This is how your time will appear on the leaderboard."
+                : "This is how your time will appear on the leaderboard, and it helps us know whose solve to cheer for."}
+            </p>
+            {tooLong && (
+              <p className="text-xs text-destructive" role="alert">
+                Please keep your name under {MAX_NAME_LENGTH} characters.
               </p>
-            </DialogBody>
-            <DialogFooter>
-              <Button
-                onClick={() => onOpenChange(false)}
-                type="button"
-                variant="outline"
-              >
-                Close
-              </Button>
-              <Button onClick={onViewLeaderboard} type="button">
-                View leaderboard
-              </Button>
-            </DialogFooter>
-          </>
-        ) : (
-          <>
-            <DialogBody className="space-y-3 py-4">
-              <p className="text-sm">
-                Want to post your time to the leaderboard?
-              </p>
-              <div className="space-y-1.5">
-                <Label htmlFor="leaderboard-name">Display name</Label>
-                <Input
-                  id="leaderboard-name"
-                  onChange={(e) => {
-                    setTypedName(e.target.value);
-                    setTouched(true);
-                  }}
-                  value={name}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {isSignedIn
-                    ? "This is how your time will appear on the leaderboard."
-                    : "This is how your time will appear on the leaderboard, and it helps us know whose solve to cheer for."}
-                </p>
-                {tooLong && (
-                  <p className="text-xs text-destructive" role="alert">
-                    Please keep your name under {MAX_NAME_LENGTH} characters.
-                  </p>
-                )}
-              </div>
-              {error && (
-                <p className="text-sm text-destructive" role="alert">
-                  {error}
-                </p>
-              )}
-            </DialogBody>
-            <DialogFooter>
-              <Button
-                onClick={() => onOpenChange(false)}
-                type="button"
-                variant="outline"
-              >
-                No thanks
-              </Button>
-              <Button
-                disabled={!valid || submitting}
-                onClick={handlePost}
-                type="button"
-              >
-                Post my time
-              </Button>
-            </DialogFooter>
-          </>
-        )}
+            )}
+          </div>
+          {error && (
+            <p className="text-sm text-destructive" role="alert">
+              {error}
+            </p>
+          )}
+        </DialogBody>
+        <DialogFooter>
+          <Button
+            onClick={() => onOpenChange(false)}
+            type="button"
+            variant="outline"
+          >
+            No thanks
+          </Button>
+          <Button
+            disabled={!valid || submitting}
+            onClick={handlePost}
+            type="button"
+          >
+            Post my time
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
