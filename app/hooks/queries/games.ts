@@ -44,9 +44,10 @@ export const useLeaderboard = (
   return useQuery<ListLeaderboardEntriesResponse, ApiError>({
     ...options,
     // The difficulty is part of the key so each leaderboard tab caches its
-    // own list; the session id follows it so a viewer-aware read (after a
-    // post) doesn't collide with the anonymous warm-up. Invalidating the
-    // [QueryKey, puzzleId] prefix still sweeps every tab and both variants.
+    // own list; the session id follows it so a viewer-aware read (one carrying
+    // the solver's session id) caches apart from an anonymous read of the same
+    // tab. Invalidating the [QueryKey, puzzleId] prefix still sweeps every tab
+    // and both variants.
     queryKey: [QueryKey.GameLeaderboard, puzzleId, difficulty, sessionId],
     queryFn: () => fetchLeaderboard(puzzleId, difficulty, sessionId),
   });

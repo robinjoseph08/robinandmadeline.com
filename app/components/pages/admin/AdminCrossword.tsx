@@ -125,7 +125,9 @@ export default function AdminCrossword() {
                     {formatDateTime(session.completed_at ?? session.created_at)}
                   </TableCell>
                   <TableCell className="tabular-nums text-muted-foreground">
-                    {session.ip_address}
+                    {session.ip_address || (
+                      <span className="text-muted-foreground">-</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end">
