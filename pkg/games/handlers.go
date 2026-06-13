@@ -106,7 +106,8 @@ func (h *handler) updateSession(c echo.Context) error {
 }
 
 // postToLeaderboard handles POST /api/games/sessions/:id/leaderboard: the
-// opt-in that publishes a completed solve under a display name.
+// opt-in that sets on_leaderboard on a completed solve and stores its display
+// name.
 func (h *handler) postToLeaderboard(c echo.Context) error {
 	id, err := pathID(c)
 	if err != nil {
@@ -125,7 +126,7 @@ func (h *handler) postToLeaderboard(c echo.Context) error {
 }
 
 // getLeaderboard handles GET /api/games/leaderboard?puzzle_id=...: one
-// puzzle's published entries, fastest first, capped (no pagination in v1).
+// puzzle's opted-in entries, fastest first, capped (no pagination in v1).
 // An optional difficulty parameter narrows the board to one difficulty, with
 // the cap and total scoped to it; the binder validates the value, so an
 // unknown difficulty is a 422 before the service runs. An optional session_id
