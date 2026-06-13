@@ -23,13 +23,18 @@ export const useLeaderboard = (
     UseQueryOptions<ListLeaderboardEntriesResponse, ApiError>,
     "queryKey" | "queryFn"
   > = {},
+  // The solver's own session id (when known): passing it asks the backend to
+  // include the solver's own ranked row, so the dialog can always show them
+  // their place even past the displayed top N.
+  sessionId?: string,
 ) => {
   return useQuery<ListLeaderboardEntriesResponse, ApiError>({
     ...options,
     // The difficulty is part of the key so each leaderboard tab caches its
-    // own list; invalidating the [QueryKey, puzzleId] prefix still sweeps
-    // all three.
-    queryKey: [QueryKey.GameLeaderboard, puzzleId, difficulty],
-    queryFn: () => fetchLeaderboard(puzzleId, difficulty),
+    // own list; the session id follows it so a viewer-aware read (after a
+    // post) doesn't collide with the anonymous warm-up. Invalidating the
+    // [QueryKey, puzzleId] prefix still sweeps every tab and both variants.
+    queryKey: [QueryKey.GameLeaderboard, puzzleId, difficulty, sessionId],
+    queryFn: () => fetchLeaderboard(puzzleId, difficulty, sessionId),
   });
 };

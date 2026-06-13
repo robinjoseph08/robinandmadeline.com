@@ -4,7 +4,13 @@
 // Crossword.session.test.tsx.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import LeaderboardDialog from "./LeaderboardDialog";
@@ -22,7 +28,12 @@ vi.mock("@/libraries/api", async () => {
 function renderDialog({
   defaultDifficulty,
   open = true,
-}: { defaultDifficulty?: Difficulty; open?: boolean } = {}) {
+  sessionId,
+}: {
+  defaultDifficulty?: Difficulty;
+  open?: boolean;
+  sessionId?: string;
+} = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -34,6 +45,7 @@ function renderDialog({
         open={open}
         puzzleId="wedding-mini-v1"
         puzzleTitle="The Wedding Mini"
+        sessionId={sessionId}
       />
     </QueryClientProvider>,
   );
@@ -48,6 +60,7 @@ function renderDialog({
             open={value}
             puzzleId="wedding-mini-v1"
             puzzleTitle="The Wedding Mini"
+            sessionId={sessionId}
           />
         </QueryClientProvider>,
       );
@@ -167,5 +180,118 @@ describe("LeaderboardDialog", () => {
 
     expect(await screen.findByText("Alice")).toBeInTheDocument();
     expect(screen.queryByText(/showing the fastest/i)).not.toBeInTheDocument();
+  });
+
+  it("passes the session id through to the read", async () => {
+    apiRequest.mockResolvedValue({ items: [], total: 0, viewer: null });
+
+    renderDialog({ sessionId: "sess-7" });
+
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=easy&session_id=sess-7",
+      ),
+    );
+  });
+
+  it("highlights the viewer's row in place when it is within the list", async () => {
+    apiRequest.mockResolvedValue({
+      items: [
+        {
+          display_name: "Alice",
+          difficulty: "easy",
+          elapsed_ms: 61_000,
+          completed_at: "2026-06-10T00:00:00Z",
+        },
+        {
+          display_name: "Robin",
+          difficulty: "easy",
+          elapsed_ms: 90_000,
+          completed_at: "2026-06-11T00:00:00Z",
+        },
+      ],
+      total: 2,
+      viewer: {
+        rank: 2,
+        entry: {
+          display_name: "Robin",
+          difficulty: "easy",
+          elapsed_ms: 90_000,
+          completed_at: "2026-06-11T00:00:00Z",
+        },
+      },
+    });
+
+    renderDialog({ sessionId: "sess-7" });
+
+    const rows = await screen.findAllByRole("listitem");
+    // No appended duplicate: the in-list row carries the marker instead.
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toHaveTextContent("Robin");
+    expect(within(rows[1]).getByText("You")).toBeInTheDocument();
+    expect(screen.getAllByText("You")).toHaveLength(1);
+  });
+
+  it("appends the viewer's row with its true rank when it falls past the list", async () => {
+    apiRequest.mockResolvedValue({
+      items: [
+        {
+          display_name: "Alice",
+          difficulty: "easy",
+          elapsed_ms: 61_000,
+          completed_at: "2026-06-10T00:00:00Z",
+        },
+        {
+          display_name: "Bob",
+          difficulty: "easy",
+          elapsed_ms: 70_000,
+          completed_at: "2026-06-11T00:00:00Z",
+        },
+      ],
+      total: 137,
+      viewer: {
+        rank: 42,
+        entry: {
+          display_name: "Robin",
+          difficulty: "easy",
+          elapsed_ms: 600_000,
+          completed_at: "2026-06-12T00:00:00Z",
+        },
+      },
+    });
+
+    renderDialog({ sessionId: "sess-7" });
+
+    const rows = await screen.findAllByRole("listitem");
+    // The two displayed plus the appended off-list viewer row.
+    expect(rows).toHaveLength(3);
+    expect(rows[2]).toHaveTextContent("42.");
+    expect(rows[2]).toHaveTextContent("Robin");
+    expect(within(rows[2]).getByText("You")).toBeInTheDocument();
+    expect(screen.getAllByText("You")).toHaveLength(1);
+    // The truncation footer still reflects items vs total.
+    expect(
+      screen.getByText(/showing the fastest 2 of 137/i),
+    ).toBeInTheDocument();
+  });
+
+  it("renders no viewer marker when the read returns no viewer", async () => {
+    apiRequest.mockResolvedValue({
+      items: [
+        {
+          display_name: "Alice",
+          difficulty: "easy",
+          elapsed_ms: 61_000,
+          completed_at: "2026-06-10T00:00:00Z",
+        },
+      ],
+      total: 1,
+      viewer: null,
+    });
+
+    renderDialog({ sessionId: "sess-7" });
+
+    expect(await screen.findByText("Alice")).toBeInTheDocument();
+    expect(screen.queryByText("You")).not.toBeInTheDocument();
   });
 });

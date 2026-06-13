@@ -3,6 +3,13 @@
 // (the easiest used). Fetched lazily per tab when the dialog opens; the read
 // is fully public. The dialog is only reachable after solving, so it opens
 // on the tab of the guest's own recorded difficulty.
+//
+// When given the solver's own session id, the read also returns that solver's
+// ranked row (the backend's viewer), so the dialog always shows them their
+// place: highlighted in the list when they are within the displayed top N,
+// and appended as a separated row with its true rank when they fall past it.
+// The viewer comes back only on the solver's own recorded-difficulty tab, so
+// no per-tab special-casing is needed here.
 
 import { useState } from "react";
 
@@ -19,6 +26,7 @@ import {
 import { useLeaderboard } from "@/hooks/queries/games";
 import { formatDuration } from "@/libraries/format";
 import { cn } from "@/libraries/utils";
+import type { LeaderboardEntry } from "@/types/generated/games";
 
 import { DIFFICULTIES, Difficulty, DIFFICULTY_LABELS } from "./puzzle";
 
@@ -33,6 +41,14 @@ interface LeaderboardDialogProps {
   open: boolean;
   puzzleId: string;
   puzzleTitle: string;
+  /**
+   * The solver's own session id, when known. Passed to the read so the
+   * backend returns the solver's own ranked row; the dialog then highlights
+   * it in the list or appends it (with its true rank) when it falls past the
+   * displayed top N. The viewer is returned only on the solver's own
+   * recorded-difficulty tab, so other tabs render plainly.
+   */
+  sessionId?: string;
 }
 
 export default function LeaderboardDialog({
@@ -41,6 +57,7 @@ export default function LeaderboardDialog({
   open,
   puzzleId,
   puzzleTitle,
+  sessionId,
 }: LeaderboardDialogProps) {
   const [difficulty, setDifficulty] = useState<Difficulty>(defaultDifficulty);
 
@@ -55,9 +72,17 @@ export default function LeaderboardDialog({
     }
   }
 
-  const { data, isError, isPending } = useLeaderboard(puzzleId, difficulty, {
-    enabled: open,
-  });
+  const { data, isError, isPending } = useLeaderboard(
+    puzzleId,
+    difficulty,
+    { enabled: open },
+    sessionId,
+  );
+
+  // The backend sends viewer as null when there is no eligible solver (a
+  // tab that is not the solver's, an anonymous read), so a falsy check is
+  // all that is needed before reading its rank.
+  const viewer = data?.viewer;
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -112,32 +137,41 @@ export default function LeaderboardDialog({
             ) : (
               <>
                 <ol className="space-y-1.5">
-                  {data.items.map((entry, index) => (
-                    // The index disambiguates entries that share a name and a
-                    // completion timestamp (the backend dedupes neither); the
-                    // list is replaced wholesale on refetch, so an index key
-                    // cannot go stale.
-                    <li
-                      className="flex items-baseline gap-3 text-sm"
-                      key={`${index}:${entry.display_name}`}
-                    >
-                      <span className="w-6 shrink-0 text-right text-muted-foreground">
-                        {index + 1}.
-                      </span>
-                      <span className="min-w-0 flex-1 truncate font-medium">
-                        {entry.display_name}
-                      </span>
-                      <span className="shrink-0 tabular-nums">
-                        {formatDuration(entry.elapsed_ms)}
-                      </span>
-                    </li>
-                  ))}
+                  {data.items.map((entry, index) => {
+                    // The viewer (the solver's own row) is in the list when its
+                    // rank falls within the displayed items; highlight that row
+                    // rather than appending a duplicate below.
+                    const isViewer =
+                      Boolean(viewer) && viewer!.rank === index + 1;
+                    return (
+                      // The index disambiguates entries that share a name and a
+                      // completion timestamp (the backend dedupes neither); the
+                      // list is replaced wholesale on refetch, so an index key
+                      // cannot go stale.
+                      <Row
+                        entry={entry}
+                        isViewer={isViewer}
+                        key={`${index}:${entry.display_name}`}
+                        rank={index + 1}
+                      />
+                    );
+                  })}
                 </ol>
                 {data.total > data.items.length && (
                   <p className="mt-3 text-xs text-muted-foreground">
                     Showing the fastest {data.items.length} of {data.total}{" "}
                     posted solves.
                   </p>
+                )}
+                {/* The solver's rank is past the displayed top N: show their
+                    own row anyway, separated, with its true number. */}
+                {viewer && viewer.rank > data.items.length && (
+                  <>
+                    <div className="my-3 border-t border-dashed" />
+                    <ol className="space-y-1.5">
+                      <Row entry={viewer.entry} isViewer rank={viewer.rank} />
+                    </ol>
+                  </>
                 )}
               </>
             )}
@@ -154,5 +188,46 @@ export default function LeaderboardDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * One leaderboard line. The solver's own row gets a "You" badge and an accent
+ * background so they can spot their place, whether it sits inside the top N or
+ * is the appended off-list row below the separator.
+ */
+function Row({
+  entry,
+  isViewer,
+  rank,
+}: {
+  entry: LeaderboardEntry;
+  isViewer: boolean;
+  rank: number;
+}) {
+  return (
+    <li
+      className={cn(
+        "flex items-baseline gap-3 rounded text-sm",
+        isViewer && "bg-secondary/40 px-2 py-1 font-medium",
+      )}
+    >
+      <span className="w-6 shrink-0 text-right text-muted-foreground">
+        {rank}.
+      </span>
+      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+        <span className="min-w-0 truncate font-medium">
+          {entry.display_name}
+        </span>
+        {isViewer && (
+          <span className="shrink-0 rounded-full bg-secondary px-1.5 text-xs font-medium text-secondary-foreground">
+            You
+          </span>
+        )}
+      </span>
+      <span className="shrink-0 tabular-nums">
+        {formatDuration(entry.elapsed_ms)}
+      </span>
+    </li>
   );
 }

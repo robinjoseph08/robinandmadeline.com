@@ -80,16 +80,23 @@ export function postLeaderboardEntry(
 
 /**
  * Reads a puzzle's leaderboard, fastest first, scoped to one difficulty:
- * GET /api/games/leaderboard.
+ * GET /api/games/leaderboard. When a sessionId is given (the solver's own
+ * session, whose UUID doubles as its bearer token), the response carries that
+ * solver's own ranked row (viewer) so the client can always show them their
+ * place, even when it falls past the displayed top N.
  */
 export function fetchLeaderboard(
   puzzleId: string,
   difficulty: GameDifficulty,
+  sessionId?: string,
 ): Promise<ListLeaderboardEntriesResponse> {
   const params = new URLSearchParams({
     puzzle_id: puzzleId,
     difficulty,
   });
+  if (sessionId) {
+    params.set("session_id", sessionId);
+  }
   return apiRequest(`/games/leaderboard?${params.toString()}`);
 }
 

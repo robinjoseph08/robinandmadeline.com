@@ -256,22 +256,30 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   const prefillName = partyData?.guests[0]?.full_name;
 
   // Warm the leaderboard tab the guest will land on (their own recorded
-  // difficulty) while the completion dialog is up, so "View leaderboard"
-  // opens populated.
-  useLeaderboard(puzzle.id, session.recordedDifficulty, {
-    enabled: completionOpen,
-  });
+  // difficulty) while the completion dialog is up, so the auto-handoff after
+  // a post opens populated. Warmed with the session id so it shares the key
+  // the dialog reads with (and so the viewer's own row comes along).
+  useLeaderboard(
+    puzzle.id,
+    session.recordedDifficulty,
+    { enabled: completionOpen },
+    session.sessionId ?? undefined,
+  );
 
-  // The warm-up fetch above runs before the guest posts, so after a
-  // successful post the cached leaderboard is missing their entry; refetch
-  // it (the prefix sweeps every difficulty tab) so "View leaderboard" shows
-  // them.
+  // A successful post hands off to the leaderboard: the warm-up fetch above
+  // ran before the post, so the cached board is missing the new row; refetch
+  // it (the prefix sweeps every difficulty tab and both the anonymous and
+  // viewer-aware variants), then swap the completion dialog for the
+  // leaderboard, anchored on the solve's difficulty with the session id so
+  // the guest's freshly posted row is shown and highlighted.
   const queryClient = useQueryClient();
   const handlePost = async (displayName: string) => {
     await session.postToLeaderboard(displayName);
     await queryClient.invalidateQueries({
       queryKey: [QueryKey.GameLeaderboard, puzzle.id],
     });
+    setCompletionOpen(false);
+    setLeaderboardOpen(true);
   };
 
   const clues = puzzle.clues[difficulty];
@@ -565,12 +573,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
         isSignedIn={isSignedIn}
         onOpenChange={setCompletionOpen}
         onPost={handlePost}
-        onViewLeaderboard={() => {
-          setCompletionOpen(false);
-          setLeaderboardOpen(true);
-        }}
         open={completionOpen}
-        posted={session.posted}
         prefillName={prefillName}
         puzzleTitle={puzzle.title}
       />
@@ -580,6 +583,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
         open={leaderboardOpen}
         puzzleId={puzzle.id}
         puzzleTitle={puzzle.title}
+        sessionId={session.sessionId ?? undefined}
       />
     </section>
   );

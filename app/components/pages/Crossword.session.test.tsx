@@ -821,12 +821,16 @@ describe("Crossword solve sessions", () => {
           }),
         ),
       );
-      // The dialog confirms, and the opt-in survives a reload.
+      // A successful post hands off to the leaderboard: the completion dialog
+      // closes and the leaderboard opens, and the opt-in survives a reload.
       await waitFor(() =>
         expect(
-          screen.getByTestId("crossword-completion-dialog"),
-        ).toHaveTextContent(/on the leaderboard/i),
+          screen.getByTestId("crossword-leaderboard-dialog"),
+        ).toBeInTheDocument(),
       );
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
       expect(storedSession().postedName).toBe("Alice Smith");
     });
 
@@ -932,11 +936,83 @@ describe("Crossword solve sessions", () => {
       fireEvent.change(input, { target: { value: "Bob" } });
       fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
 
-      // ...so a successful post refetches it, ensuring "View leaderboard"
-      // includes the guest's own entry.
+      // ...so a successful post refetches it, ensuring the leaderboard the
+      // guest is handed off to includes their own entry.
       await waitFor(() =>
         expect(leaderboardGets()).toBeGreaterThan(getsBeforePost),
       );
+    });
+
+    it("hands off to the leaderboard with the solver's row highlighted after a post", async () => {
+      seedProgress(ALL_BUT_LAST, "medium");
+      seedSession({ id: "sess-1", elapsedMs: 90_000, difficulty: "medium" });
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string }) => {
+          if (options?.method === "PATCH") {
+            return Promise.resolve(makeSession({ difficulty: "medium" }));
+          }
+          if (path === "/games/sessions/sess-1/leaderboard") {
+            return Promise.resolve(makeSession({ display_name: "Robin" }));
+          }
+          if (path.startsWith("/games/leaderboard")) {
+            // The board the guest lands on: their own session id earns them a
+            // viewer row, which here sits inside the displayed list.
+            return Promise.resolve({
+              items: [
+                {
+                  display_name: "Alice",
+                  difficulty: "medium",
+                  elapsed_ms: 61_000,
+                  completed_at: "2026-06-10T00:00:00Z",
+                },
+                {
+                  display_name: "Robin",
+                  difficulty: "medium",
+                  elapsed_ms: 90_000,
+                  completed_at: "2026-06-12T00:00:00Z",
+                },
+              ],
+              total: 2,
+              viewer: {
+                rank: 2,
+                entry: {
+                  display_name: "Robin",
+                  difficulty: "medium",
+                  elapsed_ms: 90_000,
+                  completed_at: "2026-06-12T00:00:00Z",
+                },
+              },
+            });
+          }
+          return Promise.reject(new Error(`unexpected ${path}`));
+        },
+      );
+
+      renderCrossword();
+      await solveLastLetter();
+
+      const input = await screen.findByLabelText("Display name");
+      fireEvent.change(input, { target: { value: "Robin" } });
+      fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
+
+      // The completion dialog is replaced by the leaderboard, opened on the
+      // solve's own difficulty and carrying the session id.
+      const dialog = await screen.findByTestId("crossword-leaderboard-dialog");
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(apiRequest).toHaveBeenCalledWith(
+          "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=medium&session_id=sess-1",
+        ),
+      );
+
+      // The solver's own row is marked "You" and not duplicated.
+      const rows = await within(dialog).findAllByRole("listitem");
+      expect(rows).toHaveLength(2);
+      expect(rows[1]).toHaveTextContent("Robin");
+      expect(within(rows[1]).getByText("You")).toBeInTheDocument();
+      expect(within(dialog).getAllByText("You")).toHaveLength(1);
     });
 
     it("re-sends an unacknowledged completion before posting", async () => {
@@ -974,10 +1050,11 @@ describe("Crossword solve sessions", () => {
       fireEvent.change(input, { target: { value: "Bob" } });
       fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
 
+      // The post succeeded, so the dialog hands off to the leaderboard.
       await waitFor(() =>
         expect(
-          screen.getByTestId("crossword-completion-dialog"),
-        ).toHaveTextContent(/on the leaderboard/i),
+          screen.getByTestId("crossword-leaderboard-dialog"),
+        ).toBeInTheDocument(),
       );
       // The completion PATCH landed before the leaderboard POST.
       const methods = apiRequest.mock.calls.map(
@@ -1124,6 +1201,46 @@ describe("Crossword solve sessions", () => {
       ).toBeInTheDocument();
     });
 
+    it("auto-navigates to the leaderboard when posting from the later 'Post your time' path", async () => {
+      // A returning completed solve that never opted in: posting from the
+      // solved summary still hands off to the leaderboard, same as the
+      // immediate post.
+      seedProgress(SOLUTION);
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        difficulty: "easy",
+      });
+      apiRequest.mockImplementation((path: string) => {
+        if (path === "/games/sessions/sess-1/leaderboard") {
+          return Promise.resolve(makeSession({ display_name: "Robin" }));
+        }
+        if (path.startsWith("/games/leaderboard")) {
+          return Promise.resolve({ items: [], total: 0, viewer: null });
+        }
+        return Promise.resolve(makeSession());
+      });
+
+      renderCrossword();
+      await flushAsync();
+
+      // Reopen the opt-in via the solved summary's change-of-heart affordance.
+      fireEvent.click(screen.getByRole("button", { name: "Post your time" }));
+      const input = await screen.findByLabelText("Display name");
+      fireEvent.change(input, { target: { value: "Robin" } });
+      fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("crossword-leaderboard-dialog"),
+        ).toBeInTheDocument(),
+      );
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
+    });
+
     it("opens the leaderboard from the solved summary on the solve's own difficulty tab", async () => {
       seedProgress(SOLUTION, "medium");
       seedSession({
@@ -1174,8 +1291,10 @@ describe("Crossword solve sessions", () => {
       expect(
         within(picker).getByRole("button", { pressed: true }),
       ).toHaveTextContent("Medium");
+      // The solver holds a session, so the read carries its id, asking the
+      // backend for the solver's own ranked row.
       expect(apiRequest).toHaveBeenCalledWith(
-        "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=medium",
+        "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=medium&session_id=sess-1",
       );
 
       // Fastest first within the tab.
@@ -1187,11 +1306,13 @@ describe("Crossword solve sessions", () => {
       expect(rows[1]).toHaveTextContent("1:35");
       expect(dialog).toHaveTextContent(/fastest 2 of 12/i);
 
-      // Switching tabs fetches that difficulty's board.
+      // Switching tabs fetches that difficulty's board (still carrying the
+      // session id; the backend returns a viewer only on the solver's own
+      // recorded-difficulty tab).
       fireEvent.click(within(picker).getByRole("button", { name: "Hard" }));
       await waitFor(() =>
         expect(apiRequest).toHaveBeenCalledWith(
-          "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=hard",
+          "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=hard&session_id=sess-1",
         ),
       );
     });

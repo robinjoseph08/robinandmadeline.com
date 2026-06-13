@@ -53,6 +53,12 @@ interface UseSolveSessionOptions {
 }
 
 export interface SolveSession {
+  /**
+   * The backend session's UUID (its bearer token too), once created or
+   * restored; null until then. Passing it to the leaderboard read is what
+   * lets the dialog show the solver their own ranked row.
+   */
+  sessionId: string | null;
   /** Total accumulated active milliseconds, ticking while the clock runs. */
   elapsedMs: number;
   /** Whether the guest has started this solve (now or in an earlier visit). */
@@ -137,6 +143,16 @@ export function useSolveSession({
     initialRecord?.difficulty ?? initialDifficulty,
   );
   const [posted, setPosted] = useState(Boolean(initialRecord?.postedName));
+  // The id mirrors sessionIdRef as reactive state, so consumers (the
+  // leaderboard read) re-render when a session is minted or recreated. The
+  // ref stays the source of truth for the synchronous report path.
+  const [sessionId, setSessionIdState] = useState<string | null>(
+    initialRecord?.id ?? null,
+  );
+  const setSessionId = useCallback((id: string | null) => {
+    sessionIdRef.current = id;
+    setSessionIdState(id);
+  }, []);
 
   /** Total accumulated active milliseconds as of right now. */
   const totalElapsed = useCallback(() => {
@@ -174,7 +190,7 @@ export function useSolveSession({
         puzzle_id: puzzleId,
         difficulty: easiestRef.current,
       });
-      sessionIdRef.current = session.id;
+      setSessionId(session.id);
       applyServerDifficulty(session.difficulty);
       persist();
       return session.id;
@@ -183,7 +199,7 @@ export function useSolveSession({
       // on; the next report tries again.
       return null;
     }
-  }, [puzzleId, applyServerDifficulty, persist]);
+  }, [puzzleId, applyServerDifficulty, persist, setSessionId]);
 
   /**
    * Report progress to the backend. Never throws: every failure mode either
@@ -227,7 +243,7 @@ export function useSolveSession({
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) {
           // The stored session is gone server-side; recreate and retry once.
-          sessionIdRef.current = null;
+          setSessionId(null);
           const newId = await ensureSessionId();
           if (newId) {
             try {
@@ -245,7 +261,13 @@ export function useSolveSession({
         // silently; telemetry must never break solving.
       }
     },
-    [ensureSessionId, totalElapsed, applyServerDifficulty, persist],
+    [
+      ensureSessionId,
+      totalElapsed,
+      applyServerDifficulty,
+      persist,
+      setSessionId,
+    ],
   );
 
   const enqueue = useCallback((task: () => Promise<unknown>) => {
@@ -422,6 +444,7 @@ export function useSolveSession({
   );
 
   return {
+    sessionId,
     elapsedMs,
     started,
     running,
