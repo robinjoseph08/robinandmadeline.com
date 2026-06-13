@@ -174,11 +174,12 @@ jobs:
     name: E2E
     runs-on: ubuntu-latest
     # Locally e2e runs as part of `mise check` / `mise check:quiet`; in CI it
-    # gets this dedicated job. The job builds and boots the API + Vite against
-    # a dedicated Postgres database (created and migrated by `mise e2e:setup`),
-    # then drives Chromium through the issue #4 flow. The credentials/db below
-    # match the e2e DATABASE_URL default in playwright.config.ts and mise's
-    # e2e:setup task.
+    # gets this dedicated job. Playwright's globalSetup creates and migrates a
+    # throwaway per-run database (dropped by globalTeardown) on dynamically
+    # allocated ports, then drives Chromium through the critical flows. The
+    # Postgres service below only needs to be reachable with these credentials;
+    # the per-run database is created through the maintenance database at run
+    # time, so POSTGRES_DB below is just the service's own bootstrap database.
     services:
       postgres:
         image: postgres:17

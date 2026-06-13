@@ -29,24 +29,46 @@ description = "Start development environment (API + web)"
 # migrates via the Fly release_command instead.
 depends = ["db:migrate", "start:air", "start:web"]
 
+[tasks."start:prep"]
+description = "Prepare dev scratch dir and clear any stale API port file"
+# The API publishes its chosen port to tmp/api.port and Vite reads it. Clear it
+# before launch so start:web never reads a previous session's (or another
+# worktree's) port, and ensure tmp/ exists so the API can write the file.
+run = "mkdir -p tmp && rm -f tmp/api.port"
+
 [tasks."start:air"]
 description = "Start API with hot reload via Air"
-depends = ["db:migrate"]
+depends = ["db:migrate", "start:prep"]
 run = "air"
 
 [tasks."start:web"]
 description = "Start Vite dev server (waits for API)"
-depends = ["db:migrate"]
-run = "until nc -z localhost 8400 2>/dev/null; do sleep 0.5; done && pnpm start"
+depends = ["db:migrate", "start:prep"]
+# The API binds a free port when its preferred one is taken (so a second
+# worktree never collides), so its port is not fixed: wait for it to publish the
+# port and be reachable, then start Vite, whose /api proxy reads tmp/api.port
+# once at startup.
+run = 'until [ -f tmp/api.port ] && nc -z localhost "$(cat tmp/api.port)" 2>/dev/null; do sleep 0.2; done && pnpm start'
 
 [tasks."start:api"]
 description = "Start API directly (no hot reload)"
 run = "go run ./cmd/api"
 
 # === Database ===
+#
+# Each git worktree resolves its own database name (pkg/config derives
+# robinandmadeline_wt_<slug> for a linked worktree, the canonical
+# robinandmadeline for the main checkout), so concurrent worktrees never share a
+# database. db:create provisions it before migrating, since a worktree's database
+# is not pre-created by docker-compose.
+
+[tasks."db:create"]
+description = "Create this worktree's database if it does not exist"
+run = "go run ./cmd/migrations createdb"
 
 [tasks."db:migrate"]
 description = "Apply pending database migrations"
+depends = ["db:create"]
 run = "go run ./cmd/migrations migrate"
 
 [tasks."db:rollback"]
@@ -56,6 +78,36 @@ run = "go run ./cmd/migrations rollback"
 [tasks."db:status"]
 description = "Show applied and pending database migrations"
 run = "go run ./cmd/migrations status"
+
+[tasks."db:clone"]
+description = "Reset this worktree's database to a copy of the main dev database, then migrate"
+# Worktrees start with an empty database; this seeds one from the main checkout's
+# data. Refuses to run in the main checkout (target == source) and needs the
+# Postgres client tools (pg_dump/psql).
+run = '''
+set -eu
+source_url="postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline?sslmode=disable"
+target_url="$(go run ./cmd/migrations url)"
+source_name="$(basename "${source_url%%\?*}")"
+target_name="$(basename "${target_url%%\?*}")"
+if [ "$target_name" = "$source_name" ]; then
+  echo "db:clone only runs inside a linked worktree; here the database is the main '$source_name'." >&2
+  exit 1
+fi
+if ! command -v pg_dump >/dev/null 2>&1 || ! command -v psql >/dev/null 2>&1; then
+  echo "db:clone needs the Postgres client tools (pg_dump, psql). On macOS: brew install libpq" >&2
+  exit 1
+fi
+echo "Cloning $source_name -> $target_name ..."
+go run ./cmd/migrations dropdb
+go run ./cmd/migrations createdb
+dump="$(mktemp)"
+trap 'rm -f "$dump"' EXIT
+pg_dump --no-owner --no-privileges "$source_url" >"$dump"
+psql --quiet "$target_url" <"$dump" >/dev/null
+go run ./cmd/migrations migrate
+echo "Done: $target_name now mirrors $source_name and is migrated to this branch."
+'''
 
 # === Type Generation ===
 
@@ -103,22 +155,14 @@ run = "go test -race ./pkg/... ./cmd/... ./internal/..."
 description = "Run JS unit tests"
 run = "pnpm test:unit"
 
-[tasks."e2e:setup"]
-description = "Create and migrate the dedicated e2e database"
-# The e2e API does not migrate at startup (ADR 0007), so provision its database
-# here before Playwright boots the servers. Always a dedicated database, never
-# the shell's DATABASE_URL, so an e2e run can never touch dev data.
-run = '''
-export DATABASE_URL="${E2E_DATABASE_URL:-postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline_e2e?sslmode=disable}"
-go run ./cmd/migrations createdb
-go run ./cmd/migrations migrate
-'''
-
 [tasks."e2e:chromium"]
 description = "Run the e2e tests in Chromium"
-# tygo so the Vite dev server has the generated API types on disk; e2e:setup for
-# the database. Both run before Playwright boots the servers.
-depends = ["tygo", "e2e:setup"]
+# tygo so the Vite dev server has the generated API types on disk. Playwright's
+# own globalSetup provisions (creates + migrates) a throwaway per-run database
+# on dynamically allocated ports, and globalTeardown drops it, so concurrent e2e
+# runs (e.g. from different worktrees) never collide and there is no separate db
+# setup step here.
+depends = ["tygo"]
 run = "pnpm e2e:chromium"
 
 [tasks.e2e]

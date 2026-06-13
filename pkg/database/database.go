@@ -74,6 +74,34 @@ func EnsureExists(ctx context.Context, dsn string) error {
 	return nil
 }
 
+// DropIfExists drops the database named in dsn if it exists, connecting to the
+// maintenance "postgres" database on the same server to do so. It is idempotent.
+// This is the teardown counterpart to EnsureExists, used by the e2e harness to
+// remove its throwaway per-run database; never point it at a database you want
+// to keep. WITH (FORCE) terminates any lingering connections (Postgres 13+) so
+// the drop does not block on a still-open pool.
+func DropIfExists(ctx context.Context, dsn string) error {
+	dbName, adminDSN, err := maintenanceDSN(dsn)
+	if err != nil {
+		return err
+	}
+
+	adminDB := bun.NewDB(
+		sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(adminDSN))),
+		pgdialect.New(),
+	)
+	defer func() { _ = adminDB.Close() }()
+
+	// The database name is derived from our own DSN, not user input, so the
+	// identifier interpolation here is safe. DROP DATABASE cannot be
+	// parameterized, hence the formatted statement.
+	_, err = adminDB.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %q WITH (FORCE)", dbName))
+	if err != nil {
+		return fmt.Errorf("drop database %q: %w", dbName, err)
+	}
+	return nil
+}
+
 // isDuplicateDatabase reports whether a CREATE DATABASE error means the
 // database already exists, which EnsureExists treats as success. That is
 // SQLSTATE 42P04 (duplicate_database) when it existed before the statement, or

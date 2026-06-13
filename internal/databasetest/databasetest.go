@@ -12,6 +12,12 @@
 // a "_test" database; override the whole DSN with TEST_DATABASE_URL (used in
 // CI).
 //
+// Every database name (the shared one and each NewIsolated one) is suffixed with
+// a tag for the current git worktree (see worktreeName), so two checked-out
+// worktrees running tests against the same local Postgres never migrate or
+// truncate one another's databases. The main checkout and CI (a plain clone)
+// have an empty tag and use the unchanged names.
+//
 // Concurrency: every test in one package binary that touches the shared tables
 // must run serially (no t.Parallel), since truncation is not safe to run
 // concurrently against shared tables. Across package binaries, which `go test`
@@ -31,6 +37,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"hash/fnv"
 	"net/url"
 	"os"
 	"strings"
@@ -39,6 +46,7 @@ import (
 
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/migrations"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/worktree"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
@@ -74,7 +82,7 @@ const migrateLockID = 824873
 // to assert.
 func New(t *testing.T) *bun.DB {
 	t.Helper()
-	return newAtDSN(t, testDatabaseURL())
+	return newAtDSN(t, sharedDSN(t))
 }
 
 // NewIsolated is New pointed at a dedicated database named dbName (on the same
@@ -147,15 +155,43 @@ func ensureDatabase(dsn string) error {
 	return database.EnsureExists(ctx, dsn)
 }
 
+// sharedDSN is the shared test database DSN with its database name made
+// worktree-specific (see worktreeName), so concurrent git worktrees never share
+// (and pollute) one another's shared test database.
+func sharedDSN(t *testing.T) string {
+	t.Helper()
+	u, err := url.Parse(testDatabaseURL())
+	require.NoError(t, err, "parse test database url")
+	u.Path = "/" + worktreeName(strings.TrimPrefix(u.Path, "/"))
+	return u.String()
+}
+
 // isolatedDSN derives the DSN for a dedicated database from the shared test
 // DSN, swapping only the database name so credentials/host/options (including
-// a TEST_DATABASE_URL override in CI) carry over.
+// a TEST_DATABASE_URL override in CI) carry over. The name is made
+// worktree-specific (see worktreeName) so concurrent worktrees stay isolated.
 func isolatedDSN(t *testing.T, dbName string) string {
 	t.Helper()
 	u, err := url.Parse(testDatabaseURL())
 	require.NoError(t, err, "parse test database url")
-	u.Path = "/" + dbName
+	u.Path = "/" + worktreeName(dbName)
 	return u.String()
+}
+
+// worktreeName suffixes a base test-database name with a short, stable tag for
+// the current linked git worktree, so concurrent worktrees get their own test
+// databases instead of migrating and truncating a shared one. The main checkout
+// (and CI, a plain clone) has an empty slug and keeps the unchanged base name. A
+// short hash of the slug, rather than the slug itself, keeps even the longest
+// base name within Postgres's 63-byte identifier limit.
+func worktreeName(base string) string {
+	slug := worktree.Slug()
+	if slug == "" {
+		return base
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(slug))
+	return fmt.Sprintf("%s_%08x", base, h.Sum32())
 }
 
 // Truncate empties the given tables and is the per-test isolation primitive.

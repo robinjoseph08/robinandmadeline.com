@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -50,6 +52,34 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, 720*time.Hour, cfg.GuestSessionDuration)
 		assert.InDelta(t, 120.0, cfg.LoginRatePerMinute, 0)
 		assert.Equal(t, 20, cfg.LoginRateBurst)
+	})
+
+	t.Run("uses the canonical database for the main checkout", func(t *testing.T) {
+		// Setting DATABASE_URL to "" makes envStr fall back to the computed
+		// default; the main checkout's .git is a directory.
+		t.Setenv("DATABASE_URL", "")
+		dir := t.TempDir()
+		require.NoError(t, os.Mkdir(filepath.Join(dir, ".git"), 0o755))
+		t.Chdir(dir)
+
+		cfg, err := config.New()
+		require.NoError(t, err)
+		assert.Contains(t, cfg.DatabaseURL, "/robinandmadeline?")
+	})
+
+	t.Run("derives a per-worktree database inside a linked worktree", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "")
+		dir := t.TempDir()
+		// A linked worktree's .git is a file pointing into .git/worktrees/<name>;
+		// the name is sanitized to a Postgres identifier fragment (the hyphen
+		// becomes an underscore).
+		gitFile := filepath.Join(dir, ".git")
+		require.NoError(t, os.WriteFile(gitFile, []byte("gitdir: /repo/.git/worktrees/my-feature\n"), 0o600))
+		t.Chdir(dir)
+
+		cfg, err := config.New()
+		require.NoError(t, err)
+		assert.Contains(t, cfg.DatabaseURL, "/robinandmadeline_wt_my_feature?")
 	})
 
 	t.Run("errors on malformed PORT", func(t *testing.T) {

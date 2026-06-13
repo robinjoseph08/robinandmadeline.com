@@ -3,10 +3,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -56,10 +59,9 @@ func main() {
 	// on `db:migrate`.
 	srv := server.New(cfg, db)
 
-	lc := net.ListenConfig{}
-	listener, err := lc.Listen(ctx, "tcp", srv.Addr)
+	listener, err := listen(ctx, cfg)
 	if err != nil {
-		log.Err(err).Fatal("failed to bind port", logger.Data{"addr": srv.Addr})
+		log.Err(err).Fatal("failed to bind port")
 	}
 	actualPort := listener.Addr().(*net.TCPAddr).Port
 	log.Info("server started", logger.Data{"port": actualPort})
@@ -90,13 +92,65 @@ func main() {
 	log.Info("shutdown complete")
 }
 
-// writePortFile writes the server's actual port to tmp/api.port so the Vite
-// dev server can discover it. Skips silently if tmp/ doesn't exist.
+// listen opens the server's TCP listener. When PORT is set explicitly
+// (production via the Fly machine, the e2e harness) it binds that port and fails
+// loudly if it is taken. In local development (PORT unset) it prefers a stable
+// port -- the one this worktree last used, recorded in the port file, or the
+// configured default -- but falls back to an OS-assigned free port when that is
+// busy, so a second git worktree's `mise start` never collides with the first.
+// The chosen port is published via writePortFile for the Vite dev server.
+func listen(ctx context.Context, cfg *config.Config) (net.Listener, error) {
+	lc := net.ListenConfig{}
+	if _, explicit := os.LookupEnv("PORT"); explicit {
+		return lc.Listen(ctx, "tcp", fmt.Sprintf(":%d", cfg.ServerPort))
+	}
+	preferred := cfg.ServerPort
+	if cached, ok := cachedPort(); ok {
+		preferred = cached
+	}
+	if l, err := lc.Listen(ctx, "tcp", fmt.Sprintf(":%d", preferred)); err == nil {
+		return l, nil
+	}
+	// Preferred port busy (another worktree holds it): take any free port.
+	return lc.Listen(ctx, "tcp", ":0")
+}
+
+// cachedPort returns the port this worktree recorded in the port file on its
+// previous run, if present and valid. Preferring it keeps the dev server on a
+// stable port across air rebuilds (the Vite proxy reads the port file once at
+// startup, so a changing port would break it) without hard-coding one that would
+// clash across worktrees.
+func cachedPort() (int, bool) {
+	data, err := os.ReadFile(portFilePath())
+	if err != nil {
+		return 0, false
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || port <= 0 {
+		return 0, false
+	}
+	return port, true
+}
+
+// writePortFile publishes the server's actual port to the port file so the Vite
+// dev server can discover it. Skips silently if the target directory does not
+// exist (e.g. a stripped-down deployment with no tmp/).
 func writePortFile(log logger.Logger, port int) {
-	if _, err := os.Stat("tmp"); os.IsNotExist(err) {
+	path := portFilePath()
+	if _, err := os.Stat(filepath.Dir(path)); os.IsNotExist(err) {
 		return
 	}
-	if err := os.WriteFile("tmp/api.port", []byte(strconv.Itoa(port)), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(strconv.Itoa(port)), 0o600); err != nil {
 		log.Err(err).Warn("failed to write port file")
 	}
+}
+
+// portFilePath is where the server reads and publishes its port, defaulting to
+// tmp/api.port. The e2e harness overrides it via API_PORT_FILE so an e2e run
+// writes a throwaway path and never clobbers a running dev server's port file.
+func portFilePath() string {
+	if p := os.Getenv("API_PORT_FILE"); p != "" {
+		return p
+	}
+	return "tmp/api.port"
 }
