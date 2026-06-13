@@ -1,5 +1,6 @@
 import { createBrowserRouter } from "react-router-dom";
 
+import AdminCrossword from "@/components/pages/admin/AdminCrossword";
 import AdminDashboard from "@/components/pages/admin/AdminDashboard";
 import AdminEmails from "@/components/pages/admin/AdminEmails";
 import AdminEventDetail from "@/components/pages/admin/AdminEventDetail";
@@ -66,6 +67,7 @@ export const routes = [
           { path: "events", Component: AdminEvents },
           { path: "events/:id", Component: AdminEventDetail },
           { path: "photo-groups", Component: AdminPhotoGroups },
+          { path: "crossword", Component: AdminCrossword },
           { path: "emails", Component: AdminEmails },
         ],
       },

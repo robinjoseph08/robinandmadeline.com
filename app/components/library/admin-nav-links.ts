@@ -14,5 +14,6 @@ export const ADMIN_NAV_LINKS: NavLinkItem[] = [
   // the original photo-groups slug (renaming routes is churn with no user
   // value).
   { to: "/admin/photo-groups", label: "Group Photos" },
+  { to: "/admin/crossword", label: "Crossword" },
   { to: "/admin/emails", label: "Emails" },
 ];
