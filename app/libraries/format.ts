@@ -50,6 +50,24 @@ export function formatEventDate(date: string): string {
 }
 
 /**
+ * Formats an ISO timestamp as a readable date and time ("Oct 17, 2026, 4:05
+ * PM") for admin tables such as the crossword solve-times list. Falls back to
+ * the raw string when it does not parse, so a bad value is visible rather than
+ * hidden.
+ */
+export function formatDateTime(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed);
+}
+
+/**
  * Formats a duration in milliseconds as a clock readout for the crossword
  * timer and leaderboard: "0:07", "12:05", or "1:02:03" once it passes an
  * hour. Sub-second remainders truncate (a solve shows 0:00 until a full

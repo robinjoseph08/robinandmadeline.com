@@ -22,3 +22,21 @@ export function getPuzzleBySlug(slug: string): CrosswordPuzzle | undefined {
     ? PUZZLES_BY_SLUG[slug]
     : undefined;
 }
+
+// Puzzles keyed by their stable id (not slug). Solve sessions on the backend
+// store the puzzle id, so the admin view maps an id back to a friendly title
+// through this; built from the same registry so it stays in sync.
+const PUZZLES_BY_ID: Record<string, CrosswordPuzzle> = Object.fromEntries(
+  Object.values(PUZZLES_BY_SLUG).map((puzzle) => [puzzle.id, puzzle]),
+);
+
+/**
+ * Friendly title for a stored puzzle id ("wedding-mini-v1" becomes "The
+ * Wedding Mini"). Falls back to the raw id for an id not in the registry, so a
+ * renamed-or-retired puzzle's old sessions stay legible rather than blank.
+ */
+export function getPuzzleTitle(puzzleId: string): string {
+  return Object.prototype.hasOwnProperty.call(PUZZLES_BY_ID, puzzleId)
+    ? PUZZLES_BY_ID[puzzleId].title
+    : puzzleId;
+}

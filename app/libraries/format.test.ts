@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatDateTime,
   formatDuration,
   formatEventDate,
   formatEventWhen,
@@ -47,6 +48,23 @@ describe("formatTime", () => {
 describe("formatLongDate", () => {
   it("renders an ISO timestamp as a long date", () => {
     expect(formatLongDate("2026-08-01T12:00:00Z")).toBe("August 1, 2026");
+  });
+});
+
+describe("formatDateTime", () => {
+  it("renders an ISO timestamp as a readable date and time", () => {
+    // Assert on the parts that are timezone-stable (the calendar date can
+    // shift by zone, but the month/year of a midday UTC instant cannot), so
+    // the test does not depend on the runner's timezone.
+    const formatted = formatDateTime("2026-10-17T12:00:00Z");
+    expect(formatted).toContain("Oct");
+    expect(formatted).toContain("2026");
+    // It is a friendly readout, not the raw ISO string.
+    expect(formatted).not.toBe("2026-10-17T12:00:00Z");
+  });
+
+  it("falls back to the raw value when it does not parse", () => {
+    expect(formatDateTime("not-a-date")).toBe("not-a-date");
   });
 });
 
