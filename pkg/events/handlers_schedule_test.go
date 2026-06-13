@@ -62,15 +62,14 @@ func getSchedule(t *testing.T, e *echo.Echo, token string) *httptest.ResponseRec
 // scheduleResponse is the decoded shape the schedule tests assert on.
 type scheduleResponse struct {
 	Items []struct {
-		ID          string            `json:"id"`
-		Name        string            `json:"name"`
-		Description *string           `json:"description"`
-		Location    *string           `json:"location"`
-		Date        string            `json:"date"`
-		StartTime   *string           `json:"start_time"`
-		EndTime     *string           `json:"end_time"`
-		IsPublic    bool              `json:"is_public"`
-		PhotoGroups []json.RawMessage `json:"photo_groups"`
+		ID          string  `json:"id"`
+		Name        string  `json:"name"`
+		Description *string `json:"description"`
+		Location    *string `json:"location"`
+		Date        string  `json:"date"`
+		StartTime   *string `json:"start_time"`
+		EndTime     *string `json:"end_time"`
+		IsPublic    bool    `json:"is_public"`
 	} `json:"items"`
 	Total int `json:"total"`
 }
@@ -107,10 +106,6 @@ func TestScheduleHandler_NoTokenListsOnlyPublicEvents(t *testing.T) {
 	assert.Equal(t, pointerutil.String("The Grand Hall"), item.Location)
 	assert.Equal(t, pointerutil.String("Dinner and dancing."), item.Description)
 	assert.True(t, item.IsPublic)
-	// photo_groups is always present and (until photo groups are built) always
-	// empty, never null.
-	assert.NotNil(t, item.PhotoGroups)
-	assert.Empty(t, item.PhotoGroups)
 }
 
 func TestScheduleHandler_GuestTokenListsInvitedEventsInScheduleOrder(t *testing.T) {

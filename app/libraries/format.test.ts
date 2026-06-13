@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatEventDate,
   formatEventWhen,
+  formatGuestFirstNames,
   formatLongDate,
   formatTime,
 } from "./format";
@@ -59,5 +60,25 @@ describe("formatEventWhen", () => {
         end_time: "22:00",
       }),
     ).toBe("Saturday, October 17, 2026 · 5:00 PM to 10:00 PM");
+  });
+});
+
+describe("formatGuestFirstNames", () => {
+  it("renders a single guest by first name", () => {
+    expect(formatGuestFirstNames(["Leon Smith"])).toBe("Leon");
+  });
+
+  it("joins several guests' first names in order", () => {
+    expect(
+      formatGuestFirstNames(["Leon Smith", "Leslie Smith", "Riley Smith"]),
+    ).toBe("Leon, Leslie, Riley");
+  });
+
+  it("keeps a single-word name whole", () => {
+    expect(formatGuestFirstNames(["Cher"])).toBe("Cher");
+  });
+
+  it("returns an empty string for no names", () => {
+    expect(formatGuestFirstNames([])).toBe("");
   });
 });

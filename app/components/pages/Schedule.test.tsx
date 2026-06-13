@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import Schedule from "@/components/pages/Schedule";
 import { GUEST_TOKEN_STORAGE_KEY } from "@/libraries/guest-api";
 import type { ScheduleEvent } from "@/types/generated/events";
+import type { PartyPhotoGroup } from "@/types/generated/photogroups";
 
 function makeEvent(overrides: Partial<ScheduleEvent> = {}): ScheduleEvent {
   return {
@@ -19,7 +20,18 @@ function makeEvent(overrides: Partial<ScheduleEvent> = {}): ScheduleEvent {
     is_public: true,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
-    photo_groups: [],
+    ...overrides,
+  };
+}
+
+function makePhotoGroup(
+  overrides: Partial<PartyPhotoGroup> = {},
+): PartyPhotoGroup {
+  return {
+    id: "pg-1",
+    name: "Family Photos",
+    position: 1,
+    guest_names: ["Leon Smith", "Leslie Smith"],
     ...overrides,
   };
 }
@@ -38,14 +50,26 @@ function renderSchedule() {
   return { client, ...view };
 }
 
-/** Mocks fetch to return the given schedule body for GET /api/events. */
-function mockScheduleFetch(items: ScheduleEvent[]) {
-  const fetchMock = vi.fn().mockResolvedValue(
-    new Response(JSON.stringify({ items, total: items.length }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }),
-  );
+/**
+ * Mocks fetch with the page's two reads: GET /api/events returns the given
+ * schedule and GET /api/guest/photo-groups (requested only when a guest token
+ * is stored) returns the given party photo groups.
+ */
+function mockScheduleFetch(
+  items: ScheduleEvent[],
+  photoGroups: PartyPhotoGroup[] = [],
+) {
+  const fetchMock = vi.fn().mockImplementation((url: string) => {
+    const body = url.startsWith("/api/guest/photo-groups")
+      ? { items: photoGroups, total: photoGroups.length }
+      : { items, total: items.length };
+    return Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
@@ -323,6 +347,128 @@ describe("Schedule", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /something went wrong loading the schedule/i,
     );
+  });
+
+  it("shows the photos section naming the party's guests per group", async () => {
+    localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, "a.guest.jwt");
+    const fetchMock = mockScheduleFetch(
+      [makeEvent()],
+      [
+        makePhotoGroup(),
+        makePhotoGroup({
+          id: "pg-2",
+          name: "College Friends",
+          position: 3,
+          guest_names: ["Leslie Smith"],
+        }),
+      ],
+    );
+
+    renderSchedule();
+
+    const section = await screen.findByRole("region", { name: "Group Photos" });
+    // The static copy states when the photo session happens (domain truth:
+    // one session between the ceremony and the reception).
+    expect(
+      within(section).getByText(
+        /group photos after the ceremony, before the reception/i,
+      ),
+    ).toBeInTheDocument();
+    // One card per group in shooting order: a tile carrying the visible word
+    // "Group" over the number the photographer calls, the group's name, and
+    // the party's guests' first names inside the same card.
+    const cards = within(section).getAllByRole("listitem");
+    expect(cards).toHaveLength(2);
+    expect(within(cards[0]).getByText("Group")).toBeInTheDocument();
+    expect(within(cards[0]).getByText("1")).toBeInTheDocument();
+    expect(
+      within(cards[0]).getByRole("heading", { name: /Family Photos/ }),
+    ).toBeInTheDocument();
+    expect(within(cards[0]).getByText("Leon, Leslie")).toBeInTheDocument();
+    expect(within(cards[1]).getByText("Group")).toBeInTheDocument();
+    expect(within(cards[1]).getByText("3")).toBeInTheDocument();
+    expect(
+      within(cards[1]).getByRole("heading", { name: /College Friends/ }),
+    ).toBeInTheDocument();
+    expect(within(cards[1]).getByText("Leslie")).toBeInTheDocument();
+    // The number sits beneath the visible "Group" label, shown plainly to
+    // everyone. Pinning both the word and the number means a refactor that
+    // drops the number (leaving a meaningless tile) fails instead of shipping.
+    // The total number of groups is deliberately not shown.
+    expect(section).not.toHaveTextContent(/of \d+/i);
+    // The photos read is the authenticated guest endpoint.
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/guest/photo-groups",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer a.guest.jwt",
+        }),
+      }),
+    );
+  });
+
+  it("hides the photos section when the party has no assignments", async () => {
+    localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, "a.guest.jwt");
+    mockScheduleFetch([makeEvent()], []);
+
+    renderSchedule();
+
+    await screen.findByRole("article", { name: "Reception" });
+    expect(
+      screen.queryByRole("region", { name: "Group Photos" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the schedule and hides the photos section when the photos fetch fails", async () => {
+    localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, "a.guest.jwt");
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.startsWith("/api/guest/photo-groups")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: {
+                code: "internal_server_error",
+                message: "Something went wrong.",
+                status_code: 500,
+              },
+            }),
+            { status: 500, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ items: [makeEvent()], total: 1 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderSchedule();
+
+    // The schedule itself is unaffected; the photos section just stays
+    // hidden rather than disturbing the page with an error.
+    await screen.findByRole("article", { name: "Reception" });
+    expect(
+      screen.queryByRole("region", { name: "Group Photos" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("never requests or shows the photos section in the anonymous view", async () => {
+    // The photos data is per-party, so the anonymous view neither renders the
+    // section nor calls the guest endpoint (which would just 401).
+    const fetchMock = mockScheduleFetch([makeEvent()]);
+
+    renderSchedule();
+
+    await screen.findByRole("article", { name: "Reception" });
+    expect(
+      screen.queryByRole("region", { name: "Group Photos" }),
+    ).not.toBeInTheDocument();
+    const requested = fetchMock.mock.calls.map((call) => call[0] as string);
+    expect(requested).toEqual(["/api/events"]);
   });
 
   it("never calls out private events in the anonymous view", async () => {

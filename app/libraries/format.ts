@@ -64,3 +64,14 @@ export function formatEventWhen(
     : formatTime(event.start_time);
   return `${date} · ${time}`;
 }
+
+/**
+ * The first names of a photo group's guests, joined for display ("Leon,
+ * Leslie"). First names fit the guest-facing tone, and the viewer only ever
+ * sees their own party's guests (matching the InfoCollection greeting's
+ * first-name convention). The Group Photos cards on the schedule carry the
+ * rest of the structure (group name, position badge) in markup.
+ */
+export function formatGuestFirstNames(names: string[]): string {
+  return names.map((name) => name.split(" ")[0]).join(", ");
+}

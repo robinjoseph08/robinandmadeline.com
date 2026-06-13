@@ -28,6 +28,16 @@ packages:
     include_files:
       - types.go
 
+  # The photo-groups admin API payload, query, and response types. Only
+  # types.go is emitted; the response embeds PhotoGroup, imported from the
+  # generated models module.
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/photogroups"
+    output_path: "app/types/generated/photogroups.ts"
+    frontmatter: |
+      import * as models from "@/types/generated/models";
+    include_files:
+      - types.go
+
   # The guest RSVP flow's payload and response types. Only types.go is emitted;
   # the response types reference the model enums and embed Event, imported from
   # the generated models module.

@@ -3,18 +3,21 @@ import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { usePartyPhotoGroups } from "@/hooks/queries/photo-groups";
 import { useScheduleEvents } from "@/hooks/queries/schedule";
 import { downloadICS, googleCalendarUrl } from "@/libraries/calendar";
-import { formatEventWhen } from "@/libraries/format";
+import { formatEventWhen, formatGuestFirstNames } from "@/libraries/format";
 import type { ScheduleEvent } from "@/types/generated/events";
 
 /**
  * The schedule page, one page for both audiences: anonymous visitors see the
  * public events, and a visitor with a stored guest token also sees the
- * private events their party is invited to (marked with a badge). Each event
- * offers an .ics download and a prefilled Google Calendar link, both built on
- * the client from the event's fields. Visitors without a token get a subtle
- * pointer to code entry, where logging in unlocks their full schedule.
+ * private events their party is invited to (marked with a badge) plus a
+ * Group Photos section naming which of their party's guests are in which
+ * photo groups. Each event offers an .ics download and a prefilled Google
+ * Calendar link, both built on the client from the event's fields. Visitors
+ * without a token get a subtle pointer to code entry, where logging in
+ * unlocks their full schedule.
  */
 export default function Schedule() {
   const { data, error, isPending } = useScheduleEvents();
@@ -76,6 +79,77 @@ export default function Schedule() {
           ))}
         </div>
       )}
+
+      {/* Photo groups are not tied to an event (the one photo session sits
+          between the ceremony and the reception), so they get their own
+          section rather than a line on an event card. Mounted only for
+          authenticated visitors: the data is per-party. */}
+      {data.authenticated ? <PhotosSection /> : null}
+    </section>
+  );
+}
+
+/**
+ * The Group Photos section: the photo groups the visitor's party is in,
+ * naming which of the party's guests each group needs and where it falls in
+ * the shooting order. One card per group, in shooting order: the group's
+ * number in the photographer's order (a big circled figure under a GROUP
+ * label, the intro copy teaching the order semantics once for all cards),
+ * the group's name as a quiet label, and the party's guests' first names
+ * carrying the visual weight, since "who needs to be there" is what a guest
+ * scans for. Renders nothing until the data is in and only when the party has
+ * at least one assignment, so parties outside the shot list never see an empty
+ * shell (and a failed fetch quietly hides the section rather than disturbing
+ * the schedule above it).
+ */
+function PhotosSection() {
+  const { data } = usePartyPhotoGroups();
+
+  const groups = data?.items ?? [];
+  if (groups.length === 0) return null;
+
+  return (
+    <section aria-label="Group Photos" className="mt-10">
+      <h2 className="text-2xl font-semibold">Group Photos</h2>
+      <p className="mt-3 text-muted-foreground">
+        We'll be taking group photos after the ceremony, before the reception.
+        Groups are called in number order, so you'll know when you're up. Here
+        is where we need you:
+      </p>
+      <ol className="mt-4 flex flex-col gap-3">
+        {groups.map((group) => {
+          const names = formatGuestFirstNames(group.guest_names);
+          return (
+            <li
+              className="flex items-center gap-4 rounded-xl border border-ink/10 bg-primary/30 p-4"
+              key={group.id}
+            >
+              {/* The big number the photographer calls, circled under a
+                  visible GROUP label so the bare figure reads as "Group N"
+                  with no hover and no sr-only duplicate (the uppercase is
+                  CSS-only, so the DOM text stays "Group" then the number). */}
+              <div className="flex shrink-0 flex-col items-center gap-1">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-ink/70">
+                  Group
+                </span>
+                <span className="flex size-12 items-center justify-center rounded-full bg-secondary text-2xl font-bold leading-none">
+                  {group.position}
+                </span>
+              </div>
+              <div className="min-w-0">
+                <h3 className="break-words text-sm font-medium text-ink/60">
+                  {group.name}
+                </h3>
+                {names ? (
+                  <p className="mt-0.5 break-words text-lg font-semibold">
+                    {names}
+                  </p>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 }

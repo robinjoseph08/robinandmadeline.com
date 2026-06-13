@@ -3,9 +3,9 @@
 Playwright end-to-end tests that drive the real SPA against a real API and
 Postgres. They cover the critical flows from the issue tracker (today: issue
 #4's party and guest management, issue #7's guest RSVP flow, issue #8's
-info-collection flow, and issue #9's public/personalized schedule). Unit-level
-behavior stays in Go tests and vitest; e2e is for whole-journey coverage
-through the browser.
+info-collection flow, issue #9's public/personalized schedule, and issue #10's
+photo groups). Unit-level behavior stays in Go tests and vitest; e2e is for
+whole-journey coverage through the browser.
 
 ## Running
 
@@ -49,6 +49,8 @@ through the browser.
   when a name is a prefix of another (for example the cell label "Name" versus
   "New guest name"). The grid cells are inputs, so match a row by a cell's
   `inputValue()` (see `partyRow` in `guest-management.spec.ts`), not by row text.
-- The delete buttons use `window.confirm`; accept it with a
-  `page.on("dialog", (d) => d.accept())` handler. The add row stays open after a
-  create (for rapid entry), so reuse it rather than reopening it.
+- The guest grid's delete buttons use `window.confirm`; accept it with a
+  `page.on("dialog", (d) => d.accept())` handler. Photo group deletes instead
+  open the app's Dialog component, so click its explicit confirm button (see
+  `photo-groups.spec.ts`). The add row stays open after a create (for rapid
+  entry), so reuse it rather than reopening it.

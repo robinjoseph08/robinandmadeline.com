@@ -176,8 +176,7 @@ func (h *handler) updateEventRSVP(c echo.Context) error {
 // listScheduleEvents handles GET /api/events, the guest-facing schedule. The
 // route sits behind OptionalGuest: without a token the schedule holds public
 // events only; with a valid guest token it also holds the private events the
-// guest's party is invited to. photo_groups is always present and, until
-// photo groups are built (a later slice), always empty.
+// guest's party is invited to.
 func (h *handler) listScheduleEvents(c echo.Context) error {
 	partyID := auth.GuestPartyID(c)
 	list, total, err := h.service.ScheduleEvents(c.Request().Context(), partyID)
@@ -187,7 +186,7 @@ func (h *handler) listScheduleEvents(c echo.Context) error {
 
 	items := make([]ScheduleEvent, 0, len(list))
 	for _, e := range list {
-		items = append(items, ScheduleEvent{Event: *e, PhotoGroups: []SchedulePhotoGroup{}})
+		items = append(items, ScheduleEvent{Event: *e})
 	}
 	return c.JSON(http.StatusOK, ListScheduleEventsResponse{Items: items, Total: total})
 }
