@@ -12,6 +12,12 @@
 // a "_test" database; override the whole DSN with TEST_DATABASE_URL (used in
 // CI).
 //
+// Every database name (the shared one and each NewIsolated one) is suffixed with
+// a tag for the current git worktree (see worktree.ScopedName), so two
+// checked-out worktrees running tests against the same local Postgres never
+// migrate or truncate one another's databases. The main checkout and CI (a plain
+// clone) have an empty tag and use the unchanged names.
+//
 // Concurrency: every test in one package binary that touches the shared tables
 // must run serially (no t.Parallel), since truncation is not safe to run
 // concurrently against shared tables. Across package binaries, which `go test`
@@ -39,6 +45,7 @@ import (
 
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/migrations"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/worktree"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
@@ -74,7 +81,7 @@ const migrateLockID = 824873
 // to assert.
 func New(t *testing.T) *bun.DB {
 	t.Helper()
-	return newAtDSN(t, testDatabaseURL())
+	return newAtDSN(t, sharedDSN(t))
 }
 
 // NewIsolated is New pointed at a dedicated database named dbName (on the same
@@ -147,14 +154,27 @@ func ensureDatabase(dsn string) error {
 	return database.EnsureExists(ctx, dsn)
 }
 
+// sharedDSN is the shared test database DSN with its database name made
+// worktree-specific (see worktree.ScopedName), so concurrent git worktrees never
+// share (and pollute) one another's shared test database.
+func sharedDSN(t *testing.T) string {
+	t.Helper()
+	u, err := url.Parse(testDatabaseURL())
+	require.NoError(t, err, "parse test database url")
+	u.Path = "/" + worktree.ScopedName(strings.TrimPrefix(u.Path, "/"))
+	return u.String()
+}
+
 // isolatedDSN derives the DSN for a dedicated database from the shared test
 // DSN, swapping only the database name so credentials/host/options (including
-// a TEST_DATABASE_URL override in CI) carry over.
+// a TEST_DATABASE_URL override in CI) carry over. The name is made
+// worktree-specific (see worktree.ScopedName) so concurrent worktrees stay
+// isolated.
 func isolatedDSN(t *testing.T, dbName string) string {
 	t.Helper()
 	u, err := url.Parse(testDatabaseURL())
 	require.NoError(t, err, "parse test database url")
-	u.Path = "/" + dbName
+	u.Path = "/" + worktree.ScopedName(dbName)
 	return u.String()
 }
 

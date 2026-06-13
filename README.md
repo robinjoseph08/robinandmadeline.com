@@ -40,7 +40,25 @@ mise start
 ```
 
 The API listens on port `8400` and the Vite dev server runs on `8401`,
-proxying `/api/*` to the API.
+proxying `/api/*` to the API. The Vite dev server discovers the API's actual
+port from `tmp/api.port`, so the ports are not load-bearing.
+
+### Worktrees
+
+The dev setup is built to run several git worktrees at once (for parallel
+agents). Each worktree self-isolates with no configuration:
+
+- **Database**: the main checkout uses `robinandmadeline`; each linked worktree
+  derives its own `robinandmadeline_wt_<name>` (see `pkg/worktree` +
+  `pkg/config`), created by `mise db:create` ahead of migrating. Test databases
+  are likewise suffixed per worktree (`internal/databasetest`).
+- **Ports**: if `8400` is already held by another worktree's API, the next
+  `mise start` binds a free port instead and publishes it to `tmp/api.port`;
+  Vite (`strictPort: false`) hops to a free port of its own.
+- **E2E**: each run gets dynamically allocated ports and a throwaway database.
+
+A new worktree starts with an empty database. Seed it from the main checkout's
+data with `mise db:clone` (needs the Postgres client tools: `pg_dump`, `psql`).
 
 ## Common tasks
 
@@ -49,6 +67,8 @@ proxying `/api/*` to the API.
 | `mise start`        | Run API (air hot reload) + Vite dev server        |
 | `mise start:api`    | Run the API directly (no hot reload)              |
 | `mise start:web`    | Run the Vite dev server                           |
+| `mise db:migrate`   | Create (if needed) and migrate this worktree's DB |
+| `mise db:clone`     | Seed this worktree's DB from the main checkout    |
 | `mise build`        | Build the production API binary                   |
 | `mise build:docker` | Build the production Docker image                 |
 | `mise lint`         | Run golangci-lint                                 |

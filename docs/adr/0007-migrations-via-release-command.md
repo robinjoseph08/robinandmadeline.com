@@ -14,6 +14,6 @@ This fits scale-to-zero on Fly (ADR 0001). Machines stop when idle and start on 
 
 - The server no longer migrates. `cmd/api` boots against whatever schema exists; provisioning it is the deploy's job.
 - Production sets `release_command = "/app/migrations migrate"` in `fly.toml`, and the Dockerfile builds the migrations binary into the image alongside the server.
-- Local development stays ergonomic: `mise start` depends on `db:migrate`, so a fresh checkout migrates before the servers come up.
-- `migrations.BringUpToDate` is still called directly by the test harness, which provisions a throwaway database per run.
+- Local development stays ergonomic: `mise start` depends on `db:migrate`, which first runs `db:create` (the database may not exist yet), so a fresh checkout or worktree provisions and migrates before the servers come up. Each linked worktree resolves its own database name (`pkg/worktree` + `pkg/config`), so concurrent worktrees never migrate the same database; `mise db:clone` seeds a worktree from the main checkout.
+- `migrations.BringUpToDate` is still called directly by the test harness, which provisions a throwaway database per run. The e2e harness provisions and migrates its own throwaway per-run database in Playwright's globalSetup (and drops it in globalTeardown), again never at server startup.
 - A broken migration blocks the deploy rather than the running site.

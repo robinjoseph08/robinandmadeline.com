@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/worktree"
 )
 
 // Config holds all application configuration.
@@ -81,8 +83,15 @@ type Config struct {
 
 // Default values used for local development when an env var is unset.
 const (
-	// Local-only Postgres credentials matching docker-compose; never used in prod.
-	defaultDatabaseURL   = "postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline?sslmode=disable" //nolint:gosec // local dev default, overridden via DATABASE_URL
+	// Local-only Postgres credentials matching docker-compose; never used in
+	// prod. The %s is the database name that defaultDatabaseURL fills in: the
+	// canonical baseDatabaseName for the main checkout, or a per-worktree name so
+	// concurrent git worktrees get isolated databases. Overridden wholesale by
+	// DATABASE_URL in CI and production.
+	defaultDatabaseURLTemplate = "postgres://robinandmadeline_admin:password@localhost:5432/%s?sslmode=disable" //nolint:gosec // local dev default, overridden via DATABASE_URL
+	// baseDatabaseName is the dev database for the main checkout; linked worktrees
+	// suffix it (see databaseName).
+	baseDatabaseName     = "robinandmadeline"
 	defaultServerPort    = 8400
 	defaultAdminUsername = "admin"
 	// defaultAdminPassword and defaultJWTSecret are development-only conveniences.
@@ -145,7 +154,7 @@ func New() (*Config, error) {
 	}
 
 	return &Config{
-		DatabaseURL:          envStr("DATABASE_URL", defaultDatabaseURL),
+		DatabaseURL:          envStr("DATABASE_URL", defaultDatabaseURL()),
 		ServerPort:           port,
 		AdminUsername:        envStr("ADMIN_USERNAME", defaultAdminUsername),
 		AdminPassword:        envStr("ADMIN_PASSWORD", defaultAdminPassword),
@@ -224,4 +233,23 @@ func envDuration(key string, fallback time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid %s: %q is not a valid duration: %w", key, v, err)
 	}
 	return d, nil
+}
+
+// defaultDatabaseURL builds the local-development Postgres DSN used when
+// DATABASE_URL is unset. The main checkout gets the canonical database; each
+// linked git worktree gets its own (robinandmadeline_wt_<slug>) so concurrent
+// worktrees never share a database or fight over migration state. Production and
+// CI always set DATABASE_URL, so this branch never runs there.
+func defaultDatabaseURL() string {
+	return fmt.Sprintf(defaultDatabaseURLTemplate, databaseName(worktree.Slug()))
+}
+
+// databaseName returns the dev database name for a worktree slug: the canonical
+// base name for the main checkout (empty slug), or a per-worktree name derived
+// from it otherwise.
+func databaseName(slug string) string {
+	if slug == "" {
+		return baseDatabaseName
+	}
+	return baseDatabaseName + "_wt_" + slug
 }

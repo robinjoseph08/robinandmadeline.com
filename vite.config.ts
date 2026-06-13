@@ -59,6 +59,10 @@ export default defineConfig({
     outDir: "./build/app",
     emptyOutDir: true,
   },
+  // Let the e2e harness point Vite at an isolated cache dir (VITE_CACHE_DIR) so a
+  // run does not corrupt the dev server's dependency pre-bundle, or another
+  // concurrent Vite's, when several run from this same project directory.
+  cacheDir: process.env.VITE_CACHE_DIR || undefined,
   clearScreen: false,
   plugins: [react(), tailwindcss()],
 });
