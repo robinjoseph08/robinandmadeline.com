@@ -32,8 +32,9 @@ depends = ["db:migrate", "start:air", "start:web"]
 [tasks."start:prep"]
 description = "Prepare dev scratch dir and clear any stale API port file"
 # The API publishes its chosen port to tmp/api.port and Vite reads it. Clear it
-# before launch so start:web never reads a previous session's (or another
-# worktree's) port, and ensure tmp/ exists so the API can write the file.
+# before launch so start:web never reads a previous session's port (each
+# worktree already has its own tmp/api.port), and ensure tmp/ exists so the API
+# can write the file.
 run = "mkdir -p tmp && rm -f tmp/api.port"
 
 [tasks."start:air"]
@@ -99,12 +100,15 @@ if ! command -v pg_dump >/dev/null 2>&1 || ! command -v psql >/dev/null 2>&1; th
   exit 1
 fi
 echo "Cloning $source_name -> $target_name ..."
-go run ./cmd/migrations dropdb
-go run ./cmd/migrations createdb
+# Dump before dropping the target, so a pg_dump failure leaves the existing
+# worktree database untouched rather than emptied. ON_ERROR_STOP makes psql fail
+# the task on any restore error instead of exiting 0 on a partial restore.
 dump="$(mktemp)"
 trap 'rm -f "$dump"' EXIT
 pg_dump --no-owner --no-privileges "$source_url" >"$dump"
-psql --quiet "$target_url" <"$dump" >/dev/null
+go run ./cmd/migrations dropdb
+go run ./cmd/migrations createdb
+psql --quiet -v ON_ERROR_STOP=1 "$target_url" <"$dump" >/dev/null
 go run ./cmd/migrations migrate
 echo "Done: $target_name now mirrors $source_name and is migrated to this branch."
 '''

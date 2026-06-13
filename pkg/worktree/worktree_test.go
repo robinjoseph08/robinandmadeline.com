@@ -19,6 +19,7 @@ func TestSlugFromGitdirLine(t *testing.T) {
 		{"linked worktree", "gitdir: /repo/.git/worktrees/my-feature", "my_feature"},
 		{"already-safe name", "gitdir: /repo/.git/worktrees/feature_42", "feature_42"},
 		{"submodule is not a worktree", "gitdir: /repo/.git/modules/vendor", ""},
+		{"worktrees prefix without a trailing name", "gitdir: /repo/.git/worktrees", ""},
 		{"not a gitdir line", "ref: refs/heads/main", ""},
 		{"empty", "", ""},
 	}

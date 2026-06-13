@@ -64,7 +64,9 @@ func TestNew(t *testing.T) {
 
 		cfg, err := config.New()
 		require.NoError(t, err)
-		assert.Contains(t, cfg.DatabaseURL, "/robinandmadeline?")
+		// Pin the whole DSN (not just the database name) so a regression in the
+		// credentials, host, port, or sslmode is caught too.
+		assert.Equal(t, "postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline?sslmode=disable", cfg.DatabaseURL)
 	})
 
 	t.Run("derives a per-worktree database inside a linked worktree", func(t *testing.T) {
@@ -79,7 +81,7 @@ func TestNew(t *testing.T) {
 
 		cfg, err := config.New()
 		require.NoError(t, err)
-		assert.Contains(t, cfg.DatabaseURL, "/robinandmadeline_wt_my_feature?")
+		assert.Equal(t, "postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline_wt_my_feature?sslmode=disable", cfg.DatabaseURL)
 	})
 
 	t.Run("errors on malformed PORT", func(t *testing.T) {

@@ -92,16 +92,18 @@ func main() {
 	log.Info("shutdown complete")
 }
 
-// listen opens the server's TCP listener. When PORT is set explicitly
+// listen opens the server's TCP listener. When PORT is set to a non-empty value
 // (production via the Fly machine, the e2e harness) it binds that port and fails
-// loudly if it is taken. In local development (PORT unset) it prefers a stable
-// port -- the one this worktree last used, recorded in the port file, or the
-// configured default -- but falls back to an OS-assigned free port when that is
-// busy, so a second git worktree's `mise start` never collides with the first.
-// The chosen port is published via writePortFile for the Vite dev server.
+// loudly if it is taken. In local development (PORT unset or empty) it prefers a
+// stable port (the one this worktree last used, recorded in the port file, or
+// the configured default), but falls back to an OS-assigned free port when that
+// is busy, so a second git worktree's `mise start` never collides with the
+// first. The chosen port is published via writePortFile for the Vite dev server.
 func listen(ctx context.Context, cfg *config.Config) (net.Listener, error) {
 	lc := net.ListenConfig{}
-	if _, explicit := os.LookupEnv("PORT"); explicit {
+	// An empty PORT is treated as unset (matching config's envInt), so a stray
+	// PORT= in the environment still gets the dev free-port fallback.
+	if v := os.Getenv("PORT"); v != "" {
 		return lc.Listen(ctx, "tcp", fmt.Sprintf(":%d", cfg.ServerPort))
 	}
 	preferred := cfg.ServerPort

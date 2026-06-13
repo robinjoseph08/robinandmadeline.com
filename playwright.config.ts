@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import fs from "fs";
 import net from "net";
 import os from "os";
@@ -41,9 +42,11 @@ interface E2EConfig {
 // every worker process. All evaluations must agree on the same ports, database,
 // and temp dir, so the first one allocates them and writes a config file keyed
 // by a run id carried in the environment (and thus inherited by workers); later
-// evaluations read it back.
+// evaluations read it back. The run id is a fresh UUID (not the pid) so a
+// crashed run that leaks its config file can never be misread by a later run
+// that happens to reuse the pid.
 async function getOrCreateE2EConfig(): Promise<E2EConfig> {
-  const runId = process.env.E2E_RUN_ID || String(process.pid);
+  const runId = process.env.E2E_RUN_ID || randomUUID().replace(/-/g, "");
   process.env.E2E_RUN_ID = runId;
 
   const configFile = path.join(os.tmpdir(), `ram-e2e-config-${runId}.json`);
@@ -59,8 +62,8 @@ async function getOrCreateE2EConfig(): Promise<E2EConfig> {
 
   // The e2e API talks to a dedicated database, never the shell's DATABASE_URL
   // (which may point at dev data). By default each run gets its own throwaway
-  // database; set E2E_DATABASE_URL (in CI, or to pin one locally) to use a
-  // specific database instead, which the harness then leaves in place.
+  // database; set E2E_DATABASE_URL to pin a specific database instead, which the
+  // harness then leaves in place. CI uses the default per-run database.
   const override = process.env.E2E_DATABASE_URL;
   const databaseUrl =
     override ??

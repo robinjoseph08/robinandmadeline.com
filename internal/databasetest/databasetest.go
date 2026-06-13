@@ -181,11 +181,17 @@ func isolatedDSN(t *testing.T, dbName string) string {
 // worktreeName suffixes a base test-database name with a short, stable tag for
 // the current linked git worktree, so concurrent worktrees get their own test
 // databases instead of migrating and truncating a shared one. The main checkout
-// (and CI, a plain clone) has an empty slug and keeps the unchanged base name. A
-// short hash of the slug, rather than the slug itself, keeps even the longest
-// base name within Postgres's 63-byte identifier limit.
+// (and CI, a plain clone) has an empty slug and keeps the unchanged base name.
 func worktreeName(base string) string {
-	slug := worktree.Slug()
+	return suffixForSlug(base, worktree.Slug())
+}
+
+// suffixForSlug appends a short, stable tag derived from slug to base, or returns
+// base unchanged for the empty slug. A short hash of the slug (rather than the
+// slug itself) keeps even the longest base name within Postgres's 63-byte
+// identifier limit. Split from worktreeName so the naming is unit-testable
+// without depending on the working directory.
+func suffixForSlug(base, slug string) string {
 	if slug == "" {
 		return base
 	}

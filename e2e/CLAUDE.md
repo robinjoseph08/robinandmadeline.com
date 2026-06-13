@@ -26,7 +26,7 @@ whole-journey coverage through the browser.
 
 - `playwright.config.ts` (repo root) allocates a free API and frontend port per
   run (by briefly binding `:0`) and a per-run database name, sharing them across
-  Playwright workers via a pid-keyed file in the temp dir. It starts two
+  Playwright workers via a run-id-keyed file in the temp dir. It starts two
   webServers: the API (`go build ... && exec ...`, so the binary is the
   process-group leader Playwright reaps on teardown) pointed at that database,
   and the Vite dev server with `API_PORT` set so its `/api` proxy targets that
