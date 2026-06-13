@@ -128,16 +128,19 @@ func (h *handler) postToLeaderboard(c echo.Context) error {
 // puzzle's published entries, fastest first, capped (no pagination in v1).
 // An optional difficulty parameter narrows the board to one difficulty, with
 // the cap and total scoped to it; the binder validates the value, so an
-// unknown difficulty is a 422 before the service runs.
+// unknown difficulty is a 422 before the service runs. An optional session_id
+// asks for the requesting solver's own ranked row in the response's viewer; the
+// binder validates it is a well-formed UUID, and the service returns no viewer
+// (not an error) for an unknown or ineligible id.
 func (h *handler) getLeaderboard(c echo.Context) error {
 	var query LeaderboardQuery
 	if err := c.Bind(&query); err != nil {
 		return errors.WithStack(err)
 	}
 
-	entries, total, err := h.service.Leaderboard(c.Request().Context(), query)
+	entries, total, viewer, err := h.service.Leaderboard(c.Request().Context(), query)
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, ListLeaderboardEntriesResponse{Items: entries, Total: total})
+	return c.JSON(http.StatusOK, ListLeaderboardEntriesResponse{Items: entries, Total: total, Viewer: viewer})
 }
