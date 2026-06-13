@@ -29,11 +29,7 @@ func throwawayDSN(t *testing.T) string {
 	}
 	u, err := url.Parse(base)
 	require.NoError(t, err)
-	name := "ram_dropif_test"
-	if slug := worktree.Slug(); slug != "" {
-		name += "_" + slug
-	}
-	u.Path = "/" + name
+	u.Path = "/" + worktree.ScopedName("ram_dropif_test")
 	return u.String()
 }
 

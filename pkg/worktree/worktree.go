@@ -5,10 +5,33 @@
 package worktree
 
 import (
+	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// ScopedName returns base suffixed with a short, stable tag for the current
+// linked git worktree, or base unchanged for the main checkout (empty slug). It
+// gives concurrent worktrees their own Postgres databases from one base name. A
+// hash of the slug (rather than the slug itself) keeps the result within
+// Postgres's 63-byte identifier limit even for long base names; callers that
+// want a human-readable name (the dev database) format Slug() themselves.
+func ScopedName(base string) string {
+	return scopedName(base, Slug())
+}
+
+// scopedName is the pure core of ScopedName, split out so the naming is
+// unit-testable without depending on the working directory.
+func scopedName(base, slug string) string {
+	if slug == "" {
+		return base
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(slug))
+	return fmt.Sprintf("%s_%08x", base, h.Sum32())
+}
 
 // Slug returns a short, stable identifier for the current linked git worktree,
 // or "" for the main checkout or a non-repo checkout (for example a production

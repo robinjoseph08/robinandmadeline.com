@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/migrations"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/worktree"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
@@ -24,8 +25,10 @@ const defaultTestDatabaseURL = "postgres://robinandmadeline_admin:password@local
 // scratchDBName is a dedicated database for the up/down round-trip test. It is
 // intentionally separate from the shared test database (robinandmadeline_test)
 // because this test rolls migrations back, dropping tables; doing that on the
-// shared DB could race the parties tests, which run concurrently against it.
-const scratchDBName = "robinandmadeline_migrations_test"
+// shared DB could race the parties tests, which run concurrently against it. It
+// is also worktree-scoped (worktree.ScopedName) so concurrent git worktrees do
+// not drop and recreate it out from under each other.
+var scratchDBName = worktree.ScopedName("robinandmadeline_migrations_test")
 
 func baseDSN() string {
 	if dsn := os.Getenv("TEST_DATABASE_URL"); dsn != "" {
