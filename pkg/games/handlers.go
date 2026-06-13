@@ -145,3 +145,31 @@ func (h *handler) getLeaderboard(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, ListLeaderboardEntriesResponse{Items: entries, Total: total, Viewer: viewer})
 }
+
+// adminListSessions handles GET /api/admin/games/sessions: every solve session
+// in the admin {items, total} envelope, newest first. Unlike the public
+// leaderboard it includes in-progress and completed-but-unposted solves and
+// exposes ip_address, so an admin can see and clean up every recorded time. The
+// route is mounted on the admin group, so a valid admin token is required.
+func (h *handler) adminListSessions(c echo.Context) error {
+	items, total, err := h.service.ListSessions(c.Request().Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, ListAdminGameSessionsResponse{Items: items, Total: total})
+}
+
+// adminDeleteSession handles DELETE /api/admin/games/sessions/:id, returning
+// 204 on success. A malformed id is a 404 before any query (pathID), and an
+// unknown but well-formed id is a 404 from the delete. This hard-deletes the
+// row so a bad-actor or junk solve can be removed without touching the database.
+func (h *handler) adminDeleteSession(c echo.Context) error {
+	id, err := pathID(c)
+	if err != nil {
+		return err
+	}
+	if err := h.service.DeleteSession(c.Request().Context(), id); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}

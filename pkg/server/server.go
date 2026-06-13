@@ -109,6 +109,10 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB) {
 	parties.RegisterRoutes(admin, parties.NewService(db))
 	events.RegisterRoutes(admin, events.NewService(db))
 	photogroups.RegisterRoutes(admin, photogroups.NewService(db))
+	// The games admin surface (list every solve, delete a junk/bad-actor solve)
+	// hangs off the same protected group; the public games routes stay on the
+	// open /api group, registered in New.
+	games.RegisterAdminRoutes(admin, games.NewService(db))
 }
 
 // registerGuest mounts the guest API surface behind the guest auth middleware.

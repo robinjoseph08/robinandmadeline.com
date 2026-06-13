@@ -77,6 +77,45 @@ type GameSessionResponse struct {
 	models.GameSession `tstype:",extends"`
 }
 
+// AdminGameSessionResponse is one solve in the admin sessions list. Unlike
+// GameSessionResponse it does NOT embed models.GameSession: the model's
+// ip_address is json:"-" so embedding would hide it, but the admin view exists
+// precisely to surface every captured field, ip_address included, for abuse
+// tracing and cleanup. Every field is therefore declared explicitly here. This
+// is the admin view and intentionally exposes ip_address; it must never be used
+// for a public response.
+//
+// It carries every session regardless of state: CompletedAt is null for an
+// in-progress or abandoned solve, OnLeaderboard is false for a completed solve
+// the solver never posted, and DisplayName is null until they opt in. PartyID
+// and PartyName are the affiliated party when a signed-in guest's token rode
+// the solve, both null for an anonymous one; PartyName is the party's name
+// (parties.name), the same human label the rest of the admin UI shows, filled
+// via a LEFT JOIN so it is null exactly when PartyID is.
+type AdminGameSessionResponse struct {
+	ID            string     `json:"id"`
+	PuzzleID      string     `json:"puzzle_id"`
+	Difficulty    string     `json:"difficulty" tstype:"models.GameDifficulty"`
+	ElapsedMS     int64      `json:"elapsed_ms"`
+	CompletedAt   *time.Time `json:"completed_at"`
+	OnLeaderboard bool       `json:"on_leaderboard"`
+	DisplayName   *string    `json:"display_name"`
+	PartyID       *string    `json:"party_id"`
+	PartyName     *string    `json:"party_name"`
+	IPAddress     string     `json:"ip_address"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+// ListAdminGameSessionsResponse is the uniform list envelope for the admin
+// sessions list: every solve, newest first. Items is never nil, so it
+// serializes as [] rather than null on an empty list. Total counts the rows
+// returned (no pagination in v1; the data is admin-trusted and bounded).
+type ListAdminGameSessionsResponse struct {
+	Items []AdminGameSessionResponse `json:"items"`
+	Total int                        `json:"total"`
+}
+
 // LeaderboardEntry is one opted-in solve on a puzzle's leaderboard (a completed
 // session whose solver set on_leaderboard). It deliberately does NOT carry the
 // session id: the id is the session's bearer token, so exposing other solvers'
