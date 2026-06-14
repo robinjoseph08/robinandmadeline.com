@@ -4,6 +4,10 @@
 ### Project ###
 # Build output (Go binary + Vite bundle)
 /build/
+# Stray binaries from `go build ./cmd/<x>` without -o (the real output is /build/)
+/api
+/migrations
+/scripts
 # Air / dev runtime scratch (e.g. tmp/api.port, golangci-lint cache)
 /tmp/
 build-errors.log
