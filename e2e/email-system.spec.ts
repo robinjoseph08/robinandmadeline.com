@@ -100,10 +100,15 @@ test("admin composes and sends a filtered email end to end", async ({
   const previewFrame = page.frameLocator(
     `iframe[title="Email preview for ${guestName}"]`,
   );
+  // Scope to the visible content cell: the same opening line also rides at the
+  // top of the document as the hidden preheader (the inbox/notification preview
+  // text), so an unscoped getByText would match both and trip strict mode.
   await expect(
-    previewFrame.getByText(`Hi ${guestName}, save the date! RSVP at`, {
-      exact: false,
-    }),
+    previewFrame
+      .locator(".email-content")
+      .getByText(`Hi ${guestName}, save the date! RSVP at`, {
+        exact: false,
+      }),
   ).toBeVisible();
   await expect(page.getByRole("cell", { name: guestEmail })).toBeVisible();
 

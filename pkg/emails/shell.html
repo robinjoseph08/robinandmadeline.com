@@ -48,6 +48,19 @@
       font-family: Georgia, &quot;Times New Roman&quot;, serif;
     "
   >
+    <!--
+      Preheader: the inbox and notification preview text, hidden from the
+      rendered layout. Clients that build the snippet from the HTML use it, so
+      the preview reads as the message's opening line instead of the monogram.
+      The zero-width spacer after it keeps a client from appending the visible
+      header into the snippet.
+    -->
+    <div style="display: none; max-height: 0; overflow: hidden">
+      {{.Preheader}}
+    </div>
+    <div style="display: none; max-height: 0; overflow: hidden">
+      &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
+    </div>
     <!-- Full-bleed background wrapper so the cream extends past the card. -->
     <table
       role="presentation"

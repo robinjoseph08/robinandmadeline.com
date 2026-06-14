@@ -4,6 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"html/template"
+	"strings"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/renderer/html"
@@ -36,10 +37,15 @@ var markdown = goldmark.New(
 )
 
 // shellData is the shell template's data: the plain-text subject (for the
-// <title>) and the body already rendered to HTML (injected verbatim).
+// <title>), the inbox/notification preview line, and the body already rendered
+// to HTML (injected verbatim).
 type shellData struct {
 	Subject string
-	Content template.HTML
+	// Preheader is the inbox and notification preview line (the message's
+	// opening), placed hidden at the top of the body so a client that builds the
+	// snippet from the HTML previews the message rather than the shell's monogram.
+	Preheader string
+	Content   template.HTML
 }
 
 // RenderEmail resolves the merge fields in the subject and Markdown body for one
@@ -63,7 +69,8 @@ func RenderEmail(subject, body string, mctx MergeContext) string {
 
 	var out bytes.Buffer
 	if err := shellTemplate.Execute(&out, shellData{
-		Subject: resolvedSubject,
+		Subject:   resolvedSubject,
+		Preheader: preheaderText(resolvedBody),
 		// #nosec G203 -- the content is goldmark's own escaped HTML output (safe
 		// defaults), not raw user input; injecting it verbatim is the point.
 		Content: template.HTML(htmlBody.String()), //nolint:gosec
@@ -73,6 +80,22 @@ func RenderEmail(subject, body string, mctx MergeContext) string {
 		return htmlBody.String()
 	}
 	return out.String()
+}
+
+// preheaderText is the email's inbox and notification preview line: the
+// merge-resolved body's opening, whitespace-collapsed and length-capped. The
+// shell hides it at the top of the document, so a client that builds the snippet
+// from the HTML previews the message instead of the monogram header. The text
+// fallback already carries the body alone, so clients that snippet from that are
+// unaffected.
+func preheaderText(body string) string {
+	const maxLen = 200
+	collapsed := strings.Join(strings.Fields(body), " ")
+	if len(collapsed) <= maxLen {
+		return collapsed
+	}
+	// Cap by bytes, then drop a trailing rune the cut may have split in half.
+	return strings.ToValidUTF8(collapsed[:maxLen], "")
 }
 
 // ShellPreviewHTML renders the email shell with fixed sample Markdown content

@@ -44,6 +44,21 @@ func TestRenderEmail_SingleNewlineBecomesLineBreak(t *testing.T) {
 	assert.Contains(t, html, "Robin")
 }
 
+func TestRenderEmail_LeadsWithAHiddenPreheaderNotTheMonogram(t *testing.T) {
+	mctx := mergeFixture()
+	html := RenderEmail("s", "Save the date for our wedding!", mctx)
+
+	// The body's opening rides at the top of the document as a hidden preheader,
+	// so a client that builds the inbox/notification snippet from the HTML previews
+	// the message rather than the monogram ("R & M").
+	assert.Contains(t, html, "display: none")
+	preheaderIdx := strings.Index(html, "Save the date for our wedding!")
+	monogramIdx := strings.Index(html, "R <span")
+	assert.NotEqual(t, -1, preheaderIdx, "preheader text should be present")
+	assert.NotEqual(t, -1, monogramIdx, "monogram should be present")
+	assert.Less(t, preheaderIdx, monogramIdx, "preheader should come before the monogram")
+}
+
 func TestRenderEmail_DropsRawHTMLInTheBody(t *testing.T) {
 	mctx := mergeFixture()
 	// goldmark's safe defaults do not pass raw HTML through; a stray tag in the
