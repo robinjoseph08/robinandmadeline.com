@@ -22,7 +22,7 @@
 // comes back only on the solver's own recorded-difficulty tab, so no per-tab
 // special-casing is needed here.
 
-import { Medal } from "lucide-react";
+import { Trophy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -207,7 +207,7 @@ export default function LeaderboardDialog({
                     the dialog stays put at any guest count; the same
                     containment the clue lists use. */}
                 <ol
-                  className="max-h-[22rem] space-y-1.5 overflow-y-auto overscroll-contain pr-1"
+                  className="max-h-[22rem] space-y-1.5 overflow-y-auto overscroll-contain px-1"
                   data-testid="crossword-leaderboard-list"
                   ref={listRef}
                 >
@@ -277,27 +277,26 @@ export default function LeaderboardDialog({
  * palette is warm metallics that sit on the cream surface without fighting the
  * wedding blues/pinks; rank 4+ returns undefined and renders plainly.
  */
-const PODIUM: Record<number, { badge: string; label: string; medal: string }> =
-  {
-    1: {
-      badge: "bg-amber-100 text-amber-900 ring-1 ring-amber-300",
-      label: "1st place",
-      medal: "text-amber-500",
-    },
-    2: {
-      badge: "bg-slate-100 text-slate-700 ring-1 ring-slate-300",
-      label: "2nd place",
-      medal: "text-slate-400",
-    },
-    3: {
-      badge: "bg-orange-100 text-orange-900 ring-1 ring-orange-300",
-      label: "3rd place",
-      medal: "text-orange-400",
-    },
-  };
+const PODIUM: Record<number, { badge: string; icon: string; label: string }> = {
+  1: {
+    badge: "bg-amber-100 text-amber-900 ring-1 ring-amber-300",
+    icon: "text-amber-500",
+    label: "1st place",
+  },
+  2: {
+    badge: "bg-slate-100 text-slate-700 ring-1 ring-slate-300",
+    icon: "text-slate-400",
+    label: "2nd place",
+  },
+  3: {
+    badge: "bg-orange-100 text-orange-900 ring-1 ring-orange-300",
+    icon: "text-orange-400",
+    label: "3rd place",
+  },
+};
 
 /**
- * One leaderboard line. The fastest three get a colored medal and a metallic
+ * One leaderboard line. The fastest three get a colored trophy and a metallic
  * rank badge (the podium); everyone else gets a plain muted number. The
  * solver's own row gets a "You" badge and an accent background so they can
  * spot their place, whether it sits inside the displayed list or is the
@@ -333,14 +332,14 @@ function Row({
         <span
           aria-label={podium.label}
           className={cn(
-            // A clearly visible medal is the rank's marker; the number sits
+            // A clearly visible trophy is the rank's marker; the number sits
             // beside it so the placing still reads at a glance. The pill shares
             // the plain number's width so the name column stays aligned.
             "flex w-11 shrink-0 items-center justify-center gap-1 rounded-full py-0.5 pl-1 pr-1.5 text-xs font-semibold tabular-nums",
             podium.badge,
           )}
         >
-          <Medal aria-hidden="true" className={cn("h-5 w-5", podium.medal)} />
+          <Trophy aria-hidden="true" className={cn("h-5 w-5", podium.icon)} />
           {rank}
         </span>
       ) : (

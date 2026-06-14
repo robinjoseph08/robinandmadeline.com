@@ -420,7 +420,7 @@ describe("LeaderboardDialog", () => {
     renderDialog();
 
     const rows = await screen.findAllByRole("listitem");
-    // Ranks 1-3 carry a labelled podium medal; rank 4 does not.
+    // Ranks 1-3 carry a labelled podium trophy; rank 4 does not.
     expect(within(rows[0]).getByLabelText(/1st place/i)).toBeInTheDocument();
     expect(within(rows[1]).getByLabelText(/2nd place/i)).toBeInTheDocument();
     expect(within(rows[2]).getByLabelText(/3rd place/i)).toBeInTheDocument();
@@ -429,7 +429,7 @@ describe("LeaderboardDialog", () => {
     expect(rows[3]).toHaveTextContent("4.");
   });
 
-  it("composes the podium medal with the 'You' badge when the viewer is in the top three", async () => {
+  it("composes the podium trophy with the 'You' badge when the viewer is in the top three", async () => {
     apiRequest.mockResolvedValue({
       items: [
         entry({ display_name: "Alice", elapsed_ms: 60_000 }),
