@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { toast } from "sonner";
@@ -102,8 +102,8 @@ function renderCompose() {
 }
 
 beforeEach(() => {
-  // Restore the window.confirm spies individual tests install, so a previous
-  // test's stub never leaks into the next.
+  // Restore any spies individual tests install (e.g. toast.success), so a
+  // previous test's stub never leaks into the next.
   vi.restoreAllMocks();
   adminRequest.mockReset();
   navigate.mockReset();
@@ -189,15 +189,30 @@ describe("AdminEmailCompose preview", () => {
 });
 
 describe("AdminEmailCompose send", () => {
-  it("confirms with the live recipient count, POSTs the send, and navigates to its detail", async () => {
+  it("confirms with the live recipient count in the dialog, POSTs the send, and navigates to its detail", async () => {
     setMock({ preview: makePreview({ total: 3 }) });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderCompose();
 
     await user.type(screen.getByLabelText("Subject"), "Hello");
     await user.type(screen.getByLabelText("Body"), "Body");
     await user.click(screen.getByRole("button", { name: "Send" }));
+
+    // Clicking Send re-resolves the audience and opens the confirmation dialog
+    // showing that live count; it does not dispatch the send on its own.
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText("This will send to 3 recipients."),
+    ).toBeInTheDocument();
+    expect(adminRequest).not.toHaveBeenCalledWith(
+      "/admin/emails/send",
+      expect.anything(),
+    );
+
+    // The explicit, count-labeled confirm button is the deliberate send.
+    await user.click(
+      within(dialog).getByRole("button", { name: "Send to 3 recipients" }),
+    );
 
     await waitFor(() => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/emails/send", {
@@ -210,15 +225,11 @@ describe("AdminEmailCompose send", () => {
         },
       });
     });
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining("3 recipients"),
-    );
     expect(navigate).toHaveBeenCalledWith("/admin/emails/sends/send-1");
   });
 
   it("does not send when the confirmation is declined", async () => {
     setMock();
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
     renderCompose();
 
@@ -226,13 +237,18 @@ describe("AdminEmailCompose send", () => {
     await user.type(screen.getByLabelText("Body"), "Body");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    // The pre-send preview ran, but no send was dispatched.
-    await waitFor(() => {
-      expect(adminRequest).toHaveBeenCalledWith(
-        "/admin/emails/preview",
-        expect.anything(),
-      );
-    });
+    // The dialog opens (the pre-send preview ran), then Cancel dismisses it...
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    // ...the dialog closes and no send was dispatched.
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(adminRequest).toHaveBeenCalledWith(
+      "/admin/emails/preview",
+      expect.anything(),
+    );
     expect(adminRequest).not.toHaveBeenCalledWith(
       "/admin/emails/send",
       expect.anything(),
@@ -240,13 +256,15 @@ describe("AdminEmailCompose send", () => {
   });
 
   it("ignores a second Send click while the first is still resolving", async () => {
-    // The pre-send count re-resolve leaves a window before the send mutation
-    // starts; a second click there must not start a second flow (it would
-    // dispatch the whole bulk send twice). Hold the preview open to sit in
-    // that window.
+    // The pre-send count re-resolve leaves a window before the dialog opens; a
+    // second click there must not start a second re-resolve (which would
+    // ultimately dispatch the whole bulk send twice). Hold the preview open to
+    // sit in that window.
     let resolvePreview: ((v: PreviewEmailResponse) => void) | undefined;
+    let previewCalls = 0;
     adminRequest.mockImplementation((path: string) => {
       if (path === "/admin/emails/preview") {
+        previewCalls += 1;
         return new Promise((res) => {
           resolvePreview = res;
         });
@@ -260,7 +278,6 @@ describe("AdminEmailCompose send", () => {
       }
       return Promise.resolve({ items: [], total: 0 });
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderCompose();
 
@@ -273,9 +290,16 @@ describe("AdminEmailCompose send", () => {
     expect(send).toBeDisabled();
     await user.click(send);
 
-    resolvePreview!(makePreview({}));
+    // Only the first re-resolve fired; the second click did nothing.
+    expect(previewCalls).toBe(1);
+
+    // Once it resolves, the dialog opens and a single confirm dispatches once.
+    resolvePreview!(makePreview({ total: 1 }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Send to 1 recipient" }),
+    );
     await waitFor(() => expect(navigate).toHaveBeenCalled());
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
     expect(
       adminRequest.mock.calls.filter(([path]) => path === "/admin/emails/send"),
     ).toHaveLength(1);
@@ -287,7 +311,6 @@ describe("AdminEmailCompose send", () => {
     setMock({
       preview: makePreview({ total: 250, daily_sends_used: 50 }),
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderCompose();
 
@@ -295,14 +318,13 @@ describe("AdminEmailCompose send", () => {
     await user.type(screen.getByLabelText("Body"), "Body");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    await waitFor(() => {
-      expect(confirmSpy).toHaveBeenCalledWith(
-        expect.stringContaining("approximately 3 days"),
-      );
-    });
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining("daily send limit is 100 (50 used today)"),
-    );
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/approximately 3 days/),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/daily send limit is 100 \(50 used today\)/),
+    ).toBeInTheDocument();
   });
 
   it("does not count today when its budget is already spent", async () => {
@@ -312,7 +334,6 @@ describe("AdminEmailCompose send", () => {
     setMock({
       preview: makePreview({ total: 100, daily_sends_used: 100 }),
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderCompose();
 
@@ -320,16 +341,14 @@ describe("AdminEmailCompose send", () => {
     await user.type(screen.getByLabelText("Body"), "Body");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    await waitFor(() => {
-      expect(confirmSpy).toHaveBeenCalledWith(
-        expect.stringContaining("approximately 1 day."),
-      );
-    });
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/approximately 1 day\./),
+    ).toBeInTheDocument();
   });
 
   it("does not mention multiple days when today's budget covers the send", async () => {
     setMock({ preview: makePreview({ total: 3 }) });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderCompose();
 
@@ -337,17 +356,14 @@ describe("AdminEmailCompose send", () => {
     await user.type(screen.getByLabelText("Body"), "Body");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.not.stringContaining("approximately"),
-    );
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByText(/approximately/)).not.toBeInTheDocument();
   });
 
   it("does not mention multiple days when the limit is unlimited", async () => {
     setMock({
       preview: makePreview({ total: 250, daily_send_limit: 0 }),
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderCompose();
 
@@ -355,17 +371,31 @@ describe("AdminEmailCompose send", () => {
     await user.type(screen.getByLabelText("Body"), "Body");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.not.stringContaining("approximately"),
-    );
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByText(/approximately/)).not.toBeInTheDocument();
   });
 
-  it("refuses to send to zero recipients", async () => {
+  it("calls out skipped no-email guests in the confirm dialog", async () => {
+    setMock({ preview: makePreview({ total: 3, skipped_no_email: 2 }) });
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(
+        /2 matching guests without an email will be skipped\./,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("refuses to send to zero recipients without opening the dialog", async () => {
     setMock({
       preview: makePreview({ total: 0, recipients: [], sample_subject: "" }),
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderCompose();
 
@@ -373,13 +403,15 @@ describe("AdminEmailCompose send", () => {
     await user.type(screen.getByLabelText("Body"), "Body");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
+    // The re-resolve ran, but the zero-recipient guard short-circuits before
+    // the dialog opens and no send is dispatched.
     await waitFor(() => {
       expect(adminRequest).toHaveBeenCalledWith(
         "/admin/emails/preview",
         expect.anything(),
       );
     });
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(adminRequest).not.toHaveBeenCalledWith(
       "/admin/emails/send",
       expect.anything(),
@@ -521,7 +553,6 @@ describe("AdminEmailCompose templates", () => {
         },
       ],
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderCompose();
 
@@ -534,6 +565,10 @@ describe("AdminEmailCompose templates", () => {
     expect(screen.getByLabelText("Body")).toHaveValue("Mark your calendar.");
 
     await user.click(screen.getByRole("button", { name: "Send" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: /^Send to \d+ recipient/ }),
+    );
     await waitFor(() => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/emails/send", {
         method: "POST",

@@ -16,6 +16,15 @@ import {
   SIDE_OPTIONS,
 } from "@/components/pages/admin/parties/options";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -99,8 +108,9 @@ function toRecipientFilter(filter: FilterState): RecipientFilter {
  * Compose page: start from a template (or blank), edit the subject and body,
  * narrow the recipients with the guest filters, preview the resolved merge
  * fields for a sample recipient, and send. Sending always re-resolves the
- * recipient count and asks for confirmation with it, so the number confirmed
- * is never stale; the actual delivery happens in the background and the page
+ * recipient count and asks for confirmation with it in a deliberate modal, so
+ * the number confirmed is never stale and a reflexive click or Enter cannot
+ * dispatch it; the actual delivery happens in the background and the page
  * navigates to the send's detail to watch it progress.
  */
 export default function AdminEmailCompose() {
@@ -119,11 +129,15 @@ export default function AdminEmailCompose() {
   const [preview, setPreview] = useState<PreviewEmailResponse | undefined>(
     undefined,
   );
-  // True for the whole send flow (the re-resolve, the confirm, the send), not
-  // just the send mutation: the confirm count round-trip leaves a window where
-  // sendEmail.isPending is still false, and a double click there would
-  // dispatch the entire bulk send twice.
+  // True while the pre-send audience re-resolve is in flight (before the
+  // confirmation dialog opens): the count round-trip leaves a window where
+  // sendEmail.isPending is still false, and a second Send click there would
+  // re-resolve (and ultimately dispatch the bulk send) twice.
   const [sending, setSending] = useState(false);
+  // Whether the deliberate send-confirmation dialog is open. It replaces the
+  // old native window.confirm so a reflexive Enter cannot dismiss it into a
+  // send; the explicit, labeled confirm button is the only path to dispatch.
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const templates = templatesQuery.data?.items ?? [];
   const events = eventsQuery.data?.items ?? [];
@@ -156,6 +170,14 @@ export default function AdminEmailCompose() {
 
   const canCompose = subject.trim().length > 0 && body.length > 0;
   const previewDayNote = preview ? multiDaySendNote(preview) : undefined;
+  // The confirmation dialog reads its recipient count and notes from `preview`,
+  // which handleSend refreshes (via the pre-send re-resolve) immediately before
+  // opening the dialog, so what it shows is the live audience that will send.
+  const confirmTotal = preview?.total ?? 0;
+  const confirmSkippedNote =
+    preview && preview.skipped_no_email > 0
+      ? `${preview.skipped_no_email} matching guest${preview.skipped_no_email === 1 ? "" : "s"} without an email will be skipped.`
+      : undefined;
   // A preview with merge-field warnings means the send would contain a blank
   // field, which the backend hard-refuses; disable Send until it is resolved.
   // The backend always sends warnings as [] (never null), but guard defensively
@@ -197,11 +219,14 @@ export default function AdminEmailCompose() {
     }
   };
 
+  // The "Send" button: re-resolve the audience so the confirmed count is never
+  // stale relative to edits made after a preview, then open the confirmation
+  // dialog. It never dispatches the send itself; the dialog's confirm button
+  // does. `sending` guards the in-flight re-resolve so a second Send click
+  // there is ignored.
   const handleSend = async () => {
     setSending(true);
     try {
-      // Re-resolve the audience at send time so the confirmed count can never
-      // be stale relative to edits made after a preview.
       const current = await previewEmail.mutateAsync({
         subject: subject.trim(),
         body,
@@ -212,18 +237,21 @@ export default function AdminEmailCompose() {
         toast.error("No recipients with an email address match the filter.");
         return;
       }
-      const skippedNote =
-        current.skipped_no_email > 0
-          ? ` (${current.skipped_no_email} matching guest${current.skipped_no_email === 1 ? "" : "s"} without an email will be skipped)`
-          : "";
-      const dayNote = multiDaySendNote(current);
-      if (
-        !window.confirm(
-          `Send this email to ${current.total} recipient${current.total === 1 ? "" : "s"}?${skippedNote}${dayNote ? ` ${dayNote}` : ""}`,
-        )
-      )
-        return;
+      setConfirmOpen(true);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to send email",
+      );
+    } finally {
+      setSending(false);
+    }
+  };
 
+  // The confirmation dialog's confirm button: the deliberate action that
+  // dispatches the send re-resolved by handleSend, then navigates to the
+  // send's detail to watch delivery.
+  const handleConfirmSend = async () => {
+    try {
       const sent = await sendEmail.mutateAsync({
         template_id: templateId,
         subject: subject.trim(),
@@ -233,13 +261,12 @@ export default function AdminEmailCompose() {
       toast.success(
         `Email queued for ${sent.stats.total} recipient${sent.stats.total === 1 ? "" : "s"}`,
       );
+      setConfirmOpen(false);
       navigate(`/admin/emails/sends/${sent.id}`);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to send email",
       );
-    } finally {
-      setSending(false);
     }
   };
 
@@ -406,7 +433,10 @@ export default function AdminEmailCompose() {
           {sendTestEmail.isPending && <Loader2 className="animate-spin" />}
           Send test
         </Button>
+        {/* Pushed to the right, away from "Send test", so the real send is not
+            an easy misclick next to it. */}
         <Button
+          className="ml-auto"
           disabled={!canCompose || sending || hasWarnings}
           onClick={handleSend}
         >
@@ -414,6 +444,51 @@ export default function AdminEmailCompose() {
           Send
         </Button>
       </div>
+
+      <Dialog
+        onOpenChange={(open) => {
+          // Dismissal (Escape, overlay click, the corner X) is ignored while
+          // the send is in flight: closing mid-request would read as an abort
+          // the request would not honor.
+          if (!open && !sendEmail.isPending) setConfirmOpen(false);
+        }}
+        open={confirmOpen}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send this email?</DialogTitle>
+            <DialogDescription>
+              This will send to {confirmTotal} recipient
+              {confirmTotal === 1 ? "" : "s"}.
+            </DialogDescription>
+          </DialogHeader>
+
+          {(confirmSkippedNote || previewDayNote) && (
+            <DialogBody className="space-y-2 text-sm text-muted-foreground">
+              {confirmSkippedNote && <p>{confirmSkippedNote}</p>}
+              {previewDayNote && <p>{previewDayNote}</p>}
+            </DialogBody>
+          )}
+
+          <DialogFooter>
+            <Button
+              onClick={() => setConfirmOpen(false)}
+              type="button"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={sendEmail.isPending}
+              onClick={handleConfirmSend}
+              type="button"
+            >
+              {sendEmail.isPending && <Loader2 className="animate-spin" />}
+              Send to {confirmTotal} recipient{confirmTotal === 1 ? "" : "s"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {preview && (
         <div className="space-y-4 rounded-md border border-ink/10 p-4">

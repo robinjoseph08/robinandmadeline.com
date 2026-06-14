@@ -5,9 +5,9 @@ import { runStamp } from "./stamp";
 
 // Issue #11's critical E2E flow: create an email template, compose from it,
 // filter the recipients down to a known guest, preview the resolved merge
-// fields, send (with confirmation), and verify the send history and the
-// per-recipient detail. The e2e API runs without a Mailgun key, so the queue
-// worker is off and every recipient deterministically stays Queued.
+// fields, send (confirming in the modal dialog), and verify the send history
+// and the per-recipient detail. The e2e API runs without a Mailgun key, so the
+// queue worker is off and every recipient deterministically stays Queued.
 //
 // Every entity is named with a per-run unique suffix and all assertions are
 // scoped to those names, so the spec is robust against data left by earlier
@@ -26,9 +26,6 @@ const body = `Hi {{guest_name}}, save the date! RSVP at {{rsvp_link}}.`;
 test("admin composes and sends a filtered email end to end", async ({
   page,
 }) => {
-  // The send button uses window.confirm; accept it automatically.
-  page.on("dialog", (dialog) => dialog.accept());
-
   await loginAsAdmin(page);
 
   // --- Seed a guest with an email and a unique tag -------------------------
@@ -112,8 +109,11 @@ test("admin composes and sends a filtered email end to end", async ({
   ).toBeVisible();
   await expect(page.getByRole("cell", { name: guestEmail })).toBeVisible();
 
-  // --- Send (confirmation auto-accepted) lands on the send detail ----------
+  // --- Send: confirm in the modal, then land on the send detail ------------
   await page.getByRole("button", { name: "Send", exact: true }).click();
+  // The real send opens a deliberate confirmation dialog (replacing the old
+  // native confirm); its confirm button carries the live recipient count.
+  await page.getByRole("button", { name: /^Send to \d+ recipient/ }).click();
   await expect(page).toHaveURL(/\/admin\/emails\/sends\//);
   await expect(
     page.getByRole("heading", { name: `Hello ${stamp}, {{guest_name}}!` }),
