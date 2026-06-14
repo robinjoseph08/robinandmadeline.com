@@ -339,7 +339,11 @@ function Row({
             podium.badge,
           )}
         >
-          <Trophy aria-hidden="true" className={cn("h-5 w-5", podium.icon)} />
+          <Trophy
+            aria-hidden="true"
+            className={cn("h-5 w-5", podium.icon)}
+            data-testid="podium-trophy"
+          />
           {rank}
         </span>
       ) : (

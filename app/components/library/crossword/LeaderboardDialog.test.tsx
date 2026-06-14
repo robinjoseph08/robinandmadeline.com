@@ -404,6 +404,10 @@ describe("LeaderboardDialog", () => {
     const list = screen.getByTestId("crossword-leaderboard-list");
     expect(list.className).toMatch(/overflow-y-auto/);
     expect(list.className).toMatch(/max-h-/);
+    // Horizontal padding is symmetric (px-1, not pr-1) so the highlighted
+    // viewer row's ring is not clipped on the left by the scrollport's
+    // overflow; reverting to right-only padding reintroduces that clip.
+    expect(list.className).toMatch(/(^|\s)px-1(\s|$)/);
   });
 
   it("gives the top three a podium treatment and leaves the rest plain", async () => {
@@ -425,6 +429,13 @@ describe("LeaderboardDialog", () => {
     expect(within(rows[1]).getByLabelText(/2nd place/i)).toBeInTheDocument();
     expect(within(rows[2]).getByLabelText(/3rd place/i)).toBeInTheDocument();
     expect(within(rows[3]).queryByLabelText(/place/i)).not.toBeInTheDocument();
+    // The marker is specifically the trophy glyph (not just any podium pill),
+    // so swapping the icon back out is caught; the plain rank has none.
+    expect(within(rows[0]).getByTestId("podium-trophy")).toBeInTheDocument();
+    expect(within(rows[2]).getByTestId("podium-trophy")).toBeInTheDocument();
+    expect(
+      within(rows[3]).queryByTestId("podium-trophy"),
+    ).not.toBeInTheDocument();
     // Rank 4 still shows its plain number.
     expect(rows[3]).toHaveTextContent("4.");
   });
