@@ -27,6 +27,23 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, 365*24*time.Hour, cfg.GuestSessionDuration)
 		assert.InDelta(t, 5.0, cfg.LoginRatePerMinute, 0)
 		assert.Equal(t, 5, cfg.LoginRateBurst)
+		assert.Equal(t, "https://www.robinandmadeline.com", cfg.PublicBaseURL)
+		// Mailgun credentials default to empty so the worker stays off and
+		// webhooks are rejected until they are explicitly configured.
+		assert.Empty(t, cfg.MailgunAPIKey)
+		assert.Empty(t, cfg.MailgunDomain)
+		assert.Empty(t, cfg.MailgunWebhookSigningKey)
+		assert.Equal(t, "https://api.mailgun.net", cfg.MailgunBaseURL)
+		assert.Equal(t, "Robin & Madeline <hello@robinandmadeline.com>", cfg.EmailFrom)
+		assert.Equal(t, 10, cfg.EmailWorkerBatchSize)
+		assert.Equal(t, 5*time.Second, cfg.EmailWorkerPollInterval)
+		assert.Equal(t, 5*time.Minute, cfg.EmailWorkerStuckThreshold)
+		// Mailgun's free plan caps sends at 100 per UTC day, so that is the
+		// safe out-of-the-box budget.
+		assert.Equal(t, 100, cfg.EmailDailySendLimit)
+		// Test recipients default to empty: the "Send test" button has nowhere
+		// to send until the couple's own addresses are configured.
+		assert.Empty(t, cfg.EmailTestRecipients)
 	})
 
 	t.Run("reads values from environment", func(t *testing.T) {
@@ -39,6 +56,17 @@ func TestNew(t *testing.T) {
 		t.Setenv("GUEST_SESSION_DURATION", "720h")
 		t.Setenv("LOGIN_RATE_PER_MINUTE", "120")
 		t.Setenv("LOGIN_RATE_BURST", "20")
+		t.Setenv("PUBLIC_BASE_URL", "https://staging.example.com")
+		t.Setenv("MAILGUN_API_KEY", "key-abc")
+		t.Setenv("MAILGUN_DOMAIN", "mg.example.com")
+		t.Setenv("MAILGUN_BASE_URL", "https://api.eu.mailgun.net")
+		t.Setenv("MAILGUN_WEBHOOK_SIGNING_KEY", "whsec-abc")
+		t.Setenv("EMAIL_FROM", "Us <us@example.com>")
+		t.Setenv("EMAIL_WORKER_BATCH_SIZE", "25")
+		t.Setenv("EMAIL_WORKER_POLL_INTERVAL", "1s")
+		t.Setenv("EMAIL_WORKER_STUCK_THRESHOLD", "10m")
+		t.Setenv("EMAIL_DAILY_SEND_LIMIT", "250")
+		t.Setenv("EMAIL_TEST_RECIPIENTS", "Robin <robin@example.com>, Madeline <madeline@example.com>")
 
 		cfg, err := config.New()
 		require.NoError(t, err)
@@ -52,6 +80,65 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, 720*time.Hour, cfg.GuestSessionDuration)
 		assert.InDelta(t, 120.0, cfg.LoginRatePerMinute, 0)
 		assert.Equal(t, 20, cfg.LoginRateBurst)
+		assert.Equal(t, "https://staging.example.com", cfg.PublicBaseURL)
+		assert.Equal(t, "key-abc", cfg.MailgunAPIKey)
+		assert.Equal(t, "mg.example.com", cfg.MailgunDomain)
+		assert.Equal(t, "https://api.eu.mailgun.net", cfg.MailgunBaseURL)
+		assert.Equal(t, "whsec-abc", cfg.MailgunWebhookSigningKey)
+		assert.Equal(t, "Us <us@example.com>", cfg.EmailFrom)
+		assert.Equal(t, 25, cfg.EmailWorkerBatchSize)
+		assert.Equal(t, time.Second, cfg.EmailWorkerPollInterval)
+		assert.Equal(t, 10*time.Minute, cfg.EmailWorkerStuckThreshold)
+		assert.Equal(t, 250, cfg.EmailDailySendLimit)
+		// Comma-separated addresses are split and trimmed, RFC5322 display-name
+		// forms preserved.
+		assert.Equal(t, []string{"Robin <robin@example.com>", "Madeline <madeline@example.com>"}, cfg.EmailTestRecipients)
+	})
+
+	t.Run("parses and trims a single test recipient", func(t *testing.T) {
+		t.Setenv("EMAIL_TEST_RECIPIENTS", "  robin@example.com  ")
+		cfg, err := config.New()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"robin@example.com"}, cfg.EmailTestRecipients)
+	})
+
+	t.Run("ignores blank entries between commas in EMAIL_TEST_RECIPIENTS", func(t *testing.T) {
+		t.Setenv("EMAIL_TEST_RECIPIENTS", "robin@example.com, ,madeline@example.com,")
+		cfg, err := config.New()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"robin@example.com", "madeline@example.com"}, cfg.EmailTestRecipients)
+	})
+
+	// Unlike the worker tuning knobs, the daily limit accepts zero and negative
+	// values on purpose: they mean unlimited (a paid Mailgun plan with no cap).
+	t.Run("allows a zero EMAIL_DAILY_SEND_LIMIT meaning unlimited", func(t *testing.T) {
+		t.Setenv("EMAIL_DAILY_SEND_LIMIT", "0")
+
+		cfg, err := config.New()
+		require.NoError(t, err)
+		assert.Equal(t, 0, cfg.EmailDailySendLimit)
+	})
+
+	t.Run("allows a negative EMAIL_DAILY_SEND_LIMIT meaning unlimited", func(t *testing.T) {
+		t.Setenv("EMAIL_DAILY_SEND_LIMIT", "-1")
+
+		cfg, err := config.New()
+		require.NoError(t, err)
+		assert.Equal(t, -1, cfg.EmailDailySendLimit)
+	})
+
+	t.Run("errors on malformed EMAIL_DAILY_SEND_LIMIT", func(t *testing.T) {
+		t.Setenv("EMAIL_DAILY_SEND_LIMIT", "not-a-number")
+
+		_, err := config.New()
+		assert.Error(t, err)
+	})
+
+	t.Run("errors on malformed EMAIL_WORKER_POLL_INTERVAL", func(t *testing.T) {
+		t.Setenv("EMAIL_WORKER_POLL_INTERVAL", "not-a-duration")
+
+		_, err := config.New()
+		assert.Error(t, err)
 	})
 
 	t.Run("uses the canonical database for the main checkout", func(t *testing.T) {
@@ -82,6 +169,40 @@ func TestNew(t *testing.T) {
 		cfg, err := config.New()
 		require.NoError(t, err)
 		assert.Equal(t, "postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline_wt_my_feature?sslmode=disable", cfg.DatabaseURL)
+	})
+
+	// Non-positive worker knobs fail at startup: zero or negative values would
+	// otherwise surface as a failing claim query every cycle (batch size) or a
+	// hot poll loop against the database (poll interval).
+	t.Run("errors on non-positive EMAIL_WORKER_BATCH_SIZE", func(t *testing.T) {
+		t.Setenv("EMAIL_WORKER_BATCH_SIZE", "0")
+
+		_, err := config.New()
+		assert.Error(t, err)
+	})
+
+	t.Run("errors on non-positive EMAIL_WORKER_POLL_INTERVAL", func(t *testing.T) {
+		t.Setenv("EMAIL_WORKER_POLL_INTERVAL", "-1s")
+
+		_, err := config.New()
+		assert.Error(t, err)
+	})
+
+	t.Run("errors on non-positive EMAIL_WORKER_STUCK_THRESHOLD", func(t *testing.T) {
+		t.Setenv("EMAIL_WORKER_STUCK_THRESHOLD", "0s")
+
+		_, err := config.New()
+		assert.Error(t, err)
+	})
+
+	t.Run("errors on MAILGUN_API_KEY without MAILGUN_DOMAIN", func(t *testing.T) {
+		// A key with no sending domain would start the worker against a
+		// malformed Mailgun URL and permanently fail every queued email.
+		t.Setenv("MAILGUN_API_KEY", "key-test")
+		t.Setenv("MAILGUN_DOMAIN", "")
+
+		_, err := config.New()
+		assert.Error(t, err)
 	})
 
 	t.Run("errors on malformed PORT", func(t *testing.T) {

@@ -6,6 +6,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -79,6 +80,57 @@ type Config struct {
 	// the per-IP limit. Defaults to false, so dev and tests key on the socket
 	// peer address.
 	TrustProxyHeaders bool
+
+	// PublicBaseURL is the site origin guest-facing links in emails are built
+	// on ({{rsvp_link}}, {{info_link}} merge fields).
+	PublicBaseURL string
+
+	// MailgunAPIKey is the private Mailgun API key. When empty (local dev,
+	// tests, e2e), the email worker does not start and queued emails stay
+	// queued, so nothing ever calls the real Mailgun API by accident.
+	MailgunAPIKey string
+
+	// MailgunDomain is the Mailgun sending domain (e.g. mg.example.com).
+	MailgunDomain string
+
+	// MailgunBaseURL is the Mailgun API origin; override for the EU region.
+	MailgunBaseURL string
+
+	// MailgunWebhookSigningKey verifies Mailgun delivery webhook signatures.
+	// When empty, every webhook is rejected as unauthorized.
+	MailgunWebhookSigningKey string
+
+	// EmailFrom is the From header on every outbound email.
+	EmailFrom string
+
+	// EmailWorkerBatchSize is how many queued recipients one worker batch
+	// claims (ADR 0004).
+	EmailWorkerBatchSize int
+
+	// EmailWorkerPollInterval is how long the worker sleeps between queue
+	// polls when idle.
+	EmailWorkerPollInterval time.Duration
+
+	// EmailWorkerStuckThreshold is how old a `sending` row must be before the
+	// worker's reconcile pass (run each cycle, including immediately on
+	// restart) checks it against Mailgun (ADR 0004).
+	EmailWorkerStuckThreshold time.Duration
+
+	// EmailDailySendLimit caps how many emails the worker dispatches per UTC
+	// day, matching Mailgun's free-plan quota (100/day, resetting at midnight
+	// UTC). Zero or negative means unlimited (a paid plan). The count only
+	// covers sends made by this app; manual sends from the Mailgun dashboard
+	// are invisible to it.
+	EmailDailySendLimit int
+
+	// EmailTestRecipients are the addresses the admin "Send test" button
+	// dispatches to (the couple's own inboxes), sourced from
+	// EMAIL_TEST_RECIPIENTS as a comma-separated list of RFC5322 addresses
+	// (e.g. "Robin <robin@example.com>, Madeline <madeline@example.com>").
+	// Configured via env so personal contact info is never committed; empty by
+	// default, in which case the test endpoint 422s. A test send consumes one
+	// of the daily Mailgun sends on the free plan.
+	EmailTestRecipients []string
 }
 
 // Default values used for local development when an env var is unset.
@@ -107,6 +159,23 @@ const (
 	// (ADR 0006). The e2e harness raises the rate so specs never trip it.
 	defaultLoginRatePerMinute = 5.0
 	defaultLoginRateBurst     = 5
+	// The production site origin (the www canonical host, matching
+	// CANONICAL_HOST), so guest-facing email links never hit the apex redirect.
+	defaultPublicBaseURL = "https://www.robinandmadeline.com"
+	// Mailgun's US-region API origin (the EU one is api.eu.mailgun.net).
+	defaultMailgunBaseURL = "https://api.mailgun.net"
+	defaultEmailFrom      = "Robin & Madeline <hello@robinandmadeline.com>"
+	// Small batches with a short pause keep one slow Mailgun call from
+	// stalling the whole queue while still draining ~174 recipients in
+	// seconds (ADR 0004).
+	defaultEmailWorkerBatchSize    = 10
+	defaultEmailWorkerPollInterval = 5 * time.Second
+	// Comfortably longer than a worst-case in-flight batch, so a live
+	// worker's rows are never mistaken for crash leftovers.
+	defaultEmailWorkerStuckThreshold = 5 * time.Minute
+	// Mailgun's free plan allows 100 emails per UTC day with no overage, so
+	// the default budget matches it exactly.
+	defaultEmailDailySendLimit = 100
 )
 
 // New builds a Config from the environment, applying defaults for any unset
@@ -143,6 +212,34 @@ func New() (*Config, error) {
 		return nil, err
 	}
 
+	// The worker tuning knobs must be positive: a zero or negative batch size
+	// makes every claim query fail (and zero would claim nothing forever), and
+	// a non-positive poll interval turns the worker loop into a hot spin
+	// against the database. Failing at startup beats either failure mode.
+	emailWorkerBatchSize, err := envInt("EMAIL_WORKER_BATCH_SIZE", defaultEmailWorkerBatchSize)
+	if err != nil {
+		return nil, err
+	}
+	if emailWorkerBatchSize <= 0 {
+		return nil, fmt.Errorf("invalid EMAIL_WORKER_BATCH_SIZE: %d is not positive", emailWorkerBatchSize)
+	}
+
+	emailWorkerPollInterval, err := envDuration("EMAIL_WORKER_POLL_INTERVAL", defaultEmailWorkerPollInterval)
+	if err != nil {
+		return nil, err
+	}
+	if emailWorkerPollInterval <= 0 {
+		return nil, fmt.Errorf("invalid EMAIL_WORKER_POLL_INTERVAL: %s is not positive", emailWorkerPollInterval)
+	}
+
+	emailWorkerStuckThreshold, err := envDuration("EMAIL_WORKER_STUCK_THRESHOLD", defaultEmailWorkerStuckThreshold)
+	if err != nil {
+		return nil, err
+	}
+	if emailWorkerStuckThreshold <= 0 {
+		return nil, fmt.Errorf("invalid EMAIL_WORKER_STUCK_THRESHOLD: %s is not positive", emailWorkerStuckThreshold)
+	}
+
 	// A canonical host carrying a scheme, port, path, or whitespace would
 	// produce redirect targets that never match the incoming Host again (an
 	// infinite redirect loop for the whole site), so it fails loudly at boot
@@ -151,6 +248,20 @@ func New() (*Config, error) {
 	canonicalHost := envStr("CANONICAL_HOST", "")
 	if strings.ContainsAny(canonicalHost, ":/ ") {
 		return nil, fmt.Errorf("invalid CANONICAL_HOST: %q must be a bare hostname without a scheme, port, or path", canonicalHost)
+	}
+
+	// Unlike the knobs above, zero and negative values are valid here: they
+	// mean unlimited, for months where the Mailgun plan has no daily cap.
+	emailDailySendLimit, err := envInt("EMAIL_DAILY_SEND_LIMIT", defaultEmailDailySendLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	// An API key with no sending domain would start the worker against a
+	// malformed Mailgun URL: every claimed row would get a definitive non-2xx
+	// rejection and be permanently marked failed. Fail at startup instead.
+	if os.Getenv("MAILGUN_API_KEY") != "" && os.Getenv("MAILGUN_DOMAIN") == "" {
+		return nil, errors.New("MAILGUN_DOMAIN must be set when MAILGUN_API_KEY is set")
 	}
 
 	return &Config{
@@ -166,7 +277,37 @@ func New() (*Config, error) {
 		StaticDir:            envStr("STATIC_DIR", ""),
 		CanonicalHost:        canonicalHost,
 		TrustProxyHeaders:    trustProxyHeaders,
+		PublicBaseURL:        envStr("PUBLIC_BASE_URL", defaultPublicBaseURL),
+		// Mailgun credentials default to empty: without an API key the email
+		// worker stays off, and without a signing key webhooks are rejected.
+		MailgunAPIKey:             os.Getenv("MAILGUN_API_KEY"),
+		MailgunDomain:             os.Getenv("MAILGUN_DOMAIN"),
+		MailgunBaseURL:            envStr("MAILGUN_BASE_URL", defaultMailgunBaseURL),
+		MailgunWebhookSigningKey:  os.Getenv("MAILGUN_WEBHOOK_SIGNING_KEY"),
+		EmailFrom:                 envStr("EMAIL_FROM", defaultEmailFrom),
+		EmailWorkerBatchSize:      emailWorkerBatchSize,
+		EmailWorkerPollInterval:   emailWorkerPollInterval,
+		EmailWorkerStuckThreshold: emailWorkerStuckThreshold,
+		EmailDailySendLimit:       emailDailySendLimit,
+		EmailTestRecipients:       envCSV("EMAIL_TEST_RECIPIENTS"),
 	}, nil
+}
+
+// envCSV splits a comma-separated environment variable into trimmed,
+// non-empty entries (so a trailing comma or a blank between commas is
+// ignored). An unset/empty variable yields a nil slice.
+func envCSV(key string) []string {
+	raw := os.Getenv(key)
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 // envStr returns the environment variable value or a fallback when unset/empty.

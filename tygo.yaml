@@ -58,6 +58,16 @@ packages:
     include_files:
       - types.go
 
+  # The emails API payload and response types. Only types.go is emitted; the
+  # payloads embed RecipientFilter and the responses embed the email models,
+  # imported from the generated models module.
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
+    output_path: "app/types/generated/emails.ts"
+    frontmatter: |
+      import * as models from "@/types/generated/models";
+    include_files:
+      - types.go
+
   # The ErrorCode union shared by the API error envelope.
   - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
     output_path: "app/types/generated/errcodes.ts"

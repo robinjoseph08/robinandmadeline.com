@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -95,6 +95,26 @@ function LocationProbe() {
   return <div data-testid="location-search">{location.search}</div>;
 }
 
+// Buttons that navigate like an external actor: a PUSH (a link click) and a
+// REPLACE (the shape of the page's own filter writes), for the search-box
+// resync tests.
+function NavProbe() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button onClick={() => void navigate("?search=external")} type="button">
+        push-nav
+      </button>
+      <button
+        onClick={() => void navigate("?search=stale", { replace: true })}
+        type="button"
+      >
+        replace-nav
+      </button>
+    </>
+  );
+}
+
 function renderGuests(path = "/admin/guests") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -105,6 +125,7 @@ function renderGuests(path = "/admin/guests") {
         <MemoryRouter initialEntries={[path]}>
           <AdminGuests />
           <LocationProbe />
+          <NavProbe />
         </MemoryRouter>
       </QueryClientProvider>
     </TooltipProvider>,
@@ -510,6 +531,43 @@ describe("AdminGuests flat list", () => {
       expect(
         guestCalls.some((call) => call[1]?.query?.search === "smith"),
       ).toBe(true);
+    });
+  });
+
+  it("resyncs the search box from an external (PUSH) navigation", async () => {
+    setMock({ guests: [] });
+
+    const user = userEvent.setup();
+    renderGuests();
+    const box = await screen.findByRole("textbox", { name: "Search guests" });
+
+    // A link-style navigation carrying a search lands in the box (the user
+    // never typed; the URL is the source of truth here).
+    await user.click(screen.getByRole("button", { name: "push-nav" }));
+    await waitFor(() => expect(box).toHaveValue("external"));
+  });
+
+  it("does not let a REPLACE commit clobber newer typing in the search box", async () => {
+    setMock({ guests: [] });
+
+    const user = userEvent.setup();
+    renderGuests();
+    const box = await screen.findByRole("textbox", { name: "Search guests" });
+
+    // The page's own writes are all REPLACE navigations, and under a heavy
+    // render react-router can commit one long after the user has typed a
+    // newer search. The replace-nav stands in for that late commit: it must
+    // not overwrite the box (which would also stop the newer value from ever
+    // being written, since the debounce only writes when box and URL differ).
+    await user.type(box, "fresh");
+    await user.click(screen.getByRole("button", { name: "replace-nav" }));
+    expect(box).toHaveValue("fresh");
+
+    // The debounce then writes the newer typing over the stale URL value.
+    await waitFor(() => {
+      expect(screen.getByTestId("location-search")).toHaveTextContent(
+        "search=fresh",
+      );
     });
   });
 });

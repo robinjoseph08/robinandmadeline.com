@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
 )
 
 // nonDigitRE strips formatting from a phone search term so it can match stored
@@ -130,8 +131,9 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 			q = q.Where("g.placeholder_text IS NULL")
 		}
 	}
-	if f.Tags != nil {
-		q = q.Where("? = ANY(g.tags)", *f.Tags)
+	if len(f.Tags) > 0 {
+		// Array overlap: the guest's tags include ANY of the selected tags.
+		q = q.Where("g.tags && ?", pgdialect.Array(f.Tags))
 	}
 
 	// Party-level attributes filter the guest list by constraining the owning

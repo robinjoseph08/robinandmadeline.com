@@ -14,6 +14,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/info"
@@ -87,7 +88,7 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 		PerMinute: cfg.LoginRatePerMinute,
 		Burst:     cfg.LoginRateBurst,
 	})
-	registerAdmin(api, authMiddleware, db)
+	registerAdmin(api, authMiddleware, db, cfg)
 	registerGuest(api, authMiddleware, db)
 	// The guest-facing schedule mounts on the open group behind optional guest
 	// auth: anonymous requests see public events, a valid guest token adds the
@@ -98,6 +99,10 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	// opaque high-entropy per-party info token in the URL is the authentication
 	// (ADR 0003), so unlike the guessable RSVP codes it needs no rate limiter.
 	info.RegisterRoutes(api, info.NewService(db))
+	// The Mailgun delivery webhook also mounts on the open group: Mailgun
+	// calls it, so there is no JWT; the HMAC signature on each payload is the
+	// authentication (an unconfigured signing key rejects everything).
+	emails.RegisterWebhookRoutes(api, emails.NewWebhook(db, cfg.MailgunWebhookSigningKey))
 
 	return &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.ServerPort),
@@ -116,7 +121,7 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 // parties service is still constructed, but its handlers are only reachable
 // with a valid token and will error at query time if the DB is unavailable,
 // which is the same failure mode as any other DB-backed endpoint.
-func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB) {
+func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.Config) {
 	admin := g.Group("/admin")
 	admin.Use(mw.RequireAdmin)
 	admin.GET("/me", func(c echo.Context) error {
@@ -126,6 +131,16 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB) {
 	parties.RegisterRoutes(admin, parties.NewService(db))
 	events.RegisterRoutes(admin, events.NewService(db))
 	photogroups.RegisterRoutes(admin, photogroups.NewService(db))
+
+	emailService := emails.NewService(db, cfg.PublicBaseURL, cfg.AdminUsername, cfg.EmailDailySendLimit)
+	// The "Send test" endpoint enqueues a real send for the queue worker, so it
+	// needs no Mailgun client of its own. Enable it only when Mailgun is
+	// configured, mirroring how the worker decides it is on (so there is a
+	// worker to drain the test send); without a key the endpoint cleanly 422s.
+	if cfg.MailgunAPIKey != "" {
+		emailService.WithTestSend(cfg.EmailTestRecipients)
+	}
+	emails.RegisterRoutes(admin, emailService)
 }
 
 // registerGuest mounts the guest API surface behind the guest auth middleware.

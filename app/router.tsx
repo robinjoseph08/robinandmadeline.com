@@ -1,7 +1,10 @@
 import { createBrowserRouter } from "react-router-dom";
 
 import AdminDashboard from "@/components/pages/admin/AdminDashboard";
+import AdminEmailCompose from "@/components/pages/admin/AdminEmailCompose";
 import AdminEmails from "@/components/pages/admin/AdminEmails";
+import AdminEmailSendDetail from "@/components/pages/admin/AdminEmailSendDetail";
+import AdminEmailTemplates from "@/components/pages/admin/AdminEmailTemplates";
 import AdminEventDetail from "@/components/pages/admin/AdminEventDetail";
 import AdminEvents from "@/components/pages/admin/AdminEvents";
 import AdminGuests from "@/components/pages/admin/AdminGuests";
@@ -61,6 +64,9 @@ export const router = createBrowserRouter([
           { path: "events/:id", Component: AdminEventDetail },
           { path: "photo-groups", Component: AdminPhotoGroups },
           { path: "emails", Component: AdminEmails },
+          { path: "emails/compose", Component: AdminEmailCompose },
+          { path: "emails/templates", Component: AdminEmailTemplates },
+          { path: "emails/sends/:id", Component: AdminEmailSendDetail },
         ],
       },
     ],

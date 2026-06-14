@@ -10,6 +10,10 @@ import (
 // violation.
 const pgUniqueViolation = "23505"
 
+// pgForeignKeyViolation is the SQLSTATE Postgres returns for a foreign-key
+// violation.
+const pgForeignKeyViolation = "23503"
+
 // IsUniqueViolation reports whether err is a Postgres unique-constraint
 // violation. It is the single place that detection lives so stores route insert
 // and update conflicts through ConflictOnUnique rather than inspecting the
@@ -31,6 +35,18 @@ func ConflictOnUnique(err error, msg string) error {
 		return Conflict(msg)
 	}
 	return err
+}
+
+// IsForeignKeyViolation reports whether err is a Postgres foreign-key
+// violation, for writes that race a referenced row's deletion (an insert
+// naming a guest deleted between resolve and insert) and want to surface it
+// as a client error rather than a 500.
+func IsForeignKeyViolation(err error) bool {
+	var pgErr pgdriver.Error
+	if errors.As(err, &pgErr) {
+		return pgErr.Field('C') == pgForeignKeyViolation
+	}
+	return false
 }
 
 // ConflictOnConstraint is ConflictOnUnique narrowed to one named constraint,

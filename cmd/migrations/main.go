@@ -21,6 +21,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"github.com/robinjoseph08/golib/logger"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
@@ -29,6 +30,16 @@ import (
 
 func main() {
 	log := logger.New()
+
+	// Load a local .env if present so this CLI resolves DATABASE_URL (and any
+	// other config) exactly like the API server, which also loads .env. Without
+	// this, `mise db:migrate` and the server could target different databases
+	// whenever .env sets DATABASE_URL, which silently leaves the running server
+	// on an un-migrated database. Load never overrides an already-set variable,
+	// so CI and the e2e harness (which export DATABASE_URL) win, and a missing
+	// file is a no-op. No logging here so the `url` subcommand's stdout stays
+	// clean for the db:clone task that parses it.
+	_ = godotenv.Load()
 
 	if len(os.Args) < 2 {
 		usage()
