@@ -1,10 +1,10 @@
 // The leaderboard dialog's secondary states: loading, error, empty, the
 // truncation footer, and the difficulty tabs' fetch and default behavior,
-// plus the show-all list (every returned row rendered inside its own
-// scrollport), the podium treatment for the top three, and the open-time
-// auto-scroll to the viewer's own row. The auto-scroll, like the clue list's,
-// cannot run through real layout in jsdom, so it is pinned with mocked rects:
-// the viewer row is centered in the list's OWN scrollport (a bare
+// plus the show-all list (every returned row rendered inside the single
+// flex-fill scroll container), the podium treatment for the top three, and the
+// open-time auto-scroll to the viewer's own row. The auto-scroll, like the clue
+// list's, cannot run through real layout in jsdom, so it is pinned with mocked
+// rects: the viewer row is centered in the list's OWN scroll container (a bare
 // scrollIntoView would walk scrollable ancestors and move the dialog or page).
 // The populated happy path also renders through the page in
 // Crossword.session.test.tsx.
@@ -112,7 +112,7 @@ function rect(top: number, bottom: number): DOMRect {
 
 /**
  * Installs rect mocks placing the viewer's row at `viewerRect` and the list's
- * scrollport at 0-100, plus a scrollTo spy, so the open-time auto-scroll
+ * scroll container at 0-100, plus a scrollTo spy, so the open-time auto-scroll
  * effect runs against measurable geometry. jsdom has no layout, so without
  * this every rect is a zero box and the effect can't tell where the viewer's
  * row sits, exactly as the clue-list test does. The viewer row is found by the
@@ -399,20 +399,37 @@ describe("LeaderboardDialog", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(130);
     expect(screen.queryByText(/showing the fastest/i)).not.toBeInTheDocument();
 
-    // The list is its own bounded scrollport (the dialog stays put; the list
-    // scrolls), the same containment the clue lists use.
-    const list = screen.getByTestId("crossword-leaderboard-list");
-    expect(list.className).toMatch(/overflow-y-auto/);
-    expect(list.className).toMatch(/max-h-/);
+    // The list is the dialog's ONE scroll container: a flex-fill wrapper that
+    // takes the height left under the fixed tabs (flex-1 + min-h-0) and scrolls.
+    // It is NOT a second, fixed-height (max-h-[22rem]) scroller nested inside
+    // the dialog body's own scroller, which used to clip the list's last row
+    // below the body's edge on a short viewport and leave the final rank
+    // unreachable. min-h-0 lets it shrink past its content so it, not the body,
+    // owns the scroll; a regression back to a fixed height reintroduces the
+    // nested-scroller clip.
+    const scroller = screen.getByTestId("crossword-leaderboard-list");
+    expect(scroller.className).toMatch(/overflow-y-auto/);
+    expect(scroller.className).toMatch(/(^|\s)flex-1(\s|$)/);
+    expect(scroller.className).toMatch(/(^|\s)min-h-0(\s|$)/);
+    // The scroller fills the dialog rather than capping itself, so no max-height
+    // windows it independently of the body (the old nested-scroll bug).
+    expect(scroller.className).not.toMatch(/max-h-/);
     // Horizontal padding is symmetric (px-1, not pr-1) so the highlighted
-    // viewer row's ring is not clipped on the left by the scrollport's
+    // viewer row's ring is not clipped on the left by the scroll container's
     // overflow; reverting to right-only padding reintroduces that clip.
-    expect(list.className).toMatch(/(^|\s)px-1(\s|$)/);
+    expect(scroller.className).toMatch(/(^|\s)px-1(\s|$)/);
     // Vertical padding gives the first and last rows breathing room inside the
     // scroll range, so the last row (and its ring) is fully visible when
     // scrolled to the bottom instead of sitting flush against the overflow edge
     // with its time clipped; dropping it reintroduces that clip.
-    expect(list.className).toMatch(/(^|\s)py-1\.5(\s|$)/);
+    expect(scroller.className).toMatch(/(^|\s)py-1\.5(\s|$)/);
+
+    // The <ol> inside the scroller is natural height now (it no longer windows
+    // itself): it carries neither a max-height nor its own overflow, so the
+    // single wrapper above is the only thing that scrolls.
+    const ol = scroller.querySelector("ol")!;
+    expect(ol.className).not.toMatch(/max-h-/);
+    expect(ol.className).not.toMatch(/overflow-/);
   });
 
   it("gives the top three a place trophy and leaves the rest plain", async () => {
@@ -630,9 +647,9 @@ describe("LeaderboardDialog", () => {
     expect(normalRow).not.toHaveClass("bg-secondary/40");
   });
 
-  it("scrolls its own scrollport to center the viewer's row on open", async () => {
-    // The viewer ranks deep in the list (below the scrollport), as a guest who
-    // placed, say, 80th would. jsdom has no layout, so (as in the clue-list
+  it("scrolls its own container to center the viewer's row on open", async () => {
+    // The viewer ranks deep in the list (below the scroll container), as a guest
+    // who placed, say, 80th would. jsdom has no layout, so (as in the clue-list
     // test) the list renders first with the effect inert, the geometry is
     // pinned on the persisted row node, then the viewer arrives to fire the
     // effect against it. Here the warm-up read has no viewer (the inert state)
@@ -646,7 +663,7 @@ describe("LeaderboardDialog", () => {
     await screen.findByText("Solver 80");
 
     // The viewer's row (rank 80, "Solver 80") sits well below the 0-100
-    // scrollport (top 800-820); pin that before the viewer arrives.
+    // scroll container (top 800-820); pin that before the viewer arrives.
     const scrollTo = mockListGeometry(rect(800, 820), {
       targetText: "Solver 80",
     });
@@ -654,7 +671,7 @@ describe("LeaderboardDialog", () => {
 
     // The viewer-aware response lands with the SAME items (so the row node
     // persists and keeps its pinned rect) plus the solver's rank, firing the
-    // effect: centering brings the row's middle (810) to the scrollport's
+    // effect: centering brings the row's middle (810) to the container's
     // middle (50), i.e. scrollTop 760.
     queryClient.setQueryData(
       [QueryKey.GameLeaderboard, "wedding-mini-v1", "easy", "sess-7"],
@@ -668,8 +685,8 @@ describe("LeaderboardDialog", () => {
   it("measures on the next frame, not synchronously, so a reopened portal has laid out", async () => {
     // The scroll is deferred to an animation frame because the dialog's Radix
     // portal remounts the list on each open: measuring in the effect body
-    // reads a not-yet-mounted scrollport on a reopen and silently no-ops. Pin
-    // the deferral by capturing the frame callback instead of running it.
+    // reads a not-yet-mounted scroll container on a reopen and silently no-ops.
+    // Pin the deferral by capturing the frame callback instead of running it.
     let frameCb: FrameRequestCallback | null = null;
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       frameCb = cb;
@@ -709,8 +726,8 @@ describe("LeaderboardDialog", () => {
     renderDialog({ sessionId: "sess-7" });
     await screen.findByText("Solver 1");
 
-    // No "You" row to anchor on, so spy on the scrollport directly: with no
-    // viewer the effect must not move it at all.
+    // No "You" row to anchor on, so spy on the scroll container directly: with
+    // no viewer the effect must not move it at all.
     const list = screen.getByTestId("crossword-leaderboard-list");
     const scrollTo = vi.fn();
     Object.assign(list, { scrollTo });
@@ -737,8 +754,8 @@ describe("LeaderboardDialog", () => {
     renderDialog({ sessionId: "sess-7" });
     await screen.findByText("Robin");
 
-    // The viewer's row is fully within the 0-100 scrollport (top 0-20), so
-    // centering is suppressed: a podium finisher is not yanked downward.
+    // The viewer's row is fully within the 0-100 scroll container (top 0-20),
+    // so centering is suppressed: a podium finisher is not yanked downward.
     const scrollTo = mockListGeometry(rect(0, 20));
 
     await new Promise((resolve) => setTimeout(resolve, 0));

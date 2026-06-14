@@ -6,21 +6,29 @@
 //
 // The population is small and bounded (the wedding's guests), so the board
 // shows EVERYONE rather than a top-N: every returned row renders inside the
-// list's own bounded, independently scrollable scrollport, so the dialog
-// stays within the viewport while the list scrolls. The backend cap (500) is
-// a defensive ceiling well above any real board, so at wedding scale this is
-// literally everyone. The fastest three get a gold/silver/bronze podium so
-// the winners still get their moment even though all are shown.
+// list's own scrollable region, which flexes to fill the dialog's remaining
+// height so the dialog stays within the viewport while the list scrolls. The
+// backend cap (500) is a defensive ceiling well above any real board, so at
+// wedding scale this is literally everyone. The fastest three get a
+// gold/silver/bronze podium so the winners still get their moment even though
+// all are shown.
+//
+// The list is the dialog's ONE scroller. The tabs stay fixed at the top and
+// the list fills the rest of the dialog body (a flex column), so the list
+// grows on a tall viewport and shrinks on a short one, but its last row is
+// always reachable: there is no second, fixed-height scroller nested inside
+// the body to clip the list's tail (the cause of an earlier bug where the
+// final rank fell below the body's edge and could not be scrolled into view).
 //
 // When given the solver's own session id, the read also returns that solver's
 // ranked row (the backend's viewer), so the dialog always shows them their
 // place: highlighted in the list when they are within the (capped) items, and
 // appended as a separated row with its true rank when they fall past it. On
 // open, the list scrolls that highlighted row into view within its own
-// scrollport (centered), so a guest who placed, say, 80th lands on themselves
-// and can scroll up to who beat them and down to who is chasing. The viewer
-// comes back only on the solver's own recorded-difficulty tab, so no per-tab
-// special-casing is needed here.
+// scroll region (centered), so a guest who placed, say, 80th lands on
+// themselves and can scroll up to who beat them and down to who is chasing.
+// The viewer comes back only on the solver's own recorded-difficulty tab, so
+// no per-tab special-casing is needed here.
 
 import { Trophy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -97,16 +105,17 @@ export default function LeaderboardDialog({
   // all that is needed before reading its rank.
   const viewer = data?.viewer;
 
-  // The list's own scrollport and the viewer's row within it, for the
-  // open-time auto-scroll. The row ref is set whether the viewer's row sits
-  // inside the displayed items or is the appended off-list row, so either
-  // path centers the same way.
-  const listRef = useRef<HTMLOListElement>(null);
+  // The list's own scroll container and the viewer's row within it, for the
+  // open-time auto-scroll. listRef is on the flex-fill wrapper that actually
+  // scrolls (not the <ol>, which is now natural height inside it). The row ref
+  // is set whether the viewer's row sits inside the displayed items or is the
+  // appended off-list row, so either path centers the same way.
+  const listRef = useRef<HTMLDivElement>(null);
   const viewerRowRef = useRef<HTMLLIElement>(null);
 
   // On open (and once the viewer's data arrives, and on a return to the
   // solver's own tab), bring the viewer's highlighted row into view within
-  // the list's OWN scrollport. The list and the viewer's rank are the
+  // the list's OWN scroll container. The list and the viewer's rank are the
   // dependencies: a tab switch swaps both, and the data arriving flips
   // items/viewer from undefined.
   const viewerRank = viewer?.rank;
@@ -117,16 +126,16 @@ export default function LeaderboardDialog({
     // Measure and scroll on the next frame, not synchronously in the effect:
     // the dialog content is a Radix portal that remounts on each open, so on a
     // reopen the list/row nodes attach (and lay out) a beat after this effect
-    // runs. Measuring now would read a not-yet-mounted scrollport and silently
-    // no-op (the bug that left a reopened dialog stuck at the top); the frame
-    // delay lets the fresh list lay out so the geometry is real.
+    // runs. Measuring now would read a not-yet-mounted scroll container and
+    // silently no-op (the bug that left a reopened dialog stuck at the top);
+    // the frame delay lets the fresh list lay out so the geometry is real.
     const frame = requestAnimationFrame(() => {
       const list = listRef.current;
       const row = viewerRowRef.current;
       if (!list || !row) {
         return;
       }
-      // Scroll the list's own scrollport, never row.scrollIntoView(): on the
+      // Scroll the list's own container, never row.scrollIntoView(): on the
       // single-column mobile layout scrollIntoView walks every scrollable
       // ancestor and would yank the dialog or the page, the same trap the clue
       // list hit. Only the list itself may move, and only when the row is not
@@ -138,7 +147,7 @@ export default function LeaderboardDialog({
       if (fullyVisible) {
         return;
       }
-      // Center the row in the scrollport: move its middle to the scrollport's
+      // Center the row in the container: move its middle to the container's
       // middle. The browser clamps scrollTo to the scrollable range on its
       // own, so a row near either end lands as close to centered as it can.
       const rowCenter = rowRect.top + rowRect.height / 2;
@@ -160,14 +169,24 @@ export default function LeaderboardDialog({
             {puzzleTitle}: the fastest posted solves at each difficulty.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody className="py-4">
+        {/* The body is a flex column for this dialog so the tabs stay fixed
+            at the top and the list below fills the remaining height as the
+            single scroller (its base already has min-h-0 overflow-y-auto px-6,
+            so with flex-col and children that fit, the body itself never
+            overflows and its scroll is a no-op). This keeps one effective
+            scroll container: a fixed-height list nested inside the body's own
+            scroller used to clip the list's last row below the body's edge on a
+            short viewport, leaving the final rank unreachable. */}
+        <DialogBody className="flex flex-col py-4">
           {/* Styled as tabs, exposed as a pressed-button group: the same
               idiom as the other difficulty pickers (StartDialog, the
               more-menu), which keeps plain Tab/Enter operation honest
-              instead of half-promising the ARIA tabs keyboard contract. */}
+              instead of half-promising the ARIA tabs keyboard contract.
+              shrink-0 keeps the tabs at their natural height, fixed above the
+              flexing list. */}
           <div
             aria-label="Leaderboard difficulty"
-            className="flex gap-1 rounded-md bg-secondary/20 p-1"
+            className="flex shrink-0 gap-1 rounded-md bg-secondary/20 p-1"
             role="group"
           >
             {DIFFICULTIES.map((level) => (
@@ -187,82 +206,83 @@ export default function LeaderboardDialog({
               </button>
             ))}
           </div>
-          <div className="mt-4">
-            {isPending ? (
-              <p className="text-sm text-muted-foreground">
-                Loading the fastest solvers...
-              </p>
-            ) : isError ? (
-              <p className="text-sm text-muted-foreground" role="alert">
-                We couldn't load the leaderboard. Please try again in a bit.
-              </p>
-            ) : data.items.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No {DIFFICULTY_LABELS[difficulty].toLowerCase()} times posted
-                yet. Be the first!
-              </p>
-            ) : (
-              <>
-                {/* The whole board scrolls within this bounded scrollport, so
-                    the dialog stays put at any guest count; the same
-                    containment the clue lists use. The symmetric px-1 keeps a
-                    tinted row's 1px ring off the left/right overflow edge, and
-                    py-1.5 gives the first and last rows the same breathing room:
-                    without it the last row (and its ring) sits flush against the
-                    overflow boundary and its time reads as clipped when scrolled
-                    to the bottom. The padding lands inside the scroll range, so
-                    scrolling to the end now reveals the last row in full. */}
-                <ol
-                  className="max-h-[22rem] space-y-1.5 overflow-y-auto overscroll-contain px-1 py-1.5"
-                  data-testid="crossword-leaderboard-list"
-                  ref={listRef}
-                >
-                  {data.items.map((entry, index) => {
-                    // The viewer (the solver's own row) is in the list when its
-                    // rank falls within the displayed items; highlight that row
-                    // rather than appending a duplicate below.
-                    const isViewer =
-                      Boolean(viewer) && viewer!.rank === index + 1;
-                    return (
-                      // The index disambiguates entries that share a name and a
-                      // completion timestamp (the backend dedupes neither); the
-                      // list is replaced wholesale on refetch, so an index key
-                      // cannot go stale.
-                      <Row
-                        entry={entry}
-                        isViewer={isViewer}
-                        key={`${index}:${entry.display_name}`}
-                        rank={index + 1}
-                        rowRef={isViewer ? viewerRowRef : undefined}
-                      />
-                    );
-                  })}
-                </ol>
-                {data.total > data.items.length && (
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    Showing the fastest {data.items.length} of {data.total}{" "}
-                    posted solves.
-                  </p>
-                )}
-                {/* The solver's rank is past the displayed items: show their
-                    own row anyway, separated, with its true number. (Only
-                    reachable past the 500 cap, i.e. never at wedding scale.) */}
-                {viewer && viewer.rank > data.items.length && (
-                  <>
-                    <div className="my-3 border-t border-dashed" />
-                    <ol className="space-y-1.5">
-                      <Row
-                        entry={viewer.entry}
-                        isViewer
-                        rank={viewer.rank}
-                        rowRef={viewerRowRef}
-                      />
-                    </ol>
-                  </>
-                )}
-              </>
-            )}
-          </div>
+          {isPending ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              Loading the fastest solvers...
+            </p>
+          ) : isError ? (
+            <p className="mt-4 text-sm text-muted-foreground" role="alert">
+              We couldn't load the leaderboard. Please try again in a bit.
+            </p>
+          ) : data.items.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              No {DIFFICULTY_LABELS[difficulty].toLowerCase()} times posted yet.
+              Be the first!
+            </p>
+          ) : (
+            // The single scroll container: it flex-fills the height left under
+            // the fixed tabs (min-h-0 lets it shrink below its content so it,
+            // not the dialog body, owns the scroll) and holds the whole board,
+            // the truncation note, and the appended off-list viewer row, so
+            // everything scrolls together and the auto-scroll can center the
+            // viewer whether it sits in the list or is the appended row. The
+            // symmetric px-1 keeps a tinted row's 1px ring off the left/right
+            // overflow edge, and py-1.5 gives the first and last rows the same
+            // breathing room: without it the last row (and its ring) sits flush
+            // against the overflow boundary and its time reads as clipped at the
+            // bottom. The padding lands inside the scroll range, so scrolling to
+            // the end reveals the last row in full.
+            <div
+              className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 py-1.5"
+              data-testid="crossword-leaderboard-list"
+              ref={listRef}
+            >
+              <ol className="space-y-1.5">
+                {data.items.map((entry, index) => {
+                  // The viewer (the solver's own row) is in the list when its
+                  // rank falls within the displayed items; highlight that row
+                  // rather than appending a duplicate below.
+                  const isViewer =
+                    Boolean(viewer) && viewer!.rank === index + 1;
+                  return (
+                    // The index disambiguates entries that share a name and a
+                    // completion timestamp (the backend dedupes neither); the
+                    // list is replaced wholesale on refetch, so an index key
+                    // cannot go stale.
+                    <Row
+                      entry={entry}
+                      isViewer={isViewer}
+                      key={`${index}:${entry.display_name}`}
+                      rank={index + 1}
+                      rowRef={isViewer ? viewerRowRef : undefined}
+                    />
+                  );
+                })}
+              </ol>
+              {data.total > data.items.length && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Showing the fastest {data.items.length} of {data.total} posted
+                  solves.
+                </p>
+              )}
+              {/* The solver's rank is past the displayed items: show their own
+                  row anyway, separated, with its true number. (Only reachable
+                  past the 500 cap, i.e. never at wedding scale.) */}
+              {viewer && viewer.rank > data.items.length && (
+                <>
+                  <div className="my-3 border-t border-dashed" />
+                  <ol className="space-y-1.5">
+                    <Row
+                      entry={viewer.entry}
+                      isViewer
+                      rank={viewer.rank}
+                      rowRef={viewerRowRef}
+                    />
+                  </ol>
+                </>
+              )}
+            </div>
+          )}
         </DialogBody>
         <DialogFooter>
           <Button
