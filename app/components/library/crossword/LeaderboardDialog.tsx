@@ -273,36 +273,44 @@ export default function LeaderboardDialog({
 }
 
 /**
- * The gold/silver/bronze styling for the top three ranks, keyed by rank. The
- * palette is warm metallics that sit on the cream surface without fighting the
- * wedding blues/pinks; rank 4+ returns undefined and renders plainly.
+ * The gold/silver/bronze circle styling for the top three ranks, keyed by rank.
+ * Each circle carries a solid metal fill, a slightly deeper ring to give it
+ * dimension on the cream surface, and a light trophy that reads clearly inside
+ * the fill. The tones are saturated enough to register as their metal at a
+ * glance (a washed-out pastel reads as neither gold nor silver) while staying
+ * warm next to the wedding blues/pinks. Rank 4+ has no entry and renders with
+ * an empty circle gutter so its number still lines up with the podium rows.
  */
-const PODIUM: Record<number, { badge: string; icon: string; label: string }> = {
+const PODIUM: Record<number, { circle: string; label: string }> = {
   1: {
-    badge: "bg-amber-100 text-amber-900 ring-1 ring-amber-300",
-    icon: "text-amber-500",
+    // Gold: a warm amber fill with a deeper amber ring and a near-white trophy.
+    circle: "bg-amber-400 text-amber-50 ring-1 ring-inset ring-amber-600/60",
     label: "1st place",
   },
   2: {
-    badge: "bg-slate-100 text-slate-700 ring-1 ring-slate-300",
-    icon: "text-slate-400",
+    // Silver: a cool slate fill kept dark enough to read as metal on cream
+    // (the usual silver-on-light trap is too pale a gray), with a light trophy.
+    circle: "bg-slate-400 text-slate-50 ring-1 ring-inset ring-slate-600/60",
     label: "2nd place",
   },
   3: {
-    badge: "bg-orange-100 text-orange-900 ring-1 ring-orange-300",
-    icon: "text-orange-400",
+    // Bronze: a rich copper fill with a deeper ring and a light trophy.
+    circle: "bg-amber-700 text-amber-50 ring-1 ring-inset ring-amber-900/50",
     label: "3rd place",
   },
 };
 
 /**
- * One leaderboard line. The fastest three get a colored trophy and a metallic
- * rank badge (the podium); everyone else gets a plain muted number. The
- * solver's own row gets a "You" badge and an accent background so they can
- * spot their place, whether it sits inside the displayed list or is the
- * appended off-list row below the separator; that highlight composes with the
- * podium (a viewer in the top three reads as both). rowRef is set on the
- * viewer's row so the dialog can center it on open.
+ * One leaderboard line, laid out as: circle gutter, rank number, name, time.
+ * The fastest three get a gold/silver/bronze circle holding only a trophy in
+ * the gutter; everyone else leaves that gutter empty. The rank number is the
+ * same muted "{rank}." on every row (the circle never absorbs the number), so
+ * the numbers line up in their own column straight down the list. The solver's
+ * own row gets a "You" badge and an accent background so they can spot their
+ * place, whether it sits inside the displayed list or is the appended off-list
+ * row below the separator; that highlight composes with the podium (a viewer in
+ * the top three reads as the circle, the number, and "You" together). rowRef is
+ * set on the viewer's row so the dialog can center it on open.
  */
 function Row({
   entry,
@@ -319,38 +327,44 @@ function Row({
   return (
     <li
       className={cn(
-        // Every row carries the same padding so the rank/name/time columns
-        // line up across plain, podium, and viewer rows; the viewer highlight
-        // below is a background + ring only, never extra padding, so it never
-        // shifts a row's contents out of alignment with its neighbors.
+        // Every row carries the same padding so the circle/rank/name/time
+        // columns line up across plain, podium, and viewer rows; the viewer
+        // highlight below is a background + ring only, never extra padding, so
+        // it never shifts a row's contents out of alignment with its neighbors.
         "flex items-center gap-3 rounded px-2 py-1 text-sm",
         isViewer && "bg-secondary/40 font-medium ring-1 ring-secondary",
       )}
       ref={rowRef}
     >
-      {podium ? (
-        <span
-          aria-label={podium.label}
-          className={cn(
-            // A clearly visible trophy is the rank's marker; the number sits
-            // beside it so the placing still reads at a glance. The pill shares
-            // the plain number's width so the name column stays aligned.
-            "flex w-11 shrink-0 items-center justify-center gap-1 rounded-full py-0.5 pl-1 pr-1.5 text-xs font-semibold tabular-nums",
-            podium.badge,
-          )}
-        >
-          <Trophy
-            aria-hidden="true"
-            className={cn("h-5 w-5", podium.icon)}
-            data-testid="podium-trophy"
-          />
-          {rank}
-        </span>
-      ) : (
-        <span className="w-11 shrink-0 pr-1.5 text-right text-muted-foreground">
-          {rank}.
-        </span>
-      )}
+      {/* The circle gutter is reserved on every row (a fixed-width slot), so
+          the rank numbers to its right share one column whether or not the row
+          is a podium row. Podium rows fill it with the metal circle; the rest
+          leave it empty. */}
+      <span className="flex w-6 shrink-0 justify-center">
+        {podium && (
+          <span
+            aria-label={podium.label}
+            className={cn(
+              // A small metal circle holding only the trophy; the rank number
+              // lives outside it (next column) so all numbers stay aligned.
+              "flex size-6 items-center justify-center rounded-full",
+              podium.circle,
+            )}
+          >
+            <Trophy
+              aria-hidden="true"
+              className="size-3.5"
+              data-testid="podium-trophy"
+            />
+          </span>
+        )}
+      </span>
+      {/* One shared rank-number style for every row (podium and plain alike):
+          a fixed width wide enough for three digits plus the period, right-
+          aligned and muted, so the numbers form a single tidy column. */}
+      <span className="w-9 shrink-0 text-right text-muted-foreground tabular-nums">
+        {rank}.
+      </span>
       <span className="flex min-w-0 flex-1 items-baseline gap-2">
         <span className="min-w-0 truncate font-medium">
           {entry.display_name}

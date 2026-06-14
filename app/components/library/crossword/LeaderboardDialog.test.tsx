@@ -410,7 +410,7 @@ describe("LeaderboardDialog", () => {
     expect(list.className).toMatch(/(^|\s)px-1(\s|$)/);
   });
 
-  it("gives the top three a podium treatment and leaves the rest plain", async () => {
+  it("gives the top three a podium circle and leaves the rest plain", async () => {
     apiRequest.mockResolvedValue({
       items: [
         entry({ display_name: "First", elapsed_ms: 60_000 }),
@@ -424,20 +424,67 @@ describe("LeaderboardDialog", () => {
     renderDialog();
 
     const rows = await screen.findAllByRole("listitem");
-    // Ranks 1-3 carry a labelled podium trophy; rank 4 does not.
+    // Ranks 1-3 carry a labelled podium circle; rank 4 does not.
     expect(within(rows[0]).getByLabelText(/1st place/i)).toBeInTheDocument();
     expect(within(rows[1]).getByLabelText(/2nd place/i)).toBeInTheDocument();
     expect(within(rows[2]).getByLabelText(/3rd place/i)).toBeInTheDocument();
     expect(within(rows[3]).queryByLabelText(/place/i)).not.toBeInTheDocument();
-    // The marker is specifically the trophy glyph (not just any podium pill),
-    // so swapping the icon back out is caught; the plain rank has none.
+    // The marker is specifically the trophy glyph inside the circle (not just
+    // any podium circle), so swapping the icon back out is caught; the plain
+    // rank has none.
     expect(within(rows[0]).getByTestId("podium-trophy")).toBeInTheDocument();
     expect(within(rows[2]).getByTestId("podium-trophy")).toBeInTheDocument();
     expect(
       within(rows[3]).queryByTestId("podium-trophy"),
     ).not.toBeInTheDocument();
-    // Rank 4 still shows its plain number.
+    // Every row, podium or plain, shows its rank as the same "{rank}." text.
+    expect(rows[0]).toHaveTextContent("1.");
     expect(rows[3]).toHaveTextContent("4.");
+  });
+
+  it("renders the rank number identically on podium and plain rows so they stay aligned", async () => {
+    // The redesign keeps the number OUT of the podium circle: the circle holds
+    // only the trophy, and the rank number is the same muted, fixed-width,
+    // right-aligned "{rank}." on every row so the numbers form one column down
+    // the whole list. This pins that so a regression that re-merges the number
+    // into the circle, or styles the podium number differently, is caught.
+    apiRequest.mockResolvedValue({
+      items: [
+        entry({ display_name: "First", elapsed_ms: 60_000 }),
+        entry({ display_name: "Second", elapsed_ms: 61_000 }),
+        entry({ display_name: "Third", elapsed_ms: 62_000 }),
+        entry({ display_name: "Fourth", elapsed_ms: 63_000 }),
+      ],
+      total: 4,
+    });
+
+    renderDialog();
+
+    const rows = await screen.findAllByRole("listitem");
+    // Find each row's rank-number span by its text and compare the class lists:
+    // a podium row (rank 1) and a plain row (rank 4) must render the number the
+    // same way (same width, alignment, muted color, tabular figures).
+    const podiumNumber = within(rows[0]).getByText("1.");
+    const plainNumber = within(rows[3]).getByText("4.");
+    expect(podiumNumber.className).toBe(plainNumber.className);
+    // And that shared style is the fixed-width, right-aligned, muted column
+    // (not, say, a number that has slipped inside the colored circle).
+    for (const cls of [
+      "w-9",
+      "shrink-0",
+      "text-right",
+      "text-muted-foreground",
+      "tabular-nums",
+    ]) {
+      expect(podiumNumber).toHaveClass(cls);
+    }
+    // The trophy is the circle's only content: the rank number is a sibling of
+    // the circle, never a descendant of it.
+    const circle = within(rows[0]).getByLabelText(/1st place/i);
+    expect(circle).toContainElement(
+      within(rows[0]).getByTestId("podium-trophy"),
+    );
+    expect(circle).not.toContainElement(podiumNumber);
   });
 
   it("composes the podium trophy with the 'You' badge when the viewer is in the top three", async () => {
