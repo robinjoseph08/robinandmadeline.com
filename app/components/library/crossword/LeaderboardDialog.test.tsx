@@ -414,6 +414,16 @@ describe("LeaderboardDialog", () => {
     // The scroller fills the dialog rather than capping itself, so no max-height
     // windows it independently of the body (the old nested-scroll bug).
     expect(scroller.className).not.toMatch(/max-h-/);
+    // The flex-fill only works because its parent (the dialog body) is a flex
+    // column and the tabs above it are pinned: flex-1 and min-h-0 are inert
+    // under a non-flex parent, and without shrink-0 the tabs would flex too.
+    // Dropping either silently hands the scroll back to the body (the base
+    // DialogBody is itself overflow-y-auto), which is the two-scroller bug
+    // again, so both are pinned here even though they sit outside the scroller.
+    expect(scroller.parentElement!.className).toMatch(/(^|\s)flex-col(\s|$)/);
+    expect(screen.getByLabelText("Leaderboard difficulty").className).toMatch(
+      /(^|\s)shrink-0(\s|$)/,
+    );
     // Horizontal padding is symmetric (px-1, not pr-1) so the highlighted
     // viewer row's ring is not clipped on the left by the scroll container's
     // overflow; reverting to right-only padding reintroduces that clip.
@@ -424,12 +434,29 @@ describe("LeaderboardDialog", () => {
     // with its time clipped; dropping it reintroduces that clip.
     expect(scroller.className).toMatch(/(^|\s)py-1\.5(\s|$)/);
 
-    // The <ol> inside the scroller is natural height now (it no longer windows
-    // itself): it carries neither a max-height nor its own overflow, so the
-    // single wrapper above is the only thing that scrolls.
-    const ol = scroller.querySelector("ol")!;
+    // The <ol> is a DIRECT child of the scroller and natural height now (it no
+    // longer windows itself): it carries neither a max-height nor its own
+    // overflow. Asserting it is a direct child (not just a descendant) closes
+    // the gap where a fixed-height scroller could be re-nested on a wrapper
+    // BETWEEN the scroller and the <ol> while both endpoints still looked
+    // clean, which is exactly the two-scroller clip this fix removed.
+    const ol = scroller.querySelector(":scope > ol")!;
+    expect(ol).not.toBeNull();
     expect(ol.className).not.toMatch(/max-h-/);
     expect(ol.className).not.toMatch(/overflow-/);
+    // Belt and suspenders: NOTHING under the scroller reintroduces a second
+    // scroll container. No descendant may cap its height or open its own
+    // overflow (overscroll-* is the scroller's own and is excluded), so the
+    // scroller stays the one effective scroller no matter where a regression
+    // tries to nest one.
+    const nestedScrollers = Array.from(
+      scroller.querySelectorAll<HTMLElement>("*"),
+    ).filter((el) =>
+      /(^|\s)max-h-|(^|\s)overflow-(x-|y-)?(auto|scroll|hidden|clip)/.test(
+        el.className,
+      ),
+    );
+    expect(nestedScrollers).toHaveLength(0);
   });
 
   it("gives the top three a place trophy and leaves the rest plain", async () => {
