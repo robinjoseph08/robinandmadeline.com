@@ -6,6 +6,7 @@ import {
   SendStatsSummary,
   StatusBadge,
 } from "@/components/pages/admin/emails/status";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -59,7 +60,10 @@ export default function AdminEmailSendDetail() {
       ) : send ? (
         <>
           <div>
-            <h1 className="text-2xl font-semibold">{send.subject}</h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-semibold">{send.subject}</h1>
+              {send.is_test && <Badge variant="secondary">Test send</Badge>}
+            </div>
             <p className="text-sm text-muted-foreground">
               Sent {formatSentAt(send.sent_at)} by {send.sent_by}
             </p>

@@ -243,9 +243,10 @@ export default function AdminEmailCompose() {
     }
   };
 
-  // Sends the current draft to the couple's own inboxes (EMAIL_TEST_RECIPIENTS),
-  // rendered against sample data so it always looks complete; no merge-field
-  // warning gates it (it is sample data by design).
+  // Enqueues the current draft as a real test send to the couple's own inboxes
+  // (EMAIL_TEST_RECIPIENTS), rendered from the first guest matching the filter.
+  // It goes through the real queue, so on success we open the send's detail to
+  // watch delivery, just like a real send.
   const handleSendTest = async () => {
     try {
       const result = await sendTestEmail.mutateAsync({
@@ -255,8 +256,9 @@ export default function AdminEmailCompose() {
         filter: toRecipientFilter(filter),
       });
       toast.success(
-        `Test email sent to ${result.sent_to} recipient${result.sent_to === 1 ? "" : "s"}`,
+        `Test queued, sending to your inbox${result.queued === 1 ? "" : "es"}.`,
       );
+      navigate(`/admin/emails/sends/${result.send_id}`);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to send test email",

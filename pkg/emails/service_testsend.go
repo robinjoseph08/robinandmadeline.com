@@ -2,78 +2,140 @@ package emails
 
 import (
 	"context"
+	"database/sql"
+	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
+	"github.com/uptrace/bun"
 )
 
-// SendTest renders the draft through the SAME HTML shell pipeline as a real
-// send and dispatches it synchronously to every configured test recipient (the
-// couple's own inboxes, EMAIL_TEST_RECIPIENTS), so the couple can eyeball the
-// email. It is a design aid, deliberately different from a real send in three
-// ways:
+// SendTest enqueues the draft as a REAL send through the queue and worker, just
+// addressed to the couple's own inboxes (EMAIL_TEST_RECIPIENTS) so they can
+// eyeball the email in their mail client. Making it a real send is the whole
+// point: it reuses the daily-quota counting, the delivery webhook, and the send
+// history (flagged is_test) for free, rather than re-implementing them on a
+// separate synchronous path.
 //
-//   - It renders against a fully-populated SAMPLE merge context (sample guest,
-//     party, RSVP code, and links), so every merge field always resolves and the
-//     email renders complete. The item-2 emptiness validation does NOT gate it:
-//     the data is sample by design, not the real audience.
-//   - It creates NO email_sends or email_recipients rows and never touches the
-//     daily-budget counter (attempted_at); it is ephemeral.
-//   - It sends through the injected test-send MailgunClient, synchronously,
-//     rather than enqueueing for the worker.
+// The trick that lets one queue row both render real copy and reach a test
+// inbox: the worker renders each row's merge fields from its guest_id but sends
+// to its email_address (a snapshot). So SendTest picks the FIRST guest matching
+// the filter as the render source (its name, RSVP code, and links populate the
+// merge fields) and writes one recipient row per configured test inbox, each
+// pointing at that render guest but addressed to the inbox. The filter's event
+// drives the event merge fields exactly as a real send's does.
 //
-// When a real event is selected in the filter, that event drives the event
-// merge fields (so the admin can preview real copy); otherwise a sample event
-// is used. A 422 results when no test recipients are configured or when Mailgun
-// is off (no client).
+// Because it is a real send, the same merge-field emptiness validation a real
+// send enforces applies: a test must not render a blank merge field either, so
+// a draft referencing {{event_name}}/{{event_date}} with no event filter, or
+// {{rsvp_code}} when the render guest's party has no code, is a 422. It does NOT
+// touch the daily-budget counter directly: the worker stamps attempted_at when
+// it dispatches, so the test send counts against the day automatically.
+//
+// A 422 results when the test capability is off (Mailgun not configured), when
+// no test recipients are configured, or when no guest matches the filter to
+// render from.
 func (s *Service) SendTest(ctx context.Context, in TestEmailPayload) (*TestEmailResponse, error) {
-	if s.mailgunClient == nil {
+	if !s.testSendEnabled {
 		return nil, errcodes.ValidationError("Email sending is not configured.")
 	}
 	if len(s.testRecipients) == 0 {
 		return nil, errcodes.ValidationError("No test recipients are configured.")
 	}
 
-	// Use the filter's real event when one is selected, so the test shows the
-	// real event copy; otherwise fall back to a sample event.
+	// A test send renders from the first guest matching the filter (each list is
+	// ordered by guest creation). Prefer the first guest WITH an email: a real
+	// send only ever renders for emailed guests (it skips the rest), so rendering
+	// the test from one mirrors the copy a real send would actually produce. Fall
+	// back to a skipped guest only when nobody matching has an email, since the
+	// render guest's own address is irrelevant here (the row is addressed to the
+	// test inbox, not the guest). With no match at all there is nothing to render
+	// from, so it is a 422.
+	recipients, skipped, err := s.ResolveRecipients(ctx, in.Filter)
+	if err != nil {
+		return nil, err
+	}
+	var renderGuest *models.Guest
+	switch {
+	case len(recipients) > 0:
+		renderGuest = recipients[0]
+	case len(skipped) > 0:
+		renderGuest = skipped[0]
+	default:
+		return nil, errcodes.ValidationError("No guests match the filter to render a test from.")
+	}
+
+	// The same backstop a real send applies: a blank merge field must be
+	// impossible to dispatch. Validate against the single render guest plus the
+	// filter's event (one event per send), reusing the real send's helper so the
+	// rules can never drift.
 	event, err := s.filterEvent(ctx, in.Filter)
 	if err != nil {
 		return nil, err
 	}
-	if event == nil {
-		event = sampleEvent()
+	if problems := mergeFieldProblems(in.Subject, in.Body, event, []*models.Guest{renderGuest}); len(problems) > 0 {
+		return nil, errcodes.ValidationError("This test would send a blank merge field: " + joinProblems(problems))
 	}
 
-	mctx := MergeContext{
-		Guest:         sampleGuest(),
-		Party:         sampleParty(),
-		Event:         event,
-		PublicBaseURL: s.publicBaseURL,
+	now := time.Now()
+	send := &models.EmailSend{
+		ID:              newID(),
+		TemplateID:      in.TemplateID,
+		Subject:         in.Subject,
+		Body:            in.Body,
+		RecipientFilter: in.Filter,
+		SentAt:          now,
+		SentBy:          s.sentBy,
+		IsTest:          true,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
-	subject := Render(in.Subject, mctx)
-	text := Render(in.Body, mctx)
-	html := RenderEmail(in.Subject, in.Body, mctx)
-
+	// One queued row per configured test inbox, all rendering from the same
+	// render guest but each addressed to its inbox, so the worker sends a fully
+	// merged email to every test address.
+	rows := make([]*models.EmailRecipient, 0, len(s.testRecipients))
 	for _, to := range s.testRecipients {
-		if _, err := s.mailgunClient.Send(ctx, Message{
-			From:    s.emailFrom,
-			To:      to,
-			Subject: subject,
-			Text:    text,
-			HTML:    html,
-			// No recipient_id: a test send creates no email_recipients row, so
-			// there is nothing for the reconciler to match against.
-		}); err != nil {
-			return nil, errors.Wrap(err, "send test email")
-		}
+		rows = append(rows, &models.EmailRecipient{
+			ID:           newID(),
+			SendID:       send.ID,
+			GuestID:      renderGuest.ID,
+			EmailAddress: strings.TrimSpace(to),
+			Status:       models.EmailQueued,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		})
 	}
-	return &TestEmailResponse{SentTo: len(s.testRecipients)}, nil
+
+	err = s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewInsert().Model(send).Exec(ctx); err != nil {
+			if errcodes.IsForeignKeyViolation(err) {
+				return errcodes.ValidationError("The selected template no longer exists.")
+			}
+			return errors.Wrap(err, "insert test email send")
+		}
+		if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
+			// The render guest deleted between resolving and this insert trips the
+			// guest_id foreign key, the same stale-audience race CreateSend maps.
+			if errcodes.IsForeignKeyViolation(err) {
+				return errcodes.ValidationError("A matching guest was just deleted; preview again and retry.")
+			}
+			return errors.Wrap(err, "insert test email recipients")
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &TestEmailResponse{SendID: send.ID, Queued: len(rows)}, nil
 }
 
-// The sample merge entities the test send renders against, so every field
-// resolves to a realistic value and the preview email is never blank.
+// The sample merge entities the dev shell-preview endpoint (ShellPreviewHTML)
+// renders against, so every field resolves to a realistic value and the preview
+// email is never blank. The test send no longer uses these: it renders from a
+// real guest so the couple previews the real copy.
 
 func sampleGuest() *models.Guest {
 	return &models.Guest{FullName: "Alex Sample"}

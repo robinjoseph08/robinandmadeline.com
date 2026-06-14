@@ -468,11 +468,11 @@ describe("AdminEmailCompose recipient double-check", () => {
 });
 
 describe("AdminEmailCompose send test", () => {
-  it("POSTs the draft to the test endpoint and toasts the result", async () => {
+  it("POSTs the draft to the test endpoint, toasts, and navigates to the send detail", async () => {
     setMock();
     adminRequest.mockImplementation((path: string) => {
       if (path === "/admin/emails/test") {
-        return Promise.resolve({ sent_to: 2 });
+        return Promise.resolve({ send_id: "test-send-1", queued: 2 });
       }
       if (path === "/admin/emails/templates") {
         return Promise.resolve({ items: [], total: 0 });
@@ -498,9 +498,12 @@ describe("AdminEmailCompose send test", () => {
         },
       });
     });
+    // A test send is a real send now: it toasts and opens the send detail to
+    // watch delivery, the same as a real send.
     expect(successSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Test email sent to 2 recipients"),
+      expect.stringContaining("Test queued"),
     );
+    expect(navigate).toHaveBeenCalledWith("/admin/emails/sends/test-send-1");
   });
 });
 

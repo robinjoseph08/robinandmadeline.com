@@ -129,12 +129,13 @@ func (h *handler) send(c echo.Context) error {
 	return c.JSON(http.StatusCreated, newSendResponse(send, stats))
 }
 
-// sendTest handles POST /api/admin/emails/test: renders the draft against
-// sample merge data through the real HTML shell pipeline and dispatches it
-// synchronously to the configured test recipients (the couple's inboxes), so
-// the couple can eyeball the email. It creates no send/recipient rows and does
-// not touch the daily budget; a 422 results when no test recipients are
-// configured or Mailgun is off.
+// sendTest handles POST /api/admin/emails/test: enqueues the draft as a real
+// send through the queue and worker, addressed to the configured test
+// recipients (the couple's inboxes) but rendered from the first guest matching
+// the filter, so the couple can eyeball the real email. It counts against the
+// daily budget and appears in the send history flagged as a test; a 422 results
+// when no test recipients are configured, Mailgun is off, or no guest matches
+// the filter to render from. It returns 200 with the created send's id.
 func (h *handler) sendTest(c echo.Context) error {
 	var body TestEmailPayload
 	if err := c.Bind(&body); err != nil {

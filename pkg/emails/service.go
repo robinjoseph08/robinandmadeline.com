@@ -36,13 +36,14 @@ type Service struct {
 	// days. Zero or negative means unlimited.
 	dailySendLimit int
 
-	// The "Send test" capability (SendTest). The worker owns the queue's
-	// MailgunClient; the test endpoint sends synchronously, so it gets its own
-	// client injected via WithTestSend when Mailgun is configured. All three
-	// are zero when Mailgun is off, in which case SendTest cleanly 422s.
-	mailgunClient  MailgunClient
-	emailFrom      string
-	testRecipients []string
+	// The "Send test" capability (SendTest). A test send is a real send
+	// enqueued for the worker (addressed to the couple's own inboxes), so the
+	// service no longer dispatches it itself and needs no Mailgun client or
+	// From here: it only needs the recipient inboxes and a flag for whether the
+	// capability is on. Both are zero/false when Mailgun is off (WithTestSend is
+	// never called), in which case SendTest cleanly 422s.
+	testSendEnabled bool
+	testRecipients  []string
 }
 
 // NewService builds a Service backed by the given Bun DB. publicBaseURL is the
@@ -54,13 +55,14 @@ func NewService(db *bun.DB, publicBaseURL, sentBy string, dailySendLimit int) *S
 	return &Service{db: db, publicBaseURL: publicBaseURL, sentBy: sentBy, dailySendLimit: dailySendLimit}
 }
 
-// WithTestSend enables the "Send test" endpoint by injecting the Mailgun client
-// it dispatches through, the From address, and the configured test recipients
-// (the couple's own inboxes). It returns the same Service for fluent wiring.
-// Called only when Mailgun is configured; without it SendTest 422s.
-func (s *Service) WithTestSend(client MailgunClient, from string, testRecipients []string) *Service {
-	s.mailgunClient = client
-	s.emailFrom = from
+// WithTestSend enables the "Send test" endpoint with the configured test
+// recipients (the couple's own inboxes). A test send is enqueued for the queue
+// worker like any real send, so this needs no Mailgun client of its own. It
+// returns the same Service for fluent wiring. Called only when Mailgun is
+// configured (so the worker is on to drain the test send); without it SendTest
+// 422s.
+func (s *Service) WithTestSend(testRecipients []string) *Service {
+	s.testSendEnabled = true
 	s.testRecipients = testRecipients
 	return s
 }

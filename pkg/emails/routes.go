@@ -18,8 +18,8 @@ import "github.com/labstack/echo/v4"
 //	Composing and sending (ADR 0004):
 //	  POST   /emails/preview            resolve recipients + render a sample
 //	  POST   /emails/send               record send, enqueue recipients, return
-//	  POST   /emails/test               send the draft to the configured test
-//	                                    inboxes (sample data, no rows enqueued)
+//	  POST   /emails/test               enqueue the draft as a real test send to
+//	                                    the configured inboxes (flagged is_test)
 //	  GET    /emails/shell-preview      dev/design aid: the HTML shell rendered
 //	                                    with sample content (text/html, not JSON)
 //

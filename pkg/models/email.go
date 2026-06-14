@@ -68,7 +68,11 @@ type RecipientFilter struct {
 // admin may have edited them after loading a template, so they are snapshotted
 // here, not referenced), the filter that selected the recipients, and who
 // triggered it. template_id records provenance only and is NULL for one-offs;
-// deleting a template keeps past sends intact (FK SET NULL).
+// deleting a template keeps past sends intact (FK SET NULL). is_test marks a
+// "Send test" dispatch: a real send through the queue and worker, but addressed
+// to the couple's own inboxes rather than the filtered guest audience, so it
+// reuses quota counting, the delivery webhook, and the history while staying
+// distinguishable in the UI.
 type EmailSend struct {
 	bun.BaseModel `bun:"table:email_sends,alias:es" tstype:"-"`
 
@@ -79,6 +83,7 @@ type EmailSend struct {
 	RecipientFilter RecipientFilter `bun:"recipient_filter,type:jsonb" json:"recipient_filter"`
 	SentAt          time.Time       `bun:"sent_at,nullzero" json:"sent_at"`
 	SentBy          string          `bun:"sent_by" json:"sent_by"`
+	IsTest          bool            `bun:"is_test" json:"is_test"`
 
 	CreatedAt time.Time `bun:"created_at,nullzero" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero" json:"updated_at"`

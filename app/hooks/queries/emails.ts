@@ -129,14 +129,20 @@ export const useSendEmail = () => {
   });
 };
 
-// useSendTestEmail dispatches the current draft to the configured test inboxes
-// (EMAIL_TEST_RECIPIENTS) rendered against sample data, so the couple can
-// eyeball the email. It creates no send/recipient rows and does not invalidate
-// the history; it is a design aid.
+// useSendTestEmail enqueues the current draft as a real test send to the
+// configured test inboxes (EMAIL_TEST_RECIPIENTS), rendered from the first
+// guest matching the filter. It returns the created send's id so the caller can
+// open its detail, and invalidates the history since the test send now appears
+// there (flagged as a test).
 export const useSendTestEmail = () => {
+  const queryClient = useQueryClient();
+
   return useMutation<TestEmailResponse, ApiError, TestEmailPayload>({
     mutationFn: (payload) =>
       adminRequest("/admin/emails/test", { method: "POST", body: payload }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [QueryKey.ListEmailSends] });
+    },
   });
 };
 

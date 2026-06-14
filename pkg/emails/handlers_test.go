@@ -243,10 +243,11 @@ func TestSendTestHandler_MailgunOffIs422(t *testing.T) {
 	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 }
 
-func TestSendTestHandler_DispatchesToConfiguredRecipients(t *testing.T) {
+func TestSendTestHandler_EnqueuesATestSendAndReturnsItsID(t *testing.T) {
 	f := newFixtures(t)
-	client := newFakeMailgun()
-	f.emails.WithTestSend(client, testFrom, []string{"robin@example.com"})
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	f.emails.WithTestSend([]string{"robin@example.com", "madeline@example.com"})
 
 	e := echo.New()
 	b, err := binder.New()
@@ -261,8 +262,17 @@ func TestSendTestHandler_DispatchesToConfiguredRecipients(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	var resp emails.TestEmailResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	assert.Equal(t, 1, resp.SentTo)
-	assert.Len(t, client.sentMessages(), 1)
+	assert.NotEmpty(t, resp.SendID)
+	// One queued row per test inbox.
+	assert.Equal(t, 2, resp.Queued)
+
+	// The send is recorded in history, flagged as a test.
+	rec = do(t, e, http.MethodGet, "/api/admin/emails/sends/"+resp.SendID, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var detail emails.SendDetailResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &detail))
+	assert.True(t, detail.IsTest)
+	require.Len(t, detail.Recipients, 2)
 }
 
 func TestShellPreviewHandler_ReturnsHTML(t *testing.T) {

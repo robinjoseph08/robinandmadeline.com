@@ -102,11 +102,15 @@ fallback.
 `EMAIL_TEST_RECIPIENTS` powers the compose page's "Send test" button only: set
 it to a comma-separated list of RFC5322 addresses (for example
 `Robin <robin@example.com>, Madeline <madeline@example.com>`) and the button
-sends the current draft, rendered against sample data, to those inboxes so the
-couple can eyeball it. It is empty by default (the button then 422s), and it is
-kept in the environment so personal contact info is never committed. A test
-send is a real Mailgun send, so on the free plan each one consumes one of the
-100 daily sends.
+enqueues the current draft as a real send to those inboxes so the couple can
+eyeball it. It is empty by default (the button then 422s), and it is kept in the
+environment so personal contact info is never committed. A test send goes
+through the same queue and worker as a real send: it is rendered from the first
+guest matching the recipient filter (so the merge fields show real copy), counts
+against the daily send limit once dispatched, gets delivery status from the
+Mailgun webhook, and appears in the send history flagged as a test (where it can
+be filtered out). On the free plan each test send consumes one of the 100 daily
+sends.
 
 Outbound volume is capped by `EMAIL_DAILY_SEND_LIMIT` (default 100, matching
 Mailgun's free plan). The worker counts dispatch attempts per UTC day, which

@@ -139,15 +139,28 @@ func createTemplateT(t *testing.T, f fixtures, in emails.CreateTemplatePayload) 
 }
 
 // recipientsForSend reads every email_recipients row for a send straight from
-// the DB, keyed by guest id, so assertions reflect persisted state.
+// the DB, keyed by guest id, so assertions reflect persisted state. It suits a
+// real send (one row per distinct guest); a test send fans one render guest out
+// to several inboxes, so use recipientRowsForSend there.
 func recipientsForSend(t *testing.T, db *bun.DB, sendID string) map[string]*models.EmailRecipient {
 	t.Helper()
-	var rows []*models.EmailRecipient
-	err := db.NewSelect().Model(&rows).Where("send_id = ?", sendID).Scan(ctx())
-	require.NoError(t, err)
-	byGuest := make(map[string]*models.EmailRecipient, len(rows))
-	for _, r := range rows {
+	byGuest := make(map[string]*models.EmailRecipient)
+	for _, r := range recipientRowsForSend(t, db, sendID) {
 		byGuest[r.GuestID] = r
 	}
 	return byGuest
+}
+
+// recipientRowsForSend reads every email_recipients row for a send straight from
+// the DB as a slice (ordered by creation), so assertions can see multiple rows
+// that share a guest, as a test send's per-inbox rows do.
+func recipientRowsForSend(t *testing.T, db *bun.DB, sendID string) []*models.EmailRecipient {
+	t.Helper()
+	var rows []*models.EmailRecipient
+	err := db.NewSelect().Model(&rows).
+		Where("send_id = ?", sendID).
+		Order("created_at ASC", "id ASC").
+		Scan(ctx())
+	require.NoError(t, err)
+	return rows
 }

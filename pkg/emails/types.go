@@ -114,11 +114,12 @@ type SendEmailPayload struct {
 
 // TestEmailPayload is the body for POST /emails/test: the current draft to
 // send to the couple's own inboxes (EMAIL_TEST_RECIPIENTS). It mirrors the send
-// payload so the same composed copy is testable, but it is rendered against a
-// fully-populated SAMPLE merge context, so the item-2 emptiness validation does
-// NOT apply (the data is sample by design). template_id is optional provenance;
-// the optional filter lets a real event drive the event merge fields when one
-// is selected (otherwise a sample event is used).
+// payload so the same composed copy is testable. A test send is a REAL send
+// through the queue and worker, just addressed to the couple's inboxes and
+// rendered from the FIRST guest matching the filter, so the same emptiness
+// validation a real send enforces applies (a test must not render a blank merge
+// field either). template_id is optional provenance; the filter both selects
+// the render guest and drives the event merge fields.
 type TestEmailPayload struct {
 	TemplateID *string                `json:"template_id" validate:"omitempty,uuid"`
 	Subject    string                 `json:"subject" mod:"trim" validate:"required,max=500"`
@@ -126,10 +127,12 @@ type TestEmailPayload struct {
 	Filter     models.RecipientFilter `json:"filter" tstype:"models.RecipientFilter"`
 }
 
-// TestEmailResponse reports how many configured test recipients the draft was
-// sent to.
+// TestEmailResponse reports the test send the draft was enqueued as: its id (so
+// the compose page can open the send detail to watch delivery) and how many
+// recipient rows were queued (one per configured test inbox).
 type TestEmailResponse struct {
-	SentTo int `json:"sent_to"`
+	SendID string `json:"send_id"`
+	Queued int    `json:"queued"`
 }
 
 // SendStats is a send's tally of recipient rows by delivery status. Total is
