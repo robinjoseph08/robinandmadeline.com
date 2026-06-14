@@ -443,8 +443,11 @@ describe("AdminEmailCompose merge-field warnings", () => {
     expect(
       await screen.findByText(/no event is selected in the recipient filter/),
     ).toBeInTheDocument();
-    // ...and Send is disabled so a blank merge field can never be dispatched.
+    // ...and both Send and Send test are disabled so a blank merge field can
+    // never be dispatched (Send test renders from a real guest and is hard-
+    // refused by the backend the same way, so it gates on warnings too).
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send test" })).toBeDisabled();
   });
 
   it("keeps Send enabled when the preview has no warnings", async () => {
