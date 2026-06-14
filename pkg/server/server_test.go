@@ -202,6 +202,59 @@ func TestMailgunWebhookRoute_SignedPayloadPassesWithoutJWT(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, rec.Code)
 }
 
+func TestSendTestRoute_TestSendWiredWhenMailgunConfigured(t *testing.T) {
+	// server.New enables the "Send test" capability (WithTestSend) only when
+	// MailgunAPIKey is set. With it (and test recipients) configured, a POST to
+	// the test endpoint must get PAST the capability gate, proving that wiring is
+	// in place; deleting the WithTestSend line would instead make every
+	// production test-send 422 "Email sending is not configured." with no failing
+	// test. The db is nil here, so the request fails later (the capability gate is
+	// reached before any DB access), which is fine: this asserts specifically
+	// that it is NOT the not-configured 422.
+	cfg := newTestConfig(t)
+	cfg.MailgunAPIKey = "key-server-test"
+	cfg.EmailTestRecipients = []string{"robin@example.com"}
+	srv := server.New(cfg, nil)
+
+	// Log in for a valid admin token (the endpoint is behind RequireAdmin).
+	loginBody := `{"username":"admin","password":"correct-horse"}`
+	loginReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/admin/login", strings.NewReader(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(loginRec, loginReq)
+	require.Equal(t, http.StatusOK, loginRec.Code)
+
+	var login struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(loginRec.Body.Bytes(), &login))
+	require.NotEmpty(t, login.Token)
+
+	// A valid draft: the body passes the binder so the request reaches the
+	// service's capability gate rather than 422-ing on validation first.
+	testBody := `{"subject":"Hi {{guest_name}}","body":"Body","filter":{}}`
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/admin/emails/test", strings.NewReader(testBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+login.Token)
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	// It must not be rejected by the capability gate. The gate's distinctive 422
+	// message proves the capability is off; its absence proves WithTestSend ran.
+	var resp struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	assert.NotEqual(t, "Email sending is not configured.", resp.Error.Message,
+		"test-send capability gate rejected the request; WithTestSend wiring is missing")
+	// The request got past the gate into DB-backed work, which with a nil db
+	// surfaces as a 500, not the gate's 422.
+	assert.NotEqual(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
 func TestHealthEndpoint(t *testing.T) {
 	tests := []struct {
 		name          string

@@ -426,7 +426,9 @@ export default function AdminEmailCompose() {
           Preview
         </Button>
         <Button
-          disabled={!canCompose || sendTestEmail.isPending || sending}
+          disabled={
+            !canCompose || sendTestEmail.isPending || sending || hasWarnings
+          }
           onClick={handleSendTest}
           variant="outline"
         >

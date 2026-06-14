@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SendResponse } from "@/types/generated/emails";
 
@@ -148,5 +148,99 @@ describe("AdminEmails test sends", () => {
     expect(
       screen.queryByRole("link", { name: "Test send" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("AdminEmails live polling", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // A send with a recipient still in flight (queued or sending).
+  const inFlight = {
+    queued: 1,
+    sending: 1,
+    sent: 0,
+    delivered: 0,
+    bounced: 0,
+    failed: 0,
+    total: 2,
+  };
+  // A send where everything has been dispatched.
+  const settled = {
+    queued: 0,
+    sending: 0,
+    sent: 0,
+    delivered: 1,
+    bounced: 1,
+    failed: 0,
+    total: 2,
+  };
+
+  it("refetches every 5s while any send is in flight, then stops once all settle", async () => {
+    // The history polls while any listed send still has queued or sending
+    // recipients, so statuses progress without a manual refresh; once every
+    // send has settled the poll must stop rather than refetch forever.
+    adminRequest.mockResolvedValue({
+      items: [makeSend({ id: "s1", stats: inFlight })],
+      total: 1,
+    });
+
+    renderEmails();
+
+    // Flush the mount fetch: its in-flight send schedules the 5s poll.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(adminRequest).toHaveBeenCalledTimes(1);
+
+    // One interval later a second fetch fires (it would not if the predicate
+    // were inverted, dropped `sending`, or returned a constant false).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(adminRequest).toHaveBeenCalledTimes(2);
+
+    // Every send now reports settled, so the next poll's predicate is false.
+    adminRequest.mockResolvedValue({
+      items: [makeSend({ id: "s1", stats: settled })],
+      total: 1,
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(adminRequest).toHaveBeenCalledTimes(3);
+
+    // Polling has stopped: no further fetch fires after another interval (it
+    // would if the predicate returned a constant 5000 instead of false).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(adminRequest).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not poll when every listed send is already settled", async () => {
+    // All sends mount settled (no queued or sending recipients), so the history
+    // must never start polling.
+    adminRequest.mockResolvedValue({
+      items: [makeSend({ id: "s1", stats: settled })],
+      total: 1,
+    });
+
+    renderEmails();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(adminRequest).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(adminRequest).toHaveBeenCalledTimes(1);
   });
 });

@@ -531,11 +531,68 @@ describe("AdminEmailCompose send test", () => {
       });
     });
     // A test send is a real send now: it toasts and opens the send detail to
-    // watch delivery, the same as a real send.
+    // watch delivery, the same as a real send. With two inboxes queued the
+    // toast pluralizes "inboxes".
     expect(successSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Test queued"),
+      "Test queued, sending to your inboxes.",
     );
     expect(navigate).toHaveBeenCalledWith("/admin/emails/sends/test-send-1");
+  });
+
+  it("toasts the singular inbox when only one test recipient is queued", async () => {
+    setMock();
+    adminRequest.mockImplementation((path: string) => {
+      if (path === "/admin/emails/test") {
+        return Promise.resolve({ send_id: "test-send-1", queued: 1 });
+      }
+      return Promise.resolve({ items: [], total: 0 });
+    });
+    const successSpy = vi.spyOn(toast, "success");
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Send test" }));
+
+    // One inbox queued: the toast uses the singular "inbox", not "inboxes".
+    await waitFor(() => {
+      expect(successSpy).toHaveBeenCalledWith(
+        "Test queued, sending to your inbox.",
+      );
+    });
+  });
+
+  it("disables Send test while a real send's re-resolve is in flight", async () => {
+    // The pre-send count re-resolve leaves a window before the confirmation
+    // dialog opens (the `sending` guard). Send test shares that guard, so it
+    // must be disabled there too rather than firing a second send mid-flight.
+    let resolvePreview: ((v: PreviewEmailResponse) => void) | undefined;
+    adminRequest.mockImplementation((path: string) => {
+      if (path === "/admin/emails/preview") {
+        return new Promise((res) => {
+          resolvePreview = res;
+        });
+      }
+      return Promise.resolve({ items: [], total: 0 });
+    });
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+
+    // Both action buttons are enabled before the send starts.
+    const sendTest = screen.getByRole("button", { name: "Send test" });
+    expect(sendTest).toBeEnabled();
+
+    // Start a real send: the re-resolve hangs, holding the `sending` window open.
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(sendTest).toBeDisabled();
+
+    // Once the re-resolve settles the window closes and Send test is usable again.
+    resolvePreview!(makePreview({ total: 1 }));
+    await waitFor(() => expect(sendTest).toBeEnabled());
   });
 });
 
