@@ -408,9 +408,14 @@ describe("LeaderboardDialog", () => {
     // viewer row's ring is not clipped on the left by the scrollport's
     // overflow; reverting to right-only padding reintroduces that clip.
     expect(list.className).toMatch(/(^|\s)px-1(\s|$)/);
+    // Vertical padding gives the first and last rows breathing room inside the
+    // scroll range, so the last row (and its ring) is fully visible when
+    // scrolled to the bottom instead of sitting flush against the overflow edge
+    // with its time clipped; dropping it reintroduces that clip.
+    expect(list.className).toMatch(/(^|\s)py-1\.5(\s|$)/);
   });
 
-  it("gives the top three a podium circle and leaves the rest plain", async () => {
+  it("gives the top three a place trophy and leaves the rest plain", async () => {
     apiRequest.mockResolvedValue({
       items: [
         entry({ display_name: "First", elapsed_ms: 60_000 }),
@@ -424,14 +429,13 @@ describe("LeaderboardDialog", () => {
     renderDialog();
 
     const rows = await screen.findAllByRole("listitem");
-    // Ranks 1-3 carry a labelled podium circle; rank 4 does not.
+    // Ranks 1-3 carry a labelled place marker; rank 4 does not.
     expect(within(rows[0]).getByLabelText(/1st place/i)).toBeInTheDocument();
     expect(within(rows[1]).getByLabelText(/2nd place/i)).toBeInTheDocument();
     expect(within(rows[2]).getByLabelText(/3rd place/i)).toBeInTheDocument();
     expect(within(rows[3]).queryByLabelText(/place/i)).not.toBeInTheDocument();
-    // The marker is specifically the trophy glyph inside the circle (not just
-    // any podium circle), so swapping the icon back out is caught; the plain
-    // rank has none.
+    // The marker is specifically the trophy glyph (not just any place styling),
+    // so swapping the icon back out is caught; the plain rank has none.
     expect(within(rows[0]).getByTestId("podium-trophy")).toBeInTheDocument();
     expect(within(rows[2]).getByTestId("podium-trophy")).toBeInTheDocument();
     expect(
@@ -442,12 +446,46 @@ describe("LeaderboardDialog", () => {
     expect(rows[3]).toHaveTextContent("4.");
   });
 
+  it("tints podium rows with their place color and leaves plain rows untinted", async () => {
+    // The redesign mirrors the blue "You" highlight in metal: each top-three
+    // row wears a place-colored background + ring (gold/silver/bronze), so a
+    // podium row reads as a place-colored sibling of the viewer's highlight
+    // rather than a separate badge. A plain row carries neither tint. This pins
+    // the row-level treatment so a regression back to a standalone gutter widget
+    // (no row tint) is caught.
+    apiRequest.mockResolvedValue({
+      items: [
+        entry({ display_name: "First", elapsed_ms: 60_000 }),
+        entry({ display_name: "Second", elapsed_ms: 61_000 }),
+        entry({ display_name: "Third", elapsed_ms: 62_000 }),
+        entry({ display_name: "Fourth", elapsed_ms: 63_000 }),
+      ],
+      total: 4,
+    });
+
+    renderDialog();
+
+    const rows = await screen.findAllByRole("listitem");
+    // Gold, silver, bronze row tints, each with a ring like the "You" row.
+    expect(rows[0]).toHaveClass("bg-amber-300/45");
+    expect(rows[1]).toHaveClass("bg-slate-300/55");
+    expect(rows[2]).toHaveClass("bg-orange-300/45");
+    for (const podiumRow of [rows[0], rows[1], rows[2]]) {
+      expect(podiumRow.className).toMatch(/ring-1/);
+    }
+    // The plain row (rank 4) carries no place tint and no blue viewer tint.
+    expect(rows[3]).not.toHaveClass("bg-amber-300/45");
+    expect(rows[3]).not.toHaveClass("bg-secondary/40");
+    expect(rows[3].className).not.toMatch(/ring-1/);
+  });
+
   it("renders the rank number identically on podium and plain rows so they stay aligned", async () => {
-    // The redesign keeps the number OUT of the podium circle: the circle holds
-    // only the trophy, and the rank number is the same muted, fixed-width,
-    // right-aligned "{rank}." on every row so the numbers form one column down
-    // the whole list. This pins that so a regression that re-merges the number
-    // into the circle, or styles the podium number differently, is caught.
+    // The rank number is the same muted, right-aligned, tabular "{rank}." on
+    // every row; only the trophy to its left changes for the podium. The number
+    // sits in a fixed-width, right-justified unit so the periods (and the names
+    // after them) form one column down the whole list, podium rows included.
+    // This pins that so a regression that styles the podium number differently,
+    // or folds it into the trophy, is caught.
     apiRequest.mockResolvedValue({
       items: [
         entry({ display_name: "First", elapsed_ms: 60_000 }),
@@ -463,31 +501,27 @@ describe("LeaderboardDialog", () => {
     const rows = await screen.findAllByRole("listitem");
     // Find each row's rank-number span by its text and compare the class lists:
     // a podium row (rank 1) and a plain row (rank 4) must render the number the
-    // same way (same width, alignment, muted color, tabular figures).
+    // same way (alignment, muted color, tabular figures), so a podium-only
+    // restyle of the number that would knock the column out of line is caught.
     const podiumNumber = within(rows[0]).getByText("1.");
     const plainNumber = within(rows[3]).getByText("4.");
     expect(podiumNumber.className).toBe(plainNumber.className);
-    // And that shared style is the fixed-width, right-aligned, muted column
-    // (not, say, a number that has slipped inside the colored circle).
-    for (const cls of [
-      "w-9",
-      "shrink-0",
-      "text-right",
-      "text-muted-foreground",
-      "tabular-nums",
-    ]) {
+    for (const cls of ["text-right", "text-muted-foreground", "tabular-nums"]) {
       expect(podiumNumber).toHaveClass(cls);
     }
-    // The trophy is the circle's only content: the rank number is a sibling of
-    // the circle, never a descendant of it.
-    const circle = within(rows[0]).getByLabelText(/1st place/i);
-    expect(circle).toContainElement(
-      within(rows[0]).getByTestId("podium-trophy"),
-    );
-    expect(circle).not.toContainElement(podiumNumber);
+    // The trophy is a sibling of the number inside the shared rank unit, never
+    // an ancestor that absorbs it, so the number stays its own aligned column.
+    const trophy = within(rows[0]).getByTestId("podium-trophy");
+    expect(trophy).not.toContainElement(podiumNumber);
+    const rankUnit = podiumNumber.parentElement!;
+    expect(rankUnit).toContainElement(trophy);
+    // The rank unit is the fixed-width, right-justified slot that aligns the
+    // numbers; the same slot wraps the plain row's number (no trophy beside it).
+    expect(rankUnit).toHaveClass("w-16", "shrink-0", "justify-end");
+    expect(plainNumber.parentElement).toHaveClass("w-16", "justify-end");
   });
 
-  it("composes the podium trophy with the 'You' badge when the viewer is in the top three", async () => {
+  it("colors a top-three viewer's row and 'You' badge to the place, never blue", async () => {
     apiRequest.mockResolvedValue({
       items: [
         entry({ display_name: "Alice", elapsed_ms: 60_000 }),
@@ -507,8 +541,49 @@ describe("LeaderboardDialog", () => {
     // The viewer's silver row reads as both second place and "You", with no
     // appended duplicate.
     expect(within(rows[1]).getByLabelText(/2nd place/i)).toBeInTheDocument();
-    expect(within(rows[1]).getByText("You")).toBeInTheDocument();
+    const badge = within(rows[1]).getByText("You");
     expect(screen.getAllByText("You")).toHaveLength(1);
+    // A top-three viewer is the place color throughout, with zero blue: the row
+    // wears the silver tint (not the blue secondary), and the "You" badge is the
+    // silver pill (not the blue secondary badge).
+    expect(rows[1]).toHaveClass("bg-slate-300/55");
+    expect(rows[1]).not.toHaveClass("bg-secondary/40");
+    expect(badge).toHaveClass("bg-slate-400", "text-slate-950");
+    expect(badge).not.toHaveClass("bg-secondary");
+    expect(badge).not.toHaveClass("text-secondary-foreground");
+  });
+
+  it("keeps a non-podium viewer's row and 'You' badge blue", async () => {
+    // The viewer outside the top three keeps the original blue treatment: a
+    // blue row tint + ring and a blue "You" badge. This pins the split so the
+    // place coloring never leaks onto a plain-ranked viewer (and the blue never
+    // leaks onto a podium viewer, covered above).
+    apiRequest.mockResolvedValue({
+      items: [
+        entry({ display_name: "Alice", elapsed_ms: 60_000 }),
+        entry({ display_name: "Bob", elapsed_ms: 61_000 }),
+        entry({ display_name: "Carol", elapsed_ms: 62_000 }),
+        entry({ display_name: "Robin", elapsed_ms: 63_000 }),
+      ],
+      total: 4,
+      viewer: {
+        rank: 4,
+        entry: entry({ display_name: "Robin", elapsed_ms: 63_000 }),
+      },
+    });
+
+    renderDialog({ sessionId: "sess-7" });
+
+    const rows = await screen.findAllByRole("listitem");
+    const badge = within(rows[3]).getByText("You");
+    // Rank 4 is not a podium row, so no place marker rides it.
+    expect(within(rows[3]).queryByLabelText(/place/i)).not.toBeInTheDocument();
+    // Blue row tint and blue badge, with no place tint leaking in.
+    expect(rows[3]).toHaveClass("bg-secondary/40");
+    expect(rows[3].className).toMatch(/ring-1/);
+    expect(rows[3]).not.toHaveClass("bg-orange-300/45");
+    expect(badge).toHaveClass("bg-secondary", "text-secondary-foreground");
+    expect(badge).not.toHaveClass("bg-orange-400");
   });
 
   it("keeps the viewer row's box model identical to a normal row so columns stay aligned", async () => {

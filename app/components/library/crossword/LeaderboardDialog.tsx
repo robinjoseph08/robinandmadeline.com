@@ -205,9 +205,15 @@ export default function LeaderboardDialog({
               <>
                 {/* The whole board scrolls within this bounded scrollport, so
                     the dialog stays put at any guest count; the same
-                    containment the clue lists use. */}
+                    containment the clue lists use. The symmetric px-1 keeps a
+                    tinted row's 1px ring off the left/right overflow edge, and
+                    py-1.5 gives the first and last rows the same breathing room:
+                    without it the last row (and its ring) sits flush against the
+                    overflow boundary and its time reads as clipped when scrolled
+                    to the bottom. The padding lands inside the scroll range, so
+                    scrolling to the end now reveals the last row in full. */}
                 <ol
-                  className="max-h-[22rem] space-y-1.5 overflow-y-auto overscroll-contain px-1"
+                  className="max-h-[22rem] space-y-1.5 overflow-y-auto overscroll-contain px-1 py-1.5"
                   data-testid="crossword-leaderboard-list"
                   ref={listRef}
                 >
@@ -273,44 +279,63 @@ export default function LeaderboardDialog({
 }
 
 /**
- * The gold/silver/bronze circle styling for the top three ranks, keyed by rank.
- * Each circle carries a solid metal fill, a slightly deeper ring to give it
- * dimension on the cream surface, and a light trophy that reads clearly inside
- * the fill. The tones are saturated enough to register as their metal at a
- * glance (a washed-out pastel reads as neither gold nor silver) while staying
- * warm next to the wedding blues/pinks. Rank 4+ has no entry and renders with
- * an empty circle gutter so its number still lines up with the podium rows.
+ * The gold/silver/bronze treatment for the top three ranks, keyed by rank.
+ * Each place tints the WHOLE ROW the way the blue "You" highlight does, just in
+ * its metal: a filled background plus a ring at the same intensity as the
+ * viewer's `bg-secondary/40` + `ring-secondary`, so a podium row reads as a
+ * place-colored sibling of the "You" row rather than a separate widget. The
+ * `badge` recolors the "You" pill to the place (so a top-three viewer's badge
+ * is gold/silver/bronze, never blue), and `trophy` tints the small trophy that
+ * hugs the rank number. The tones are saturated enough to register as their
+ * metal at a glance (a washed-out pastel reads as neither gold nor silver)
+ * while staying warm next to the cream/ink wedding palette: amber for gold,
+ * slate for silver, and orange for bronze (kept distinct from gold's amber).
  */
-const PODIUM: Record<number, { circle: string; label: string }> = {
+const PODIUM: Record<
+  number,
+  { badge: string; label: string; row: string; trophy: string }
+> = {
   1: {
-    // Gold: a warm amber fill with a deeper amber ring and a near-white trophy.
-    circle: "bg-amber-400 text-amber-50 ring-1 ring-inset ring-amber-600/60",
+    // Gold: a warm amber wash with a deeper amber ring; the badge is a solid
+    // amber pill with near-black text, and the trophy a mid amber.
+    badge: "bg-amber-400 text-amber-950",
     label: "1st place",
+    row: "bg-amber-300/45 ring-1 ring-amber-400",
+    trophy: "text-amber-600",
   },
   2: {
-    // Silver: a cool slate fill kept dark enough to read as metal on cream
-    // (the usual silver-on-light trap is too pale a gray), with a light trophy.
-    circle: "bg-slate-400 text-slate-50 ring-1 ring-inset ring-slate-600/60",
+    // Silver: a cool slate wash kept dark enough to read as metal on cream (the
+    // usual silver-on-light trap is too pale a gray), ring and trophy to match.
+    badge: "bg-slate-400 text-slate-950",
     label: "2nd place",
+    row: "bg-slate-300/55 ring-1 ring-slate-400",
+    trophy: "text-slate-600",
   },
   3: {
-    // Bronze: a rich copper fill with a deeper ring and a light trophy.
-    circle: "bg-amber-700 text-amber-50 ring-1 ring-inset ring-amber-900/50",
+    // Bronze: a copper-orange wash, distinct from gold's amber so the two warm
+    // metals don't blur together, with a deeper orange ring and trophy.
+    badge: "bg-orange-400 text-orange-950",
     label: "3rd place",
+    row: "bg-orange-300/45 ring-1 ring-orange-400",
+    trophy: "text-orange-700",
   },
 };
 
 /**
- * One leaderboard line, laid out as: circle gutter, rank number, name, time.
- * The fastest three get a gold/silver/bronze circle holding only a trophy in
- * the gutter; everyone else leaves that gutter empty. The rank number is the
- * same muted "{rank}." on every row (the circle never absorbs the number), so
- * the numbers line up in their own column straight down the list. The solver's
- * own row gets a "You" badge and an accent background so they can spot their
- * place, whether it sits inside the displayed list or is the appended off-list
- * row below the separator; that highlight composes with the podium (a viewer in
- * the top three reads as the circle, the number, and "You" together). rowRef is
- * set on the viewer's row so the dialog can center it on open.
+ * One leaderboard line, laid out as: rank unit (trophy + number), name, time.
+ * The fastest three tint the whole row gold/silver/bronze the same way the
+ * viewer's "You" row tints blue (a background + ring), and a small trophy hugs
+ * the left of the rank number. The rank number itself is the same muted "{rank}."
+ * on every row, right-aligned within a fixed-width unit, so the numbers (and the
+ * names after them) line up in one column straight down the list whether or not
+ * a row is a podium row; the trophy floats to the number's left without pushing
+ * it. The solver's own row carries a "You" badge so they can spot their place,
+ * whether it sits inside the displayed list or is the appended off-list row
+ * below the separator. The two treatments compose: a non-podium viewer is blue
+ * (row tint + ring and a blue badge); a top-three viewer is the place color
+ * throughout (place row tint + ring, a place-colored badge, the place trophy),
+ * with zero blue. rowRef is set on the viewer's row so the dialog can center it
+ * on open.
  */
 function Row({
   entry,
@@ -327,50 +352,59 @@ function Row({
   return (
     <li
       className={cn(
-        // Every row carries the same padding so the circle/rank/name/time
-        // columns line up across plain, podium, and viewer rows; the viewer
-        // highlight below is a background + ring only, never extra padding, so
-        // it never shifts a row's contents out of alignment with its neighbors.
+        // Every row carries the same padding so the rank/name/time columns line
+        // up across plain, podium, and viewer rows; both highlights below are a
+        // background + ring only, never extra padding, so a tinted row never
+        // shifts its contents out of alignment with its neighbors.
         "flex items-center gap-3 rounded px-2 py-1 text-sm",
-        isViewer && "bg-secondary/40 font-medium ring-1 ring-secondary",
+        // Row tint: a podium row wears its place color; otherwise the viewer's
+        // own row wears the blue "You" highlight; a plain row stays untinted.
+        podium
+          ? cn("font-medium", podium.row)
+          : isViewer && "bg-secondary/40 font-medium ring-1 ring-secondary",
       )}
       ref={rowRef}
     >
-      {/* The circle gutter is reserved on every row (a fixed-width slot), so
-          the rank numbers to its right share one column whether or not the row
-          is a podium row. Podium rows fill it with the metal circle; the rest
-          leave it empty. */}
-      <span className="flex w-6 shrink-0 justify-center">
+      {/* The rank unit: a fixed-width, right-aligned slot holding the trophy
+          (podium rows only) immediately left of the number. Right-justifying
+          inside a fixed width keeps every "{rank}." period in one column and
+          the names starting at the same x, podium or not; the single-digit
+          podium trophies line up with each other on the number's left. The
+          width fits the trophy plus the largest rank that can occur (the
+          appended off-list viewer row can run to four digits) without wrapping. */}
+      <span className="flex w-16 shrink-0 items-center justify-end gap-1">
         {podium && (
-          <span
-            aria-label={podium.label}
-            className={cn(
-              // A small metal circle holding only the trophy; the rank number
-              // lives outside it (next column) so all numbers stay aligned.
-              "flex size-6 items-center justify-center rounded-full",
-              podium.circle,
-            )}
-          >
-            <Trophy
-              aria-hidden="true"
-              className="size-3.5"
-              data-testid="podium-trophy"
-            />
-          </span>
+          <Trophy
+            aria-hidden="true"
+            className={cn("size-4 shrink-0", podium.trophy)}
+            data-testid="podium-trophy"
+          />
         )}
+        {/* One shared rank-number style for every row (podium and plain alike):
+            muted, right-aligned, tabular figures, so the numbers form a single
+            tidy column; only the trophy to its left changes for the podium. */}
+        <span className="text-right text-muted-foreground tabular-nums">
+          {rank}.
+        </span>
       </span>
-      {/* One shared rank-number style for every row (podium and plain alike):
-          a fixed width wide enough for three digits plus the period, right-
-          aligned and muted, so the numbers form a single tidy column. */}
-      <span className="w-9 shrink-0 text-right text-muted-foreground tabular-nums">
-        {rank}.
-      </span>
+      {/* A visually hidden, labelled marker so a screen reader announces "Nth
+          place" on podium rows (the trophy itself is decorative); non-podium
+          rows have none. aria-label (not just text) keeps it reachable as an
+          accessible name, the same hook the tests assert against. */}
+      {podium && <span aria-label={podium.label} className="sr-only" />}
       <span className="flex min-w-0 flex-1 items-baseline gap-2">
         <span className="min-w-0 truncate font-medium">
           {entry.display_name}
         </span>
         {isViewer && (
-          <span className="shrink-0 rounded-full bg-secondary px-1.5 text-xs font-medium text-secondary-foreground">
+          <span
+            className={cn(
+              // The "You" pill takes the place color on a top-three viewer (no
+              // blue), or the blue secondary on a non-podium viewer.
+              "shrink-0 rounded-full px-1.5 text-xs font-medium",
+              podium ? podium.badge : "bg-secondary text-secondary-foreground",
+            )}
+          >
             You
           </span>
         )}
