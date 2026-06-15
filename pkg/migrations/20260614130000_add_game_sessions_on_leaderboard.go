@@ -7,15 +7,13 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// This file's 20260614010000 timestamp is deliberately ahead of the calendar
-// for the same reason the create migration's 20260614000000 is (see that file),
-// and it MUST sort strictly after 20260614000000: on a fresh database (CI, the
-// shared test database, the e2e database) Bun creates tables in name-sort order,
-// so this ALTER has to run after the CREATE that introduces game_sessions. Bun
-// applies whichever registered migrations are still unapplied regardless of how
-// their names sort, so the future date is harmless and must not be "corrected"
-// to the authoring date; only the ordering relative to the create migration
-// matters.
+// This file's 20260614130000 timestamp sits after the create migration's
+// 20260614120000 (see that file for why the games migrations follow the email
+// system's 20260614000000), and it MUST sort strictly after it: on a fresh
+// database (CI, the shared test database, the e2e database) Bun creates tables
+// in name-sort order, so this ALTER has to run after the CREATE that introduces
+// game_sessions. Keeping the version unique and ordered after the create
+// migration is all that matters here.
 func init() {
 	up := func(ctx context.Context, db *bun.DB) error {
 		// on_leaderboard is the EXPLICIT leaderboard opt-in, replacing the old

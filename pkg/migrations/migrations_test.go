@@ -105,8 +105,8 @@ func TestMigrations_UpThenDown(t *testing.T) {
 // onLeaderboardMigrationName is the Name (the leading timestamp) of the
 // migration that adds the on_leaderboard column. Bun derives a Go migration's
 // Name from its filename's timestamp prefix, so this matches
-// 20260614010000_add_game_sessions_on_leaderboard.go.
-const onLeaderboardMigrationName = "20260614010000"
+// 20260614130000_add_game_sessions_on_leaderboard.go.
+const onLeaderboardMigrationName = "20260614130000"
 
 // TestOnLeaderboardMigration_BackfillsAndDropsColumn pins the one piece of the
 // on_leaderboard migration that the full up-to-date harness can never exercise:

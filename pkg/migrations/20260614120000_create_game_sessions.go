@@ -7,12 +7,13 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// This file's 20260614000000 timestamp is deliberately ahead of the calendar:
-// the email system's migrations are being authored concurrently in another
-// worktree, and a future date guarantees this name cannot collide with the
-// names that work is minting. Bun applies whichever registered migrations are
-// still unapplied regardless of how their names sort, so the future date is
-// harmless and must not be "corrected" to the authoring date.
+// This file's 20260614120000 timestamp sits after the email system's
+// 20260614000000_add_email_send_test_flag migration so every migration keeps a
+// unique version. Bun keys migrations by the numeric version (the descriptive
+// suffix is only a comment), so two files sharing 20260614000000 collide and
+// one is silently skipped; placing the games migrations after the email
+// migration that already claimed 20260614000000 avoids that. Only the version
+// staying unique and the ordering before the on_leaderboard ALTER matter.
 func init() {
 	up := func(ctx context.Context, db *bun.DB) error {
 		// game_sessions: one tracked crossword solve. A row is created when
