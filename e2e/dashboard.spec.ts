@@ -3,23 +3,16 @@ import { expect, test } from "@playwright/test";
 import { loginAsAdmin } from "./auth";
 import { runStamp } from "./stamp";
 
-// Issue #12's critical E2E flow: the admin dashboard. Seed a guest (so the
-// overview has data), then verify the dashboard renders its headline stats and
-// the RSVP deadline + contact email app settings round-trip (save, reload,
-// still there). Settings are global rather than per-run, so the assertion is
-// that the saved values survive a reload, not that they equal a fixed seed.
-//
-// The contact email is stamped per run so a later run's save doesn't make an
-// earlier run's assertion flaky against the shared e2e database.
+// Issue #12's critical E2E flow: the admin dashboard overview. Seed a guest (so
+// the overview has data), then verify the dashboard renders its headline stats
+// and the info-collection progress bar. The editable app settings live on their
+// own page now; their round-trip is covered in settings.spec.ts.
 
 const stamp = runStamp();
 const partyName = `Dash Party ${stamp}`;
 const guestName = `Dashee ${stamp}`;
-const contactEmail = `contact-${stamp}@example.com`;
 
-test("admin views the dashboard and edits settings end to end", async ({
-  page,
-}) => {
+test("admin views the dashboard overview", async ({ page }) => {
   await loginAsAdmin(page);
 
   // --- Seed a guest so the overview has at least one party/guest -----------
@@ -50,15 +43,4 @@ test("admin views the dashboard and edits settings end to end", async ({
   await expect(
     page.getByRole("progressbar", { name: "Info collection progress" }),
   ).toBeVisible();
-
-  // --- Edit and save the RSVP deadline and contact email -------------------
-  await page.getByLabel("RSVP deadline").fill("2026-08-01");
-  await page.getByLabel("Contact email").fill(contactEmail);
-  await page.getByRole("button", { name: "Save settings" }).click();
-  await expect(page.getByText("Settings saved")).toBeVisible();
-
-  // --- Reload: the settings persisted --------------------------------------
-  await page.goto("/admin", { waitUntil: "domcontentloaded" });
-  await expect(page.getByLabel("RSVP deadline")).toHaveValue("2026-08-01");
-  await expect(page.getByLabel("Contact email")).toHaveValue(contactEmail);
 });

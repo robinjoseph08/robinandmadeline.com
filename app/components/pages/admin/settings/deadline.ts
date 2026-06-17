@@ -1,7 +1,7 @@
 /**
  * Helpers for the RSVP deadline app setting, which is stored as an RFC3339
- * timestamp (pkg/models.AppSettingRSVPDeadline) but edited on the dashboard as
- * a plain calendar date.
+ * timestamp (pkg/models.AppSettingRSVPDeadline) but edited on the settings page
+ * as a plain calendar date.
  *
  * The deadline's domain meaning is "RSVPs are open through the end of this
  * day": the RSVP reader closes the window only for moments strictly after the

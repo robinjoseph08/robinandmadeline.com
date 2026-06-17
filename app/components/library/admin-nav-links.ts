@@ -2,7 +2,8 @@ import type { NavLinkItem } from "@/components/library/nav-links";
 
 /**
  * Admin sidebar navigation links. Each points at a section of the admin area;
- * Dashboard is the overview home with the site's headline stats and settings.
+ * Dashboard is the overview home with the site's headline stats, and Settings
+ * holds the site-wide app settings.
  */
 export const ADMIN_NAV_LINKS: NavLinkItem[] = [
   { to: "/admin", label: "Dashboard", end: true },
@@ -15,4 +16,5 @@ export const ADMIN_NAV_LINKS: NavLinkItem[] = [
   { to: "/admin/photo-groups", label: "Group Photos" },
   { to: "/admin/crossword", label: "Crossword" },
   { to: "/admin/emails", label: "Emails" },
+  { to: "/admin/settings", label: "Settings" },
 ];
