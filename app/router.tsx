@@ -1,5 +1,6 @@
 import { createBrowserRouter } from "react-router-dom";
 
+import AdminCrossword from "@/components/pages/admin/AdminCrossword";
 import AdminDashboard from "@/components/pages/admin/AdminDashboard";
 import AdminEmailCompose from "@/components/pages/admin/AdminEmailCompose";
 import AdminEmails from "@/components/pages/admin/AdminEmails";
@@ -27,7 +28,9 @@ import RSVPForm from "@/components/pages/RSVPForm";
 import Schedule from "@/components/pages/Schedule";
 import Story from "@/components/pages/Story";
 
-export const router = createBrowserRouter([
+// The route table is exported on its own so tests can mount the real routes
+// in a memory router (see router.test.tsx) instead of mirroring them.
+export const routes = [
   {
     path: "/",
     Component: Root,
@@ -36,7 +39,11 @@ export const router = createBrowserRouter([
       { path: "story", Component: Story },
       { path: "schedule", Component: Schedule },
       { path: "games", Component: Games },
-      { path: "games/crossword", Component: Crossword },
+      // Each puzzle lives at its own short path (/games/mini is the 5x5,
+      // /games/crossword the full 15x15). The slug resolves against the
+      // crossword puzzle registry, and unknown slugs get the page's friendly
+      // not-found treatment.
+      { path: "games/:puzzleSlug", Component: Crossword },
       { path: "photos", Component: Photos },
       { path: "faq", Component: FAQ },
       { path: "rsvp", Component: RSVP },
@@ -63,6 +70,7 @@ export const router = createBrowserRouter([
           { path: "events", Component: AdminEvents },
           { path: "events/:id", Component: AdminEventDetail },
           { path: "photo-groups", Component: AdminPhotoGroups },
+          { path: "crossword", Component: AdminCrossword },
           { path: "emails", Component: AdminEmails },
           { path: "emails/compose", Component: AdminEmailCompose },
           { path: "emails/templates", Component: AdminEmailTemplates },
@@ -71,4 +79,6 @@ export const router = createBrowserRouter([
       },
     ],
   },
-]);
+];
+
+export const router = createBrowserRouter(routes);
