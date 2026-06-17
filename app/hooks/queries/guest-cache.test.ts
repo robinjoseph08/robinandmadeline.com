@@ -40,8 +40,10 @@ describe("resetGuestQueries", () => {
   });
 
   it("registers exactly the three known guest-scoped keys", () => {
-    // A guard against a new guest surface being added without registering its
-    // key here (which would leave it flashing across a party switch).
+    // Pins the registered set so a rename, removal, or accidental drop of one of
+    // the three keys trips here. It cannot catch a brand-new guest surface that
+    // was never added to GUEST_QUERY_KEYS (the literal would still match); that
+    // case is guarded by the GUEST_QUERY_KEYS doc comment and review.
     expect([...GUEST_QUERY_KEYS]).toEqual([
       RSVPQueryKey.PartyRSVPs,
       ScheduleQueryKey.ScheduleEvents,

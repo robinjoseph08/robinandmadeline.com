@@ -292,6 +292,15 @@ func TestListGuests_SearchMatchesFormattedPhone(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, guestIDs(got)[withPhone.ID], "the last four digits still find the stored number")
 	})
+	t.Run("a 3-digit fragment is exactly at the gate and matches the phone", func(t *testing.T) {
+		// "415" strips to 3 digits, the minimum the gate allows, and is a
+		// substring of the stored number but of neither the name nor the party.
+		// It pins the >=3 boundary from above, so a stricter gate (>=4) would
+		// regress here.
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("415")})
+		require.NoError(t, err)
+		assert.True(t, guestIDs(got)[withPhone.ID], "exactly 3 digits is a phone search and finds the number")
+	})
 	t.Run("text-only query does not match on the phone", func(t *testing.T) {
 		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("zzz")})
 		require.NoError(t, err)
@@ -311,6 +320,14 @@ func TestListGuests_SearchMatchesFormattedPhone(t *testing.T) {
 		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("1")})
 		require.NoError(t, err)
 		assert.False(t, guestIDs(got)[withPhone.ID], "fewer than 3 digits must not match on the phone")
+	})
+	t.Run("a 2-digit fragment just under the gate does not match the phone", func(t *testing.T) {
+		// "26" strips to 2 digits, one short of the gate, and is a substring of the
+		// stored number. It pins the >=3 boundary from below, so a looser gate
+		// (>=2) would wrongly match the phone here.
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("26")})
+		require.NoError(t, err)
+		assert.False(t, guestIDs(got)[withPhone.ID], "2 digits is under the gate and must not match on the phone")
 	})
 }
 
