@@ -224,18 +224,19 @@ func TestBind_DiveRequiredForSliceModTraversal(t *testing.T) {
 	})
 }
 
-// TestValidators covers the date, time, url, and emailblank custom validators
-// directly.
+// TestValidators covers the date, time, datetimeblank, url, and emailblank
+// custom validators directly.
 func TestValidators(t *testing.T) {
 	t.Parallel()
 	b, err := New()
 	require.NoError(t, err)
 
 	type payload struct {
-		When  string `json:"when" validate:"omitempty,date"`
-		Start string `json:"start" validate:"omitempty,time"`
-		Site  string `json:"site" validate:"omitempty,url"`
-		Mail  string `json:"mail" validate:"omitempty,emailblank"`
+		When     string `json:"when" validate:"omitempty,date"`
+		Start    string `json:"start" validate:"omitempty,time"`
+		Deadline string `json:"deadline" validate:"omitempty,datetimeblank"`
+		Site     string `json:"site" validate:"omitempty,url"`
+		Mail     string `json:"mail" validate:"omitempty,emailblank"`
 	}
 
 	cases := []struct {
@@ -258,6 +259,11 @@ func TestValidators(t *testing.T) {
 		{"hour 24 rejected", `{"start":"24:00"}`, false},
 		{"minute 60 rejected", `{"start":"17:60"}`, false},
 		{"missing colon rejected", `{"start":"1700"}`, false},
+		{"valid rfc3339 deadline", `{"deadline":"2026-08-01T23:59:59Z"}`, true},
+		{"rfc3339 with offset", `{"deadline":"2026-08-01T23:59:59-07:00"}`, true},
+		{"empty deadline allowed", `{"deadline":""}`, true},
+		{"date-only deadline rejected", `{"deadline":"2026-08-01"}`, false},
+		{"garbage deadline rejected", `{"deadline":"not-a-timestamp"}`, false},
 		{"valid url", `{"site":"https://example.com"}`, true},
 		{"bad url", `{"site":"not a url"}`, false},
 		{"valid email", `{"mail":"pat@example.com"}`, true},

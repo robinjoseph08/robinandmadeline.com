@@ -2,7 +2,7 @@ import type { NavLinkItem } from "@/components/library/nav-links";
 
 /**
  * Admin sidebar navigation links. Each points at a section of the admin area;
- * Dashboard is still a placeholder until a later issue fleshes it out.
+ * Dashboard is the overview home with the site's headline stats and settings.
  */
 export const ADMIN_NAV_LINKS: NavLinkItem[] = [
   { to: "/admin", label: "Dashboard", end: true },

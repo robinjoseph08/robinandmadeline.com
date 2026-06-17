@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"time"
 
 	"github.com/go-playground/mold/v4"
 	"github.com/go-playground/validator/v10"
@@ -46,6 +47,27 @@ func timeValidator(fl validator.FieldLevel) bool {
 		return true
 	}
 	return timeRE.MatchString(value)
+}
+
+// datetimeBlankValidator accepts a valid RFC3339 timestamp or the empty string.
+// Like the date/url/emailblank validators it permits blank so a value can be
+// cleared: a partial update sends a present-but-blank field to erase the
+// setting, which the service then removes. A present, non-blank value must
+// parse as RFC3339 (the format the app_settings rsvp_deadline is stored in and
+// the RSVP reader parses back). Use `omitempty,datetimeblank` so an absent (nil
+// pointer) field is skipped while a present blank one clears; add `required` to
+// forbid blank.
+//
+// It exists instead of validator's built-in `datetime=...` because that tag
+// rejects the empty string, so it cannot express the clear gesture; this
+// mirrors how emailblank/phone permit blank for the same reason.
+func datetimeBlankValidator(fl validator.FieldLevel) bool {
+	value := fl.Field().String()
+	if value == "" {
+		return true
+	}
+	_, err := time.Parse(time.RFC3339, value)
+	return err == nil
 }
 
 // urlValidator ensures the value is a valid URL or the empty string. The empty
