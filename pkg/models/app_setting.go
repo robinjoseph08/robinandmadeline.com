@@ -17,8 +17,8 @@ const (
 )
 
 // AppSetting is one site-wide key/value setting (e.g. the RSVP deadline or the
-// contact email). The admin dashboard edits these; feature packages read the
-// keys they care about.
+// contact email). The admin settings page edits these; feature packages read
+// the keys they care about.
 type AppSetting struct {
 	bun.BaseModel `bun:"table:app_settings,alias:s" tstype:"-"`
 

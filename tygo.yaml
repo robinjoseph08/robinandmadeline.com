@@ -80,8 +80,8 @@ packages:
       - types.go
 
   # The dashboard overview response types. Only types.go is emitted; the
-  # response embeds Event and the events package's RSVPBreakdown, and references
-  # the model enums (Side/Relation), all imported from the generated modules.
+  # response embeds Event and the events package's RSVPBreakdown, both imported
+  # from the generated modules.
   - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/dashboard"
     output_path: "app/types/generated/dashboard.ts"
     frontmatter: |
