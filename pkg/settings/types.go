@@ -5,10 +5,10 @@ package settings
 // payload doubles as the service input.
 
 // Response is the body of GET /api/admin/settings and of a successful PUT: the
-// full set of app settings the dashboard reads and writes. Every field is a
-// pointer so an unset setting (an absent app_settings row) is distinguishable
-// from one explicitly set to blank: a nil value means "not configured" (no
-// deadline, no contact email), which is a valid state.
+// full set of app settings the admin settings page reads and writes. Every
+// field is a pointer so an unset setting (an absent app_settings row) is
+// distinguishable from one explicitly set to blank: a nil value means "not
+// configured" (no deadline, no contact email), which is a valid state.
 //
 // rsvp_deadline is an RFC3339 timestamp (the last moment RSVPs stay open; the
 // reader closes them only strictly after it), and contact_email is the address
@@ -22,7 +22,7 @@ type Response struct {
 // form's partial fields, every setting is optional and updated independently:
 // an absent field (nil) leaves the stored setting untouched, a present field is
 // written, and a present-but-blank field clears the setting (deletes its row),
-// returning it to the unset state. This lets the dashboard save one field
+// returning it to the unset state. This lets the settings page save one field
 // without having to resend the others, and lets it clear a deadline or contact
 // email without a separate delete endpoint.
 //

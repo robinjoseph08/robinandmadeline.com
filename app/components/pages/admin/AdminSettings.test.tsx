@@ -151,6 +151,28 @@ describe("AdminSettings", () => {
     expect(putBody).toMatchObject({ rsvp_deadline: "" });
   });
 
+  it("clears the contact email by sending an empty string when it is cleared", async () => {
+    let putBody: unknown;
+    stub({
+      settings: makeSettings({ contact_email: "hello@example.com" }),
+      onPut: (body) => {
+        putBody = body;
+        return makeSettings();
+      },
+    });
+    const user = userEvent.setup();
+    renderSettings();
+
+    const email = await screen.findByLabelText("Contact email");
+    await waitFor(() => expect(email).toHaveValue("hello@example.com"));
+    await user.clear(email);
+
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    expect(putBody).toMatchObject({ contact_email: "" });
+  });
+
   it("surfaces a save error in a toast", async () => {
     adminRequest.mockImplementation(
       (path: string, opts?: { method?: string }) => {

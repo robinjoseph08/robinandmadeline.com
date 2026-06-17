@@ -1,9 +1,9 @@
 // Package settings is the admin read/write side of the site-wide app_settings
-// table: the API the dashboard uses to read and update the RSVP deadline and
-// contact email. The persistent model (and its well-known keys) live in
-// pkg/models; the guest-facing readers (pkg/rsvps) only read these keys, while
-// this package owns the admin writes. There is one row per key; an absent row
-// is a valid "unset" state (no deadline, no contact email).
+// table: the API the admin settings page uses to read and update the RSVP
+// deadline and contact email. The persistent model (and its well-known keys)
+// live in pkg/models; the guest-facing readers (pkg/rsvps) only read these
+// keys, while this package owns the admin writes. There is one row per key; an
+// absent row is a valid "unset" state (no deadline, no contact email).
 package settings
 
 import (

@@ -345,6 +345,7 @@ func TestValidationMessages(t *testing.T) {
 		Side     string   `json:"side" validate:"omitempty,oneof=robin madeline"`
 		Email    string   `json:"email" validate:"omitempty,email"`
 		Phone    string   `json:"phone" validate:"omitempty,phone"`
+		Deadline string   `json:"deadline" validate:"omitempty,datetimeblank"`
 		Circle   []string `json:"circle" validate:"omitempty,max=2"`
 	}
 
@@ -357,6 +358,7 @@ func TestValidationMessages(t *testing.T) {
 		{"oneof lists the valid values", `{"full_name":"A","side":"nobody"}`, "Side must be one of: robin, madeline."},
 		{"email reads as a sentence", `{"full_name":"A","email":"nope"}`, "Email must be a valid email address."},
 		{"phone reads as a sentence", `{"full_name":"A","phone":"asds"}`, "Phone must be a valid phone number."},
+		{"datetimeblank reads as a sentence", `{"full_name":"A","deadline":"nope"}`, "Deadline must be an RFC3339 timestamp."},
 		{"max on a string counts characters", `{"full_name":"` + strings.Repeat("x", 201) + `"}`, "Full name must be at most 200 characters."},
 		{"max on a slice counts elements", `{"full_name":"A","circle":["a","b","c"]}`, "Circle must have at most 2 elements."},
 	}

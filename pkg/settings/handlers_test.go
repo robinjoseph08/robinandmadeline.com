@@ -112,7 +112,7 @@ func TestUpdateSettings_RoundTrip(t *testing.T) {
 
 func TestUpdateSettings_PartialLeavesOthersUntouched(t *testing.T) {
 	// Setting only one field must not disturb the other: an absent field is
-	// left as-is, so the dashboard can save one field without resending the
+	// left as-is, so the settings page can save one field without resending the
 	// rest.
 	e := newAPI(t)
 

@@ -3,7 +3,11 @@ import { Link } from "react-router-dom";
 import { RSVPBreakdownSummary } from "@/components/pages/admin/events/RSVPBreakdownSummary";
 import { useDashboard } from "@/hooks/queries/dashboard";
 import { formatEventDate } from "@/libraries/format";
-import type { EventRSVPStats } from "@/types/generated/dashboard";
+import type {
+  EventRSVPStats,
+  RelationBreakdown,
+  SideBreakdown,
+} from "@/types/generated/dashboard";
 
 /**
  * Admin home: the wedding-site overview. Three headline stat cards (total
@@ -115,8 +119,8 @@ function StatCard({ label, value, hint }: StatCardProps) {
 }
 
 interface GuestBreakdownSectionProps {
-  bySide: { robin: number; madeline: number };
-  byRelation: { family: number; friend: number };
+  bySide: SideBreakdown;
+  byRelation: RelationBreakdown;
 }
 
 function GuestBreakdownSection({
