@@ -5,7 +5,9 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import RSVPConfirmation from "@/components/pages/RSVPConfirmation";
+import { QueryKey as PhotoGroupsQueryKey } from "@/hooks/queries/photo-groups";
 import { QueryKey } from "@/hooks/queries/rsvp";
+import { QueryKey as ScheduleQueryKey } from "@/hooks/queries/schedule";
 import { GUEST_TOKEN_STORAGE_KEY } from "@/libraries/guest-api";
 import type { PartyRSVPsResponse } from "@/types/generated/rsvps";
 
@@ -212,12 +214,24 @@ describe("RSVPConfirmation", () => {
     expect(screen.queryByRole("link", { name: /@/ })).not.toBeInTheDocument();
   });
 
-  it("clears the token and returns to code entry via Not your party?", async () => {
+  it("clears every guest-scoped cache and returns to code entry via Not your party?", async () => {
     // The escape hatch for a visitor whose stored token landed them on someone
     // else's party: forget the token and go back to code entry.
     guestRequest.mockResolvedValue(makeData());
     const user = userEvent.setup();
     const queryClient = renderConfirmation();
+    // The abandoned party's guest-scoped caches, plus an admin cache that is
+    // scoped to the admin token and must survive the switch.
+    queryClient.setQueryData([QueryKey.PartyRSVPs], { guests: [] });
+    queryClient.setQueryData([ScheduleQueryKey.ScheduleEvents], {
+      schedule: {},
+    });
+    queryClient.setQueryData([PhotoGroupsQueryKey.PartyPhotoGroups], {
+      items: [],
+    });
+    queryClient.setQueryData([PhotoGroupsQueryKey.ListPhotoGroups], {
+      items: ["admin"],
+    });
 
     await user.click(
       await screen.findByRole("button", { name: /not your party\?/i }),
@@ -225,9 +239,19 @@ describe("RSVPConfirmation", () => {
 
     expect(await screen.findByText("Code Entry Page")).toBeInTheDocument();
     expect(localStorage.getItem(GUEST_TOKEN_STORAGE_KEY)).toBeNull();
-    // The abandoned party's cached RSVP data goes with the token; otherwise a
-    // different code logging in next would briefly see (and the form would
-    // seed from) the wrong party's answers.
+    // Every guest-scoped cache goes with the token; otherwise a different code
+    // logging in next would briefly see (and the form would seed from) the
+    // wrong party's data across any guest surface.
     expect(queryClient.getQueryData([QueryKey.PartyRSVPs])).toBeUndefined();
+    expect(
+      queryClient.getQueryData([ScheduleQueryKey.ScheduleEvents]),
+    ).toBeUndefined();
+    expect(
+      queryClient.getQueryData([PhotoGroupsQueryKey.PartyPhotoGroups]),
+    ).toBeUndefined();
+    // The admin shot list is not guest-scoped, so the switch leaves it alone.
+    expect(
+      queryClient.getQueryData([PhotoGroupsQueryKey.ListPhotoGroups]),
+    ).toEqual({ items: ["admin"] });
   });
 });

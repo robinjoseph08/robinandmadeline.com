@@ -1,24 +1,34 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import RSVP from "@/components/pages/RSVP";
+import { QueryKey as PhotoGroupsQueryKey } from "@/hooks/queries/photo-groups";
+import { QueryKey as RSVPQueryKey } from "@/hooks/queries/rsvp";
+import { QueryKey as ScheduleQueryKey } from "@/hooks/queries/schedule";
 import { GUEST_TOKEN_STORAGE_KEY } from "@/libraries/guest-api";
 
 function renderRSVP() {
-  return render(
-    <MemoryRouter initialEntries={["/rsvp"]}>
-      <Routes>
-        <Route element={<RSVP />} path="/rsvp" />
-        <Route element={<div>RSVP Form Page</div>} path="/rsvp/form" />
-        <Route
-          element={<div>Confirmation Page</div>}
-          path="/rsvp/confirmation"
-        />
-      </Routes>
-    </MemoryRouter>,
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/rsvp"]}>
+        <Routes>
+          <Route element={<RSVP />} path="/rsvp" />
+          <Route element={<div>RSVP Form Page</div>} path="/rsvp/form" />
+          <Route
+            element={<div>Confirmation Page</div>}
+            path="/rsvp/confirmation"
+          />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 /** A minimal GET /api/guest/rsvp body with the routing-relevant flags. */
@@ -90,6 +100,35 @@ describe("RSVP", () => {
 
     // An unresponded party lands on the form.
     expect(await screen.findByText("RSVP Form Page")).toBeInTheDocument();
+  });
+
+  it("evicts the previous party's guest-scoped caches on a new login", async () => {
+    // Party A's data lingering in the cache from an earlier session on this
+    // device. A new code is a deliberate party switch, so every guest-scoped
+    // cache (RSVPs, schedule, photo groups) must be dropped before party B
+    // sees the app, or party B briefly renders party A's data.
+    mockLoginFetch(rsvpBody());
+    const queryClient = renderRSVP();
+    queryClient.setQueryData([RSVPQueryKey.PartyRSVPs], { guests: ["A"] });
+    queryClient.setQueryData([ScheduleQueryKey.ScheduleEvents], {
+      schedule: "A",
+    });
+    queryClient.setQueryData([PhotoGroupsQueryKey.PartyPhotoGroups], {
+      items: ["A"],
+    });
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/party code/i), "kalel");
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByText("RSVP Form Page")).toBeInTheDocument();
+    expect(queryClient.getQueryData([RSVPQueryKey.PartyRSVPs])).toBeUndefined();
+    expect(
+      queryClient.getQueryData([ScheduleQueryKey.ScheduleEvents]),
+    ).toBeUndefined();
+    expect(
+      queryClient.getQueryData([PhotoGroupsQueryKey.PartyPhotoGroups]),
+    ).toBeUndefined();
   });
 
   it("continues to the confirmation when the party has already responded", async () => {
