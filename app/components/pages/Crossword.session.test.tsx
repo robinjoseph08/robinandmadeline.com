@@ -597,10 +597,22 @@ describe("Crossword solve sessions", () => {
 
       view.unmount();
 
-      expect(lastPatchBody()).toMatchObject({
-        elapsed_ms: 65_000,
-        completed: false,
-      });
+      // The unmount flush must ride the keepalive path (like hidden/pagehide),
+      // since in-SPA navigation would abort a normal fetch before it lands.
+      // Asserting the full options (not just the body) pins the keepalive flag
+      // so a regression that points the unmount cleanup at the non-keepalive
+      // updateGameSession is caught.
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/games/sessions/sess-1",
+        expect.objectContaining({
+          method: "PATCH",
+          keepalive: true,
+          body: expect.objectContaining({
+            elapsed_ms: 65_000,
+            completed: false,
+          }),
+        }),
+      );
     });
 
     it("keeps the clock stopped when the page mounts in a hidden tab", async () => {

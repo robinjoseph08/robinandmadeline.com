@@ -74,6 +74,21 @@ function reportedDifficulties(): Array<GameSession["difficulty"] | undefined> {
     );
 }
 
+/** Every elapsed_ms carried on a PATCH report so far. */
+function reportedElapsed(): number[] {
+  return apiRequest.mock.calls
+    .filter(
+      ([path, options]) =>
+        typeof path === "string" &&
+        path.startsWith("/games/sessions/") &&
+        (options?.method ?? "GET") === "PATCH",
+    )
+    .map(
+      ([, options]) =>
+        (options?.body as UpdateGameSessionPayload).elapsed_ms ?? 0,
+    );
+}
+
 /** Drain the hook's serialized report queue. */
 async function flush() {
   await act(async () => {
@@ -121,6 +136,50 @@ describe("useSolveSession locking", () => {
     expect(result.current.recordedDifficulty).toBe("hard");
     expect(reportedDifficulties()).toHaveLength(reportsBefore);
     expect(reportedDifficulties()).not.toContain("easy");
+  });
+
+  it("never reports a lower elapsed than the last accepted value", async () => {
+    // The clock derives elapsed from Date.now() deltas, so a system clock that
+    // jumps backward (NTP correction, manual change) while the clock is running
+    // computes a live stretch shorter than what the server already accepted. The
+    // Math.max floor against lastSentElapsedRef keeps the report monotonic so the
+    // server never rejects it for shrinking; this drives the clock backward
+    // mid-run and pins it.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    const start = new Date("2026-01-01T00:00:00Z").getTime();
+    vi.setSystemTime(start);
+
+    const { result } = renderHook(() =>
+      useSolveSession({
+        puzzleId: "wedding-mini-v1",
+        initiallyStarted: false,
+        initialDifficulty: "easy",
+      }),
+    );
+
+    act(() => result.current.start("easy"));
+    await flush();
+
+    // Run forward 60s while solving; the heartbeats report up to 60000ms, so
+    // that becomes the last accepted value (the clock stays running, so its
+    // anchor is unchanged).
+    act(() => vi.advanceTimersByTime(60_000));
+    await flush();
+    const afterForward = reportedElapsed();
+    expect(afterForward[afterForward.length - 1]).toBe(60_000);
+
+    // The system clock jumps backward WITHOUT pausing, so the still-anchored
+    // live stretch (now - anchor) goes negative and totalElapsed() drops below
+    // 60000. The next heartbeat then fires a report off that lowered value.
+    act(() => vi.setSystemTime(start - 10_000));
+    act(() => vi.advanceTimersByTime(30_000));
+    await flush();
+
+    // The floor holds: no report ever drops below the last accepted value
+    // (without Math.max the last report would be the lowered computed elapsed).
+    const all = reportedElapsed();
+    expect(Math.min(...all)).toBe(60_000);
+    expect(all[all.length - 1]).toBe(60_000);
   });
 
   it("ignores reportDifficulty for an unreportable restore (initiallyFinished)", async () => {

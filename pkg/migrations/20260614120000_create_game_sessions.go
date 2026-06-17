@@ -35,7 +35,7 @@ func init() {
 		// name shown on the leaderboard, set once post-completion and kept
 		// even for signed-in parties so an anonymous entry can be retroactively
 		// affiliated later. (At this revision display_name being non-NULL was
-		// also the implicit leaderboard opt-in; migration 20260614010000 makes
+		// also the implicit leaderboard opt-in; migration 20260614130000 makes
 		// the opt-in an explicit on_leaderboard column, so display_name no
 		// longer gates visibility.)
 		_, err := db.ExecContext(ctx, `
