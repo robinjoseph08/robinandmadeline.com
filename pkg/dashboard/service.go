@@ -204,12 +204,14 @@ func (s *Service) infoProgress(ctx context.Context) (InfoCollectionProgress, err
 }
 
 // emailStats rolls the guest-facing email_recipients rows up into the delivery
-// summary. A recipient counts as Sent once it has been dispatched to Mailgun
-// (status sent, delivered, or bounced; delivered/bounced are sent rows the
-// webhook upgraded), and Delivered when Mailgun confirmed delivery.
-// queued/sending rows are not yet sent and a failed row never reached Mailgun,
-// so neither counts. The delivery rate is Delivered/Sent, 0 when nothing has
-// been sent.
+// summary. A recipient counts as Sent when its current status is sent,
+// delivered, or bounced (delivered/bounced are sent rows the webhook upgraded),
+// and Delivered when Mailgun confirmed delivery. queued/sending rows have not
+// been dispatched yet, and failed rows are excluded: a failed row is either one
+// the worker never managed to dispatch or one Mailgun permanently rejected for
+// a non-bounce reason (pkg/emails/webhook.go mapDeliveryEvent), and this
+// headline tracks healthy guest delivery, not attempts. The delivery rate is
+// Delivered/Sent, 0 when nothing has been sent.
 //
 // Test sends (is_test on the parent send, addressed to the couple's own
 // inboxes rather than guests) are excluded, so this headline reflects guest

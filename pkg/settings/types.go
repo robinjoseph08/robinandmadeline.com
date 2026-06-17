@@ -10,8 +10,9 @@ package settings
 // from one explicitly set to blank: a nil value means "not configured" (no
 // deadline, no contact email), which is a valid state.
 //
-// rsvp_deadline is an RFC3339 timestamp (the moment the RSVP window closes);
-// contact_email is the address shown to guests in the post-deadline message.
+// rsvp_deadline is an RFC3339 timestamp (the last moment RSVPs stay open; the
+// reader closes them only strictly after it), and contact_email is the address
+// shown to guests in the post-deadline message.
 type Response struct {
 	RSVPDeadline *string `json:"rsvp_deadline"`
 	ContactEmail *string `json:"contact_email"`

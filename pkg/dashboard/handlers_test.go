@@ -150,10 +150,13 @@ func TestDashboard_EmptyIsAllZeros(t *testing.T) {
 
 func TestDashboard_PartyAndGuestCounts(t *testing.T) {
 	f := newAPI(t)
-	p1 := createParty(t, f, "Smiths", partyOpts{side: models.SideRobin, relation: models.RelationFamily})
+	// Side and relation are deliberately asymmetric (Robin 2 / Madeline 1 but
+	// Family 1 / Friend 2) so a regression that mixes up the two dimensions or
+	// queries the wrong column produces visibly wrong counts.
+	p1 := createParty(t, f, "Smiths", partyOpts{side: models.SideRobin, relation: models.RelationFriend})
 	createGuest(t, f, p1.ID, "Alice", true, emailOf("alice@example.com"))
 	createGuest(t, f, p1.ID, "Bob", false, nil)
-	p2 := createParty(t, f, "Joneses", partyOpts{side: models.SideMadeline, relation: models.RelationFriend})
+	p2 := createParty(t, f, "Joneses", partyOpts{side: models.SideMadeline, relation: models.RelationFamily})
 	createGuest(t, f, p2.ID, "Carol", true, emailOf("carol@example.com"))
 
 	resp := getDashboard(t, f)
@@ -163,14 +166,16 @@ func TestDashboard_PartyAndGuestCounts(t *testing.T) {
 	// Guests are attributed to their party's side/relation.
 	assert.Equal(t, 2, resp.GuestBreakdown.BySide.Robin)
 	assert.Equal(t, 1, resp.GuestBreakdown.BySide.Madeline)
-	assert.Equal(t, 2, resp.GuestBreakdown.ByRelation.Family)
-	assert.Equal(t, 1, resp.GuestBreakdown.ByRelation.Friend)
+	assert.Equal(t, 1, resp.GuestBreakdown.ByRelation.Family)
+	assert.Equal(t, 2, resp.GuestBreakdown.ByRelation.Friend)
 }
 
 func TestDashboard_PerEventRSVPBreakdownAndSummary(t *testing.T) {
 	// A public event backfills a pending RSVP for every guest; overriding two of
-	// them to attending/not_attending leaves one pending. The per-event breakdown
-	// and the site-wide summary must both reflect that.
+	// them to attending/not_attending leaves one pending. A second public event
+	// gets one attending override, the rest pending, so the site-wide summary
+	// must sum across both events (not just reflect one), pinning the rollup as
+	// an accumulation rather than an assignment.
 	f := newAPI(t)
 	p := createParty(t, f, "Smiths", partyOpts{})
 	g1 := createGuest(t, f, p.ID, "Alice", true, emailOf("alice@example.com"))
@@ -187,39 +192,70 @@ func TestDashboard_PerEventRSVPBreakdownAndSummary(t *testing.T) {
 	_, err = f.events.UpdateRSVPStatus(ctx(), ev.ID, g2.ID, events.UpdateEventRSVPPayload{Status: models.RSVPNotAttending})
 	require.NoError(t, err)
 
-	resp := getDashboard(t, f)
-	require.Len(t, resp.Events, 1)
-	b := resp.Events[0].RSVPBreakdown
-	assert.Equal(t, 1, b.Attending)
-	assert.Equal(t, 1, b.NotAttending)
-	assert.Equal(t, 1, b.Pending)
-	assert.Equal(t, 3, b.Total)
+	ev2, err := f.events.CreateEvent(ctx(), events.CreateEventPayload{
+		Name: "Reception", Date: "2026-08-02", IsPublic: true,
+	})
+	require.NoError(t, err)
 
-	// The summary rolls every event's rows up: 2 of 3 responded.
-	assert.Equal(t, 1, resp.RSVPSummary.Attending)
+	_, err = f.events.UpdateRSVPStatus(ctx(), ev2.ID, g1.ID, events.UpdateEventRSVPPayload{Status: models.RSVPAttending})
+	require.NoError(t, err)
+
+	resp := getDashboard(t, f)
+	require.Len(t, resp.Events, 2)
+	// Events come back in schedule order: Ceremony (08-01) then Reception (08-02).
+	ceremony := resp.Events[0].RSVPBreakdown
+	assert.Equal(t, 1, ceremony.Attending)
+	assert.Equal(t, 1, ceremony.NotAttending)
+	assert.Equal(t, 1, ceremony.Pending)
+	assert.Equal(t, 3, ceremony.Total)
+	reception := resp.Events[1].RSVPBreakdown
+	assert.Equal(t, 1, reception.Attending)
+	assert.Equal(t, 0, reception.NotAttending)
+	assert.Equal(t, 2, reception.Pending)
+	assert.Equal(t, 3, reception.Total)
+
+	// The summary rolls both events' rows up: 4 of 6 responded across the two.
+	assert.Equal(t, 2, resp.RSVPSummary.Attending)
 	assert.Equal(t, 1, resp.RSVPSummary.NotAttending)
-	assert.Equal(t, 1, resp.RSVPSummary.Pending)
-	assert.Equal(t, 2, resp.RSVPSummary.Responded)
-	assert.Equal(t, 3, resp.RSVPSummary.Total)
-	assert.InDelta(t, 2.0/3.0, resp.RSVPSummary.ResponseRate, 0.0001)
+	assert.Equal(t, 3, resp.RSVPSummary.Pending)
+	assert.Equal(t, 3, resp.RSVPSummary.Responded)
+	assert.Equal(t, 6, resp.RSVPSummary.Total)
+	assert.InDelta(t, 3.0/6.0, resp.RSVPSummary.ResponseRate, 0.0001)
 }
 
 func TestDashboard_InfoCollectionProgressUsesEffectiveStatus(t *testing.T) {
-	// Effective status (ADR 0005): a not-requested digital party with its
-	// primary's email present derives complete; one without it derives
-	// incomplete. The dashboard count must match the model's derivation, not a
-	// reimplementation.
+	// Effective status (ADR 0005) has two branches the count must honor via the
+	// model, not a reimplementation: a not-requested party derives complete iff
+	// its required fields are present, while a requested party is complete only
+	// when confirmed (its data alone is ignored). The fixtures exercise both:
+	//   - derivedComplete:  not-requested, primary email present  -> complete
+	//   - derivedIncomplete: not-requested, no primary email      -> incomplete
+	//   - affirmedComplete: requested+confirmed (has email)        -> complete
+	//   - affirmedPending:  requested, not confirmed (has email)   -> incomplete
+	// The affirmedPending party has its email yet still reads incomplete, so the
+	// count can never be a bare required-fields check, and the Relation("Guests")
+	// load stays load-bearing (drop it and every party would read incomplete).
 	f := newAPI(t)
-	complete := createParty(t, f, "Complete", partyOpts{invitationType: models.InvitationDigital})
-	createGuest(t, f, complete.ID, "Primary", true, emailOf("primary@example.com"))
+	derivedComplete := createParty(t, f, "DerivedComplete", partyOpts{invitationType: models.InvitationDigital})
+	createGuest(t, f, derivedComplete.ID, "Primary", true, emailOf("primary@example.com"))
 
-	incomplete := createParty(t, f, "Incomplete", partyOpts{invitationType: models.InvitationDigital})
-	createGuest(t, f, incomplete.ID, "NoEmail", true, nil)
+	derivedIncomplete := createParty(t, f, "DerivedIncomplete", partyOpts{invitationType: models.InvitationDigital})
+	createGuest(t, f, derivedIncomplete.ID, "NoEmail", true, nil)
+
+	affirmedComplete := createParty(t, f, "AffirmedComplete", partyOpts{invitationType: models.InvitationDigital})
+	createGuest(t, f, affirmedComplete.ID, "Primary", true, emailOf("affirmed@example.com"))
+	_, err := f.parties.MarkComplete(ctx(), affirmedComplete.ID)
+	require.NoError(t, err)
+
+	affirmedPending := createParty(t, f, "AffirmedPending", partyOpts{invitationType: models.InvitationDigital})
+	createGuest(t, f, affirmedPending.ID, "Primary", true, emailOf("pending@example.com"))
+	_, err = f.parties.RequestInfo(ctx(), affirmedPending.ID)
+	require.NoError(t, err)
 
 	resp := getDashboard(t, f)
-	assert.Equal(t, 1, resp.InfoCollection.Complete)
-	assert.Equal(t, 1, resp.InfoCollection.Incomplete)
-	assert.Equal(t, 2, resp.InfoCollection.Total)
+	assert.Equal(t, 2, resp.InfoCollection.Complete)
+	assert.Equal(t, 2, resp.InfoCollection.Incomplete)
+	assert.Equal(t, 4, resp.InfoCollection.Total)
 	assert.InDelta(t, 0.5, resp.InfoCollection.Rate, 0.0001)
 }
 
@@ -254,10 +290,14 @@ func TestDashboard_EmailStatsAndDeliveryRate(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Real send: 2 delivered, 1 bounced, 1 sent (not yet upgraded), 1 queued.
+	// Real send: 2 delivered, 1 bounced, 1 sent (not yet upgraded), 1 queued,
+	// 1 sending, 1 failed. The queued/sending/failed rows must all stay out of
+	// Sent: queued and sending are not dispatched yet, and a failed row (whether
+	// the worker never dispatched it or Mailgun permanently rejected it) is not
+	// healthy delivery.
 	for _, status := range []string{
 		models.EmailDelivered, models.EmailDelivered, models.EmailBounced,
-		models.EmailSent, models.EmailQueued,
+		models.EmailSent, models.EmailQueued, models.EmailSending, models.EmailFailed,
 	} {
 		insertRecipient(realSend.ID, status)
 	}
@@ -265,8 +305,8 @@ func TestDashboard_EmailStatsAndDeliveryRate(t *testing.T) {
 	insertRecipient(testSend.ID, models.EmailDelivered)
 
 	resp := getDashboard(t, f)
-	// Sent = delivered(2) + bounced(1) + sent(1) = 4; queued is not sent, and
-	// the test send's delivered row is excluded.
+	// Sent = delivered(2) + bounced(1) + sent(1) = 4; queued/sending/failed are
+	// excluded, and the test send's delivered row is excluded.
 	assert.Equal(t, 4, resp.Emails.Sent)
 	assert.Equal(t, 2, resp.Emails.Delivered)
 	assert.InDelta(t, 2.0/4.0, resp.Emails.DeliveryRate, 0.0001)

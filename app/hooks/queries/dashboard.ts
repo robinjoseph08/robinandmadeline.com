@@ -19,9 +19,9 @@ import type {
  * is typed end to end with the tygo-generated response types.
  *
  * The dashboard stats are computed fresh server-side on each request (no
- * caching), so saving a setting that the overview surfaces (the RSVP deadline)
- * invalidates the overview too, keeping the headline numbers in step with the
- * settings form.
+ * caching). The overview response also carries the RSVP deadline (for API
+ * completeness; the editable field reads it from the settings query), so saving
+ * a setting invalidates the overview too, keeping that field in step.
  */
 
 export enum QueryKey {
@@ -57,7 +57,7 @@ export const useSettings = (
 
 // useUpdateSettings saves a partial settings change (each field independently).
 // On success it refreshes the settings query and the dashboard overview, since
-// the overview surfaces the RSVP deadline the form just changed.
+// the overview response also carries the RSVP deadline the form just changed.
 export const useUpdateSettings = () => {
   const queryClient = useQueryClient();
 

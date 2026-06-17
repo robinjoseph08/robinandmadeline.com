@@ -178,6 +178,23 @@ describe("AdminDashboard stats", () => {
     expect(bar).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getByText("1 of 2 parties complete")).toBeInTheDocument();
   });
+
+  it("renders the email delivery summary with sent, delivered, and rate", async () => {
+    // Pin the populated branch: the empty default never renders these numbers,
+    // so a swap of sent/delivered or a botched rate format would slip through.
+    stub({
+      dashboard: makeDashboard({
+        emails: { sent: 8, delivered: 6, delivery_rate: 0.75 },
+      }),
+    });
+    renderDashboard();
+
+    const heading = await screen.findByRole("heading", { name: "Emails" });
+    const section = within(heading.closest("section") as HTMLElement);
+    expect(section.getByText("8")).toBeInTheDocument();
+    expect(section.getByText("6")).toBeInTheDocument();
+    expect(section.getByText(/75% delivery rate/)).toBeInTheDocument();
+  });
 });
 
 describe("AdminDashboard settings", () => {

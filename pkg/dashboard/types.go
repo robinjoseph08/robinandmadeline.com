@@ -72,10 +72,11 @@ type InfoCollectionProgress struct {
 }
 
 // EmailStats is the email-delivery rollup over every recipient row. Sent counts
-// the recipients that were dispatched to Mailgun (status sent, delivered, or
-// bounced; a delivered/bounced row is a sent row the webhook later upgraded).
-// Delivered counts those Mailgun confirmed. DeliveryRate is Delivered/Sent as a
-// 0..1 fraction (0 when nothing has been sent, never a divide-by-zero).
+// the recipients whose current status is sent, delivered, or bounced (a
+// delivered/bounced row is a sent row the webhook later upgraded); queued,
+// sending, and failed rows are excluded. Delivered counts those Mailgun
+// confirmed. DeliveryRate is Delivered/Sent as a 0..1 fraction (0 when nothing
+// has been sent, never a divide-by-zero).
 type EmailStats struct {
 	Sent         int     `json:"sent"`
 	Delivered    int     `json:"delivered"`
