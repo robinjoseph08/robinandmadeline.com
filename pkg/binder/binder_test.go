@@ -224,18 +224,19 @@ func TestBind_DiveRequiredForSliceModTraversal(t *testing.T) {
 	})
 }
 
-// TestValidators covers the date, time, url, and emailblank custom validators
-// directly.
+// TestValidators covers the date, time, datetimeblank, url, and emailblank
+// custom validators directly.
 func TestValidators(t *testing.T) {
 	t.Parallel()
 	b, err := New()
 	require.NoError(t, err)
 
 	type payload struct {
-		When  string `json:"when" validate:"omitempty,date"`
-		Start string `json:"start" validate:"omitempty,time"`
-		Site  string `json:"site" validate:"omitempty,url"`
-		Mail  string `json:"mail" validate:"omitempty,emailblank"`
+		When     string `json:"when" validate:"omitempty,date"`
+		Start    string `json:"start" validate:"omitempty,time"`
+		Deadline string `json:"deadline" validate:"omitempty,datetimeblank"`
+		Site     string `json:"site" validate:"omitempty,url"`
+		Mail     string `json:"mail" validate:"omitempty,emailblank"`
 	}
 
 	cases := []struct {
@@ -258,6 +259,11 @@ func TestValidators(t *testing.T) {
 		{"hour 24 rejected", `{"start":"24:00"}`, false},
 		{"minute 60 rejected", `{"start":"17:60"}`, false},
 		{"missing colon rejected", `{"start":"1700"}`, false},
+		{"valid rfc3339 deadline", `{"deadline":"2026-08-01T23:59:59Z"}`, true},
+		{"rfc3339 with offset", `{"deadline":"2026-08-01T23:59:59-07:00"}`, true},
+		{"empty deadline allowed", `{"deadline":""}`, true},
+		{"date-only deadline rejected", `{"deadline":"2026-08-01"}`, false},
+		{"garbage deadline rejected", `{"deadline":"not-a-timestamp"}`, false},
 		{"valid url", `{"site":"https://example.com"}`, true},
 		{"bad url", `{"site":"not a url"}`, false},
 		{"valid email", `{"mail":"pat@example.com"}`, true},
@@ -339,6 +345,7 @@ func TestValidationMessages(t *testing.T) {
 		Side     string   `json:"side" validate:"omitempty,oneof=robin madeline"`
 		Email    string   `json:"email" validate:"omitempty,email"`
 		Phone    string   `json:"phone" validate:"omitempty,phone"`
+		Deadline string   `json:"deadline" validate:"omitempty,datetimeblank"`
 		Circle   []string `json:"circle" validate:"omitempty,max=2"`
 	}
 
@@ -351,6 +358,7 @@ func TestValidationMessages(t *testing.T) {
 		{"oneof lists the valid values", `{"full_name":"A","side":"nobody"}`, "Side must be one of: robin, madeline."},
 		{"email reads as a sentence", `{"full_name":"A","email":"nope"}`, "Email must be a valid email address."},
 		{"phone reads as a sentence", `{"full_name":"A","phone":"asds"}`, "Phone must be a valid phone number."},
+		{"datetimeblank reads as a sentence", `{"full_name":"A","deadline":"nope"}`, "Deadline must be an RFC3339 timestamp."},
 		{"max on a string counts characters", `{"full_name":"` + strings.Repeat("x", 201) + `"}`, "Full name must be at most 200 characters."},
 		{"max on a slice counts elements", `{"full_name":"A","circle":["a","b","c"]}`, "Circle must have at most 2 elements."},
 	}

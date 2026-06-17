@@ -14,6 +14,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/dashboard"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
@@ -22,6 +23,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/photogroups"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/rsvps"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/settings"
 	"github.com/uptrace/bun"
 )
 
@@ -119,9 +121,9 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 
 // registerAdmin mounts the admin API surface behind the admin auth middleware.
 // Every route on the returned group requires a valid admin token. GET
-// /api/admin/me confirms a stored token is still valid; the parties/guests and
-// events endpoints register their own routes on this same protected group via
-// their RegisterRoutes.
+// /api/admin/me confirms a stored token is still valid; the dashboard,
+// settings, parties/guests, and events endpoints register their own routes on
+// this same protected group via their RegisterRoutes.
 //
 // The db may be nil (e.g. in wiring tests that only exercise auth): the
 // parties service is still constructed, but its handlers are only reachable
@@ -134,6 +136,8 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.C
 		return c.JSON(http.StatusOK, MeResponse{Role: auth.RoleAdmin})
 	})
 
+	dashboard.RegisterRoutes(admin, dashboard.NewService(db))
+	settings.RegisterRoutes(admin, settings.NewService(db))
 	parties.RegisterRoutes(admin, parties.NewService(db))
 	events.RegisterRoutes(admin, events.NewService(db))
 	photogroups.RegisterRoutes(admin, photogroups.NewService(db))

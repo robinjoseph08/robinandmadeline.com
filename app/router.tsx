@@ -14,6 +14,7 @@ import AdminLogin from "@/components/pages/admin/AdminLogin";
 import AdminParties from "@/components/pages/admin/AdminParties";
 import AdminPartyDetail from "@/components/pages/admin/AdminPartyDetail";
 import AdminPhotoGroups from "@/components/pages/admin/AdminPhotoGroups";
+import AdminSettings from "@/components/pages/admin/AdminSettings";
 import RequireAdmin from "@/components/pages/admin/RequireAdmin";
 import Crossword from "@/components/pages/Crossword";
 import FAQ from "@/components/pages/FAQ";
@@ -75,6 +76,7 @@ export const routes = [
           { path: "emails/compose", Component: AdminEmailCompose },
           { path: "emails/templates", Component: AdminEmailTemplates },
           { path: "emails/sends/:id", Component: AdminEmailSendDetail },
+          { path: "settings", Component: AdminSettings },
         ],
       },
     ],
