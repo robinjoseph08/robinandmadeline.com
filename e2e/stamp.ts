@@ -1,11 +1,13 @@
 /**
  * Returns a letters-only per-run unique suffix for entity names.
  *
- * The admin guest search also matches phones by the digits in the search
- * term, so a suffix containing digits would drag every phone-bearing guest
- * left by earlier runs into a name search and break row isolation. The
- * timestamp is rendered in base 26 with each digit mapped to a-z, which is
- * injective, so the suffix stays unique per run and never contains digits.
+ * The admin guest search now gates its phone clause on the term looking like a
+ * phone number (only digits and phone formatting, with at least 3 digits), so a
+ * letters-bearing name search no longer matches phones and a digit in the suffix
+ * is harmless. We keep the suffix letters-only anyway so isolation never depends
+ * on that gate: the timestamp is rendered in base 26 with each digit mapped to
+ * a-z, which is injective, so the suffix stays unique per run and never contains
+ * digits.
  */
 export function runStamp(): string {
   return [...Date.now().toString(26)]

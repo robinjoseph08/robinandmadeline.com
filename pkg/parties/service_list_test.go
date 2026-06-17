@@ -269,16 +269,17 @@ func TestListGuests_SearchMatchesPartyName(t *testing.T) {
 	assert.True(t, ids[g.ID], "a guest matches when its party's name matches the search")
 }
 
-// TestListGuests_SearchMatchesFormattedPhone proves the phone search tolerates
-// formatting: a query typed with punctuation still finds a number stored as
-// canonical E.164, while a text-only query does not match a guest merely because
-// it has a phone (the formatting-stripped clause is skipped when the query has no
-// digits).
+// TestListGuests_SearchMatchesFormattedPhone proves the phone clause is gated on
+// the term actually looking like a phone number: a query made only of digits and
+// common phone formatting (with at least 3 digits) matches a number stored as
+// canonical E.164, tolerating punctuation, while any term carrying a letter or
+// fewer than 3 digits never touches phones. This keeps a name/email/address
+// search that happens to include a digit from matching every phone-bearing guest.
 func TestListGuests_SearchMatchesFormattedPhone(t *testing.T) {
 	svc, _ := newService(t)
 	p := createPartyT(t, svc, digitalPartyInput())
 	withPhone := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{
-		FullName: "Pat", Phone: pointerutil.String("+14155552671"),
+		FullName: "Quinn", Phone: pointerutil.String("+14155552671"),
 	})
 
 	t.Run("formatted query matches stored E.164", func(t *testing.T) {
@@ -286,10 +287,30 @@ func TestListGuests_SearchMatchesFormattedPhone(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, guestIDs(got)[withPhone.ID], "a formatted phone query finds the E.164 number")
 	})
+	t.Run("digit-only fragment of 3+ digits matches the phone", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("2671")})
+		require.NoError(t, err)
+		assert.True(t, guestIDs(got)[withPhone.ID], "the last four digits still find the stored number")
+	})
 	t.Run("text-only query does not match on the phone", func(t *testing.T) {
 		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("zzz")})
 		require.NoError(t, err)
 		assert.False(t, guestIDs(got)[withPhone.ID], "a non-digit query must not match every guest who has a phone")
+	})
+	t.Run("letters plus an incidental digit do not match the phone", func(t *testing.T) {
+		// "Apt 415" strips to "415", a 3-digit substring of the stored number, so
+		// the old any-digit trigger would have matched the phone. The letters must
+		// gate it out: "Apt 415" overlaps nothing in the guest's name or party.
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("Apt 415")})
+		require.NoError(t, err)
+		assert.False(t, guestIDs(got)[withPhone.ID], "a term containing letters must never match on the phone")
+	})
+	t.Run("a digit fragment shorter than 3 does not match the phone", func(t *testing.T) {
+		// "1" is a digit of the stored number, but a lone digit is far too broad to
+		// be a phone search, so the minimum-3-digits gate keeps it phone-free.
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Search: pointerutil.String("1")})
+		require.NoError(t, err)
+		assert.False(t, guestIDs(got)[withPhone.ID], "fewer than 3 digits must not match on the phone")
 	})
 }
 
