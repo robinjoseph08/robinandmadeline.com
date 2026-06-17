@@ -7,8 +7,9 @@ import "github.com/uptrace/bun"
 // an email address. An absent row is a valid state (no deadline set, no
 // contact email configured).
 const (
-	// AppSettingRSVPDeadline is the moment the RSVP window closes, stored as an
-	// RFC3339 timestamp. Absent means RSVPs stay open indefinitely.
+	// AppSettingRSVPDeadline is the last moment RSVPs stay open (the reader
+	// closes them only strictly after it), stored as an RFC3339 timestamp.
+	// Absent means RSVPs stay open indefinitely.
 	AppSettingRSVPDeadline = "rsvp_deadline"
 	// AppSettingContactEmail is the address shown to guests in the
 	// post-deadline "contact us" message.

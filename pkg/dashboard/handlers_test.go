@@ -214,7 +214,8 @@ func TestDashboard_PerEventRSVPBreakdownAndSummary(t *testing.T) {
 	assert.Equal(t, 2, reception.Pending)
 	assert.Equal(t, 3, reception.Total)
 
-	// The summary rolls both events' rows up: 4 of 6 responded across the two.
+	// The summary rolls both events' rows up: 3 of 6 responded across the two
+	// (2 attending + 1 not_attending).
 	assert.Equal(t, 2, resp.RSVPSummary.Attending)
 	assert.Equal(t, 1, resp.RSVPSummary.NotAttending)
 	assert.Equal(t, 3, resp.RSVPSummary.Pending)
