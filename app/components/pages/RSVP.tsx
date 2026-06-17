@@ -1,9 +1,11 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { resetGuestQueries } from "@/hooks/queries/guest-cache";
 import {
   ApiError,
   clearGuestToken,
@@ -32,6 +34,7 @@ function rsvpDestination(data: PartyRSVPsResponse): string {
  */
 export default function RSVP() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +69,10 @@ export default function RSVP() {
     setSubmitting(true);
     try {
       await guestLogin(code.trim());
+      // A new code is a deliberate party switch: drop any guest-scoped caches
+      // left by a previous party on this device so party B starts from a
+      // loading state, not party A's stale RSVPs, schedule, or photo groups.
+      resetGuestQueries(queryClient);
       const data = await guestRequest<PartyRSVPsResponse>("/guest/rsvp");
       navigate(rsvpDestination(data));
     } catch (err) {

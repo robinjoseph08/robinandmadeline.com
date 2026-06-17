@@ -2,7 +2,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
-import { QueryKey, usePartyRSVPs } from "@/hooks/queries/rsvp";
+import { resetGuestQueries } from "@/hooks/queries/guest-cache";
+import { usePartyRSVPs } from "@/hooks/queries/rsvp";
 import { formatLongDate } from "@/libraries/format";
 import { clearGuestToken, readGuestToken } from "@/libraries/guest-api";
 import { isNamedPlaceholder } from "@/libraries/placeholders";
@@ -57,13 +58,13 @@ export default function RSVPConfirmation() {
 
   // The escape hatch for a visitor looking at someone else's party (a shared
   // device, or a mistyped code remembered by the stored token): forget the
-  // token and land back on code entry. The cached RSVP data goes with the
+  // token and land back on code entry. Every guest-scoped cache goes with the
   // token: it belongs to the abandoned party, and leaving it behind would
-  // flash (and mis-seed) that party's answers if a different code logs in
-  // next.
+  // flash (and mis-seed) that party's data (RSVPs, schedule, photo groups) if
+  // a different code logs in next.
   const handleNotYourParty = () => {
     clearGuestToken();
-    queryClient.removeQueries({ queryKey: [QueryKey.PartyRSVPs] });
+    resetGuestQueries(queryClient);
     navigate("/rsvp");
   };
 

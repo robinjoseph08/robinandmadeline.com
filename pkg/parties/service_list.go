@@ -15,6 +15,12 @@ import (
 // E.164 numbers, which are digits only.
 var nonDigitRE = regexp.MustCompile(`\D`)
 
+// phoneSearchRE gates the phone clause of the guest search: only a term made
+// entirely of digits and common phone formatting (spaces and ()+./-) is treated
+// as a phone search, so a name, email, or address fragment that merely contains
+// a digit never matches every phone-bearing guest.
+var phoneSearchRE = regexp.MustCompile(`^[\d\s()+./-]+$`)
+
 // likeEscaper escapes the characters LIKE/ILIKE treat specially, backslash
 // first so the added escapes are not themselves escaped.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
@@ -108,9 +114,12 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 		args := []any{pattern, pattern, partyNameMatch}
 		// Phones are stored as canonical E.164 (digits, no formatting), so match the
 		// query with its formatting stripped too, letting "(415) 555-2671" find
-		// "+14155552671". Only when the query has digits, so a text-only search does
-		// not match every guest who happens to have a phone.
-		if digits := nonDigitRE.ReplaceAllString(*f.Search, ""); digits != "" {
+		// "+14155552671". Gate this on the term actually looking like a phone number:
+		// the whole term is digits and common phone formatting (phoneSearchRE) and
+		// carries at least 3 digits. That keeps a name, email, or address fragment
+		// that merely contains a digit (or a lone digit) from matching every guest
+		// who happens to have a phone.
+		if digits := nonDigitRE.ReplaceAllString(*f.Search, ""); len(digits) >= 3 && phoneSearchRE.MatchString(*f.Search) {
 			clause += " OR regexp_replace(g.phone, '\\D', '', 'g') ILIKE ?"
 			args = append(args, "%"+digits+"%")
 		}
