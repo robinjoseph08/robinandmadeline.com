@@ -61,7 +61,8 @@
   --color-rose-hover: #c0666a; /* button hover */
   --color-rose-soft: #f3e1e1; /* light tint for chips / nav pills (ink text) */
 
-  /* Blue (links) and green (accents) */
+  /* Supporting blue and green accents from the monogram, available for charts
+   * and highlights (links and primary actions stay on rose, above). */
   --color-blue: #4f6493;
   --color-green: #5c6b41;
 
