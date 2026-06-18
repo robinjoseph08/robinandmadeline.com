@@ -51,7 +51,7 @@ export default function AdminLogin() {
             Admin
           </span>
         </div>
-        <h1 className="mt-5 text-2xl font-bold">Sign in</h1>
+        <h1 className="mt-5 text-2xl font-bold">Sign In</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Sign in to manage the wedding site.
         </p>
@@ -94,7 +94,7 @@ export default function AdminLogin() {
           ) : null}
 
           <Button className="mt-2" disabled={submitting} type="submit">
-            {submitting ? "Signing in..." : "Sign in"}
+            {submitting ? "Signing In..." : "Sign In"}
           </Button>
         </form>
       </div>

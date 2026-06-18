@@ -275,7 +275,7 @@ function BackLink() {
       to="/admin/parties"
     >
       <ArrowLeft className="size-4" />
-      Back to parties
+      Back to Parties
     </Link>
   );
 }
