@@ -111,7 +111,7 @@ export default function RSVP() {
           <Input
             autoComplete="off"
             autoFocus
-            className="uppercase tracking-widest"
+            className="block pb-0.5 font-mono uppercase tracking-widest"
             id="rsvp-code"
             onChange={(e) => setCode(e.target.value.toUpperCase())}
             placeholder="XXXXX"

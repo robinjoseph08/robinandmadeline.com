@@ -22,7 +22,7 @@ export default function Story() {
             {/* Timeline dot, centered on the list's left border. */}
             <span
               aria-hidden
-              className="absolute top-1 -left-[31px] size-3 rounded-full bg-complementary-2 ring-4 ring-cream sm:-left-[47px]"
+              className="absolute top-1 -left-[31px] size-3 rounded-full bg-rose ring-4 ring-cream sm:-left-[47px]"
             />
             <p className="text-sm font-medium uppercase tracking-widest text-ink/70">
               {milestone.date}

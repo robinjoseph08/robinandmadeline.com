@@ -4,20 +4,20 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { NAV_LINKS } from "@/components/library/nav-links";
-import NavBar from "@/components/library/NavBar";
+import SiteHeader from "@/components/library/SiteHeader";
 import { AuthProvider } from "@/libraries/auth";
 
-function renderNav() {
+function renderHeader() {
   return render(
     <AuthProvider>
       <MemoryRouter>
-        <NavBar />
+        <SiteHeader />
       </MemoryRouter>
     </AuthProvider>,
   );
 }
 
-describe("NavBar", () => {
+describe("SiteHeader", () => {
   beforeEach(() => {
     localStorage.clear();
   });
@@ -26,8 +26,8 @@ describe("NavBar", () => {
     localStorage.clear();
   });
 
-  it("renders every primary navigation link on desktop", () => {
-    renderNav();
+  it("renders every primary navigation link", () => {
+    renderHeader();
 
     for (const link of NAV_LINKS) {
       // Each label appears as a link pointing at its route.
@@ -39,7 +39,7 @@ describe("NavBar", () => {
 
   it("toggles the mobile menu via the hamburger button", async () => {
     const user = userEvent.setup();
-    renderNav();
+    renderHeader();
 
     expect(screen.queryByTestId("mobile-menu")).not.toBeInTheDocument();
 
@@ -58,7 +58,7 @@ describe("NavBar", () => {
   });
 
   it("hides the Admin link when there is no admin session", () => {
-    renderNav();
+    renderHeader();
 
     expect(
       screen.queryByRole("link", { name: /admin/i }),
@@ -68,7 +68,7 @@ describe("NavBar", () => {
   it("shows an Admin link to the admin area when an admin session exists", () => {
     localStorage.setItem("admin_token", "a.jwt.token");
 
-    renderNav();
+    renderHeader();
 
     const adminLinks = screen.getAllByRole("link", { name: /admin/i });
     expect(adminLinks.length).toBeGreaterThan(0);

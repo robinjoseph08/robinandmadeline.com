@@ -7,8 +7,8 @@ interface PageHeaderProps {
 export default function PageHeader({ title, subtitle }: PageHeaderProps) {
   return (
     <header className="text-center">
-      <h1 className="text-4xl font-bold tracking-tight">{title}</h1>
-      <p className="mt-3 text-ink/70">{subtitle}</p>
+      <h1 className="font-display text-4xl font-normal text-ink">{title}</h1>
+      <p className="mt-3 text-ink-muted">{subtitle}</p>
     </header>
   );
 }
