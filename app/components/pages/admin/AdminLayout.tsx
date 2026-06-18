@@ -76,10 +76,10 @@ export default function AdminLayout() {
               to="/"
             >
               <ArrowLeft aria-hidden className="size-4 shrink-0" />
-              Back to Site
+              Back to site
             </Link>
             <Button onClick={handleLogout} type="button" variant="outline">
-              Sign Out
+              Sign out
             </Button>
           </div>
         </aside>
