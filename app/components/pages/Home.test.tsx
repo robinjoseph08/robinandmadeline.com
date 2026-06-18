@@ -3,11 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import Home from "@/components/pages/Home";
-import {
-  HERO_IMAGE,
-  HOME_CTA_CARDS,
-  WEDDING,
-} from "@/components/pages/home-content";
+import { HERO_IMAGE, WEDDING } from "@/components/pages/home-content";
 
 function renderHome() {
   return render(
@@ -25,7 +21,8 @@ describe("Home", () => {
       screen.getByRole("heading", { name: /robin & madeline/i }),
     ).toBeInTheDocument();
     expect(screen.getByText(WEDDING.tagline)).toBeInTheDocument();
-    expect(screen.getByText(WEDDING.dateText)).toBeInTheDocument();
+    // The date also appears in the countdown below, so more than one match.
+    expect(screen.getAllByText(WEDDING.dateText).length).toBeGreaterThan(0);
     expect(screen.getByText(WEDDING.venueText)).toBeInTheDocument();
   });
 
@@ -34,35 +31,19 @@ describe("Home", () => {
 
     const photo = screen.getByRole("img", { name: HERO_IMAGE.alt });
     expect(photo).toHaveAttribute("src", HERO_IMAGE.fallbackSrc);
-    // Intrinsic dimensions so the layout reserves space before the photo
-    // loads instead of shifting the CTA cards down.
+    // Intrinsic dimensions so the layout reserves space before the photo loads.
     expect(photo).toHaveAttribute("width", String(HERO_IMAGE.width));
     expect(photo).toHaveAttribute("height", String(HERO_IMAGE.height));
   });
 
-  it("renders a CTA card linking to each destination", () => {
+  it("renders a live countdown to the wedding", () => {
     renderHome();
 
-    // Issue #13 requires CTA cards for RSVP, Schedule, and Our Story.
-    expect(HOME_CTA_CARDS.map((card) => card.to)).toEqual([
-      "/rsvp",
-      "/schedule",
-      "/story",
-    ]);
-
-    for (const card of HOME_CTA_CARDS) {
-      const link = screen.getByRole("link", {
-        name: new RegExp(card.title, "i"),
-      });
-      expect(link).toHaveAttribute("href", card.to);
-      expect(screen.getByText(card.description)).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: /countdown to the wedding/i }),
+    ).toBeInTheDocument();
+    for (const label of ["Days", "Hours", "Minutes", "Seconds"]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
     }
-  });
-
-  it("links the RSVP call-to-action to the RSVP page", () => {
-    renderHome();
-
-    const rsvp = screen.getByRole("link", { name: /rsvp/i });
-    expect(rsvp).toHaveAttribute("href", "/rsvp");
   });
 });

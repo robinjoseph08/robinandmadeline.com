@@ -2,60 +2,126 @@
 @import "tw-animate-css";
 
 /*
- * Wedding color palette. Exposed as Tailwind theme colors so they generate
- * utilities such as `bg-primary`, `text-ink`, `bg-secondary`,
- * `bg-complementary-1`, `bg-complementary-2`, and `bg-cream`.
+ * Custom display faces. Lily Paperie (script) renders the couple's names by
+ * default; Magics Flavor (retro serif) is the heading face and the alternate
+ * for the names. Both are self-hosted from app/assets/fonts (Vite fingerprints
+ * the url() references at build time). woff2 first with a woff fallback.
+ */
+@font-face {
+  font-family: "Lily Paperie";
+  src:
+    url("./assets/fonts/LilyPaperie.woff2") format("woff2"),
+    url("./assets/fonts/LilyPaperie.woff") format("woff");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Magics Flavor";
+  src:
+    url("./assets/fonts/MagicsFlavor.woff2") format("woff2"),
+    url("./assets/fonts/MagicsFlavor.woff") format("woff");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Magics Flavor";
+  src: url("./assets/fonts/MagicsFlavor-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+/*
+ * Wedding palette, grounded in the couple's floral monogram (dusty rose,
+ * cornflower blue, sage green over a champagne neutral) and tuned for the web:
+ * every interactive color only ever deepens within its own hue on hover/active
+ * (never a cross-hue jump), and action fills are saturated enough that a button
+ * never reads as disabled. The page background is a soft warm grey (#f5f5f5).
  *
- * Names are deliberate: `cream`/`ink` avoid colliding with Tailwind's built-in
- * `white`/`black` utilities while still mapping to our palette.
+ * Exposed as Tailwind theme colors so they generate utilities like `bg-rose`,
+ * `text-ink`, `bg-rose-soft`, `border-line`, `font-script`.
  */
 @theme {
-  --color-cream: #f6f5f1;
-  --color-ink: #161822;
-  --color-primary: #ffdcdc;
-  --color-secondary: #adc8ff;
-  --color-complementary-1: #c0ffd4;
-  --color-complementary-2: #f25477;
+  /* Surfaces */
+  --color-page: #f5f5f5; /* the global background */
+  --color-surface: #fbfaf8; /* warm white raised surfaces / cards */
 
+  /* Ink (text) */
+  --color-ink: #2a2622; /* primary text (13.8:1 on the page) */
+  --color-ink-muted: #5c534b; /* secondary text (6.9:1) */
+
+  /* Lines */
+  --color-line: #e0d9d0; /* soft hairline */
+
+  /* Rose: the primary, romantic hue (the bright monogram pink). Used for the
+   * names, accents, buttons, links, and active nav. */
+  --color-rose: #d6787b;
+  --color-rose-hover: #c0666a; /* button hover */
+  --color-rose-soft: #f3e1e1; /* light tint for chips / nav pills (ink text) */
+
+  /* Supporting blue and green accents from the monogram, available for charts
+   * and highlights (links and primary actions stay on rose, above). */
+  --color-blue: #4f6493;
+  --color-green: #5c6b41;
+
+  /*
+   * Legacy palette aliases kept so existing pages and tests (which reference
+   * `bg-primary`, `bg-secondary`, `bg-complementary-1`, `bg-cream`) keep
+   * working. Values are remapped onto the new system: the old pastel fills
+   * become soft tints, so a `bg-primary` content card reads as a soft rose
+   * wash. The action color lives on `--color-rose` (see button.tsx).
+   */
+  --color-cream: #fbfaf8;
+  --color-primary: #f3e1e1; /* soft rose tint */
+  --color-secondary: #b7c8e6; /* soft periwinkle (crossword/chips highlight) */
+  --color-complementary-1: #e4e8d9; /* soft green */
+
+  /* Type families */
+  --font-script: "Lily Paperie", "Snell Roundhand", cursive;
+  --font-display: "Magics Flavor", "Hoefler Text", Georgia, serif;
   --font-sans:
-    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
-    "Segoe UI Symbol", "Noto Color Emoji";
+    "Winky Rough", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono:
+    "Courier Prime", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 /*
  * shadcn/ui semantic tokens wired to the wedding palette so shadcn components
- * (e.g. Button) render in the wedding colors. `--primary`/`--secondary` reuse
- * the palette so `bg-primary`/`bg-secondary` and shadcn components stay
- * consistent; foreground tokens use ink for legibility on the soft surfaces.
+ * render in the wedding colors on the #f5f5f5 page. Foregrounds are chosen for
+ * WCAG AA legibility on their surface.
  */
 :root {
   --radius: 0.625rem;
 
-  --background: #f6f5f1; /* cream */
-  --foreground: #161822; /* ink */
-  --card: #f6f5f1;
-  --card-foreground: #161822;
-  --popover: #f6f5f1;
-  --popover-foreground: #161822;
-  --primary: #ffdcdc; /* palette primary (soft pink) */
-  --primary-foreground: #161822; /* ink for contrast on soft pink */
-  --secondary: #adc8ff; /* palette secondary (blue) */
-  --secondary-foreground: #161822;
-  --muted: #ffdcdc;
-  --muted-foreground: #161822;
-  --accent: #c0ffd4; /* complementary 1 (green) */
-  --accent-foreground: #161822;
-  --destructive: #f25477; /* complementary 2 (deep pink) */
-  --border: #161822;
-  --input: #161822;
-  --ring: #f25477;
+  --background: #f5f5f5; /* page */
+  --foreground: #2a2622; /* ink */
+  --card: #fbfaf8;
+  --card-foreground: #2a2622;
+  --popover: #fbfaf8;
+  --popover-foreground: #2a2622;
+  --primary: #f3e1e1; /* soft rose tint (Button uses --color-rose directly) */
+  --primary-foreground: #2a2622; /* ink on the soft tint */
+  --secondary: #b7c8e6; /* soft periwinkle */
+  --secondary-foreground: #2a2622;
+  --muted: #f1ede7;
+  --muted-foreground: #5c534b;
+  --accent: #e4e8d9; /* green soft */
+  --accent-foreground: #434e30; /* green deep, for text on the green tint */
+  --destructive: #9a3d3d; /* a clearer red, distinct from the mauve rose */
+  --destructive-foreground: #ffffff;
+  --border: #e0d9d0; /* soft hairline default */
+  --input: #8f7d6d; /* clear field outline (3.6:1) */
+  --ring: #41547f; /* blue focus ring */
 }
 
 /*
  * `inline` so these reference the runtime CSS variables above. We intentionally
- * do NOT redefine --color-primary / --color-secondary here: those already come
- * from the palette @theme block and equal --primary / --secondary, so the
- * shadcn Button (bg-primary) and the bg-primary utility resolve identically.
+ * do NOT redefine --color-primary / --color-secondary here: those come from the
+ * palette @theme block and equal --primary / --secondary, so the bg-primary
+ * utility and shadcn components resolve identically.
  */
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -75,6 +141,7 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -86,5 +153,62 @@
   }
   body {
     @apply bg-background text-foreground;
+    line-height: 1.6;
   }
+}
+
+/*
+ * Let a child escape a max-width container and span the full viewport width.
+ * Used by the full-bleed hero on the home page. Assumes no horizontal
+ * overflow elsewhere (the app shell never scrolls sideways).
+ */
+@utility full-bleed {
+  width: 100vw;
+  margin-inline: calc(50% - 50vw);
+}
+
+/*
+ * Gentle entrance for the hero text: a soft fade and rise on mount. Stagger the
+ * lines with an inline animation-delay. Disabled under reduced-motion.
+ */
+@keyframes hero-rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hero-rise {
+  animation: hero-rise 0.95s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-rise {
+    animation: none;
+  }
+}
+
+/*
+ * Every heading uses the Magics Flavor display serif; the couple's names opt out
+ * via their own font-script utility on an inner span. It is a single-weight face,
+ * so force 400 to avoid synthesized bold.
+ */
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-weight: 400;
+}
+
+/* At small sizes (about 20px and under) the retro serif reads better with a
+ * little tracking; h1 is always larger so it opts out. */
+h2,
+h3,
+h4 {
+  letter-spacing: 0.3px;
 }

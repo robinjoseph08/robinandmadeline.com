@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 
+import Monogram from "@/components/library/Monogram";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/libraries/api";
 import { useAuth } from "@/libraries/auth-context";
@@ -44,7 +45,13 @@ export default function AdminLogin() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm rounded-lg border border-ink/10 bg-cream p-8 shadow-sm">
-        <h1 className="text-2xl font-bold">Admin sign in</h1>
+        <div className="flex flex-col items-center gap-1">
+          <Monogram className="h-16 w-auto" sizes="64px" />
+          <span className="text-[0.65rem] font-semibold uppercase tracking-[0.15em] text-ink-muted">
+            Admin
+          </span>
+        </div>
+        <h1 className="mt-5 text-2xl font-bold">Sign in</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Sign in to manage the wedding site.
         </p>
