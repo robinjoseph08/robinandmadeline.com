@@ -24,8 +24,8 @@ export const WEDDING = {
  *
  * Pre-generated from the photographer's 6000x4000 original (full frame, no
  * crop) with all metadata stripped. The width ladder spans small phones up to
- * a full-bleed 4K hero so the final site design, still to be determined, can
- * render the photo at any size without needing new assets. To regenerate
+ * a full-bleed 4K hero so the site design can render the photo at any size
+ * without needing new assets. To regenerate
  * (ImageMagick, cwebp, avifenc), for each width W in 640/1280/1920/2560/3840:
  *
  *   magick original.jpg -auto-orient -strip -resize "${W}x" tmp-${W}.png

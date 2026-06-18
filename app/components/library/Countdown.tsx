@@ -69,7 +69,10 @@ export default function Countdown() {
             className="rounded-2xl border border-line bg-surface px-2 py-5 shadow-sm sm:py-6"
             key={unit.key}
           >
-            <div className="font-display text-3xl tabular-nums text-rose sm:text-5xl">
+            <div
+              className="font-display text-3xl tabular-nums text-rose sm:text-5xl"
+              data-testid={`countdown-${unit.key}`}
+            >
               {time[unit.key]}
             </div>
             <div className="mt-1 text-[0.6rem] font-semibold uppercase tracking-[0.12em] text-ink-muted sm:text-xs">

@@ -158,7 +158,7 @@
 
 /*
  * Let a child escape a max-width container and span the full viewport width.
- * Used by the full-bleed hero in Options 1 and 2. Assumes no horizontal
+ * Used by the full-bleed hero on the home page. Assumes no horizontal
  * overflow elsewhere (the app shell never scrolls sideways).
  */
 @utility full-bleed {

@@ -7,10 +7,10 @@ import { NAV_LINKS } from "@/components/library/nav-links";
 import SiteHeader from "@/components/library/SiteHeader";
 import { AuthProvider } from "@/libraries/auth";
 
-function renderHeader() {
+function renderHeader(initialPath = "/") {
   return render(
     <AuthProvider>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialPath]}>
         <SiteHeader />
       </MemoryRouter>
     </AuthProvider>,
@@ -57,6 +57,25 @@ describe("SiteHeader", () => {
     }
   });
 
+  it("closes the mobile menu when navigating via the logo", async () => {
+    const user = userEvent.setup();
+    // Start off the home page so the logo navigates to a different route.
+    renderHeader("/story");
+
+    await user.click(
+      screen.getByRole("button", { name: /toggle navigation menu/i }),
+    );
+    expect(screen.getByTestId("mobile-menu")).toBeInTheDocument();
+
+    // The logo has no explicit close handler, so this exercises the
+    // route-change reset rather than the per-link onNavigate path.
+    await user.click(
+      screen.getByRole("link", { name: /robin and madeline, home/i }),
+    );
+
+    expect(screen.queryByTestId("mobile-menu")).not.toBeInTheDocument();
+  });
+
   it("hides the Admin link when there is no admin session", () => {
     renderHeader();
 
@@ -73,5 +92,28 @@ describe("SiteHeader", () => {
     const adminLinks = screen.getAllByRole("link", { name: /admin/i });
     expect(adminLinks.length).toBeGreaterThan(0);
     expect(adminLinks[0]).toHaveAttribute("href", "/admin");
+  });
+
+  it("shows the compact monogram brand on the home overlay", () => {
+    renderHeader("/");
+
+    // On the home page the full names live on the hero photo, so the header
+    // shows only the compact "R&M" mark (no spelled-out names).
+    const brand = screen.getByRole("link", {
+      name: /robin and madeline, home/i,
+    });
+    expect(brand).toHaveTextContent(/^R&M$/);
+    expect(brand).not.toHaveTextContent(/Madeline/);
+  });
+
+  it("shows the full names brand on non-home pages", () => {
+    renderHeader("/story");
+
+    // Off the home page the header is a solid bar with the spelled-out names.
+    const brand = screen.getByRole("link", {
+      name: /robin and madeline, home/i,
+    });
+    expect(brand).toHaveTextContent(/Robin/);
+    expect(brand).toHaveTextContent(/Madeline/);
   });
 });

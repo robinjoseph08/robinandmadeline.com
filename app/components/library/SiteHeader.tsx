@@ -59,6 +59,15 @@ export default function SiteHeader() {
   const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
 
+  // Close the mobile menu on any route change (a nav link, the logo, or the
+  // browser back/forward button) so it never lingers open over the next page.
+  // Reset during render off the previous path rather than in an effect.
+  const [menuPath, setMenuPath] = useState(pathname);
+  if (menuPath !== pathname) {
+    setMenuPath(pathname);
+    setOpen(false);
+  }
+
   const overlay = pathname === "/";
   const items: NavLinkItem[] = isAuthenticated
     ? [...NAV_LINKS, { to: "/admin", label: "Admin" }]
