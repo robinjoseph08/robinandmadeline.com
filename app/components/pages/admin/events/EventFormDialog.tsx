@@ -40,6 +40,7 @@ interface FormState {
   name: string;
   description: string;
   location: string;
+  locationUrl: string;
   date: string;
   startTime: string;
   endTime: string;
@@ -50,6 +51,7 @@ const EMPTY_FORM: FormState = {
   name: "",
   description: "",
   location: "",
+  locationUrl: "",
   date: "",
   startTime: "",
   endTime: "",
@@ -61,6 +63,7 @@ function formFromEvent(event: EventResponse): FormState {
     name: event.name,
     description: event.description ?? "",
     location: event.location ?? "",
+    locationUrl: event.location_url ?? "",
     date: event.date,
     startTime: event.start_time ?? "",
     endTime: event.end_time ?? "",
@@ -111,6 +114,7 @@ export function EventFormDialog({
       name: form.name.trim(),
       description: optional(form.description),
       location: optional(form.location),
+      location_url: optional(form.locationUrl),
       date: form.date,
       start_time: optional(form.startTime),
       end_time: optional(form.endTime),
@@ -164,6 +168,22 @@ export function EventFormDialog({
               placeholder="Garden Pavilion"
               value={form.location}
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="event-location-url">Location link</Label>
+            <Input
+              id="event-location-url"
+              onChange={(e) => update("locationUrl", e.target.value)}
+              placeholder="https://maps.app.goo.gl/..."
+              type="url"
+              value={form.locationUrl}
+            />
+            <p className="text-xs text-muted-foreground">
+              Optional. A map or directions link guests can open from the
+              schedule. Paste the full URL (starting with https://); requires a
+              location.
+            </p>
           </div>
 
           <div className="grid grid-cols-3 gap-4">

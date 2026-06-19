@@ -1,12 +1,18 @@
-import { CalendarPlus, ExternalLink } from "lucide-react";
+import { CalendarDays, CalendarPlus, Clock } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { EventLocation } from "@/components/library/EventLocation";
+import { GoogleIcon } from "@/components/library/GoogleIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { usePartyPhotoGroups } from "@/hooks/queries/photo-groups";
 import { useScheduleEvents } from "@/hooks/queries/schedule";
 import { downloadICS, googleCalendarUrl } from "@/libraries/calendar";
-import { formatEventWhen, formatGuestFirstNames } from "@/libraries/format";
+import {
+  formatEventDate,
+  formatEventTime,
+  formatGuestFirstNames,
+} from "@/libraries/format";
 import type { ScheduleEvent } from "@/types/generated/events";
 
 /**
@@ -160,6 +166,7 @@ interface EventCardProps {
 }
 
 function EventCard({ event, authenticated }: EventCardProps) {
+  const eventTime = formatEventTime(event);
   return (
     <article
       aria-label={event.name}
@@ -175,15 +182,40 @@ function EventCard({ event, authenticated }: EventCardProps) {
         ) : null}
       </div>
 
-      <p className="mt-1 text-sm text-muted-foreground">
-        {formatEventWhen(event)}
+      <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+        <CalendarDays aria-hidden="true" className="size-4 shrink-0" />
+        {formatEventDate(event.date)}
       </p>
+      {eventTime ? (
+        <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+          <Clock aria-hidden="true" className="size-4 shrink-0" />
+          {eventTime}
+        </p>
+      ) : null}
       {event.location ? (
-        <p className="mt-1 text-sm text-muted-foreground">{event.location}</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          <EventLocation
+            location={event.location}
+            locationUrl={event.location_url}
+          />
+        </p>
       ) : null}
       {event.description ? <p className="mt-3">{event.description}</p> : null}
 
       <div className="mt-4 flex flex-wrap gap-2">
+        <Button asChild size="sm" variant="outline">
+          <a
+            aria-label="Add to Google Calendar (opens in new tab)"
+            href={googleCalendarUrl(event)}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {/* Smaller than the button's default size-4: a filled brand mark
+                reads heavier than the stroked icons. ! beats [&_svg]:size-4. */}
+            <GoogleIcon className="!size-3.5" />
+            Add to Google Calendar
+          </a>
+        </Button>
         <Button
           onClick={() => downloadICS(event)}
           size="sm"
@@ -192,17 +224,6 @@ function EventCard({ event, authenticated }: EventCardProps) {
         >
           <CalendarPlus aria-hidden="true" />
           Add to Calendar (.ics)
-        </Button>
-        <Button asChild size="sm" variant="outline">
-          <a
-            aria-label="Google Calendar (opens in new tab)"
-            href={googleCalendarUrl(event)}
-            rel="noreferrer"
-            target="_blank"
-          >
-            <ExternalLink aria-hidden="true" />
-            Google Calendar
-          </a>
         </Button>
       </div>
     </article>

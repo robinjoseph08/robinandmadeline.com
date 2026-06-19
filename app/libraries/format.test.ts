@@ -4,10 +4,12 @@ import {
   formatDateTime,
   formatDuration,
   formatEventDate,
+  formatEventTime,
   formatEventWhen,
   formatGuestFirstNames,
   formatLongDate,
   formatTime,
+  venueTimeZoneAbbreviation,
 } from "./format";
 
 describe("formatDuration", () => {
@@ -82,6 +84,40 @@ describe("formatEventDate", () => {
   });
 });
 
+describe("venueTimeZoneAbbreviation", () => {
+  it("labels the venue zone for a date, honoring daylight saving", () => {
+    // The venue is America/Chicago: central daylight time in mid-October,
+    // central standard time after the early-November switch. The formatter pins
+    // the zone explicitly, so the result is independent of the runner's zone.
+    expect(venueTimeZoneAbbreviation("2026-10-17")).toBe("CDT");
+    expect(venueTimeZoneAbbreviation("2026-12-25")).toBe("CST");
+  });
+});
+
+describe("formatEventTime", () => {
+  it("returns null when the event has no start time", () => {
+    expect(
+      formatEventTime({ date: "2026-10-17", start_time: undefined }),
+    ).toBeNull();
+  });
+
+  it("labels the start time with the venue zone when there is no end time", () => {
+    expect(formatEventTime({ date: "2026-10-17", start_time: "17:00" })).toBe(
+      "5:00 PM CDT",
+    );
+  });
+
+  it("labels a time range with the venue zone", () => {
+    expect(
+      formatEventTime({
+        date: "2026-10-17",
+        start_time: "17:00",
+        end_time: "22:00",
+      }),
+    ).toBe("5:00 PM to 10:00 PM CDT");
+  });
+});
+
 describe("formatEventWhen", () => {
   it("renders date only when the event has no start time", () => {
     expect(formatEventWhen({ date: "2026-10-17", start_time: undefined })).toBe(
@@ -89,20 +125,20 @@ describe("formatEventWhen", () => {
     );
   });
 
-  it("renders date and start time", () => {
+  it("renders date and start time with the venue zone", () => {
     expect(formatEventWhen({ date: "2026-10-17", start_time: "17:00" })).toBe(
-      "Saturday, October 17, 2026 · 5:00 PM",
+      "Saturday, October 17, 2026 · 5:00 PM CDT",
     );
   });
 
-  it("renders date and a time range when an end time is set", () => {
+  it("renders date and a zoned time range when an end time is set", () => {
     expect(
       formatEventWhen({
         date: "2026-10-17",
         start_time: "17:00",
         end_time: "22:00",
       }),
-    ).toBe("Saturday, October 17, 2026 · 5:00 PM to 10:00 PM");
+    ).toBe("Saturday, October 17, 2026 · 5:00 PM to 10:00 PM CDT");
   });
 });
 

@@ -50,9 +50,9 @@ describe("googleCalendarUrl", () => {
     // timezone no matter where the guest opens the link.
     expect(url.searchParams.get("ctz")).toBe("America/Chicago");
     expect(url.searchParams.get("location")).toBe("The Grand Hall");
-    // The details always end with a link back to the schedule page.
+    // The details carry the event text, then the labeled schedule link.
     expect(url.searchParams.get("details")).toBe(
-      "Dinner and dancing.\n\nhttps://www.robinandmadeline.com/schedule",
+      "Dinner and dancing.\n\nSchedule: https://www.robinandmadeline.com/schedule",
     );
   });
 
@@ -60,7 +60,25 @@ describe("googleCalendarUrl", () => {
     const url = new URL(googleCalendarUrl(makeEvent({ start_time: "17:00" })));
     expect(url.searchParams.get("location")).toBeNull();
     expect(url.searchParams.get("details")).toBe(
-      "https://www.robinandmadeline.com/schedule",
+      "Schedule: https://www.robinandmadeline.com/schedule",
+    );
+  });
+
+  it("appends a Map line to the details when the event has a location link", () => {
+    const url = new URL(
+      googleCalendarUrl(
+        makeEvent({
+          start_time: "17:00",
+          location: "The Grand Hall",
+          location_url: "https://maps.app.goo.gl/abc123",
+        }),
+      ),
+    );
+    // The label still rides in the location field; the precise link travels in
+    // the details so it reaches the guest's calendar.
+    expect(url.searchParams.get("location")).toBe("The Grand Hall");
+    expect(url.searchParams.get("details")).toBe(
+      "Schedule: https://www.robinandmadeline.com/schedule\nMap: https://maps.app.goo.gl/abc123",
     );
   });
 
@@ -139,9 +157,9 @@ describe("icsContent", () => {
     expect(ics).toContain("DTEND;TZID=America/Chicago:20261017T220000");
     expect(ics).toContain("SUMMARY:Reception");
     expect(ics).toContain("LOCATION:The Grand Hall");
-    // The description always ends with a link back to the schedule page.
+    // The description carries the event text, then the labeled schedule link.
     expect(ics).toContain(
-      "DESCRIPTION:Dinner and dancing.\\n\\nhttps://www.robinandmadeline.com/schedule",
+      "DESCRIPTION:Dinner and dancing.\\n\\nSchedule: https://www.robinandmadeline.com/schedule",
     );
     // The referenced TZID is defined in the file so strict parsers resolve it.
     expect(ics).toContain("BEGIN:VTIMEZONE");
@@ -169,7 +187,23 @@ describe("icsContent", () => {
     const ics = icsContent(makeEvent({ start_time: "17:00" }), now);
     expect(ics).not.toContain("LOCATION:");
     expect(ics).toContain(
-      "DESCRIPTION:https://www.robinandmadeline.com/schedule\r\n",
+      "DESCRIPTION:Schedule: https://www.robinandmadeline.com/schedule\r\n",
+    );
+  });
+
+  it("adds a Map line to the DESCRIPTION and escapes the link when the event has a location link", () => {
+    const ics = icsContent(
+      makeEvent({
+        location: "The Grand Hall",
+        // A real maps URL carries commas (coordinates), which RFC 5545 requires
+        // escaped inside a content line.
+        location_url: "https://maps.example.com/?q=40.1,-88.2",
+      }),
+      now,
+    );
+    expect(ics).toContain("LOCATION:The Grand Hall");
+    expect(ics).toContain(
+      "DESCRIPTION:Schedule: https://www.robinandmadeline.com/schedule\\nMap: https://maps.example.com/?q=40.1\\,-88.2",
     );
   });
 
@@ -183,7 +217,7 @@ describe("icsContent", () => {
     );
     expect(ics).toContain("SUMMARY:Dinner\\; Dancing\\, Fun\\\\Stuff");
     expect(ics).toContain(
-      "DESCRIPTION:Line one\\nLine two\\n\\nhttps://www.robinandmadeline.com/schedule",
+      "DESCRIPTION:Line one\\nLine two\\n\\nSchedule: https://www.robinandmadeline.com/schedule",
     );
   });
 
@@ -195,7 +229,7 @@ describe("icsContent", () => {
       now,
     );
     expect(ics).toContain(
-      "DESCRIPTION:CRLF\\nthen\\nlone CR\\n\\nhttps://www.robinandmadeline.com/schedule",
+      "DESCRIPTION:CRLF\\nthen\\nlone CR\\n\\nSchedule: https://www.robinandmadeline.com/schedule",
     );
   });
 });

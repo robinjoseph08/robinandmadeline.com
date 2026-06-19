@@ -157,6 +157,28 @@ describe("AdminEventDetail invite parties", () => {
   });
 });
 
+describe("AdminEventDetail header", () => {
+  it("renders the location as a link to its Location Link", async () => {
+    adminRequest.mockImplementation((path: string) => {
+      if (path === "/admin/events/e1") {
+        return Promise.resolve(
+          makeEvent({
+            location: "The Grand Hall",
+            location_url: "https://maps.app.goo.gl/abc123",
+          }),
+        );
+      }
+      return Promise.resolve({ items: [], total: 0 });
+    });
+
+    renderDetail();
+
+    const link = await screen.findByRole("link", { name: "The Grand Hall" });
+    expect(link).toHaveAttribute("href", "https://maps.app.goo.gl/abc123");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+});
+
 describe("AdminEventDetail RSVP override", () => {
   it("PUTs the new status for one guest's RSVP", async () => {
     adminRequest.mockImplementation((path: string, options?: object) => {

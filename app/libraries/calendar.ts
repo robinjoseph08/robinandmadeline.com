@@ -9,9 +9,10 @@
  * definition for .ics) and leave the daylight-saving math to the consuming
  * calendar. An event with no start time becomes an all-day event; a missing
  * end time defaults to one hour after the start; an end time before the start
- * is read as running past midnight into the next day. Both outputs end the
- * description with a link back to the schedule page so guests can return to
- * the site for the latest details.
+ * is read as running past midnight into the next day. Both outputs close the
+ * description with a labeled link back to the schedule page (and a map link
+ * when the event has a Location Link) so guests can return to the site for the
+ * latest details or open the venue from their calendar.
  */
 
 import { VENUE_TIME_ZONE } from "@/libraries/venue";
@@ -26,13 +27,25 @@ const MINUTES_PER_DAY = 24 * 60;
 const SCHEDULE_URL = "https://www.robinandmadeline.com/schedule";
 
 /**
- * The calendar-entry description: the event's own text (when it has any)
- * followed by the schedule page link.
+ * The calendar-entry description: the event's own text (when it has any), then
+ * a labeled "Schedule:" link back to the site, and a "Map:" link when the event
+ * has a Location Link. The labeled key-value lines keep the two URLs legible in
+ * calendar clients, which render the description as plain text. The map link
+ * rides along here, in the description, rather than in the calendar's own
+ * LOCATION field: that field only carries the text label (jamming a URL into it
+ * is client-dependent), so the description is where the precise link can travel
+ * with the event into a guest's calendar.
  */
 function calendarDescription(event: Event): string {
-  return event.description
-    ? `${event.description}\n\n${SCHEDULE_URL}`
-    : SCHEDULE_URL;
+  const lines: string[] = [];
+  if (event.description) {
+    lines.push(event.description, "");
+  }
+  lines.push(`Schedule: ${SCHEDULE_URL}`);
+  if (event.location_url) {
+    lines.push(`Map: ${event.location_url}`);
+  }
+  return lines.join("\n");
 }
 
 /**

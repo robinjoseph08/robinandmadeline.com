@@ -46,9 +46,9 @@ type Binder struct {
 
 // New initializes a new Binder instance with the appropriate validation
 // functions registered. The query decoder reads `query` aliases, validator
-// error fields use the json name, the date/time/datetimeblank/url/emailblank/
-// phone custom validators are registered, and mold gains the phone modifier
-// (E.164 normalization).
+// error fields use the json name, the date/time/datetimeblank/url/httpurl/
+// emailblank/phone custom validators are registered, and mold gains the phone
+// modifier (E.164 normalization).
 func New() (*Binder, error) {
 	queryDecoder := schema.NewDecoder()
 	queryDecoder.SetAliasTag("query")
@@ -72,6 +72,9 @@ func New() (*Binder, error) {
 		return nil, errors.WithStack(err)
 	}
 	if err := validate.RegisterValidation("url", urlValidator); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	if err := validate.RegisterValidation("httpurl", httpurlValidator); err != nil {
 		return nil, errors.WithStack(err)
 	}
 	if err := validate.RegisterValidation("emailblank", emailBlankValidator); err != nil {

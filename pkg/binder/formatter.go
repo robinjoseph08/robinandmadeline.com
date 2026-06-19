@@ -30,6 +30,7 @@ const (
 	phone         = "phone"
 	required      = "required"
 	urlTag        = "url"
+	httpURL       = "httpurl"
 )
 
 var timeType = reflect.TypeOf(timepkg.Time{})
@@ -140,6 +141,8 @@ func formatValidationError(err validator.FieldError) string {
 		return field + " is required."
 	case urlTag:
 		return field + " must be a valid URL."
+	case httpURL:
+		return field + " must be a valid http or https URL."
 	default:
 		// A tag without a dedicated message above falls back to a generic message.
 		// The debug log surfaces the unhandled tag so a friendlier message can be

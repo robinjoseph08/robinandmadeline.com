@@ -1,20 +1,5 @@
-import { formatTime } from "@/libraries/format";
-import { VENUE_TIME_ZONE } from "@/libraries/venue";
+import { formatTime, venueTimeZoneAbbreviation } from "@/libraries/format";
 import type { EventResponse } from "@/types/generated/events";
-
-/**
- * The venue timezone's abbreviation on a given calendar date ("PST" or "PDT"
- * for Pacific, depending on daylight saving). Event times are venue
- * wall-clock values, so every displayed time carries this label to make the
- * zone explicit.
- */
-export function venueTimeZoneAbbreviation(date: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: VENUE_TIME_ZONE,
-    timeZoneName: "short",
-  }).formatToParts(new Date(`${date}T12:00:00Z`));
-  return parts.find((part) => part.type === "timeZoneName")?.value ?? "";
-}
 
 /**
  * Formats an event's date plus its optional start/end times for display

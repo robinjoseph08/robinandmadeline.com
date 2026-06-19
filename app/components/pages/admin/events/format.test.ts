@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { venueTimeZoneAbbreviation } from "@/libraries/format";
 import type { EventResponse } from "@/types/generated/events";
 
-import { formatEventWhen, venueTimeZoneAbbreviation } from "./format";
+import { formatEventWhen } from "./format";
 
 function makeEvent(overrides: Partial<EventResponse>): EventResponse {
   return {

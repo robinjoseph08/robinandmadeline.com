@@ -94,6 +94,7 @@ async function seedFixtures(request: APIRequestContext): Promise<string> {
     start_time: "19:00",
     end_time: "22:00",
     location: "The Grand Hall",
+    location_url: "https://maps.app.goo.gl/e2eGrandHall",
     description: "Drinks and dancing to kick off the weekend.",
     is_public: true,
   });
@@ -156,10 +157,19 @@ test("schedule shows public events to everyone and invited private events to a l
 
   const publicCard = eventCard(page, publicEventName);
   await expect(publicCard).toBeVisible();
+  // The date and time render on their own lines (each with a leading icon).
   await expect(
-    publicCard.getByText("Saturday, October 17, 2026 · 7:00 PM to 10:00 PM"),
+    publicCard.getByText("Saturday, October 17, 2026"),
   ).toBeVisible();
-  await expect(publicCard.getByText("The Grand Hall")).toBeVisible();
+  await expect(publicCard.getByText("7:00 PM to 10:00 PM CDT")).toBeVisible();
+  // The location renders as a link to its Location Link, opening in a new tab.
+  const locationLink = publicCard.getByRole("link", { name: "The Grand Hall" });
+  await expect(locationLink).toBeVisible();
+  await expect(locationLink).toHaveAttribute(
+    "href",
+    "https://maps.app.goo.gl/e2eGrandHall",
+  );
+  await expect(locationLink).toHaveAttribute("target", "_blank");
   await expect(
     publicCard.getByText("Drinks and dancing to kick off the weekend."),
   ).toBeVisible();
