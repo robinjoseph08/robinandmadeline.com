@@ -47,11 +47,12 @@ describe("chipColorClass", () => {
   );
 
   // The whole reason the tag hash uses a tuned multiplier: tags that co-occur on
-  // a real guest must resolve to different colors, so their chips are
-  // distinguishable in the same cell. Reverting the multiplier (e.g. back to the
-  // old 31) reintroduces a collision here. These are the known co-occurring
-  // groups from the guest list; a new collision is a deliberate re-tuning event
-  // that should update this list.
+  // a real guest must resolve to different colors, so their chips stay
+  // distinguishable in the same cell. The four-way friend group is the tightest
+  // real grouping; the two pairs below both collide if the multiplier reverts to
+  // the old 31, so this test fails on that regression. These are known
+  // co-occurring groups from the guest list; a new collision is a deliberate
+  // re-tuning event that should update this list.
   it.each([
     [["Closest Friends", "JHHS", "UTD", "Yippees"]],
     [["In-Law", "Parent"]],
