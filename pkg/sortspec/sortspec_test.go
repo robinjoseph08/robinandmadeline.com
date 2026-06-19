@@ -76,7 +76,7 @@ func TestSerialize_RoundTrips(t *testing.T) {
 	levels, err := sortspec.Parse(spec, anyField)
 	require.NoError(t, err)
 	assert.Equal(t, spec, sortspec.Serialize(levels))
-	assert.Equal(t, "", sortspec.Serialize(nil), "empty levels serialize to empty string")
+	assert.Empty(t, sortspec.Serialize(nil), "empty levels serialize to empty string")
 }
 
 func TestValidateSpec_PerEntity(t *testing.T) {
@@ -85,11 +85,11 @@ func TestValidateSpec_PerEntity(t *testing.T) {
 		assert.NoError(t, sortspec.ValidateSpec(sortspec.EntityGuests, ""))
 	})
 	t.Run("invitation is a party field only", func(t *testing.T) {
-		assert.NoError(t, sortspec.ValidateSpec(sortspec.EntityParties, "invitation:asc"))
+		require.NoError(t, sortspec.ValidateSpec(sortspec.EntityParties, "invitation:asc"))
 		assert.Error(t, sortspec.ValidateSpec(sortspec.EntityGuests, "invitation:asc"))
 	})
 	t.Run("party is a guest field only", func(t *testing.T) {
-		assert.NoError(t, sortspec.ValidateSpec(sortspec.EntityGuests, "party:asc"))
+		require.NoError(t, sortspec.ValidateSpec(sortspec.EntityGuests, "party:asc"))
 		assert.Error(t, sortspec.ValidateSpec(sortspec.EntityParties, "party:asc"))
 	})
 	t.Run("name is shared", func(t *testing.T) {
