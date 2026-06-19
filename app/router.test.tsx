@@ -77,6 +77,14 @@ describe("router", () => {
     expect(screen.getByRole("heading", { name: "Games" })).toBeInTheDocument();
   });
 
+  it("renders the Travel page at /travel", () => {
+    // A guest content route (ungated): guards the { path: "travel" } wiring so
+    // a broken path or wrong Component can't ship green.
+    renderAt("/travel");
+
+    expect(screen.getByRole("heading", { name: "Travel" })).toBeInTheDocument();
+  });
+
   it.each(["mini", "crossword"])(
     "redirects a guest from /games/%s back to the games landing",
     (slug) => {
