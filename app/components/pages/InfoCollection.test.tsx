@@ -124,7 +124,12 @@ describe("InfoCollection", () => {
     renderPage();
     await screen.findByRole("heading", { name: /^Hi / });
 
-    expect(screen.getByText(/email update/i)).toBeInTheDocument();
+    // Pin both halves of the note: that submitted emails receive the updates,
+    // and the opt-out (leave an email blank).
+    expect(
+      screen.getByText(/every email entered above gets a copy/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/leave their email blank/i)).toBeInTheDocument();
   });
 
   it("shows example placeholders in the empty fields", async () => {
@@ -282,6 +287,26 @@ describe("InfoCollection", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps an admin-entered country instead of defaulting to the US", async () => {
+    const user = userEvent.setup();
+    apiRequest.mockResolvedValue(makeData({ country: "Canada" }));
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    // The country field is hidden, but a non-US country an admin already set is
+    // preserved rather than overwritten with the US default.
+    const address = within(screen.getByRole("region", { name: /address/i }));
+    await user.type(address.getByLabelText(/Address line 1/), "123 King St");
+    await user.type(address.getByLabelText(/City/), "Toronto");
+    await user.type(address.getByLabelText(/State/), "ON");
+    await user.type(address.getByLabelText(/ZIP code/), "M5H 2N2");
+
+    await user.click(screen.getByRole("button", { name: "Save your info" }));
+    await screen.findByRole("heading", { name: "Thank you!" });
+
+    expect(submittedPayload().country).toBe("Canada");
+  });
+
   it("removes a non-primary guest after an inline confirmation", async () => {
     const user = userEvent.setup();
     apiRequest.mockResolvedValue(makeData({ invitation_type: "digital" }));
@@ -317,6 +342,9 @@ describe("InfoCollection", () => {
     const payload = submittedPayload();
     expect(payload.guests).toContainEqual({ guest_id: "g2", remove: true });
     expect(payload.address_line_1).toBeUndefined();
+    // A digital party omits country too, so an admin-entered country is left
+    // untouched (the default only applies on the physical path).
+    expect(payload.country).toBeUndefined();
   });
 
   it("undo restores a guest marked for removal", async () => {
