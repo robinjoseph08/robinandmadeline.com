@@ -13,6 +13,7 @@ function renderLayout() {
         <Routes>
           <Route element={<AdminLayout />} path="/admin">
             <Route element={<div>Dashboard content</div>} index />
+            <Route element={<div>Guests content</div>} path="guests" />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -48,10 +49,27 @@ describe("AdminLayout", () => {
     // back-to-site exit, so the nav is fully reachable on mobile.
     const drawer = await screen.findByRole("dialog");
     expect(
-      within(drawer).getByRole("link", { name: /guests/i }),
+      within(drawer).getByRole("link", { name: "Guests" }),
     ).toHaveAttribute("href", "/admin/guests");
     expect(
       within(drawer).getByRole("link", { name: /back to site/i }),
     ).toHaveAttribute("href", "/");
+  });
+
+  it("closes the drawer after navigating to a section", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(
+      screen.getByRole("button", { name: /open admin navigation/i }),
+    );
+    const drawer = await screen.findByRole("dialog");
+
+    await user.click(within(drawer).getByRole("link", { name: "Guests" }));
+
+    // Following a link navigates and dismisses the drawer (its onNavigate plus
+    // the route-change reset), and the routed section renders.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("Guests content")).toBeInTheDocument();
   });
 });

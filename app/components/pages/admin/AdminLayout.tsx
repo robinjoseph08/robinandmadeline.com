@@ -52,7 +52,12 @@ function AdminNav({
         onClick={onNavigate}
         to="/admin"
       >
-        <Monogram className="h-16 w-auto" sizes="64px" />
+        {/* Decorative: the visible "Admin" label names the link, so the mark is
+            hidden from assistive tech to keep the link name from reading
+            "Robin and Madeline floral monogram Admin". */}
+        <span aria-hidden className="contents">
+          <Monogram className="h-16 w-auto" sizes="64px" />
+        </span>
         <span className="text-[0.65rem] font-semibold uppercase tracking-[0.15em] text-ink-muted">
           Admin
         </span>
@@ -163,7 +168,9 @@ export default function AdminLayout() {
               </SheetContent>
             </Sheet>
             <Link className="flex items-center gap-2" to="/admin">
-              <Monogram className="h-8 w-auto" sizes="32px" />
+              <span aria-hidden className="contents">
+                <Monogram className="h-8 w-auto" sizes="32px" />
+              </span>
               <span className="text-xs font-semibold uppercase tracking-[0.15em] text-ink-muted">
                 Admin
               </span>

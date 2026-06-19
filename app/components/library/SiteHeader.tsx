@@ -1,5 +1,5 @@
 import { Menu, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 
 import Monogram from "@/components/library/Monogram";
@@ -69,6 +69,7 @@ export default function SiteHeader() {
   const { isAuthenticated } = useAuth();
   const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Close the mobile menu on any route change (a nav link, the logo, or the
   // browser back/forward button) so it never lingers open over the next page.
@@ -79,6 +80,54 @@ export default function SiteHeader() {
     setOpen(false);
   }
 
+  // The open menu is a full-screen modal, so while it is open lock body scroll
+  // (the page behind must not drift), move focus into the panel, and restore
+  // focus to whatever opened it on close. Escape-to-close and tab-trapping are
+  // handled by the panel's own key handler below; aria-modal marks the rest of
+  // the page inert for assistive tech.
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const opener = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    menuRef.current
+      ?.querySelector<HTMLElement>("a[href], button:not([disabled])")
+      ?.focus();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      opener?.focus?.();
+    };
+  }, [open]);
+
+  // Keep keyboard focus inside the open panel (wrap at both ends) and close it
+  // on Escape. Events bubble up from the focused control within the panel.
+  function handleMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (event.key !== "Tab") {
+      return;
+    }
+    const focusables = menuRef.current?.querySelectorAll<HTMLElement>(
+      "a[href], button:not([disabled])",
+    );
+    if (!focusables || focusables.length === 0) {
+      return;
+    }
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   const overlay = pathname === "/";
   const items: NavLinkItem[] = isAuthenticated
     ? [...NAV_LINKS, { to: "/admin", label: "Admin" }]
@@ -86,6 +135,7 @@ export default function SiteHeader() {
 
   const mobileToggle = (
     <button
+      aria-controls="site-mobile-nav"
       aria-expanded={open}
       aria-label="Toggle navigation menu"
       className={cn(
@@ -109,8 +159,14 @@ export default function SiteHeader() {
   // focused menu on every route (its own top bar mirrors the header bar).
   const mobileMenu = open ? (
     <div
+      aria-label="Site navigation"
+      aria-modal="true"
       className="fixed inset-0 z-50 flex flex-col bg-page md:hidden"
       data-testid="mobile-menu"
+      id="site-mobile-nav"
+      onKeyDown={handleMenuKeyDown}
+      ref={menuRef}
+      role="dialog"
     >
       <div className="flex shrink-0 items-center justify-between px-4 py-5">
         <span className="font-display text-lg font-normal tracking-wide text-rose">
@@ -137,8 +193,10 @@ export default function SiteHeader() {
         />
       </nav>
       {/* The floral mark anchors the foot of the menu, echoing the site footer
-          so the full-screen panel reads as finished rather than half-empty. */}
-      <div className="shrink-0 px-4 pb-10 pt-6 text-center">
+          so the full-screen panel reads as finished rather than half-empty. It
+          is purely decorative here (the brand is already at the top), so it is
+          hidden from assistive tech. */}
+      <div aria-hidden className="shrink-0 px-4 pb-10 pt-6 text-center">
         <Monogram className="mx-auto h-14 w-auto" sizes="56px" />
       </div>
     </div>
