@@ -215,9 +215,9 @@ func orderPartiesBySort(q *bun.SelectQuery, levels []sortspec.SortLevel) *bun.Se
 // case-insensitive ("alice" next to "Alice") regardless of the database's
 // collation; under a locale collation (e.g. en_US.utf8) that already folds case
 // it is belt-and-suspenders, but it makes the behavior collation-independent. The
-// expressions embed no user input (the
-// field came from the sortspec whitelist, the direction is added separately), so
-// they are injection-safe. An unmapped field returns "" and is skipped, which is
+// expressions embed no user input (the field came from the sortspec whitelist,
+// the direction is added separately), so they are injection-safe. An unmapped
+// field returns "" and is skipped, which is
 // the seam a sortspec field would slip through if added without an SQL case
 // (TestPartySortFieldsHaveExpr guards against exactly that).
 func partySortExpr(field string) string {
