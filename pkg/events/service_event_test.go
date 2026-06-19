@@ -144,16 +144,23 @@ func TestUpdateEvent_AppliesFields(t *testing.T) {
 func TestCreateEvent_RejectsLocationLinkWithoutLocation(t *testing.T) {
 	svc, _, _ := newServices(t)
 
-	_, err := svc.CreateEvent(ctx(), events.CreateEventPayload{
-		Name:        "Ceremony",
-		LocationURL: pointerutil.String("https://maps.app.goo.gl/abc123"),
-		Date:        "2026-10-17",
-	})
-	assertErrCode(t, err, errcodes.CodeValidationError)
+	// A link with no label at all, and a link with a present-but-blank label
+	// (what the binder yields after trimming whitespace), are both rejected: the
+	// rule requires a non-empty location, not merely a non-nil one.
+	for _, label := range []*string{nil, pointerutil.String("")} {
+		_, err := svc.CreateEvent(ctx(), events.CreateEventPayload{
+			Name:        "Ceremony",
+			Location:    label,
+			LocationURL: pointerutil.String("https://maps.app.goo.gl/abc123"),
+			Date:        "2026-10-17",
+		})
+		assertErrCode(t, err, errcodes.CodeValidationError)
+		require.ErrorContains(t, err, "A location link requires a location.")
+	}
 
 	_, total, err := svc.ListEvents(ctx())
 	require.NoError(t, err)
-	assert.Zero(t, total, "the rejected create persisted nothing")
+	assert.Zero(t, total, "the rejected creates persisted nothing")
 }
 
 func TestUpdateEvent_RejectsLocationLinkWithoutLocation(t *testing.T) {
@@ -166,6 +173,7 @@ func TestUpdateEvent_RejectsLocationLinkWithoutLocation(t *testing.T) {
 		Date:        created.Date,
 	})
 	assertErrCode(t, err, errcodes.CodeValidationError)
+	require.ErrorContains(t, err, "A location link requires a location.")
 
 	reloaded, err := svc.GetEvent(ctx(), created.ID)
 	require.NoError(t, err)

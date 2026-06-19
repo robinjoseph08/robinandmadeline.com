@@ -207,6 +207,20 @@ describe("icsContent", () => {
     );
   });
 
+  it("orders the DESCRIPTION as event text, then Schedule, then Map when all are present", () => {
+    const ics = icsContent(
+      makeEvent({
+        description: "Dinner and dancing.",
+        location: "The Grand Hall",
+        location_url: "https://maps.app.goo.gl/abc123",
+      }),
+      now,
+    );
+    expect(ics).toContain(
+      "DESCRIPTION:Dinner and dancing.\\n\\nSchedule: https://www.robinandmadeline.com/schedule\\nMap: https://maps.app.goo.gl/abc123",
+    );
+  });
+
   it("escapes commas, semicolons, backslashes, and newlines in text", () => {
     const ics = icsContent(
       makeEvent({

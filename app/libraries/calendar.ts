@@ -21,8 +21,9 @@ import type { Event } from "@/types/generated/models";
 const MINUTES_PER_DAY = 24 * 60;
 
 /**
- * Appended to every generated calendar entry's description so guests can get
- * back to the site from their calendar.
+ * The schedule page URL, emitted on a labeled "Schedule:" line in every
+ * generated calendar entry's description so guests can get back to the site
+ * from their calendar.
  */
 const SCHEDULE_URL = "https://www.robinandmadeline.com/schedule";
 

@@ -47,8 +47,8 @@ A scheduled wedding activity (Rehearsal Dinner / Madhuram Veppu, Ceremony, Recep
 The human-readable label for where an **Event** takes place (e.g., "Garden Pavilion"). Optional and free-form: a display label, not a structured address.
 
 **Location Link**:
-An optional couple-provided URL attached to an **Event**'s **Location** that guests click to open the place, typically a Google Maps or directions page. It accepts any valid URL, so "map" describes its intent, not a restriction on what it may point to.
-_Avoid_: Map Link (the field accepts any URL, not only maps); Location URL (the spoken term is "link", though the stored value is a URL)
+An optional couple-provided URL attached to an **Event**'s **Location** that guests click to open the place, typically a Google Maps or directions page. It accepts any http or https URL, so "map" describes its intent, not a restriction on what it may point to.
+_Avoid_: Map Link (the field accepts any http(s) URL, not only maps); Location URL (the spoken term is "link", though the stored value is a URL)
 
 **Public Event**:
 An event visible on the schedule to anyone, with no code required.

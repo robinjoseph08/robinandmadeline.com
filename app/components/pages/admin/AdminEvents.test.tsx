@@ -195,6 +195,51 @@ describe("AdminEvents create", () => {
   });
 });
 
+describe("AdminEvents edit", () => {
+  it("prefills the location link when editing and carries it through the update", async () => {
+    adminRequest.mockImplementation((path: string, options?: object) => {
+      if (
+        path === "/admin/events/e1" &&
+        (options as { method?: string } | undefined)?.method === "PUT"
+      ) {
+        return Promise.resolve(makeEvent({}));
+      }
+      return Promise.resolve({
+        items: [
+          makeEvent({
+            location: "The Grand Hall",
+            location_url: "https://maps.app.goo.gl/abc123",
+          }),
+        ],
+        total: 1,
+      });
+    });
+
+    const user = userEvent.setup();
+    renderEvents();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Edit Reception" }),
+    );
+    // The edit form seeds from the event, so the stored link is prefilled, not
+    // wiped (a dropped formFromEvent mapping would silently clear it on save).
+    expect(screen.getByLabelText("Location link")).toHaveValue(
+      "https://maps.app.goo.gl/abc123",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/events/e1", {
+        method: "PUT",
+        body: expect.objectContaining({
+          location: "The Grand Hall",
+          location_url: "https://maps.app.goo.gl/abc123",
+        }),
+      });
+    });
+  });
+});
+
 describe("AdminEvents delete", () => {
   it("DELETEs the event after confirmation", async () => {
     adminRequest.mockImplementation((path: string, options?: object) => {

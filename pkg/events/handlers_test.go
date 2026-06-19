@@ -125,6 +125,20 @@ func TestCreateEventHandler_BadStartTimeIs422(t *testing.T) {
 	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 }
 
+func TestCreateEventHandler_NonHTTPLocationURLIs422(t *testing.T) {
+	e, _, _ := newAPI(t)
+	// Pins the location_url field to the strict httpurl tag through the real
+	// binder: a javascript:// URL parses to a non-empty host, so the loose url
+	// validator would accept it. A valid location is supplied so the cross-field
+	// rule passes and the bad link is the only reason to reject.
+	rec := do(t, e, http.MethodPost, "/api/admin/events", map[string]any{
+		"name": "Reception", "date": "2026-10-17",
+		"location": "The Grand Hall", "location_url": "javascript://evil",
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
 func TestListEventsHandler_ReturnsEnvelope(t *testing.T) {
 	e, svc, _ := newAPI(t)
 	createEventT(t, svc, publicEventInput())
