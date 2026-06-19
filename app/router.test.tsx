@@ -2,7 +2,9 @@
 // and /games/crossword the full 15x15, resolved through the puzzle registry.
 // The tests mount the real route table in a memory router (wrapped in the
 // same providers index.tsx uses), so a route table edit that breaks either
-// path fails here.
+// path fails here. The play routes are admin-gated (RequireGamesAccess) while
+// the games are unreleased, so the puzzle tests sign in first and a guest is
+// sent back to the /games "coming soon" landing.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
@@ -32,6 +34,8 @@ describe("router", () => {
   });
 
   it("renders the mini at /games/mini", () => {
+    localStorage.setItem("admin_token", "a.jwt.token");
+
     renderAt("/games/mini");
 
     // getByText rather than a role query: the first visit opens the modal
@@ -43,6 +47,8 @@ describe("router", () => {
   });
 
   it("renders the full 15x15 at /games/crossword", () => {
+    localStorage.setItem("admin_token", "a.jwt.token");
+
     renderAt("/games/crossword");
 
     expect(screen.getByText(weddingFull.title)).toBeInTheDocument();
@@ -52,6 +58,8 @@ describe("router", () => {
   });
 
   it("shows the friendly not-found treatment for an unknown games path", () => {
+    localStorage.setItem("admin_token", "a.jwt.token");
+
     renderAt("/games/does-not-exist");
 
     expect(
@@ -68,4 +76,19 @@ describe("router", () => {
 
     expect(screen.getByRole("heading", { name: "Games" })).toBeInTheDocument();
   });
+
+  it.each(["mini", "crossword"])(
+    "redirects a guest from /games/%s back to the games landing",
+    (slug) => {
+      // No admin token: the play route is gated, so a guest is sent to the
+      // /games landing and its coming-soon note instead of the puzzle.
+      const router = renderAt(`/games/${slug}`);
+
+      expect(router.state.location.pathname).toBe("/games");
+      expect(
+        screen.getByRole("heading", { name: "Games" }),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/check back later/i)).toBeInTheDocument();
+    },
+  );
 });
