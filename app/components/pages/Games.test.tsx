@@ -30,12 +30,16 @@ describe("Games", () => {
     expect(screen.getByRole("heading", { name: "Games" })).toBeInTheDocument();
     expect(screen.getByText(/check back later/i)).toBeInTheDocument();
 
-    // The games are hidden until they're ready, so the cards never render.
+    // The games are hidden until they're ready: no cards, and none of the
+    // admin-only framing leaks to a guest.
     expect(
       screen.queryByRole("link", { name: /mini crossword/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("link", { name: /fifteen-by-fifteen/i }),
+      screen.queryByRole("link", { name: /^Crossword/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/signed in as an admin/i),
     ).not.toBeInTheDocument();
   });
 
@@ -44,13 +48,17 @@ describe("Games", () => {
 
     renderGames();
 
-    // The admin sees why this section is visible to them.
+    // The admin sees why this section is visible to them, and not the guest
+    // coming-soon note.
     expect(screen.getByText(/signed in as an admin/i)).toBeInTheDocument();
+    expect(screen.queryByText(/check back later/i)).not.toBeInTheDocument();
 
     const mini = screen.getByRole("link", { name: /mini crossword/i });
     expect(mini).toHaveAttribute("href", "/games/mini");
 
-    const full = screen.getByRole("link", { name: /fifteen-by-fifteen/i });
+    // "Crossword" alone also matches "Mini Crossword", so anchor to the start
+    // of the accessible name to pin the full puzzle's card by its title.
+    const full = screen.getByRole("link", { name: /^Crossword/i });
     expect(full).toHaveAttribute("href", "/games/crossword");
   });
 });

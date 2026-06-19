@@ -46,7 +46,7 @@ export default function Games() {
     <section className="mx-auto max-w-2xl py-8">
       <p className="mb-6 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
         You're seeing the games below because you're signed in as an admin.
-        Guests get a coming soon note until they're ready.
+        Guests can't see them until the games are ready.
       </p>
 
       <h1 className="text-3xl font-bold">Games</h1>

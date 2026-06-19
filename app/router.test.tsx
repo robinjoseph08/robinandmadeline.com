@@ -77,13 +77,18 @@ describe("router", () => {
     expect(screen.getByRole("heading", { name: "Games" })).toBeInTheDocument();
   });
 
-  it("redirects a guest from a game back to the games landing", () => {
-    // No admin token: the play route is gated, so a guest lands on the games
-    // page and its "coming soon" note instead of the puzzle.
-    renderAt("/games/mini");
+  it.each(["mini", "crossword"])(
+    "redirects a guest from /games/%s back to the games landing",
+    (slug) => {
+      // No admin token: the play route is gated, so a guest is sent to the
+      // /games landing and its coming-soon note instead of the puzzle.
+      const router = renderAt(`/games/${slug}`);
 
-    expect(screen.getByRole("heading", { name: "Games" })).toBeInTheDocument();
-    expect(screen.getByText(/check back later/i)).toBeInTheDocument();
-    expect(screen.queryByText(weddingMini.title)).not.toBeInTheDocument();
-  });
+      expect(router.state.location.pathname).toBe("/games");
+      expect(
+        screen.getByRole("heading", { name: "Games" }),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/check back later/i)).toBeInTheDocument();
+    },
+  );
 });
