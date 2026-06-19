@@ -3,8 +3,8 @@ import type { EventResponse } from "@/types/generated/events";
 
 /**
  * Formats an event's date plus its optional start/end times for display
- * ("2026-10-17", "2026-10-17 4:00 PM PDT", "2026-10-17 4:00 PM to 10:00 PM
- * PDT", or "2026-10-17 until 10:00 PM PDT" when only an end time is set).
+ * ("2026-10-17", "2026-10-17 4:00 PM CDT", "2026-10-17 4:00 PM to 10:00 PM
+ * CDT", or "2026-10-17 until 10:00 PM CDT" when only an end time is set).
  * Shared by the events list rows and the event detail header. A date with no
  * times carries no zone label; there is no time to disambiguate.
  */
