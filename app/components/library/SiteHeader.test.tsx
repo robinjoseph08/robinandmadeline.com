@@ -57,6 +57,21 @@ describe("SiteHeader", () => {
     }
   });
 
+  it("closes the mobile menu via its close button", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    await user.click(
+      screen.getByRole("button", { name: /toggle navigation menu/i }),
+    );
+    expect(screen.getByTestId("mobile-menu")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /close navigation menu/i }),
+    );
+    expect(screen.queryByTestId("mobile-menu")).not.toBeInTheDocument();
+  });
+
   it("closes the mobile menu when navigating via the logo", async () => {
     const user = userEvent.setup();
     // Start off the home page so the logo navigates to a different route.

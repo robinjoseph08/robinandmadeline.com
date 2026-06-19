@@ -57,11 +57,13 @@ export default function Home() {
             <Names className="text-[clamp(3.25rem,9vw,6.5rem)] text-white [text-shadow:0_2px_4px_rgba(42,38,34,1),0_4px_30px_rgba(42,38,34,0.65)]" />
           </h1>
           <p
-            className="hero-rise mt-5 text-sm font-medium uppercase tracking-[0.2em] text-white/90 [text-shadow:0_1px_4px_rgba(42,38,34,1),0_2px_16px_rgba(42,38,34,0.65)]"
+            className="hero-rise mt-5 flex flex-col items-center gap-1.5 text-sm font-medium uppercase tracking-[0.2em] text-white/90 [text-shadow:0_1px_4px_rgba(42,38,34,1),0_2px_16px_rgba(42,38,34,0.65)] sm:flex-row sm:gap-0"
             style={{ animationDelay: "440ms" }}
           >
             <span>{WEDDING.dateText}</span>
-            <span className="px-2">&middot;</span>
+            <span aria-hidden className="hidden px-2 sm:inline">
+              &middot;
+            </span>
             <span>{WEDDING.venueText}</span>
           </p>
         </div>
