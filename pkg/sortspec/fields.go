@@ -3,11 +3,11 @@ package sortspec
 import "github.com/pkg/errors"
 
 // Sortable field tokens shared by the admin lists. They are the wire vocabulary
-// of a spec (the part before each ":"), kept in sync with SORT_FIELDS in
-// app/libraries/sortSpec.ts and with the ORDER BY mapping in
-// pkg/parties/service_list.go. A field is not necessarily valid for every
-// entity: PartyFields and GuestFields below list which apply where (e.g. party
-// is guest-only, invitation is party-only).
+// of a spec (the part before each ":"), kept in sync with PARTY_SORT_FIELDS /
+// GUEST_SORT_FIELDS in app/components/pages/admin/parties/options.ts and with the
+// ORDER BY mapping in pkg/parties/service_list.go. A field is not necessarily
+// valid for every entity: PartyFields and GuestFields below list which apply
+// where (e.g. party is guest-only, invitation is party-only).
 const (
 	FieldName       = "name"       // party name / guest full name
 	FieldDateAdded  = "date_added" // created_at

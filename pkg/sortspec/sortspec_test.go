@@ -1,6 +1,8 @@
 package sortspec_test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/sortspec"
@@ -25,6 +27,18 @@ func TestParse_Valid(t *testing.T) {
 			{Field: "side", Direction: sortspec.DirAsc},
 			{Field: "name", Direction: sortspec.DirDesc},
 		}, levels)
+	})
+	t.Run("exactly MaxLevels is accepted", func(t *testing.T) {
+		// Pin the upper boundary: MaxLevels distinct fields parse, while one more is
+		// rejected (TestParse_Invalid "too many levels"). Catches a > vs >= slip.
+		valid := func(f string) bool { return strings.HasPrefix(f, "f") }
+		parts := make([]string, sortspec.MaxLevels)
+		for i := range parts {
+			parts[i] = fmt.Sprintf("f%d:asc", i)
+		}
+		levels, err := sortspec.Parse(strings.Join(parts, ","), valid)
+		require.NoError(t, err)
+		assert.Len(t, levels, sortspec.MaxLevels)
 	})
 }
 

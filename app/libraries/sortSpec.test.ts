@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MAX_SORT_LEVELS,
   parseSortSpec,
   serializeSortSpec,
   sortSpecsEqual,
@@ -40,9 +41,16 @@ describe("parseSortSpec", () => {
   });
 
   it("rejects more than the max levels", () => {
-    const many = Array.from({ length: 9 }, (_, i) => `f${i}:asc`).join(",");
-    const allFields = new Set(Array.from({ length: 9 }, (_, i) => `f${i}`));
+    const count = MAX_SORT_LEVELS + 1;
+    const many = Array.from({ length: count }, (_, i) => `f${i}:asc`).join(",");
+    const allFields = new Set(Array.from({ length: count }, (_, i) => `f${i}`));
     expect(parseSortSpec(many, allFields)).toBeNull();
+  });
+
+  it("accepts exactly the max number of levels", () => {
+    const fields = Array.from({ length: MAX_SORT_LEVELS }, (_, i) => `f${i}`);
+    const spec = fields.map((f) => `${f}:asc`).join(",");
+    expect(parseSortSpec(spec, new Set(fields))).toHaveLength(MAX_SORT_LEVELS);
   });
 });
 

@@ -40,14 +40,14 @@ function makeParty(overrides: Partial<PartyResponse>): PartyResponse {
   };
 }
 
-function renderParties() {
+function renderParties(path = "/") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <TooltipProvider>
       <QueryClientProvider client={client}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[path]}>
           <AdminParties />
         </MemoryRouter>
       </QueryClientProvider>
@@ -64,6 +64,42 @@ const MADELINE_PARTY = makeParty({
 
 beforeEach(() => {
   adminRequest.mockReset();
+  localStorage.clear();
+});
+
+describe("AdminParties sorting", () => {
+  // The list request always carries the effective sort, so the server order is
+  // explicit. Precedence: URL ?sort= > saved localStorage default > builtin.
+  function lastListSort() {
+    const calls = adminRequest.mock.calls.filter(
+      (call) => call[0] === "/admin/parties",
+    );
+    return (calls[calls.length - 1]?.[1] as { query?: { sort?: string } })
+      ?.query?.sort;
+  }
+
+  it("sends the builtin default sort when none is saved or in the URL", async () => {
+    adminRequest.mockResolvedValue({ items: [ROBIN_PARTY], total: 1 });
+    renderParties();
+    await screen.findByDisplayValue("Robin's Party");
+    expect(lastListSort()).toBe("date_added:asc");
+  });
+
+  it("sends a saved localStorage default as the sort", async () => {
+    localStorage.setItem("admin:parties:defaultSort", "name:desc");
+    adminRequest.mockResolvedValue({ items: [ROBIN_PARTY], total: 1 });
+    renderParties();
+    await screen.findByDisplayValue("Robin's Party");
+    expect(lastListSort()).toBe("name:desc");
+  });
+
+  it("lets a URL sort override the saved default", async () => {
+    localStorage.setItem("admin:parties:defaultSort", "name:desc");
+    adminRequest.mockResolvedValue({ items: [ROBIN_PARTY], total: 1 });
+    renderParties("/admin/parties?sort=side:asc");
+    await screen.findByDisplayValue("Robin's Party");
+    expect(lastListSort()).toBe("side:asc");
+  });
 });
 
 describe("AdminParties filters", () => {

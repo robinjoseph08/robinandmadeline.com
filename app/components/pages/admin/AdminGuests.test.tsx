@@ -134,6 +134,42 @@ function renderGuests(path = "/admin/guests") {
 
 beforeEach(() => {
   adminRequest.mockReset();
+  localStorage.clear();
+});
+
+describe("AdminGuests sorting", () => {
+  // The guest list always sends the effective sort. Precedence: URL ?sort= >
+  // saved localStorage default > builtin (creation order).
+  function lastGuestsSort() {
+    const calls = adminRequest.mock.calls.filter(
+      (call) => call[0] === "/admin/guests",
+    );
+    return (calls[calls.length - 1]?.[1] as { query?: { sort?: string } })
+      ?.query?.sort;
+  }
+
+  it("sends the builtin default sort when none is saved or in the URL", async () => {
+    setMock({ guests: [makeGuestItem({ full_name: "Ada" })] });
+    renderGuests();
+    await screen.findByDisplayValue("Ada");
+    expect(lastGuestsSort()).toBe("date_added:asc");
+  });
+
+  it("sends a saved localStorage default as the sort", async () => {
+    localStorage.setItem("admin:guests:defaultSort", "party:asc");
+    setMock({ guests: [makeGuestItem({ full_name: "Ada" })] });
+    renderGuests();
+    await screen.findByDisplayValue("Ada");
+    expect(lastGuestsSort()).toBe("party:asc");
+  });
+
+  it("lets a URL sort override the saved default", async () => {
+    localStorage.setItem("admin:guests:defaultSort", "party:asc");
+    setMock({ guests: [makeGuestItem({ full_name: "Ada" })] });
+    renderGuests("/admin/guests?sort=name:desc");
+    await screen.findByDisplayValue("Ada");
+    expect(lastGuestsSort()).toBe("name:desc");
+  });
 });
 
 describe("AdminGuests flat list", () => {

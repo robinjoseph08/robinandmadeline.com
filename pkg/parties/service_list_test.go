@@ -558,8 +558,11 @@ func TestListParties_Sort(t *testing.T) {
 func TestListGuests_Sort(t *testing.T) {
 	svc, _ := newService(t)
 
-	// Apple Party (robin) holds Charlie then alice; Zebra Party (madeline) holds Bob.
-	apple := createPartyT(t, svc, sortPartyInput("Apple Party", models.SideRobin))
+	// "apple Party" is lowercased deliberately: it sorts before "Zebra Party" only
+	// under a case-insensitive (LOWER) party sort, so the party subtests below
+	// would catch a regression that dropped LOWER from the party-name subquery.
+	// apple (robin) holds Charlie then alice; Zebra (madeline) holds Bob.
+	apple := createPartyT(t, svc, sortPartyInput("apple Party", models.SideRobin))
 	zebra := createPartyT(t, svc, sortPartyInput("Zebra Party", models.SideMadeline))
 
 	// Created in this order: Charlie, then alice, then Bob.
@@ -578,11 +581,21 @@ func TestListGuests_Sort(t *testing.T) {
 		assert.Equal(t, []string{"Charlie", "Bob", "alice"}, guestNames(got))
 	})
 	t.Run("party then name groups by owning party, sorts by name within", func(t *testing.T) {
-		// Apple (a < z) before Zebra; within Apple, name asc gives alice, Charlie.
-		// Differs from name-only ([alice, Bob, Charlie]), proving the second level.
+		// apple (a < z, case-insensitively) before Zebra; within apple, name asc
+		// gives alice, Charlie. Differs from name-only ([alice, Bob, Charlie]),
+		// proving the second level and the LOWER on the party-name subquery.
 		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Sort: "party:asc,name:asc"})
 		require.NoError(t, err)
 		assert.Equal(t, []string{"alice", "Charlie", "Bob"}, guestNames(got))
+	})
+	t.Run("side then name sorts by the owning party's side via subquery", func(t *testing.T) {
+		// Guest side is a party-level field read through a correlated subquery (not
+		// the joined relation alias). side asc puts madeline (Bob, in Zebra) before
+		// robin (alice, Charlie, in apple), then name asc within. Pins the subquery
+		// shape for guest party-level sorts.
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Sort: "side:asc,name:asc"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Bob", "alice", "Charlie"}, guestNames(got))
 	})
 	t.Run("date_added desc is newest first", func(t *testing.T) {
 		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Sort: "date_added:desc"})
