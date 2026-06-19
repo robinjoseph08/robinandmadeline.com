@@ -1,11 +1,11 @@
 import {
-  type Circle,
   CircleChildhood,
   CircleCollege,
   CircleExtended,
   CircleImmediate,
   CircleOther,
   CircleWork,
+  type Circle,
 } from "@/types/generated/models";
 
 /**
@@ -14,8 +14,10 @@ import {
  *   - Fixed-set values (a party's circle, a guest's flags) get an explicit,
  *     hand-picked color, so they read consistently and a little semantically.
  *   - Open-ended values (guest tags) hash into a curated palette. The multiplier
- *     is tuned so no two tags that co-occur on a real guest land on the same
- *     color — a shared color only misleads when two chips sit in the same cell.
+ *     is tuned against the current guest list so tags that co-occur on a guest
+ *     resolve to different colors. A shared color only misleads when two chips
+ *     share a cell, so collisions between tags that never share a guest are
+ *     harmless (and unavoidable once tags outnumber the palette).
  *
  * A given value always resolves to the same color everywhere it appears (row,
  * dropdown, filter). Every class is a literal string so Tailwind's scanner keeps it.
@@ -41,14 +43,16 @@ const TAG_COLORS = [
   "bg-stone-200 text-stone-900",
 ] as const;
 
-// A party's circle is a closed enum, so each value gets a designed color: warm
-// for the closest family, cooling outward, neutral for "Other".
+// A party's circle is a closed enum, so each value gets a hand-picked color
+// instead of a hashed one, chosen to stay distinct from its neighbors (blue for
+// College and fuchsia for Work, which would otherwise read alike), with a
+// neutral stone for the "Other" catch-all. Ordered to match the Circle enum.
 const CIRCLE_CHIP_COLOR: Record<Circle, string> = {
   [CircleImmediate]: "bg-rose-200 text-rose-900",
   [CircleExtended]: "bg-amber-200 text-amber-900",
-  [CircleChildhood]: "bg-emerald-200 text-emerald-900",
   [CircleCollege]: "bg-blue-200 text-blue-900",
   [CircleWork]: "bg-fuchsia-200 text-fuchsia-900",
+  [CircleChildhood]: "bg-emerald-200 text-emerald-900",
   [CircleOther]: "bg-stone-200 text-stone-900",
 };
 
@@ -71,8 +75,9 @@ export function chipColorClass(value: string): string {
   const explicit = EXPLICIT_CHIP_COLOR.get(value);
   if (explicit) return explicit;
 
-  // Polynomial string hash; the ×77 multiplier is tuned against the real guest
-  // list so co-occurring tags resolve to different colors (see the doc above).
+  // Polynomial string hash. The ×77 multiplier is tuned against the current
+  // guest list so co-occurring tags resolve to different colors; chips.test.ts
+  // pins that property.
   let hash = 0;
   for (let i = 0; i < value.length; i++) {
     hash = (hash * 77 + value.charCodeAt(i)) >>> 0;
