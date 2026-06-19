@@ -10,6 +10,7 @@ export const NAV_LINKS: NavLinkItem[] = [
   { to: "/", label: "Home", end: true },
   { to: "/story", label: "Our Story" },
   { to: "/schedule", label: "Schedule" },
+  { to: "/travel", label: "Travel" },
   { to: "/games", label: "Games" },
   { to: "/photos", label: "Photos" },
   { to: "/faq", label: "FAQ" },

@@ -29,6 +29,7 @@ import RSVPConfirmation from "@/components/pages/RSVPConfirmation";
 import RSVPForm from "@/components/pages/RSVPForm";
 import Schedule from "@/components/pages/Schedule";
 import Story from "@/components/pages/Story";
+import Travel from "@/components/pages/Travel";
 
 // The route table is exported on its own so tests can mount the real routes
 // in a memory router (see router.test.tsx) instead of mirroring them.
@@ -40,6 +41,7 @@ export const routes = [
       { index: true, Component: Home },
       { path: "story", Component: Story },
       { path: "schedule", Component: Schedule },
+      { path: "travel", Component: Travel },
       { path: "games", Component: Games },
       // Each puzzle lives at its own short path (/games/mini is the 5x5,
       // /games/crossword the full 15x15). The slug resolves against the
