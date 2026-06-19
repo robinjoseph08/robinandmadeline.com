@@ -4,8 +4,8 @@
  * The image assets are pre-generated and committed under app/assets/gallery by
  * scripts/build-gallery-photos.sh (metadata stripped, resized, AVIF + a JPEG
  * fallback). This module pairs those fingerprinted URLs with each photo's
- * intrinsic dimensions and display order so the gallery can lay itself out
- * (justified rows) and reserve space before the images load.
+ * large-variant dimensions (its aspect ratio) and display order so the gallery
+ * can lay itself out (justified rows) and reserve space before the images load.
  *
  * To change which photos appear or their order, edit CURATED in the build
  * script, re-run it, and update GALLERY_MANIFEST below to match.

@@ -80,6 +80,52 @@ describe("Photos", () => {
     expect(within(dialog).getByAltText(last.alt)).toBeInTheDocument();
   });
 
+  it("pages forward and wraps around from the last photo", async () => {
+    const user = userEvent.setup();
+    render(<Photos />);
+
+    const dialog = await openLightbox(user, GALLERY_PHOTOS.length - 1);
+
+    await user.keyboard("{ArrowRight}");
+    expect(
+      within(dialog).getByAltText(GALLERY_PHOTOS[0].alt),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the current position in the counter", async () => {
+    const user = userEvent.setup();
+    render(<Photos />);
+
+    const dialog = await openLightbox(user, 2);
+    const total = GALLERY_PHOTOS.length;
+    expect(within(dialog).getByText(`3 / ${total}`)).toBeInTheDocument();
+
+    await user.keyboard("{ArrowRight}");
+    expect(within(dialog).getByText(`4 / ${total}`)).toBeInTheDocument();
+  });
+
+  it("sets intrinsic dimensions on the lightbox image to reserve space", async () => {
+    const user = userEvent.setup();
+    render(<Photos />);
+
+    const photo = GALLERY_PHOTOS[0];
+    const dialog = await openLightbox(user, 0);
+    const image = within(dialog).getByAltText(photo.alt);
+    expect(image).toHaveAttribute("width", String(photo.width));
+    expect(image).toHaveAttribute("height", String(photo.height));
+  });
+
+  it("closes the lightbox when the backdrop is clicked", async () => {
+    const user = userEvent.setup();
+    render(<Photos />);
+
+    await openLightbox(user, 0);
+    await user.click(
+      screen.getByRole("button", { name: "Close photo viewer" }),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("closes the lightbox with the close button", async () => {
     const user = userEvent.setup();
     render(<Photos />);
@@ -96,5 +142,18 @@ describe("Photos", () => {
     await openLightbox(user, 0);
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("resolves a non-empty asset URL for every photo", () => {
+    // Guards against the hand-maintained manifest drifting from the committed
+    // assets, which would make urlFor() silently return "" (broken images).
+    for (const photo of GALLERY_PHOTOS) {
+      expect(photo.fallbackSrc).toBeTruthy();
+      for (const segment of photo.avifSrcSet.split(",")) {
+        const [url, descriptor] = segment.trim().split(/\s+/);
+        expect(url).toBeTruthy();
+        expect(descriptor).toMatch(/^\d+w$/);
+      }
+    }
   });
 });

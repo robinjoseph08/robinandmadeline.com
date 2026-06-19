@@ -81,4 +81,14 @@ for n in "${CURATED[@]}"; do
 done
 wait
 
-echo "Done. Wrote $(ls -1 "${OUT_DIR}" | wc -l | tr -d ' ') files."
+# Plain `wait` does not propagate the backgrounded jobs' exit codes, so verify
+# the run produced every expected file (4 per photo) rather than trusting that
+# none of the magick pipelines failed silently.
+expected=$(( ${#CURATED[@]} * 4 ))
+actual=$(ls -1 "${OUT_DIR}" | wc -l | tr -d ' ')
+echo "Wrote ${actual} of ${expected} expected files to ${OUT_DIR}."
+if [[ "$actual" -ne "$expected" ]]; then
+  echo "ERROR: expected ${expected} files (4 per photo); something failed." >&2
+  exit 1
+fi
+echo "Done."

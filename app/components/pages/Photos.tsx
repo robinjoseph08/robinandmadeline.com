@@ -156,6 +156,19 @@ export default function Photos() {
 
   const active = GALLERY_PHOTOS[index];
 
+  // The gallery is curated from a hand-maintained manifest; render just the
+  // header (not a crashing lightbox) if it is ever empty.
+  if (!active) {
+    return (
+      <div className="py-12">
+        <PageHeader
+          subtitle="A few of our favorite moments together."
+          title="Photos"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="py-12">
       <PageHeader
@@ -216,7 +229,7 @@ export default function Photos() {
           <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-ink/90 backdrop-blur-sm data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
           <DialogPrimitive.Content className="fixed inset-0 z-50 flex items-center justify-center p-4 focus:outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0">
             <DialogPrimitive.Title className="sr-only">
-              {active.alt}
+              Photo viewer
             </DialogPrimitive.Title>
             <DialogPrimitive.Description className="sr-only">
               Photo {index + 1} of {count}. Use the arrow keys or the on-screen
