@@ -72,6 +72,49 @@ describe("SiteHeader", () => {
     expect(screen.queryByTestId("mobile-menu")).not.toBeInTheDocument();
   });
 
+  it("closes the mobile menu on Escape", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    await user.click(
+      screen.getByRole("button", { name: /toggle navigation menu/i }),
+    );
+    expect(screen.getByTestId("mobile-menu")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("mobile-menu")).not.toBeInTheDocument();
+  });
+
+  it("moves focus into the open menu", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    await user.click(
+      screen.getByRole("button", { name: /toggle navigation menu/i }),
+    );
+
+    // Focus lands on a control inside the panel so keyboard/AT users start
+    // within it rather than behind it.
+    const menu = screen.getByTestId("mobile-menu");
+    expect(menu).toContainElement(document.activeElement as HTMLElement);
+  });
+
+  it("locks body scroll while open and restores it on close", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    const before = document.body.style.overflow;
+    await user.click(
+      screen.getByRole("button", { name: /toggle navigation menu/i }),
+    );
+    expect(document.body.style.overflow).toBe("hidden");
+
+    await user.click(
+      screen.getByRole("button", { name: /close navigation menu/i }),
+    );
+    expect(document.body.style.overflow).toBe(before);
+  });
+
   it("closes the mobile menu when navigating via the logo", async () => {
     const user = userEvent.setup();
     // Start off the home page so the logo navigates to a different route.

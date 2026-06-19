@@ -83,8 +83,8 @@ export default function SiteHeader() {
   // The open menu is a full-screen modal, so while it is open lock body scroll
   // (the page behind must not drift), move focus into the panel, and restore
   // focus to whatever opened it on close. Escape-to-close and tab-trapping are
-  // handled by the panel's own key handler below; aria-modal marks the rest of
-  // the page inert for assistive tech.
+  // handled by the panel's own key handler below; role="dialog" + aria-modal
+  // expose it as a modal dialog to assistive tech.
   useEffect(() => {
     if (!open) {
       return;
@@ -135,7 +135,6 @@ export default function SiteHeader() {
 
   const mobileToggle = (
     <button
-      aria-controls="site-mobile-nav"
       aria-expanded={open}
       aria-label="Toggle navigation menu"
       className={cn(
@@ -163,7 +162,6 @@ export default function SiteHeader() {
       aria-modal="true"
       className="fixed inset-0 z-50 flex flex-col bg-page md:hidden"
       data-testid="mobile-menu"
-      id="site-mobile-nav"
       onKeyDown={handleMenuKeyDown}
       ref={menuRef}
       role="dialog"

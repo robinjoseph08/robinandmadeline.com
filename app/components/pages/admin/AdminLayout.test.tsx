@@ -54,6 +54,12 @@ describe("AdminLayout", () => {
     expect(
       within(drawer).getByRole("link", { name: /back to site/i }),
     ).toHaveAttribute("href", "/");
+    // The decorative monogram is hidden from AT, so the brand link's name is
+    // just "Admin" (not "Robin and Madeline floral monogram Admin").
+    expect(within(drawer).getByRole("link", { name: "Admin" })).toHaveAttribute(
+      "href",
+      "/admin",
+    );
   });
 
   it("closes the drawer after navigating to a section", async () => {
