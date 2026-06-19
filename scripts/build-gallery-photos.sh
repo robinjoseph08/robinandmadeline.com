@@ -49,6 +49,11 @@ CURATED=(
 
 mkdir -p "$OUT_DIR"
 
+# Clear prior outputs so a re-run is reproducible: no orphaned assets linger from
+# a since-removed slug, and the final file-count check reflects only this run.
+# `-f` ignores the no-match case (the glob stays literal when the dir is empty).
+rm -f "${OUT_DIR}"/mr-*.avif "${OUT_DIR}"/mr-*.jpg
+
 # Encode one original into the full ladder. Backgrounded per photo below.
 process_one() {
   local n="$1"
@@ -85,7 +90,9 @@ wait
 # the run produced every expected file (4 per photo) rather than trusting that
 # none of the magick pipelines failed silently.
 expected=$(( ${#CURATED[@]} * 4 ))
-actual=$(ls -1 "${OUT_DIR}" | wc -l | tr -d ' ')
+# `find` (not a glob) so the count ignores stray files like .DS_Store and does
+# not trip pipefail when a pattern matches nothing.
+actual=$(find "${OUT_DIR}" -maxdepth 1 \( -name 'mr-*.avif' -o -name 'mr-*.jpg' \) | wc -l | tr -d ' ')
 echo "Wrote ${actual} of ${expected} expected files to ${OUT_DIR}."
 if [[ "$actual" -ne "$expected" ]]; then
   echo "ERROR: expected ${expected} files (4 per photo); something failed." >&2
