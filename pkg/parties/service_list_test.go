@@ -503,8 +503,10 @@ func TestListGuests_EventAndRSVPStatusFilters(t *testing.T) {
 
 // TestListParties_Sort covers the multi-level party sort. Parties are created out
 // of alphabetical, side, and creation order so single-field and multi-level
-// sorts each produce a visibly distinct order, and "alice" is lowercase to prove
-// the name sort is case-insensitive.
+// sorts each produce a visibly distinct order; "alice" is lowercase so the
+// asserted order is alphabetical regardless of case. (These assert the resulting
+// order, not the LOWER mechanism: the dev DB's locale collation already folds
+// case, so dropping LOWER would not change the order here. See partySortExpr.)
 func TestListParties_Sort(t *testing.T) {
 	svc, _ := newService(t)
 
@@ -513,7 +515,7 @@ func TestListParties_Sort(t *testing.T) {
 	alice := createPartyT(t, svc, sortPartyInput("alice", models.SideMadeline))
 	charlie := createPartyT(t, svc, sortPartyInput("Charlie", models.SideMadeline))
 
-	t.Run("name asc is case-insensitive A-Z", func(t *testing.T) {
+	t.Run("name asc sorts A-Z", func(t *testing.T) {
 		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{Sort: "name:asc"})
 		require.NoError(t, err)
 		assert.Equal(t, []string{"alice", "Bob", "Charlie"}, partyNames(got))
@@ -558,11 +560,11 @@ func TestListParties_Sort(t *testing.T) {
 func TestListGuests_Sort(t *testing.T) {
 	svc, _ := newService(t)
 
-	// "apple Party" is lowercased deliberately: it sorts before "Zebra Party" only
-	// under a case-insensitive (LOWER) party sort, so the party subtests below
-	// would catch a regression that dropped LOWER from the party-name subquery.
-	// apple (robin) holds Charlie then alice; Zebra (madeline) holds Bob.
-	apple := createPartyT(t, svc, sortPartyInput("apple Party", models.SideRobin))
+	// Apple Party (robin) holds Charlie then alice; Zebra Party (madeline) holds
+	// Bob. The party subtests below pin the multi-level ordering (primary key is
+	// the owning party), not the LOWER in the party-name subquery specifically,
+	// which the dev DB's locale collation makes redundant here.
+	apple := createPartyT(t, svc, sortPartyInput("Apple Party", models.SideRobin))
 	zebra := createPartyT(t, svc, sortPartyInput("Zebra Party", models.SideMadeline))
 
 	// Created in this order: Charlie, then alice, then Bob.
@@ -570,7 +572,7 @@ func TestListGuests_Sort(t *testing.T) {
 	alice := addGuestT(t, svc, apple.ID, parties.CreateGuestPayload{FullName: "alice"})
 	bob := addGuestT(t, svc, zebra.ID, parties.CreateGuestPayload{FullName: "Bob", IsPrimary: true})
 
-	t.Run("name asc is case-insensitive A-Z", func(t *testing.T) {
+	t.Run("name asc sorts A-Z", func(t *testing.T) {
 		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Sort: "name:asc"})
 		require.NoError(t, err)
 		assert.Equal(t, []string{"alice", "Bob", "Charlie"}, guestNames(got))
@@ -581,9 +583,9 @@ func TestListGuests_Sort(t *testing.T) {
 		assert.Equal(t, []string{"Charlie", "Bob", "alice"}, guestNames(got))
 	})
 	t.Run("party then name groups by owning party, sorts by name within", func(t *testing.T) {
-		// apple (a < z, case-insensitively) before Zebra; within apple, name asc
-		// gives alice, Charlie. Differs from name-only ([alice, Bob, Charlie]),
-		// proving the second level and the LOWER on the party-name subquery.
+		// Apple (a < z) before Zebra; within Apple, name asc gives alice, Charlie.
+		// Differs from name-only ([alice, Bob, Charlie]), proving the primary key is
+		// the owning party's name and the guest name is the secondary level.
 		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Sort: "party:asc,name:asc"})
 		require.NoError(t, err)
 		assert.Equal(t, []string{"alice", "Charlie", "Bob"}, guestNames(got))

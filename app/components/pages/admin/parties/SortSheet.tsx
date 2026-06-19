@@ -137,9 +137,9 @@ function SortLevelRow({
  * from the default) that opens a sheet holding the multi-level sort. Each row is
  * a field + direction; rows are ordered by precedence (the first is the primary
  * sort) and reordered with the up/down arrows. Add a field to sort by it next,
- * remove one to drop it. The active sort lives in the URL (the page owns it, so
- * it is shareable); "Save as default" persists it to this browser via
- * localStorage. Sheet-only (no drawer), matching FilterSheet.
+ * remove one to drop it. A non-default sort lives in the URL (the page owns it,
+ * so it is shareable; a default sort leaves the URL clean); "Save as default"
+ * persists it to this browser via localStorage. Sheet-only, matching FilterSheet.
  */
 export function SortSheet({
   fields,

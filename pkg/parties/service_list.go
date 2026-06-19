@@ -211,8 +211,11 @@ func orderPartiesBySort(q *bun.SelectQuery, levels []sortspec.SortLevel) *bun.Se
 }
 
 // partySortExpr maps a whitelisted party sort field to its ORDER BY expression on
-// the parties table (aliased p). Name sorts use LOWER for case-insensitive
-// ordering ("alice" next to "Alice"). The expressions embed no user input (the
+// the parties table (aliased p). Name sorts use LOWER so the order is
+// case-insensitive ("alice" next to "Alice") regardless of the database's
+// collation; under a locale collation (e.g. en_US.utf8) that already folds case
+// it is belt-and-suspenders, but it makes the behavior collation-independent. The
+// expressions embed no user input (the
 // field came from the sortspec whitelist, the direction is added separately), so
 // they are injection-safe. An unmapped field returns "" and is skipped, which is
 // the seam a sortspec field would slip through if added without an SQL case
