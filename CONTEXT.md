@@ -43,6 +43,13 @@ _Avoid_: Order, roles (the PRD's original name for this attribute)
 **Event**:
 A scheduled wedding activity (Rehearsal Dinner / Madhuram Veppu, Ceremony, Reception, possibly Brunch).
 
+**Location**:
+The human-readable label for where an **Event** takes place (e.g., "Garden Pavilion"). Optional and free-form: a display label, not a structured address.
+
+**Location Link**:
+An optional couple-provided URL attached to an **Event**'s **Location** that guests click to open the place, typically a Google Maps or directions page. It accepts any http or https URL, so "map" describes its intent, not a restriction on what it may point to.
+_Avoid_: Map Link (the field accepts any http(s) URL, not only maps); Location URL (the spoken term is "link", though the stored value is a URL)
+
 **Public Event**:
 An event visible on the schedule to anyone, with no code required.
 
@@ -92,6 +99,7 @@ _Avoid_: Photo shoot, album (the photo gallery is unrelated); per-event photo gr
 - A **Placeholder Guest** carries **Placeholder Text**; the slot is hidden during **Info Collection**, and naming it (during RSVP, until the deadline) never erases the descriptor, so the slot stays identifiable and re-nameable.
 - A **Party** has one **Info Token** and one **RSVP Code**.
 - A **Guest** has one **Event RSVP** per **Event** they are invited to.
+- An **Event** has an optional **Location**, which may carry an optional **Location Link**. A **Location Link** cannot exist without a **Location**: the link decorates the label, so a link with no label is rejected.
 - A **Photo Group** contains zero or more **Guests** (it may sit empty while the shot list is drafted, and an empty group still shifts the positions every party sees). Photo groups belong to no **Event**: they form one global shooting order for the single photo session between the ceremony and the reception.
 - A **Guest** carries individual email, phone, dietary restrictions, and RSVP responses; the mailing **address** lives on the **Party**.
 - A **Party** becomes **Info Collection Requested** once its info link is sent; requesting resets its **Info Collection Status** to incomplete.

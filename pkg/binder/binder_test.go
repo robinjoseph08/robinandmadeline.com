@@ -224,8 +224,8 @@ func TestBind_DiveRequiredForSliceModTraversal(t *testing.T) {
 	})
 }
 
-// TestValidators covers the date, time, datetimeblank, url, and emailblank
-// custom validators directly.
+// TestValidators covers the date, time, datetimeblank, url, httpurl, and
+// emailblank custom validators directly.
 func TestValidators(t *testing.T) {
 	t.Parallel()
 	b, err := New()
@@ -236,6 +236,7 @@ func TestValidators(t *testing.T) {
 		Start    string `json:"start" validate:"omitempty,time"`
 		Deadline string `json:"deadline" validate:"omitempty,datetimeblank"`
 		Site     string `json:"site" validate:"omitempty,url"`
+		Map      string `json:"map" validate:"omitempty,httpurl"`
 		Mail     string `json:"mail" validate:"omitempty,emailblank"`
 	}
 
@@ -266,6 +267,13 @@ func TestValidators(t *testing.T) {
 		{"garbage deadline rejected", `{"deadline":"not-a-timestamp"}`, false},
 		{"valid url", `{"site":"https://example.com"}`, true},
 		{"bad url", `{"site":"not a url"}`, false},
+		{"httpurl https accepted", `{"map":"https://maps.app.goo.gl/abc"}`, true},
+		{"httpurl http accepted", `{"map":"http://example.com/maps"}`, true},
+		{"empty httpurl allowed", `{"map":""}`, true},
+		{"httpurl without scheme rejected", `{"map":"maps.google.com/abc"}`, false},
+		{"httpurl non-http scheme rejected", `{"map":"ftp://example.com"}`, false},
+		{"httpurl javascript scheme rejected", `{"map":"javascript://example.com"}`, false},
+		{"httpurl missing host rejected", `{"map":"https://"}`, false},
 		{"valid email", `{"mail":"pat@example.com"}`, true},
 		{"empty email allowed", `{"mail":""}`, true},
 		{"bad email", `{"mail":"not-an-email"}`, false},

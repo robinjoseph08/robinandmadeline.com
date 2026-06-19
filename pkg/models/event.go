@@ -15,6 +15,9 @@ import (
 // invited. Date travels as a "YYYY-MM-DD" string (the column is a Postgres
 // DATE); StartTime/EndTime are nullable "HH:MM" strings, which sort lexically
 // in chronological order and so double as the schedule's display order.
+// Location is a free-form display label; LocationURL, when set, is the link the
+// schedule renders that label as (a map or directions page) and is only ever
+// present alongside a Location (the events service rejects a link with no label).
 type Event struct {
 	bun.BaseModel `bun:"table:events,alias:e" tstype:"-"`
 
@@ -22,6 +25,7 @@ type Event struct {
 	Name        string  `bun:"name" json:"name"`
 	Description *string `bun:"description" json:"description"`
 	Location    *string `bun:"location" json:"location"`
+	LocationURL *string `bun:"location_url" json:"location_url"`
 	Date        string  `bun:"date" json:"date"`
 	StartTime   *string `bun:"start_time" json:"start_time"`
 	EndTime     *string `bun:"end_time" json:"end_time"`

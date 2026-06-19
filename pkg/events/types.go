@@ -13,11 +13,15 @@ import "github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 // chronological for the schedule's ORDER BY and the values fixed-width for
 // calendar formats). is_public decides invitation semantics (ADR 0002):
 // creating a public event backfills a pending Event RSVP for every existing
-// guest in the same transaction.
+// guest in the same transaction. location_url is the optional Location Link
+// (an http(s) URL the schedule renders the location label as): it requires a
+// location, a cross-field rule the service enforces (the binder only checks
+// each field's own format).
 type CreateEventPayload struct {
 	Name        string  `json:"name" mod:"trim" validate:"required,max=200"`
 	Description *string `json:"description" mod:"trim" validate:"omitempty,max=2000"`
 	Location    *string `json:"location" mod:"trim" validate:"omitempty,max=500"`
+	LocationURL *string `json:"location_url" mod:"trim" validate:"omitempty,httpurl,max=2048"`
 	Date        string  `json:"date" mod:"trim" validate:"required,date"`
 	StartTime   *string `json:"start_time" mod:"trim" validate:"omitempty,time"`
 	EndTime     *string `json:"end_time" mod:"trim" validate:"omitempty,time"`
@@ -33,6 +37,7 @@ type UpdateEventPayload struct {
 	Name        string  `json:"name" mod:"trim" validate:"required,max=200"`
 	Description *string `json:"description" mod:"trim" validate:"omitempty,max=2000"`
 	Location    *string `json:"location" mod:"trim" validate:"omitempty,max=500"`
+	LocationURL *string `json:"location_url" mod:"trim" validate:"omitempty,httpurl,max=2048"`
 	Date        string  `json:"date" mod:"trim" validate:"required,date"`
 	StartTime   *string `json:"start_time" mod:"trim" validate:"omitempty,time"`
 	EndTime     *string `json:"end_time" mod:"trim" validate:"omitempty,time"`

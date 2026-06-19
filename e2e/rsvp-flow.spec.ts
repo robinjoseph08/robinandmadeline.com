@@ -122,9 +122,10 @@ test("guest RSVPs end to end: code entry, form, confirmation, return visit", asy
   await expect(aliceCard.getByText(eventName)).toBeVisible();
   await expect(placeholderCard.getByText(eventName)).toBeVisible();
 
-  // The event row shows its date and 12-hour time range.
+  // The event row shows its date and 12-hour time range, labeled with the
+  // venue timezone.
   await expect(
-    aliceCard.getByText("Saturday, October 17, 2026 · 5:00 PM to 10:00 PM"),
+    aliceCard.getByText("Saturday, October 17, 2026 · 5:00 PM to 10:00 PM CDT"),
   ).toBeVisible();
 
   // Alice attends; the placeholder gets a real name, attends too, and notes a

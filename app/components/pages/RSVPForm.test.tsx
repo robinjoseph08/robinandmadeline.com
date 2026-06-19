@@ -341,13 +341,14 @@ describe("RSVPForm", () => {
     const alice = await screen.findByRole("region", { name: "Alice Smith" });
 
     // A start time alone renders next to the date; a start and end render as
-    // a range. The 24-hour stored values display in 12-hour time.
+    // a range. The 24-hour stored values display in 12-hour time, labeled with
+    // the venue timezone.
     expect(
-      within(alice).getByText("Saturday, October 17, 2026 · 5:00 PM"),
+      within(alice).getByText("Saturday, October 17, 2026 · 5:00 PM CDT"),
     ).toBeInTheDocument();
     expect(
       within(alice).getByText(
-        "Saturday, October 17, 2026 · 5:30 PM to 10:00 PM",
+        "Saturday, October 17, 2026 · 5:30 PM to 10:00 PM CDT",
       ),
     ).toBeInTheDocument();
   });

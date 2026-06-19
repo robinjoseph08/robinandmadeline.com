@@ -3,6 +3,7 @@
  * the admin dashboard.
  */
 
+import { VENUE_TIME_ZONE } from "@/libraries/venue";
 import type { Event } from "@/types/generated/models";
 
 /**
@@ -50,6 +51,21 @@ export function formatEventDate(date: string): string {
 }
 
 /**
+ * The venue timezone's abbreviation on a given calendar date ("CST" or "CDT"
+ * for Central, depending on daylight saving). Event times are venue wall-clock
+ * values, so a displayed time can carry this label to make the zone explicit
+ * for guests reading from another timezone. Empty string if the runtime cannot
+ * resolve a short name.
+ */
+export function venueTimeZoneAbbreviation(date: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: VENUE_TIME_ZONE,
+    timeZoneName: "short",
+  }).formatToParts(new Date(`${date}T12:00:00Z`));
+  return parts.find((part) => part.type === "timeZoneName")?.value ?? "";
+}
+
+/**
  * Formats an ISO timestamp as a readable date and time ("Oct 17, 2026, 4:05
  * PM") for admin tables such as the crossword solve-times list. Falls back to
  * the raw string when it does not parse, so a bad value is visible rather than
@@ -86,19 +102,36 @@ export function formatDuration(ms: number): string {
 }
 
 /**
- * One line saying when an event happens: "Saturday, June 13, 2026 · 5:00 PM"
- * when a start time is set, with "5:00 PM to 10:00 PM" when an end time is
- * too, and just the date when the event has no start time.
+ * The time portion of an event, labeled with the venue timezone ("5:00 PM to
+ * 10:00 PM CDT", or "5:00 PM CDT" with no end), or null when the event has no
+ * start time (an all-day event shown by date alone). Event times are venue
+ * wall-clock values, so the zone label disambiguates them for a guest reading
+ * from another timezone. Splitting the time out from formatEventWhen lets the
+ * schedule card stack the date and time on separate lines while formatEventWhen
+ * keeps them on one.
+ */
+export function formatEventTime(
+  event: Pick<Event, "date" | "start_time" | "end_time">,
+): string | null {
+  if (!event.start_time) return null;
+  const range = event.end_time
+    ? `${formatTime(event.start_time)} to ${formatTime(event.end_time)}`
+    : formatTime(event.start_time);
+  const zone = venueTimeZoneAbbreviation(event.date);
+  return zone ? `${range} ${zone}` : range;
+}
+
+/**
+ * One line saying when an event happens: "Saturday, June 13, 2026 · 5:00 PM
+ * CDT" when a start time is set, with "5:00 PM to 10:00 PM CDT" when an end
+ * time is too, and just the date (no zone) when the event has no start time.
  */
 export function formatEventWhen(
   event: Pick<Event, "date" | "start_time" | "end_time">,
 ): string {
   const date = formatEventDate(event.date);
-  if (!event.start_time) return date;
-  const time = event.end_time
-    ? `${formatTime(event.start_time)} to ${formatTime(event.end_time)}`
-    : formatTime(event.start_time);
-  return `${date} · ${time}`;
+  const time = formatEventTime(event);
+  return time ? `${date} · ${time}` : date;
 }
 
 /**

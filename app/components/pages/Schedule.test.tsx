@@ -93,13 +93,38 @@ describe("Schedule", () => {
     renderSchedule();
 
     const card = await screen.findByRole("article", { name: "Reception" });
+    // The date and time render on their own lines (each with a leading icon).
     expect(
-      within(card).getByText(
-        "Saturday, October 17, 2026 · 5:00 PM to 10:00 PM",
-      ),
+      within(card).getByText("Saturday, October 17, 2026"),
+    ).toBeInTheDocument();
+    // The time line carries the venue timezone for guests in another zone.
+    expect(
+      within(card).getByText("5:00 PM to 10:00 PM CDT"),
     ).toBeInTheDocument();
     expect(within(card).getByText("The Grand Hall")).toBeInTheDocument();
     expect(within(card).getByText("Dinner and dancing.")).toBeInTheDocument();
+    // With no location link, the label is plain text, not a link.
+    expect(
+      within(card).queryByRole("link", { name: "The Grand Hall" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("links the location to its Location Link when the event has one", async () => {
+    mockScheduleFetch([
+      makeEvent({
+        location: "The Grand Hall",
+        location_url: "https://maps.app.goo.gl/abc123",
+      }),
+    ]);
+
+    renderSchedule();
+
+    const card = await screen.findByRole("article", { name: "Reception" });
+    // The icon is aria-hidden, so the link's accessible name is just the label.
+    const link = within(card).getByRole("link", { name: "The Grand Hall" });
+    expect(link).toHaveAttribute("href", "https://maps.app.goo.gl/abc123");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
   });
 
   it("renders events in the order the API returns (schedule order)", async () => {

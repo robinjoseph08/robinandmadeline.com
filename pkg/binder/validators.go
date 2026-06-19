@@ -82,6 +82,22 @@ func urlValidator(fl validator.FieldLevel) bool {
 	return err == nil && u.Scheme != "" && u.Host != ""
 }
 
+// httpurlValidator ensures the value is an http or https URL or the empty
+// string. It is the stricter sibling of urlValidator: where that one accepts
+// any scheme with a host, this one rejects everything but http(s). Use it for a
+// URL that will be rendered as an anchor href (the event Location Link), since a
+// javascript:, data:, or other-scheme value reaching the markup would be an XSS
+// vector. The empty string is allowed so the value can be cleared; pair with
+// `omitempty`, and add `required` to forbid blank.
+func httpurlValidator(fl validator.FieldLevel) bool {
+	value := fl.Field().String()
+	if value == "" {
+		return true
+	}
+	u, err := url.Parse(value)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
 // emailBlankValidator accepts a valid email address or the empty string. Like
 // the date/url validators it permits blank so a value can be cleared: a partial
 // update (PATCH) sends a present-but-blank field to erase an optional email,

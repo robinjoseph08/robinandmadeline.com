@@ -93,6 +93,26 @@ describe("AdminEvents list", () => {
     expect(screen.getByText("Public")).toBeInTheDocument();
     expect(screen.getByText("Private")).toBeInTheDocument();
   });
+
+  it("renders the location as a link when the event has a Location Link", async () => {
+    adminRequest.mockResolvedValue({
+      items: [
+        makeEvent({
+          id: "e-reception",
+          name: "Reception",
+          location: "The Grand Hall",
+          location_url: "https://maps.app.goo.gl/abc123",
+        }),
+      ],
+      total: 1,
+    });
+
+    renderEvents();
+
+    const link = await screen.findByRole("link", { name: "The Grand Hall" });
+    expect(link).toHaveAttribute("href", "https://maps.app.goo.gl/abc123");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
 });
 
 describe("AdminEvents create", () => {
@@ -123,11 +143,98 @@ describe("AdminEvents create", () => {
           name: "Brunch",
           description: undefined,
           location: undefined,
+          location_url: undefined,
           date: "2026-10-18",
           start_time: undefined,
           end_time: undefined,
           is_public: false,
         },
+      });
+    });
+  });
+
+  it("sends the location and its link when both are filled in", async () => {
+    adminRequest.mockImplementation((path: string, options?: object) => {
+      if (
+        path === "/admin/events" &&
+        (options as { method?: string } | undefined)?.method === "POST"
+      ) {
+        return Promise.resolve(makeEvent({ id: "e-new", name: "Reception" }));
+      }
+      return Promise.resolve({ items: [], total: 0 });
+    });
+
+    const user = userEvent.setup();
+    renderEvents();
+
+    await user.click(await screen.findByRole("button", { name: /Add event/ }));
+    await user.type(screen.getByLabelText("Name"), "Reception");
+    await user.type(screen.getByLabelText("Location"), "The Grand Hall");
+    await user.type(
+      screen.getByLabelText("Location link"),
+      "https://maps.app.goo.gl/abc123",
+    );
+    await user.type(screen.getByLabelText("Date"), "2026-10-18");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/events", {
+        method: "POST",
+        body: {
+          name: "Reception",
+          description: undefined,
+          location: "The Grand Hall",
+          location_url: "https://maps.app.goo.gl/abc123",
+          date: "2026-10-18",
+          start_time: undefined,
+          end_time: undefined,
+          is_public: false,
+        },
+      });
+    });
+  });
+});
+
+describe("AdminEvents edit", () => {
+  it("prefills the location link when editing and carries it through the update", async () => {
+    adminRequest.mockImplementation((path: string, options?: object) => {
+      if (
+        path === "/admin/events/e1" &&
+        (options as { method?: string } | undefined)?.method === "PUT"
+      ) {
+        return Promise.resolve(makeEvent({}));
+      }
+      return Promise.resolve({
+        items: [
+          makeEvent({
+            location: "The Grand Hall",
+            location_url: "https://maps.app.goo.gl/abc123",
+          }),
+        ],
+        total: 1,
+      });
+    });
+
+    const user = userEvent.setup();
+    renderEvents();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Edit Reception" }),
+    );
+    // The edit form seeds from the event, so the stored link is prefilled, not
+    // wiped (a dropped formFromEvent mapping would silently clear it on save).
+    expect(screen.getByLabelText("Location link")).toHaveValue(
+      "https://maps.app.goo.gl/abc123",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/events/e1", {
+        method: "PUT",
+        body: expect.objectContaining({
+          location: "The Grand Hall",
+          location_url: "https://maps.app.goo.gl/abc123",
+        }),
       });
     });
   });

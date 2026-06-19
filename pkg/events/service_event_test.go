@@ -18,6 +18,7 @@ func TestCreateEvent_PersistsFields(t *testing.T) {
 		Name:        "Ceremony",
 		Description: pointerutil.String("The main event"),
 		Location:    pointerutil.String("Garden Pavilion"),
+		LocationURL: pointerutil.String("https://maps.app.goo.gl/abc123"),
 		Date:        "2026-10-17",
 		StartTime:   pointerutil.String("16:00"),
 		EndTime:     pointerutil.String("17:00"),
@@ -29,6 +30,7 @@ func TestCreateEvent_PersistsFields(t *testing.T) {
 	assert.Equal(t, "Ceremony", reloaded.Name)
 	assert.Equal(t, pointerutil.String("The main event"), reloaded.Description)
 	assert.Equal(t, pointerutil.String("Garden Pavilion"), reloaded.Location)
+	assert.Equal(t, pointerutil.String("https://maps.app.goo.gl/abc123"), reloaded.LocationURL)
 	// The DATE column round-trips as the same YYYY-MM-DD string.
 	assert.Equal(t, "2026-10-17", reloaded.Date)
 	assert.Equal(t, pointerutil.String("16:00"), reloaded.StartTime)
@@ -114,11 +116,12 @@ func TestUpdateEvent_AppliesFields(t *testing.T) {
 	created := createEventT(t, svc, privateEventInput())
 
 	updated, err := svc.UpdateEvent(ctx(), created.ID, events.UpdateEventPayload{
-		Name:      "Madhuram Veppu",
-		Location:  pointerutil.String("Family Home"),
-		Date:      "2026-10-15",
-		StartTime: pointerutil.String("18:30"),
-		IsPublic:  false,
+		Name:        "Madhuram Veppu",
+		Location:    pointerutil.String("Family Home"),
+		LocationURL: pointerutil.String("https://maps.app.goo.gl/family"),
+		Date:        "2026-10-15",
+		StartTime:   pointerutil.String("18:30"),
+		IsPublic:    false,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "Madhuram Veppu", updated.Name)
@@ -128,9 +131,53 @@ func TestUpdateEvent_AppliesFields(t *testing.T) {
 	assert.Equal(t, "Madhuram Veppu", reloaded.Name)
 	assert.Nil(t, reloaded.Description, "an omitted optional field persists as NULL")
 	assert.Equal(t, pointerutil.String("Family Home"), reloaded.Location)
+	assert.Equal(t, pointerutil.String("https://maps.app.goo.gl/family"), reloaded.LocationURL)
 	assert.Equal(t, "2026-10-15", reloaded.Date)
 	assert.Equal(t, pointerutil.String("18:30"), reloaded.StartTime)
 	assert.Nil(t, reloaded.EndTime)
+}
+
+// A Location Link decorates a Location, so the service rejects a location_url
+// with no location on both write paths (the binder validates each field's own
+// format; this cross-field rule lives in the service). The rejection is a 422,
+// and nothing is persisted.
+func TestCreateEvent_RejectsLocationLinkWithoutLocation(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	// A link with no label at all, and a link with a present-but-blank label
+	// (what the binder yields after trimming whitespace), are both rejected: the
+	// rule requires a non-empty location, not merely a non-nil one.
+	for _, label := range []*string{nil, pointerutil.String("")} {
+		_, err := svc.CreateEvent(ctx(), events.CreateEventPayload{
+			Name:        "Ceremony",
+			Location:    label,
+			LocationURL: pointerutil.String("https://maps.app.goo.gl/abc123"),
+			Date:        "2026-10-17",
+		})
+		assertErrCode(t, err, errcodes.CodeValidationError)
+		require.ErrorContains(t, err, "A location link requires a location.")
+	}
+
+	_, total, err := svc.ListEvents(ctx())
+	require.NoError(t, err)
+	assert.Zero(t, total, "the rejected creates persisted nothing")
+}
+
+func TestUpdateEvent_RejectsLocationLinkWithoutLocation(t *testing.T) {
+	svc, _, _ := newServices(t)
+	created := createEventT(t, svc, privateEventInput())
+
+	_, err := svc.UpdateEvent(ctx(), created.ID, events.UpdateEventPayload{
+		Name:        created.Name,
+		LocationURL: pointerutil.String("https://maps.app.goo.gl/abc123"),
+		Date:        created.Date,
+	})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+	require.ErrorContains(t, err, "A location link requires a location.")
+
+	reloaded, err := svc.GetEvent(ctx(), created.ID)
+	require.NoError(t, err)
+	assert.Nil(t, reloaded.LocationURL, "the rejected update left the row unchanged")
 }
 
 func TestUpdateEvent_MissingIs404(t *testing.T) {

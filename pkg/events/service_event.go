@@ -18,12 +18,16 @@ import (
 // parties are invited explicitly. The payload is already bound, trimmed,
 // defaulted, and validated by the binder, so the fields are assigned directly.
 func (s *Service) CreateEvent(ctx context.Context, in CreateEventPayload) (*models.Event, error) {
+	if err := validateLocationLink(in.Location, in.LocationURL); err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	event := &models.Event{
 		ID:          newID(),
 		Name:        in.Name,
 		Description: in.Description,
 		Location:    in.Location,
+		LocationURL: in.LocationURL,
 		Date:        in.Date,
 		StartTime:   in.StartTime,
 		EndTime:     in.EndTime,
@@ -74,6 +78,9 @@ func (s *Service) ListEvents(ctx context.Context) ([]*models.Event, int, error) 
 // public-event invariant (ADR 0002); flipping to private leaves existing rows
 // untouched so no response is lost to a visibility toggle.
 func (s *Service) UpdateEvent(ctx context.Context, id string, in UpdateEventPayload) (*models.Event, error) {
+	if err := validateLocationLink(in.Location, in.LocationURL); err != nil {
+		return nil, err
+	}
 	event := new(models.Event)
 	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
 		// Load inside the tx so the public-flip detection and the backfill see a
@@ -91,6 +98,7 @@ func (s *Service) UpdateEvent(ctx context.Context, id string, in UpdateEventPayl
 		event.Name = in.Name
 		event.Description = in.Description
 		event.Location = in.Location
+		event.LocationURL = in.LocationURL
 		event.Date = in.Date
 		event.StartTime = in.StartTime
 		event.EndTime = in.EndTime
@@ -98,8 +106,8 @@ func (s *Service) UpdateEvent(ctx context.Context, id string, in UpdateEventPayl
 		event.UpdatedAt = time.Now()
 
 		if _, err := tx.NewUpdate().Model(event).
-			Column("name", "description", "location", "date", "start_time",
-				"end_time", "is_public", "updated_at").
+			Column("name", "description", "location", "location_url", "date",
+				"start_time", "end_time", "is_public", "updated_at").
 			WherePK().Exec(ctx); err != nil {
 			return errors.Wrap(err, "update event")
 		}
@@ -142,4 +150,19 @@ func backfillAllGuests(ctx context.Context, db bun.IDB, eventID string) error {
 		return err
 	}
 	return insertPendingRSVPs(ctx, db, []string{eventID}, guestIDs)
+}
+
+// validateLocationLink enforces the one cross-field rule on an event's location:
+// a Location Link decorates a Location, so a location_url with no location is
+// rejected (CONTEXT.md: "a link with no label is rejected"). The binder already
+// validated each field's own format; this invariant spans two fields, so it
+// lives here with the other service-enforced rules rather than as a struct tag.
+// Both fields arrive trimmed, so a blank is an empty (or nil) string.
+func validateLocationLink(location, locationURL *string) error {
+	hasURL := locationURL != nil && *locationURL != ""
+	hasLabel := location != nil && *location != ""
+	if hasURL && !hasLabel {
+		return errcodes.ValidationError("A location link requires a location.")
+	}
+	return nil
 }

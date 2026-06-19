@@ -1,25 +1,10 @@
-import { formatTime } from "@/libraries/format";
-import { VENUE_TIME_ZONE } from "@/libraries/venue";
+import { formatTime, venueTimeZoneAbbreviation } from "@/libraries/format";
 import type { EventResponse } from "@/types/generated/events";
 
 /**
- * The venue timezone's abbreviation on a given calendar date ("PST" or "PDT"
- * for Pacific, depending on daylight saving). Event times are venue
- * wall-clock values, so every displayed time carries this label to make the
- * zone explicit.
- */
-export function venueTimeZoneAbbreviation(date: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: VENUE_TIME_ZONE,
-    timeZoneName: "short",
-  }).formatToParts(new Date(`${date}T12:00:00Z`));
-  return parts.find((part) => part.type === "timeZoneName")?.value ?? "";
-}
-
-/**
  * Formats an event's date plus its optional start/end times for display
- * ("2026-10-17", "2026-10-17 4:00 PM PDT", "2026-10-17 4:00 PM to 10:00 PM
- * PDT", or "2026-10-17 until 10:00 PM PDT" when only an end time is set).
+ * ("2026-10-17", "2026-10-17 4:00 PM CDT", "2026-10-17 4:00 PM to 10:00 PM
+ * CDT", or "2026-10-17 until 10:00 PM CDT" when only an end time is set).
  * Shared by the events list rows and the event detail header. A date with no
  * times carries no zone label; there is no time to disambiguate.
  */

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
+import { EventLocation } from "@/components/library/EventLocation";
 import {
   EventFormDialog,
   type EventFormPayload,
@@ -143,7 +144,12 @@ export default function AdminEvents() {
                   </TableCell>
                   <TableCell>{formatEventWhen(event)}</TableCell>
                   <TableCell>
-                    {event.location ?? (
+                    {event.location ? (
+                      <EventLocation
+                        location={event.location}
+                        locationUrl={event.location_url}
+                      />
+                    ) : (
                       <span className="text-muted-foreground">-</span>
                     )}
                   </TableCell>
