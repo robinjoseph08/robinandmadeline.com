@@ -58,7 +58,7 @@ export default function Travel() {
       <div className="mt-12 flex flex-col gap-6">
         <Section icon={Plane} title="Flights">
           <p>
-            There are 2 main airports around here: the bigger DFW and the
+            There are two main airports around here: the bigger DFW and the
             smaller DAL (Love Field). Both are fairly close to each other, so
             they don't make too much of a difference in terms of travel
             distance. Some airlines only go to one or the other, so that will
@@ -77,7 +77,7 @@ export default function Travel() {
         <Section icon={Car} title="Rental Cars">
           <p>
             The DFW area is pretty sprawling, and the venue is a bit outside of
-            the city, so it’s highly encouraged to rent a car if you’re flying
+            the city, so it's highly encouraged to rent a car if you're flying
             in so that you can easily get around.
           </p>
         </Section>
