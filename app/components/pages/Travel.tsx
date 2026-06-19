@@ -44,9 +44,8 @@ function Section({
 
 /**
  * Travel: logistics for guests traveling in for the wedding, grouped into
- * titled sections. All copy is hard-coded placeholder text for now; edit it
- * directly below (each section's content is free-form JSX, so rich text is
- * fine).
+ * titled sections. Copy is hard-coded inline; edit it directly below (each
+ * section's content is free-form JSX, so rich text is fine).
  */
 export default function Travel() {
   return (
@@ -59,7 +58,7 @@ export default function Travel() {
       <div className="mt-12 flex flex-col gap-6">
         <Section icon={Plane} title="Flights">
           <p>
-            There are 2 main ariports around here: the bigger DFW and the
+            There are 2 main airports around here: the bigger DFW and the
             smaller DAL (Love Field). Both are fairly close to each other, so
             they don't make too much of a difference in terms of travel
             distance. Some airlines only go to one or the other, so that will
