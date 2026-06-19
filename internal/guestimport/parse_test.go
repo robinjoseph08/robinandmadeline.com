@@ -67,6 +67,9 @@ func TestParse_GroupsGuestsIntoPartiesByFamilyColumn(t *testing.T) {
 	require.True(t, alice.IsPrimary, "the first guest of a party is its primary")
 	require.Equal(t, []string{"Sibling", "Bridal Party"}, alice.Tags)
 	require.Equal(t, pointerutil.String("alice@example.com"), alice.Email)
+	// 555-0100 is a 7-digit fictional number, not a valid dialable US number, so
+	// the import's E.164 normalization leaves it as written; see
+	// TestParse_PhoneIsNormalizedToE164 for the normalized case.
 	require.Equal(t, pointerutil.String("555-0100"), alice.Phone)
 	require.False(t, alice.IsChild)
 	require.True(t, alice.IsDrinking)
@@ -289,6 +292,27 @@ func TestParse_CodesAreUppercased(t *testing.T) {
 	)
 	require.Empty(t, plan.Warnings)
 	require.Equal(t, pointerutil.String("PEPPER"), plan.Parties[0].Party.RSVPCode)
+}
+
+func TestParse_PhoneIsNormalizedToE164(t *testing.T) {
+	// The API normalizes phone numbers to E.164 (mod:"phone"); the import does
+	// the same, so a bare 10-digit sheet number is stored just like one a guest
+	// later enters through the form, and the frontend formats both. Invisible
+	// directional-formatting runes a Google Sheets export can wrap a cell in
+	// (the second row) are stripped first, since libphonenumber would otherwise
+	// refuse to parse the number; a value that still is not a valid, dialable
+	// number (the third row) is kept exactly as written.
+	// U+202D and U+202C are the invisible directional-formatting marks; building
+	// the row with explicit escapes keeps the fixture readable and unambiguous.
+	bidiPhone := "\u202d6184208298\u202c"
+	plan := parseT(t,
+		`Dana,Cole,Dana Cole,Robin,Friend,College,UTD,Cole,1,9725551234,,,,,,,,No,Yes,`,
+		"Amy,Stone,Amy Stone,Robin,Friend,College,UTD,Stone,1,"+bidiPhone+",,,,,,,,No,Yes,",
+		`Eli,Vale,Eli Vale,Robin,Friend,College,UTD,Vale,1,555-0100,,,,,,,,No,Yes,`,
+	)
+	require.Equal(t, pointerutil.String("+19725551234"), plan.Parties[0].Guests[0].Phone)
+	require.Equal(t, pointerutil.String("+16184208298"), plan.Parties[1].Guests[0].Phone)
+	require.Equal(t, pointerutil.String("555-0100"), plan.Parties[2].Guests[0].Phone)
 }
 
 func TestParse_CodeOnThePrimaryRowCoversTheParty(t *testing.T) {

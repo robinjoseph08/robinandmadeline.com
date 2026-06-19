@@ -19,6 +19,7 @@ import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Combobox, type ComboboxOption } from "@/components/library/Combobox";
+import { usePhoneFormatting } from "@/components/library/use-phone-formatting";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Command,
@@ -190,6 +191,12 @@ interface GridTextCellProps {
   className?: string;
   /** Normalize each typed value (e.g. force upper-case for RSVP codes). */
   transform?: (value: string) => string;
+  /**
+   * Format the value as a US phone number as it is typed, keeping the caret
+   * beside the edited digit (see usePhoneFormatting). Mutually exclusive with
+   * transform.
+   */
+  phoneFormat?: boolean;
   /** Show the save-status tint (off for add-row draft cells, which do not save). */
   showStatus?: boolean;
 }
@@ -207,9 +214,23 @@ export function GridTextCell({
   autoFocus,
   className,
   transform,
+  phoneFormat = false,
   showStatus = true,
 }: GridTextCellProps) {
   const cell = useCommittableValue(value, onCommit);
+
+  const applyTyped = (next: string) => {
+    if (commitOnChange) {
+      cell.commitValue(next);
+    } else {
+      cell.setValue(next);
+    }
+  };
+  // Phone column: caret-preserving live formatting, shared with the
+  // info-collection PhoneField. For the other columns the ref stays detached
+  // and the hook's effect is a no-op.
+  const inputRef = useRef<HTMLInputElement>(null);
+  const phoneOnChange = usePhoneFormatting(inputRef, applyTyped);
 
   // Drive the field's intrinsic width off the live (possibly uncommitted) value
   // so the column grows while you type, not only after a refetch (see
@@ -235,14 +256,14 @@ export function GridTextCell({
         autoFocus={autoFocus}
         className={cn(GRID_CONTROL_CLASS, className)}
         onBlur={commitOnChange ? undefined : cell.commit}
-        onChange={(e) => {
-          const next = transform ? transform(e.target.value) : e.target.value;
-          if (commitOnChange) {
-            cell.commitValue(next);
-          } else {
-            cell.setValue(next);
-          }
-        }}
+        onChange={
+          phoneFormat
+            ? phoneOnChange
+            : (e) =>
+                applyTyped(
+                  transform ? transform(e.target.value) : e.target.value,
+                )
+        }
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
@@ -273,6 +294,7 @@ export function GridTextCell({
           }
         }}
         placeholder={placeholder}
+        ref={phoneFormat ? inputRef : undefined}
         size={fieldSize}
         type={type}
         value={cell.value}

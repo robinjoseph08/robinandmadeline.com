@@ -119,6 +119,20 @@ func parsePhone(value string) (*phonenumbers.PhoneNumber, bool) {
 	return num, phonenumbers.IsValidNumber(num)
 }
 
+// NormalizePhone renders a phone number to canonical E.164 (e.g.
+// "(415) 555-2671" or "9725551234" -> "+14155552671") when it parses as a real,
+// dialable number against defaultPhoneRegion, and returns the value unchanged
+// otherwise. It is the standalone form of phoneModifier's normalization,
+// exported so a non-HTTP path — the one-time CSV guest import — can store the
+// same canonical representation the request binder produces instead of the
+// spreadsheet's raw formatting.
+func NormalizePhone(value string) string {
+	if num, ok := parsePhone(value); ok {
+		return phonenumbers.Format(num, phonenumbers.E164)
+	}
+	return value
+}
+
 // phoneValidator accepts a valid phone number or the empty string. Like the
 // date/url/emailblank validators it permits blank so a value can be cleared: a
 // partial update (PATCH) sends a present-but-blank field to erase an optional
@@ -149,8 +163,6 @@ func phoneModifier(_ context.Context, fl mold.FieldLevel) error {
 	if value == "" {
 		return nil
 	}
-	if num, ok := parsePhone(value); ok {
-		fl.Field().SetString(phonenumbers.Format(num, phonenumbers.E164))
-	}
+	fl.Field().SetString(NormalizePhone(value))
 	return nil
 }

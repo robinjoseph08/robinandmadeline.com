@@ -1,11 +1,13 @@
 import { useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 
+import { PhoneField } from "@/components/library/PhoneField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePartyInfo, useUpdatePartyInfo } from "@/hooks/queries/info";
 import { ApiError } from "@/libraries/api";
+import { formatPhone } from "@/libraries/phone";
 import type {
   Guest,
   GuestInfoUpdate,
@@ -119,17 +121,47 @@ function submittedName(input: string): string | undefined {
   return trimmed !== "" ? trimmed : undefined;
 }
 
-/** The party-level address fields, in display order. */
+/**
+ * The party-level address fields shown on the form, in display order. Country
+ * is deliberately absent: every invitation is mailed within the US, so the
+ * field is hidden and the value defaults to the US on submit (see
+ * handleSubmit).
+ */
 const addressFields = [
-  { key: "address_line_1", label: "Address line 1", required: true },
-  { key: "address_line_2", label: "Address line 2", required: false },
-  { key: "city", label: "City", required: true },
-  { key: "state_or_province", label: "State or province", required: true },
-  { key: "postal_code", label: "Postal code", required: true },
-  { key: "country", label: "Country", required: true },
+  {
+    key: "address_line_1",
+    label: "Address line 1",
+    placeholder: "123 Main St",
+    required: true,
+  },
+  {
+    key: "address_line_2",
+    label: "Address line 2",
+    placeholder: "Apt 4",
+    required: false,
+  },
+  { key: "city", label: "City", placeholder: "Dallas", required: true },
+  {
+    key: "state_or_province",
+    label: "State",
+    placeholder: "TX",
+    required: true,
+  },
+  {
+    key: "postal_code",
+    label: "ZIP code",
+    placeholder: "75201",
+    required: true,
+  },
 ] as const;
 
 type AddressKey = (typeof addressFields)[number]["key"];
+
+/**
+ * The country every invitation is mailed to. The form no longer asks for it,
+ * so this fills in for any party without an admin-entered country.
+ */
+const DEFAULT_COUNTRY = "United States";
 
 interface InfoFormProps {
   token: string;
@@ -153,7 +185,9 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
     Object.fromEntries(data.guests.map((g) => [g.id, g.email ?? ""])),
   );
   const [phones, setPhones] = useState<Record<string, string>>(() =>
-    Object.fromEntries(data.guests.map((g) => [g.id, g.phone ?? ""])),
+    Object.fromEntries(
+      data.guests.map((g) => [g.id, formatPhone(g.phone ?? "")]),
+    ),
   );
   const [address, setAddress] = useState<Record<AddressKey, string>>(() => {
     const initial = {} as Record<AddressKey, string>;
@@ -208,6 +242,9 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
       for (const field of addressFields) {
         payload[field.key] = address[field.key].trim();
       }
+      // Country isn't asked on the form; default it to the US, but keep any
+      // country an admin already entered for the party.
+      payload.country = (data.country ?? "").trim() || DEFAULT_COUNTRY;
     }
 
     try {
@@ -270,6 +307,7 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                     onChange={(e) =>
                       setKeyed(setNames, guest.id, e.target.value)
                     }
+                    placeholder="Jane Smith"
                     required
                     type="text"
                     value={names[guest.id] ?? ""}
@@ -285,6 +323,7 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                     onChange={(e) =>
                       setKeyed(setEmails, guest.id, e.target.value)
                     }
+                    placeholder="example@gmail.com"
                     required={guest.is_primary}
                     type="email"
                     value={emails[guest.id] ?? ""}
@@ -292,12 +331,10 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                 </div>
                 <div className="mt-3 flex flex-col gap-1.5">
                   <Label htmlFor={`phone-${guest.id}`}>Phone</Label>
-                  <Input
+                  <PhoneField
                     id={`phone-${guest.id}`}
-                    onChange={(e) =>
-                      setKeyed(setPhones, guest.id, e.target.value)
-                    }
-                    type="tel"
+                    onChange={(v) => setKeyed(setPhones, guest.id, v)}
+                    placeholder="9725551234"
                     value={phones[guest.id] ?? ""}
                   />
                 </div>
@@ -344,6 +381,11 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
           </section>
         ))}
 
+        <p className="text-center text-sm italic text-muted-foreground">
+          If there are additional people in your party that we missed, message
+          us so we can add them!
+        </p>
+
         {isPhysical ? (
           <section
             aria-label="Mailing address"
@@ -369,6 +411,7 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                         [field.key]: e.target.value,
                       }))
                     }
+                    placeholder={field.placeholder}
                     required={field.required}
                     type="text"
                     value={address[field.key]}
@@ -388,6 +431,12 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
         <Button disabled={updateInfo.isPending} type="submit">
           {updateInfo.isPending ? "Saving..." : "Save your info"}
         </Button>
+
+        <p className="text-sm text-muted-foreground">
+          On the rare occasion we send an email update, every email entered
+          above gets a copy so the whole party stays in the loop. If someone
+          would rather not get these updates, just leave their email blank.
+        </p>
       </form>
     </section>
   );

@@ -109,6 +109,76 @@ describe("InfoCollection", () => {
     );
   });
 
+  it("invites the party to flag anyone we missed", async () => {
+    apiRequest.mockResolvedValue(makeData());
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    expect(
+      screen.getByText(/additional people in your party/i),
+    ).toBeInTheDocument();
+  });
+
+  it("tells the party that submitted emails receive the rare updates", async () => {
+    apiRequest.mockResolvedValue(makeData());
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    expect(screen.getByText(/email update/i)).toBeInTheDocument();
+  });
+
+  it("shows example placeholders in the empty fields", async () => {
+    apiRequest.mockResolvedValue(makeData());
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    const alice = guestSection("Alice Smith");
+    expect(alice.getByLabelText(/^Name/)).toHaveAttribute(
+      "placeholder",
+      "Jane Smith",
+    );
+    expect(alice.getByLabelText(/^Email/)).toHaveAttribute(
+      "placeholder",
+      "example@gmail.com",
+    );
+    expect(alice.getByLabelText(/^Phone/)).toHaveAttribute(
+      "placeholder",
+      "9725551234",
+    );
+    const address = within(screen.getByRole("region", { name: /address/i }));
+    expect(address.getByLabelText(/Address line 1/)).toHaveAttribute(
+      "placeholder",
+      "123 Main St",
+    );
+    expect(address.getByLabelText(/ZIP code/)).toHaveAttribute(
+      "placeholder",
+      "75201",
+    );
+  });
+
+  it("shows a saved phone number in the formatted style on revisit", async () => {
+    apiRequest.mockResolvedValue(
+      makeData({
+        guests: [
+          {
+            id: "g1",
+            full_name: "Alice Smith",
+            is_primary: true,
+            email: "alice@example.com",
+            phone: "+19723121234",
+          },
+        ],
+      }),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    // The backend stores E.164; the form regroups it instead of showing +1...
+    expect(guestSection("Alice Smith").getByLabelText(/^Phone/)).toHaveValue(
+      "(972) 312-1234",
+    );
+  });
+
   it("requires the primary email and the address fields for a physical party", async () => {
     apiRequest.mockResolvedValue(makeData());
     renderPage();
@@ -132,9 +202,10 @@ describe("InfoCollection", () => {
     expect(address.getByLabelText(/Address line 1/)).toBeRequired();
     expect(address.getByLabelText(/Address line 2/)).not.toBeRequired();
     expect(address.getByLabelText(/City/)).toBeRequired();
-    expect(address.getByLabelText(/State or province/)).toBeRequired();
-    expect(address.getByLabelText(/Postal code/)).toBeRequired();
-    expect(address.getByLabelText(/Country/)).toBeRequired();
+    expect(address.getByLabelText(/State/)).toBeRequired();
+    expect(address.getByLabelText(/ZIP code/)).toBeRequired();
+    // Country is no longer asked: it's hidden and defaults to the US on submit.
+    expect(address.queryByLabelText(/Country/)).not.toBeInTheDocument();
   });
 
   it("hides the address section for a digital party, with no note about it", async () => {
@@ -170,13 +241,12 @@ describe("InfoCollection", () => {
     await user.type(alice.getByLabelText(/^Name/), "Alicia Smith");
     await user.type(alice.getByLabelText(/^Phone/), "+14155552671");
 
-    // Fill the required mailing address.
+    // Fill the required mailing address. Country isn't asked on the form.
     const address = within(screen.getByRole("region", { name: /address/i }));
     await user.type(address.getByLabelText(/Address line 1/), "123 Main St");
     await user.type(address.getByLabelText(/City/), "Springfield");
-    await user.type(address.getByLabelText(/State or province/), "IL");
-    await user.type(address.getByLabelText(/Postal code/), "62701");
-    await user.type(address.getByLabelText(/Country/), "USA");
+    await user.type(address.getByLabelText(/State/), "IL");
+    await user.type(address.getByLabelText(/ZIP code/), "62701");
 
     await user.click(screen.getByRole("button", { name: "Save your info" }));
 
@@ -185,6 +255,8 @@ describe("InfoCollection", () => {
     const payload = submittedPayload();
     expect(payload.address_line_1).toBe("123 Main St");
     expect(payload.city).toBe("Springfield");
+    // Country defaults to the US even though the guest never enters it.
+    expect(payload.country).toBe("United States");
     expect(payload.guests).toEqual([
       {
         guest_id: "g1",
