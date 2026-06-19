@@ -8,6 +8,8 @@
 /api
 /migrations
 /scripts
+# ...but the stray binary is a file; keep the committed scripts/ directory tracked.
+!/scripts/
 # Air / dev runtime scratch (e.g. tmp/api.port, golangci-lint cache)
 /tmp/
 build-errors.log
