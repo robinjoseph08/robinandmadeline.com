@@ -601,21 +601,23 @@ func optional(s string) *string {
 	return pointerutil.String(s)
 }
 
-// optionalPhone is optional for the Phone cell: it normalizes a non-blank
-// number to canonical E.164 (binder.NormalizePhone, the same step the request
-// binder runs) so a number imported from the sheet matches one a guest later
-// enters through the API, and the frontend formats both. Invisible formatting
-// runes a Google Sheets export can wrap a cell in are stripped first, since
-// libphonenumber treats them as part of the number and would otherwise refuse
-// to parse it; a value that still is not dialable is kept as written. This
-// mirrors the rsvp_code uppercasing in parseRow: the import deliberately
+// optionalPhone is optional for the Phone cell: a blank cell, or one holding
+// only the invisible formatting runes a Google Sheets export can wrap a value
+// in, becomes nil; any real number is normalized to canonical E.164
+// (binder.NormalizePhone, the same step the request binder runs) so a sheet
+// number matches one a guest later enters through the API, and the frontend
+// formats both. The runes are stripped before the blank check and before
+// parsing, since libphonenumber treats them as part of the number and would
+// otherwise refuse it; a value that still is not dialable is kept as written.
+// This mirrors the rsvp_code uppercasing in parseRow: the import deliberately
 // replicates the API's normalizations so the two paths converge on one stored
 // form.
 func optionalPhone(s string) *string {
-	if s == "" {
+	stripped := stripFormatRunes(s)
+	if stripped == "" {
 		return nil
 	}
-	return pointerutil.String(binder.NormalizePhone(stripFormatRunes(s)))
+	return pointerutil.String(binder.NormalizePhone(stripped))
 }
 
 // stripFormatRunes drops Unicode control and format characters (categories Cc
