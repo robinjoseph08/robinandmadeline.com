@@ -8,12 +8,13 @@ import {
 
 /**
  * Formats a phone number as the user types, via libphonenumber-js's AsYouType
- * against the US default region: a bare number groups as "(123) 456-7890", a
- * number written with the US "1" country code or in full international "+…" form
- * is grouped in its own convention, and a value too long or not yet a valid
- * number is left as the digits entered rather than forced into US grouping. The
- * backend still normalizes to E.164 on save, so callers seed a display-formatted
- * value (formatPhone) and submit whatever this leaves in the field.
+ * against the US default region: a bare number groups progressively as
+ * "(123) 456-7890", and a number written with the US "1" country code or in
+ * full international "+…" form is grouped in its own convention. A value with
+ * more digits than a valid number (so AsYouType can no longer place them) falls
+ * back toward the bare digits rather than a forced grouping. The backend still
+ * normalizes to E.164 on save, so callers seed a display-formatted value
+ * (formatPhone) and submit whatever this leaves in the field.
  */
 function formatPhoneInput(value: string): string {
   return new AsYouType("US").input(value);
