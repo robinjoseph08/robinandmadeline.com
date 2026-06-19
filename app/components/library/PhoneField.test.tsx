@@ -31,35 +31,47 @@ describe("PhoneField", () => {
     expect(phone).toHaveValue("(972) 555-1234");
   });
 
+  it("recognizes a leading US country code instead of mangling it", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    // A leading "1" is the US country code, so it groups as "1 (415)..." rather
+    // than getting swallowed into the area code.
+    const phone = screen.getByRole("textbox");
+    await user.type(phone, "14155552671");
+    expect(phone).toHaveValue("1 (415) 555-2671");
+  });
+
   it("keeps the caret beside the edited digit when inserting mid-number", async () => {
     const user = userEvent.setup();
     render(<Harness />);
 
+    // A number typed with a missing prefix digit reads as "(972) 551-234".
     const phone = screen.getByRole<HTMLInputElement>("textbox");
-    await user.type(phone, "9725551234");
-    expect(phone).toHaveValue("(972) 555-1234");
+    await user.type(phone, "972551234");
+    expect(phone).toHaveValue("(972) 551-234");
 
-    // Drop a digit in right after the area code (position 6, before the first
-    // "5"). The rest of the number reflows, but the caret stays beside the
+    // Insert the missing "5" between the "55" and the "1" (position 8). The
+    // number reflows to "(972) 555-1234", but the caret stays right after the
     // inserted digit instead of snapping to the end.
-    await user.type(phone, "0", {
-      initialSelectionStart: 6,
-      initialSelectionEnd: 6,
+    await user.type(phone, "5", {
+      initialSelectionStart: 8,
+      initialSelectionEnd: 8,
     });
-    expect(phone).toHaveValue("(972) 055-51234");
-    expect(phone.selectionStart).toBe(7);
+    expect(phone).toHaveValue("(972) 555-1234");
+    expect(phone.selectionStart).toBe(9);
   });
 
-  it("shows the placeholder when empty and leaves an international number alone", async () => {
+  it("shows the placeholder when empty and formats an international number", async () => {
     const user = userEvent.setup();
     render(<Harness />);
 
     const phone = screen.getByRole("textbox");
     expect(phone).toHaveAttribute("placeholder", "9725551234");
 
-    // A number written in full international form (leading +) is not US, so it
-    // passes through untouched rather than being forced into US grouping.
+    // A number written in full international form (leading +) is grouped in its
+    // own country's convention, not forced into US grouping.
     await user.type(phone, "+442079460958");
-    expect(phone).toHaveValue("+442079460958");
+    expect(phone).toHaveValue("+44 20 7946 0958");
   });
 });

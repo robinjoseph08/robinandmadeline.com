@@ -267,7 +267,7 @@ describe("InfoCollection", () => {
         guest_id: "g1",
         full_name: "Alicia Smith",
         email: "alice@example.com",
-        phone: "+14155552671",
+        phone: "+1 415 555 2671",
         remove: false,
       },
       {

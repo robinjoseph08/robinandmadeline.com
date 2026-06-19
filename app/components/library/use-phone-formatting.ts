@@ -1,3 +1,4 @@
+import { AsYouType } from "libphonenumber-js";
 import {
   useLayoutEffect,
   useRef,
@@ -6,18 +7,16 @@ import {
 } from "react";
 
 /**
- * Formats a US phone number as the user types, so they can see the punctuation
- * is handled for them (the backend still normalizes to E.164 on save). A number
- * written in international form (a leading +) is passed through untouched, since
- * this light formatter only knows US grouping; that also covers a prefilled
- * value already in international form.
+ * Formats a phone number as the user types, via libphonenumber-js's AsYouType
+ * against the US default region: a bare number groups as "(123) 456-7890", a
+ * number written with the US "1" country code or in full international "+…" form
+ * is grouped in its own convention, and a value too long or not yet a valid
+ * number is left as the digits entered rather than forced into US grouping. The
+ * backend still normalizes to E.164 on save, so callers seed a display-formatted
+ * value (formatPhone) and submit whatever this leaves in the field.
  */
 function formatPhoneInput(value: string): string {
-  if (value.trim().startsWith("+")) return value;
-  const digits = value.replace(/\D/g, "");
-  if (digits.length < 4) return digits;
-  if (digits.length < 7) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
-  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  return new AsYouType("US").input(value);
 }
 
 /** Counts the digit characters in a string. */
@@ -43,7 +42,7 @@ function caretAfterNthDigit(formatted: string, n: number): number {
 }
 
 /**
- * Wires caret-preserving US phone formatting onto a controlled text input.
+ * Wires caret-preserving phone formatting onto a controlled text input.
  * Inserting the grouping characters shifts every later position, so a controlled
  * input would restore a now-stale caret offset and scatter the user's edits.
  * Instead we count the digits before the caret, reformat, and put the caret back

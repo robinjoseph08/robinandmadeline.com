@@ -11,7 +11,7 @@ interface PhoneFieldProps {
 }
 
 /**
- * A controlled phone input that formats US numbers as the user types, with the
+ * A controlled phone input that formats numbers as the user types, with the
  * caret kept beside the digit being edited (see usePhoneFormatting). The backend
  * still normalizes to E.164 on save, so seed this with a display-formatted value
  * (formatPhone) and submit whatever it holds.

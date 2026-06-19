@@ -192,9 +192,9 @@ interface GridTextCellProps {
   /** Normalize each typed value (e.g. force upper-case for RSVP codes). */
   transform?: (value: string) => string;
   /**
-   * Format the value as a US phone number as it is typed, keeping the caret
-   * beside the edited digit (see usePhoneFormatting). When set, it takes
-   * precedence over transform, which is ignored.
+   * Format the value as a phone number as it is typed, keeping the caret beside
+   * the edited digit (see usePhoneFormatting). When set, it takes precedence
+   * over transform, which is ignored.
    */
   phoneFormat?: boolean;
   /** Show the save-status tint (off for add-row draft cells, which do not save). */
