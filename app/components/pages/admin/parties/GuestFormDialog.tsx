@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react";
 import { useState } from "react";
 
 import { ChipsInput } from "@/components/library/ChipsInput";
+import { PhoneField } from "@/components/library/PhoneField";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -193,10 +194,10 @@ export function GuestFormDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="guest-phone">Phone</Label>
-              <Input
+              <PhoneField
                 id="guest-phone"
-                onChange={(e) => update("phone", e.target.value)}
-                placeholder="(415) 555-2671"
+                onChange={(value) => update("phone", value)}
+                placeholder="9725551234"
                 value={form.phone}
               />
             </div>

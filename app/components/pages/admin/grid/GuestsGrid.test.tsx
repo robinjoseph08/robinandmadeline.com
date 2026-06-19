@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -91,5 +91,33 @@ describe("GuestsGrid add-row isolation", () => {
     );
     // ...without ever re-rendering the grid body that holds the guest rows.
     expect(partyIdFor).not.toHaveBeenCalled();
+  });
+});
+
+describe("GuestsGrid phone cell", () => {
+  it("formats a phone number live as it is typed and commits the formatted value", async () => {
+    adminRequest.mockResolvedValue(
+      makeGuest({ id: "g1", full_name: "Alice", phone: "+19725551234" }),
+    );
+    const user = userEvent.setup();
+    renderGrid(
+      [makeGuest({ id: "g1", full_name: "Alice" })],
+      (g) => g.party_id,
+    );
+
+    // The phone cell punctuates US numbers as they are typed, matching the
+    // info-collection and guest-dialog inputs.
+    const phone = await screen.findByRole("textbox", { name: "Phone" });
+    await user.type(phone, "9725551234");
+    expect(phone).toHaveValue("(972) 555-1234");
+
+    // Blurring commits the formatted value; the backend re-normalizes to E.164.
+    await user.tab();
+    await waitFor(() =>
+      expect(adminRequest).toHaveBeenCalledWith("/admin/guests/g1", {
+        method: "PATCH",
+        body: { phone: "(972) 555-1234" },
+      }),
+    );
   });
 });

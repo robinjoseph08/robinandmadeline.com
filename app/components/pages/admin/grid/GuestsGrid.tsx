@@ -289,6 +289,7 @@ export function GuestsGrid<TGuest extends Guest>({
                 onCommit={(value) =>
                   patchField(guest.id, partyId, { phone: value })
                 }
+                phoneFormat
                 placeholder="None"
                 // Show the stored E.164 number in a friendly format; the backend
                 // re-normalizes whatever is typed back to E.164 on save.
@@ -585,6 +586,7 @@ function AddGuestRow({
         onCommit={(value) => setDraftField("phone", value)}
         onEnter={handleCreate}
         onEscape={handleAddRowEscape}
+        phoneFormat
         placeholder="e.g. (415) 555-2671"
         showStatus={false}
         value={draft.phone}

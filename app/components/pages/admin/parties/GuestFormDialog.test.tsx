@@ -68,3 +68,34 @@ describe("GuestFormDialog tags", () => {
     );
   });
 });
+
+describe("GuestFormDialog phone", () => {
+  it("seeds the phone formatted, formats edits live, and submits the formatted value", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(
+      <GuestFormDialog
+        guest={makeGuest({ phone: "+19725551234" })}
+        isPending={false}
+        onOpenChange={() => {}}
+        onSubmit={onSubmit}
+        open
+      />,
+    );
+
+    // An edit opens with the stored E.164 number shown the friendly way.
+    const phone = screen.getByLabelText("Phone");
+    expect(phone).toHaveValue("(972) 555-1234");
+
+    // Re-typing a bare number punctuates it live, and the formatted value is
+    // what the dialog submits (the backend re-normalizes to E.164).
+    await user.clear(phone);
+    await user.type(phone, "4155552671");
+    expect(phone).toHaveValue("(415) 555-2671");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ phone: "(415) 555-2671" }),
+    );
+  });
+});

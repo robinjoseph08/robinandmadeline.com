@@ -166,11 +166,11 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   await expect(bobCard.getByText(/will be removed/)).toBeVisible();
 
   // --- Fill the mailing address and submit -----------------------------------
+  // Country isn't asked on the form; it defaults to the US on submit.
   await addressCard.getByLabel(/Address line 1/).fill("123 Main St");
   await addressCard.getByLabel(/City/).fill("Springfield");
-  await addressCard.getByLabel(/State or province/).fill("IL");
-  await addressCard.getByLabel(/Postal code/).fill("62701");
-  await addressCard.getByLabel(/Country/).fill("USA");
+  await addressCard.getByLabel(/State/).fill("IL");
+  await addressCard.getByLabel(/ZIP code/).fill("62701");
 
   await page.getByRole("button", { name: "Save your info" }).click();
   await expect(page.getByRole("heading", { name: "Thank you!" })).toBeVisible();
@@ -187,8 +187,10 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   await expect(revisitedAlice.getByLabel(/Email/)).toHaveValue(
     "alice@example.com",
   );
-  // The backend normalized the phone to E.164.
-  await expect(revisitedAlice.getByLabel("Phone")).toHaveValue("+14155552671");
+  // The backend normalized the phone to E.164; the form regroups it for display.
+  await expect(revisitedAlice.getByLabel("Phone")).toHaveValue(
+    "(415) 555-2671",
+  );
 
   // The +1 slot still belongs to the party (it was never removable here), but
   // stays invisible on the revisit too.
@@ -198,7 +200,7 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   await expect(revisitedAddress.getByLabel(/Address line 1/)).toHaveValue(
     "123 Main St",
   );
-  await expect(revisitedAddress.getByLabel(/Postal code/)).toHaveValue("62701");
+  await expect(revisitedAddress.getByLabel(/ZIP code/)).toHaveValue("62701");
 });
 
 test("a digital party's page hides the address section entirely", async ({

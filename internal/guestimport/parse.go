@@ -23,9 +23,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/golib/pointerutil"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 )
 
@@ -317,7 +319,7 @@ func (p *parser) parseRow(line int, record []string, idx map[string]int) {
 		fullName:  name,
 		partyName: get(colParty),
 		email:     optional(get(colEmail)),
-		phone:     optional(get(colPhone)),
+		phone:     optionalPhone(get(colPhone)),
 		tags:      splitMulti(get(colOrder)),
 		address: addressCells{
 			line1:      get(colAddress1),
@@ -597,4 +599,37 @@ func optional(s string) *string {
 		return nil
 	}
 	return pointerutil.String(s)
+}
+
+// optionalPhone is optional for the Phone cell: a blank cell, or one holding
+// only the invisible formatting runes a Google Sheets export can wrap a value
+// in, becomes nil; any real number is normalized to canonical E.164
+// (binder.NormalizePhone, the same step the request binder runs) so a sheet
+// number matches one a guest later enters through the API, and the frontend
+// formats both. The runes are stripped before the blank check and before
+// parsing, since libphonenumber treats them as part of the number and would
+// otherwise refuse it; a value that still is not dialable is kept as written.
+// This mirrors the rsvp_code uppercasing in parseRow: the import deliberately
+// replicates the API's normalizations so the two paths converge on one stored
+// form.
+func optionalPhone(s string) *string {
+	stripped := stripFormatRunes(s)
+	if stripped == "" {
+		return nil
+	}
+	return pointerutil.String(binder.NormalizePhone(stripped))
+}
+
+// stripFormatRunes drops Unicode control and format characters (categories Cc
+// and Cf) from a string. A Google Sheets export occasionally wraps a phone cell
+// in directional-formatting marks (U+202D ... U+202C): they survive TrimSpace,
+// are invisible, and block phone normalization, so they are removed before the
+// number is parsed.
+func stripFormatRunes(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.In(r, unicode.Cc, unicode.Cf) {
+			return -1
+		}
+		return r
+	}, s)
 }
