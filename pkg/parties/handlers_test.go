@@ -227,6 +227,60 @@ func TestListPartiesHandler_FilterByQueryParam(t *testing.T) {
 	assert.Equal(t, "R", resp.Items[0].Name)
 }
 
+func TestListPartiesHandler_InvalidSortValueIs422(t *testing.T) {
+	e := newAPI(t)
+	// The sort spec is validated by the binder's sortspec validator, like a bad
+	// filter enum: an unknown field is a 422 before the handler runs.
+	rec := do(t, e, http.MethodGet, "/api/admin/parties?sort=bogus:asc", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
+func TestListGuestsHandler_SortFieldIsScopedToEntity(t *testing.T) {
+	e := newAPI(t)
+	// "invitation" is a party-only sort field; the guest list's sortspec=guests
+	// whitelist rejects it, proving the validator is scoped per entity.
+	rec := do(t, e, http.MethodGet, "/api/admin/guests?sort=invitation:asc", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
+func TestListPartiesHandler_SortByQueryParam(t *testing.T) {
+	e := newAPI(t)
+	// Create three parties whose names and sides order differently, then sort via
+	// the query string, proving the multi-level spec flows through c.Bind into the
+	// order by. Bob is robin; alice and Charlie are madeline.
+	for _, p := range []map[string]any{
+		{"name": "Bob", "side": "robin"},
+		{"name": "alice", "side": "madeline"},
+		{"name": "Charlie", "side": "madeline"},
+	} {
+		p["relation"] = "friend"
+		p["invitation_type"] = "digital"
+		require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties", withGuest(p)).Code)
+	}
+
+	names := func(target string) []string {
+		rec := do(t, e, http.MethodGet, target, nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var resp struct {
+			Items []struct {
+				Name string `json:"name"`
+			} `json:"items"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		got := make([]string, len(resp.Items))
+		for i, it := range resp.Items {
+			got[i] = it.Name
+		}
+		return got
+	}
+
+	assert.Equal(t, []string{"alice", "Bob", "Charlie"}, names("/api/admin/parties?sort=name:asc"))
+	// Multi-level: side asc (madeline first) then name asc within each side.
+	assert.Equal(t, []string{"alice", "Charlie", "Bob"}, names("/api/admin/parties?sort=side:asc,name:asc"))
+}
+
 func TestListGuestsHandler_MultiTagQueryParamFiltersAnyOf(t *testing.T) {
 	e := newAPI(t)
 	// One party with two guests carrying different tags, added through the

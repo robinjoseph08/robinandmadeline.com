@@ -27,6 +27,35 @@ func guestIDs(guests []*models.Guest) map[string]bool {
 	return ids
 }
 
+// partyNames returns the party names in their listed order, for asserting sorts.
+func partyNames(ps []*models.Party) []string {
+	names := make([]string, len(ps))
+	for i, p := range ps {
+		names[i] = p.Name
+	}
+	return names
+}
+
+// guestNames returns the guest full names in their listed order, for asserting
+// sorts.
+func guestNames(guests []*models.Guest) []string {
+	names := make([]string, len(guests))
+	for i, g := range guests {
+		names[i] = g.FullName
+	}
+	return names
+}
+
+// sortPartyInput is a minimal valid digital party with the given name and side,
+// for sort tests that need parties whose names and sides order differently from
+// their creation order (so single-field and multi-level sorts are distinguishable).
+func sortPartyInput(name, side string) parties.CreatePartyPayload {
+	in := digitalPartyInput()
+	in.Name = name
+	in.Side = side
+	return in
+}
+
 func TestListParties_FiltersBySideRelationCircleInvitation(t *testing.T) {
 	svc, _ := newService(t)
 
@@ -469,5 +498,110 @@ func TestListGuests_EventAndRSVPStatusFilters(t *testing.T) {
 		ids := guestIDs(got)
 		assert.True(t, ids[g1.ID])
 		assert.False(t, ids[g3.ID], "filtered out by the party filter")
+	})
+}
+
+// TestListParties_Sort covers the multi-level party sort. Parties are created out
+// of alphabetical, side, and creation order so single-field and multi-level
+// sorts each produce a visibly distinct order, and "alice" is lowercase to prove
+// the name sort is case-insensitive.
+func TestListParties_Sort(t *testing.T) {
+	svc, _ := newService(t)
+
+	// Created in this order: Bob (robin), alice (madeline), Charlie (madeline).
+	bob := createPartyT(t, svc, sortPartyInput("Bob", models.SideRobin))
+	alice := createPartyT(t, svc, sortPartyInput("alice", models.SideMadeline))
+	charlie := createPartyT(t, svc, sortPartyInput("Charlie", models.SideMadeline))
+
+	t.Run("name asc is case-insensitive A-Z", func(t *testing.T) {
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{Sort: "name:asc"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alice", "Bob", "Charlie"}, partyNames(got))
+	})
+	t.Run("name desc is Z-A", func(t *testing.T) {
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{Sort: "name:desc"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Charlie", "Bob", "alice"}, partyNames(got))
+	})
+	t.Run("date_added desc is newest first", func(t *testing.T) {
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{Sort: "date_added:desc"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{charlie.Name, alice.Name, bob.Name}, partyNames(got))
+	})
+	t.Run("side then name groups by side, sorts by name within", func(t *testing.T) {
+		// side asc puts madeline (m < r) before robin; within each side, name asc.
+		// This differs from name-only (which would interleave Bob between alice and
+		// Charlie), proving the second level is honored.
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{Sort: "side:asc,name:asc"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alice", "Charlie", "Bob"}, partyNames(got))
+	})
+	t.Run("empty sort is the builtin default: creation order, oldest first", func(t *testing.T) {
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{})
+		require.NoError(t, err)
+		assert.Equal(t, []string{bob.Name, alice.Name, charlie.Name}, partyNames(got))
+	})
+	t.Run("sort composes with a filter", func(t *testing.T) {
+		// Narrow to madeline parties, then sort by name: the where clause and the
+		// order by coexist.
+		got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{
+			Side: pointerutil.String(models.SideMadeline),
+			Sort: "name:asc",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alice", "Charlie"}, partyNames(got))
+	})
+}
+
+// TestListGuests_Sort covers the multi-level guest sort, including sorting by the
+// owning party (a correlated subquery) and a party-then-name multi-level sort.
+func TestListGuests_Sort(t *testing.T) {
+	svc, _ := newService(t)
+
+	// Apple Party (robin) holds Charlie then alice; Zebra Party (madeline) holds Bob.
+	apple := createPartyT(t, svc, sortPartyInput("Apple Party", models.SideRobin))
+	zebra := createPartyT(t, svc, sortPartyInput("Zebra Party", models.SideMadeline))
+
+	// Created in this order: Charlie, then alice, then Bob.
+	charlie := addGuestT(t, svc, apple.ID, parties.CreateGuestPayload{FullName: "Charlie", IsPrimary: true})
+	alice := addGuestT(t, svc, apple.ID, parties.CreateGuestPayload{FullName: "alice"})
+	bob := addGuestT(t, svc, zebra.ID, parties.CreateGuestPayload{FullName: "Bob", IsPrimary: true})
+
+	t.Run("name asc is case-insensitive A-Z", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Sort: "name:asc"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alice", "Bob", "Charlie"}, guestNames(got))
+	})
+	t.Run("name desc is Z-A", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Sort: "name:desc"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Charlie", "Bob", "alice"}, guestNames(got))
+	})
+	t.Run("party then name groups by owning party, sorts by name within", func(t *testing.T) {
+		// Apple (a < z) before Zebra; within Apple, name asc gives alice, Charlie.
+		// Differs from name-only ([alice, Bob, Charlie]), proving the second level.
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Sort: "party:asc,name:asc"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alice", "Charlie", "Bob"}, guestNames(got))
+	})
+	t.Run("date_added desc is newest first", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Sort: "date_added:desc"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{bob.FullName, alice.FullName, charlie.FullName}, guestNames(got))
+	})
+	t.Run("empty sort is the builtin default: creation order, oldest first", func(t *testing.T) {
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{})
+		require.NoError(t, err)
+		assert.Equal(t, []string{charlie.FullName, alice.FullName, bob.FullName}, guestNames(got))
+	})
+	t.Run("sort composes with a filter", func(t *testing.T) {
+		// Narrow to Apple Party, then sort by name: the where clause and the order
+		// by coexist.
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{
+			PartyID: pointerutil.String(apple.ID),
+			Sort:    "name:asc",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alice", "Charlie"}, guestNames(got))
 	})
 }

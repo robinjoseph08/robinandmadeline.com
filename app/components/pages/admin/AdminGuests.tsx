@@ -13,17 +13,29 @@ import {
 import { FilterSheet } from "@/components/pages/admin/parties/FilterSheet";
 import { GuestFormDialog } from "@/components/pages/admin/parties/GuestFormDialog";
 import {
+  BUILTIN_GUEST_SORT,
   CIRCLE_OPTIONS,
+  GUEST_SORT_FIELD_SET,
+  GUEST_SORT_FIELDS,
+  GUEST_SORT_STORAGE_KEY,
   RELATION_OPTIONS,
   RSVP_STATUS_OPTIONS,
   SIDE_OPTIONS,
   type Option,
 } from "@/components/pages/admin/parties/options";
+import { SortSheet } from "@/components/pages/admin/parties/SortSheet";
 import { Input } from "@/components/ui/input";
 import { useEvents } from "@/hooks/queries/events";
 import { useGuests, useUpdateGuest } from "@/hooks/queries/guests";
 import { useParties } from "@/hooks/queries/parties";
 import { useFilterParams } from "@/hooks/useFilterParams";
+import { useSortDefault } from "@/hooks/useSortDefault";
+import {
+  parseSortSpec,
+  serializeSortSpec,
+  sortSpecsEqual,
+  type SortLevel,
+} from "@/libraries/sortSpec";
 import type {
   Circle,
   EventRSVPStatus,
@@ -58,9 +70,10 @@ const FILTER_KEYS = [
 ] as const;
 
 // Every URL param forwarded to the list API: the sheet filters plus the search
-// box. Unknown params (a utm_ tag on a shared link) stay in the URL but never
-// reach the API, whose binder 422s unknown query keys.
-const QUERY_KEYS = [...FILTER_KEYS, "search"] as const;
+// box and the sort (neither a filter, so both stay out of the badge count).
+// Unknown params (a utm_ tag on a shared link) stay in the URL but never reach
+// the API, whose binder 422s unknown query keys.
+const QUERY_KEYS = [...FILTER_KEYS, "search", "sort"] as const;
 
 /**
  * Admin flat guest list: every guest across all parties, edited like a
@@ -117,10 +130,46 @@ export default function AdminGuests() {
     (key) => filters[key] !== undefined,
   ).length;
 
+  // Sort precedence: an explicit URL sort wins, else this browser's saved
+  // default, else the builtin (creation order). The URL holds only a non-default
+  // sort; the effective sort is always sent to the API so the server order is
+  // explicit. See AdminParties for the shared shape.
+  const [storedDefaultSort, saveStoredDefaultSort] = useSortDefault(
+    GUEST_SORT_STORAGE_KEY,
+    GUEST_SORT_FIELD_SET,
+  );
+  const urlSort = useMemo(
+    () =>
+      filters.sort ? parseSortSpec(filters.sort, GUEST_SORT_FIELD_SET) : null,
+    [filters.sort],
+  );
+  const defaultSort =
+    storedDefaultSort && storedDefaultSort.length > 0
+      ? storedDefaultSort
+      : BUILTIN_GUEST_SORT;
+  const effectiveSort = urlSort && urlSort.length > 0 ? urlSort : defaultSort;
+  const isSortDirty = urlSort !== null && !sortSpecsEqual(urlSort, defaultSort);
+
+  const applySort = (next: SortLevel[]) => {
+    const serialized = serializeSortSpec(next);
+    setFilter(
+      "sort",
+      serialized && !sortSpecsEqual(next, defaultSort) ? serialized : undefined,
+    );
+  };
+  const saveSortAsDefault = () => {
+    saveStoredDefaultSort(effectiveSort);
+    setFilter("sort", undefined);
+  };
+  const resetSort = () => setFilter("sort", undefined);
+
   // keepPreviousData holds the last results (and the count) on screen while a new
-  // search/filter fetches, so the list does not flash to a loading state on every
-  // keystroke; the search box's spinner signals the refetch instead.
-  const guestsQuery = useGuests(filters, { placeholderData: keepPreviousData });
+  // search/filter/sort fetches, so the list does not flash to a loading state on
+  // every keystroke; the search box's spinner signals the refetch instead.
+  const guestsQuery = useGuests(
+    { ...filters, sort: serializeSortSpec(effectiveSort) || undefined },
+    { placeholderData: keepPreviousData },
+  );
   const guests = guestsQuery.data?.items ?? [];
   const updateGuest = useUpdateGuest();
 
@@ -231,7 +280,7 @@ export default function AdminGuests() {
         </div>
         <FilterSheet
           activeCount={activeFilterCount}
-          onClearAll={() => clearAll(["search"])}
+          onClearAll={() => clearAll(["search", "sort"])}
         >
           <FilterSelect<string>
             label="Party"
@@ -294,6 +343,14 @@ export default function AdminGuests() {
             value={filters.rsvp_status as EventRSVPStatus | undefined}
           />
         </FilterSheet>
+        <SortSheet
+          fields={GUEST_SORT_FIELDS}
+          isDirty={isSortDirty}
+          levels={effectiveSort}
+          onChange={applySort}
+          onResetDefault={resetSort}
+          onSaveDefault={saveSortAsDefault}
+        />
       </div>
 
       {guestsQuery.isLoading ? (

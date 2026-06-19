@@ -133,12 +133,15 @@ type MarkInfoPayload struct {
 	Status string `json:"status" validate:"required,oneof=complete incomplete" tstype:"models.InfoCollectionStatus"`
 }
 
-// ListPartiesQuery is the set of party list filters, bound from the query string
-// by the custom binder (gorilla/schema via the `query` tag). A nil pointer means
-// "do not filter on this field". Every filter except InfoCollectionStatus is
-// applied in SQL; status is computed in Go (it depends on the derived rules) and
-// filtered after the query. Enum filters are validated (omitempty so an absent
-// filter is fine); a bad value is a 422.
+// ListPartiesQuery is the set of party list filters plus the sort, bound from the
+// query string by the custom binder (gorilla/schema via the `query` tag). A nil
+// filter pointer means "do not filter on this field". Every filter except
+// InfoCollectionStatus is applied in SQL; status is computed in Go (it depends on
+// the derived rules) and filtered after the query. Sort is a multi-level sort
+// spec ("side:asc,name:asc"), parsed and applied via pkg/sortspec; an empty Sort
+// keeps the default (creation order). Enum filters and Sort are validated
+// (omitempty so an absent value is fine); a bad value is a 422 (the sortspec
+// validator checks Sort against the party field whitelist).
 type ListPartiesQuery struct {
 	Side                    *string `query:"side" json:"side" validate:"omitempty,oneof=robin madeline"`
 	Relation                *string `query:"relation" json:"relation" validate:"omitempty,oneof=family friend"`
@@ -146,6 +149,7 @@ type ListPartiesQuery struct {
 	InvitationType          *string `query:"invitation_type" json:"invitation_type" validate:"omitempty,oneof=physical digital"`
 	InfoCollectionRequested *bool   `query:"info_collection_requested" json:"info_collection_requested"`
 	InfoCollectionStatus    *string `query:"info_collection_status" json:"info_collection_status" validate:"omitempty,oneof=complete incomplete" tstype:"models.InfoCollectionStatus"`
+	Sort                    string  `query:"sort" json:"sort,omitempty" validate:"omitempty,max=200,sortspec=parties"`
 }
 
 // CreateGuestPayload is the body to add a guest to a party. The party comes from
@@ -226,12 +230,12 @@ type PatchGuestPayload struct {
 	SeatNumber          *int     `json:"seat_number,omitempty" validate:"omitempty,min=1"`
 }
 
-// ListGuestsQuery is the set of flat guest-list filters, bound from the query
-// string by the custom binder (gorilla/schema via the `query` tag). Side /
-// Relation / Circle are party-level attributes, so those clauses join through
-// the guest's party. EventID / RSVPStatus filter through the guest's Event
-// RSVP rows (a row is the invitation, ADR 0002): an event alone matches that
-// event's invited set, adding a status constrains within that event, and a
+// ListGuestsQuery is the set of flat guest-list filters plus the sort, bound from
+// the query string by the custom binder (gorilla/schema via the `query` tag).
+// Side / Relation / Circle are party-level attributes, so those clauses join
+// through the guest's party. EventID / RSVPStatus filter through the guest's
+// Event RSVP rows (a row is the invitation, ADR 0002): an event alone matches
+// that event's invited set, adding a status constrains within that event, and a
 // status alone matches guests holding a row in that status on any event.
 type ListGuestsQuery struct {
 	Search   *string `query:"search" json:"search"`                               // case-insensitive match on name, email, phone, or party name
@@ -253,6 +257,11 @@ type ListGuestsQuery struct {
 	IsPlaceholder *bool   `query:"is_placeholder" json:"is_placeholder"`
 	EventID       *string `query:"event_id" json:"event_id" validate:"omitempty,uuid"` // matches guests invited to this event
 	RSVPStatus    *string `query:"rsvp_status" json:"rsvp_status" validate:"omitempty,oneof=pending attending not_attending" tstype:"models.EventRSVPStatus"`
+	// Sort is a multi-level sort spec ("party:asc,name:asc"); an empty Sort keeps
+	// the default (creation order). The "party" field sorts a guest by its owning
+	// party's name. Validated against the guest field whitelist by the sortspec
+	// validator (a bad value is a 422).
+	Sort string `query:"sort" json:"sort,omitempty" validate:"omitempty,max=200,sortspec=guests"`
 }
 
 // PartyResponse is the API representation of a party: the stored model plus the

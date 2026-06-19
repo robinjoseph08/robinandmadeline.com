@@ -7,6 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/sortspec"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 )
@@ -32,8 +33,9 @@ func escapeLike(term string) string {
 	return likeEscaper.Replace(term)
 }
 
-// ListParties returns parties matching the filter (each with guests loaded,
-// ordered by creation time) and the total count.
+// ListParties returns parties matching the filter (each with guests loaded) in
+// the requested sort order (default: creation order, oldest first) and the total
+// count.
 //
 // Every filter except InfoCollectionStatus is applied in SQL. Status cannot be
 // expressed cleanly in SQL because it depends on the derived rules over the
@@ -43,7 +45,8 @@ func escapeLike(term string) string {
 // and filtering one predicate in Go is comfortably fine.
 func (s *Service) ListParties(ctx context.Context, f ListPartiesQuery) ([]*models.Party, int, error) {
 	var parties []*models.Party
-	q := s.db.NewSelect().Model(&parties).Relation("Guests", orderGuestsByCreation).Order("p.created_at ASC", "p.id ASC")
+	q := s.db.NewSelect().Model(&parties).Relation("Guests", orderGuestsByCreation)
+	q = orderPartiesBySort(q, sortspec.ResolveParties(f.Sort))
 
 	if f.Side != nil {
 		q = q.Where("p.side = ?", *f.Side)
@@ -89,15 +92,16 @@ func (s *Service) ListParties(ctx context.Context, f ListPartiesQuery) ([]*model
 	return filtered, len(filtered), nil
 }
 
-// ListGuests returns guests matching the flat filter (ordered by creation time)
-// and the total count. Each guest's owning party is eager-loaded so the flat
-// list can show the party name (a guest has no detail page of its own; it is
-// edited in the context of its party). Party-level filters (side/relation/
-// circle) are applied via a correlated EXISTS against the guest's party, keeping
-// the result a flat guest list.
+// ListGuests returns guests matching the flat filter in the requested sort order
+// (default: creation order, oldest first) and the total count. Each guest's
+// owning party is eager-loaded so the flat list can show the party name (a guest
+// has no detail page of its own; it is edited in the context of its party).
+// Party-level filters (side/relation/circle) are applied via a correlated EXISTS
+// against the guest's party, keeping the result a flat guest list.
 func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.Guest, int, error) {
 	var guests []*models.Guest
-	q := s.db.NewSelect().Model(&guests).Relation("Party").Order("g.created_at ASC", "g.id ASC")
+	q := s.db.NewSelect().Model(&guests).Relation("Party")
+	q = orderGuestsBySort(q, sortspec.ResolveGuests(f.Sort))
 
 	if f.PartyID != nil {
 		q = q.Where("g.party_id = ?", *f.PartyID)
@@ -189,4 +193,83 @@ func partyScopeSubquery(db *bun.DB, f ListGuestsQuery) *bun.SelectQuery {
 		sub = sub.Where("? = ANY(p.circle)", *f.Circle)
 	}
 	return sub
+}
+
+// orderPartiesBySort applies a parsed multi-level sort to the party list query:
+// one ORDER BY expression per level, in precedence order, then p.id ASC as a
+// stable tiebreaker so rows that tie on every level keep a deterministic order
+// across loads. levels is never empty (sortspec.ResolveParties falls back to the
+// builtin default), so the default of creation order (oldest first) is just the
+// builtin running through the same path, leaving an unsorted view unchanged.
+func orderPartiesBySort(q *bun.SelectQuery, levels []sortspec.SortLevel) *bun.SelectQuery {
+	for _, l := range levels {
+		if expr := partySortExpr(l.Field); expr != "" {
+			q = q.OrderExpr(expr + " " + sortDir(l.Direction))
+		}
+	}
+	return q.Order("p.id ASC")
+}
+
+// partySortExpr maps a whitelisted party sort field to its ORDER BY expression on
+// the parties table (aliased p). Name sorts use LOWER for case-insensitive
+// ordering ("alice" next to "Alice"). The expressions embed no user input (the
+// field came from the sortspec whitelist, the direction is added separately), so
+// they are injection-safe. An unmapped field returns "" and is skipped, which is
+// the seam a sortspec field would slip through if added without an SQL case
+// (TestPartySortFieldsHaveExpr guards against exactly that).
+func partySortExpr(field string) string {
+	switch field {
+	case sortspec.FieldName:
+		return "LOWER(p.name)"
+	case sortspec.FieldDateAdded:
+		return "p.created_at"
+	case sortspec.FieldSide:
+		return "p.side"
+	case sortspec.FieldRelation:
+		return "p.relation"
+	case sortspec.FieldInvitation:
+		return "p.invitation_type"
+	}
+	return ""
+}
+
+// orderGuestsBySort is orderPartiesBySort for the flat guest list, tiebroken by
+// g.id ASC.
+func orderGuestsBySort(q *bun.SelectQuery, levels []sortspec.SortLevel) *bun.SelectQuery {
+	for _, l := range levels {
+		if expr := guestSortExpr(l.Field); expr != "" {
+			q = q.OrderExpr(expr + " " + sortDir(l.Direction))
+		}
+	}
+	return q.Order("g.id ASC")
+}
+
+// guestSortExpr maps a whitelisted guest sort field to its ORDER BY expression on
+// the guests table (aliased g). The party-level fields (party name, side,
+// relation) read the owning party through a correlated subquery rather than the
+// joined Party relation, so the ordering does not depend on the relation join's
+// alias (mirroring how the party-name search clause is built). See partySortExpr
+// for the injection-safety and unmapped-field notes.
+func guestSortExpr(field string) string {
+	switch field {
+	case sortspec.FieldName:
+		return "LOWER(g.full_name)"
+	case sortspec.FieldParty:
+		return "(SELECT LOWER(parties.name) FROM parties WHERE parties.id = g.party_id)"
+	case sortspec.FieldDateAdded:
+		return "g.created_at"
+	case sortspec.FieldSide:
+		return "(SELECT parties.side FROM parties WHERE parties.id = g.party_id)"
+	case sortspec.FieldRelation:
+		return "(SELECT parties.relation FROM parties WHERE parties.id = g.party_id)"
+	}
+	return ""
+}
+
+// sortDir renders a sort direction as the SQL keyword.
+func sortDir(d sortspec.Direction) string {
+	if d == sortspec.DirDesc {
+		return "DESC"
+	}
+	return "ASC"
 }
