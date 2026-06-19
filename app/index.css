@@ -76,7 +76,7 @@
   --color-cream: #fbfaf8;
   --color-primary: #f3e1e1; /* soft rose tint */
   --color-secondary: #b7c8e6; /* soft periwinkle (crossword/chips highlight) */
-  --color-complementary-1: #e4e8d9; /* soft green */
+  --color-complementary-1: #c5d39c; /* soft green */
 
   /* Type families */
   --font-script: "Lily Paperie", "Snell Roundhand", cursive;
@@ -108,7 +108,7 @@
   --secondary-foreground: #2a2622;
   --muted: #f1ede7;
   --muted-foreground: #5c534b;
-  --accent: #e4e8d9; /* green soft */
+  --accent: var(--color-complementary-1); /* green (brand palette) */
   --accent-foreground: #434e30; /* green deep, for text on the green tint */
   --destructive: #9a3d3d; /* a clearer red, distinct from the mauve rose */
   --destructive-foreground: #ffffff;
