@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
 
+import { useAuth } from "@/libraries/auth-context";
+
 interface GameInfo {
   description: string;
   title: string;
@@ -23,8 +25,30 @@ const GAMES: GameInfo[] = [
 ];
 
 export default function Games() {
+  const { isAuthenticated } = useAuth();
+
+  // The games aren't ready for guests yet, so anyone without an admin session
+  // gets a friendly "coming soon" note instead of the list. The play routes are
+  // gated to match (see RequireGamesAccess), so the cards stay hidden here too.
+  if (!isAuthenticated) {
+    return (
+      <section className="mx-auto max-w-2xl py-8">
+        <h1 className="text-3xl font-bold">Games</h1>
+        <p className="mt-3 text-muted-foreground">
+          We're building some games for you to play while you wait for the
+          wedding. Check back later to play them!
+        </p>
+      </section>
+    );
+  }
+
   return (
     <section className="mx-auto max-w-2xl py-8">
+      <p className="mb-6 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        You're seeing the games below because you're signed in as an admin.
+        Guests get a coming soon note until they're ready.
+      </p>
+
       <h1 className="text-3xl font-bold">Games</h1>
       <p className="mt-3 text-muted-foreground">
         A little fun while you wait for the big day.
