@@ -101,6 +101,25 @@ export default function SiteHeader() {
     };
   }, [open]);
 
+  // Close the menu if the viewport grows into the desktop layout while it is
+  // open (e.g. a larger phone rotating to landscape past the md breakpoint).
+  // Otherwise it would be hidden by md:hidden along with its toggle while body
+  // scroll stays locked, with no visible way to recover. Guarded for jsdom and
+  // other environments without matchMedia.
+  useEffect(() => {
+    if (!open || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const desktop = window.matchMedia("(min-width: 768px)");
+    const onChange = (event: MediaQueryListEvent) => {
+      if (event.matches) {
+        setOpen(false);
+      }
+    };
+    desktop.addEventListener("change", onChange);
+    return () => desktop.removeEventListener("change", onChange);
+  }, [open]);
+
   // Keep keyboard focus inside the open panel (wrap at both ends) and close it
   // on Escape. Events bubble up from the focused control within the panel.
   function handleMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
