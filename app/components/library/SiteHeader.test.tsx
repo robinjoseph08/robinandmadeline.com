@@ -57,6 +57,64 @@ describe("SiteHeader", () => {
     }
   });
 
+  it("closes the mobile menu via its close button", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    await user.click(
+      screen.getByRole("button", { name: /toggle navigation menu/i }),
+    );
+    expect(screen.getByTestId("mobile-menu")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /close navigation menu/i }),
+    );
+    expect(screen.queryByTestId("mobile-menu")).not.toBeInTheDocument();
+  });
+
+  it("closes the mobile menu on Escape", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    await user.click(
+      screen.getByRole("button", { name: /toggle navigation menu/i }),
+    );
+    expect(screen.getByTestId("mobile-menu")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("mobile-menu")).not.toBeInTheDocument();
+  });
+
+  it("moves focus into the open menu", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    await user.click(
+      screen.getByRole("button", { name: /toggle navigation menu/i }),
+    );
+
+    // Focus lands on a control inside the panel so keyboard/AT users start
+    // within it rather than behind it.
+    const menu = screen.getByTestId("mobile-menu");
+    expect(menu).toContainElement(document.activeElement as HTMLElement);
+  });
+
+  it("locks body scroll while open and restores it on close", async () => {
+    const user = userEvent.setup();
+    renderHeader();
+
+    const before = document.body.style.overflow;
+    await user.click(
+      screen.getByRole("button", { name: /toggle navigation menu/i }),
+    );
+    expect(document.body.style.overflow).toBe("hidden");
+
+    await user.click(
+      screen.getByRole("button", { name: /close navigation menu/i }),
+    );
+    expect(document.body.style.overflow).toBe(before);
+  });
+
   it("closes the mobile menu when navigating via the logo", async () => {
     const user = userEvent.setup();
     // Start off the home page so the logo navigates to a different route.
@@ -74,6 +132,35 @@ describe("SiteHeader", () => {
     );
 
     expect(screen.queryByTestId("mobile-menu")).not.toBeInTheDocument();
+  });
+
+  it("marks the active route and leaves the others unmarked", () => {
+    renderHeader("/story");
+
+    // NavLink sets aria-current="page" on the active route. Home carries `end`,
+    // so it must not match /story (the bug a missing `end` would introduce).
+    const [story] = screen.getAllByRole("link", { name: "Our Story" });
+    expect(story).toHaveAttribute("aria-current", "page");
+    const [home] = screen.getAllByRole("link", { name: "Home" });
+    expect(home).not.toHaveAttribute("aria-current");
+  });
+
+  it("includes the Admin link inside the mobile menu when authenticated", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("admin_token", "a.jwt.token");
+    renderHeader();
+
+    await user.click(
+      screen.getByRole("button", { name: /toggle navigation menu/i }),
+    );
+
+    // The mobile menu must carry the same authenticated items as the desktop
+    // nav, including the appended Admin link (not bare NAV_LINKS).
+    const menu = screen.getByTestId("mobile-menu");
+    expect(within(menu).getByRole("link", { name: "Admin" })).toHaveAttribute(
+      "href",
+      "/admin",
+    );
   });
 
   it("hides the Admin link when there is no admin session", () => {
@@ -106,14 +193,25 @@ describe("SiteHeader", () => {
     expect(brand).not.toHaveTextContent(/Madeline/);
   });
 
-  it("shows the full names brand on non-home pages", () => {
+  it("shows the compact mark on mobile and the script names on desktop off home", () => {
     renderHeader("/story");
 
-    // Off the home page the header is a solid bar with the spelled-out names.
     const brand = screen.getByRole("link", {
       name: /robin and madeline, home/i,
     });
-    expect(brand).toHaveTextContent(/Robin/);
-    expect(brand).toHaveTextContent(/Madeline/);
+    // jsdom applies no CSS, so both variants are in the DOM; assert the
+    // responsive contract via classes instead. Inverting the two (the bug a
+    // class swap would introduce) flips which is shown at each breakpoint.
+    // Mobile mark: the compact "R&M", visible by default and hidden at md+.
+    const compact = brand.querySelector(".md\\:hidden");
+    expect(compact).not.toBeNull();
+    expect(compact).toHaveTextContent(/^R&M$/);
+    expect(compact).not.toHaveClass("hidden");
+    // Desktop mark: the script names, hidden on mobile and shown at md+.
+    const names = brand.querySelector(".md\\:inline-block");
+    expect(names).not.toBeNull();
+    expect(names).toHaveClass("hidden");
+    expect(names).toHaveTextContent(/Robin/);
+    expect(names).toHaveTextContent(/Madeline/);
   });
 });
