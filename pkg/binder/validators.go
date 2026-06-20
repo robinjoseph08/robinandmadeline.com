@@ -11,6 +11,7 @@ import (
 	"github.com/go-playground/mold/v4"
 	"github.com/go-playground/validator/v10"
 	"github.com/nyaruka/phonenumbers"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/sortspec"
 )
 
 // dateRE constrains the month to 01-12 and the day to 01-31. It is a format
@@ -181,4 +182,17 @@ func phoneModifier(_ context.Context, fl mold.FieldLevel) error {
 	}
 	fl.Field().SetString(NormalizePhone(value))
 	return nil
+}
+
+// sortspecValidator accepts a valid multi-level sort spec for the entity named
+// in the tag param (e.g. `sortspec=parties`), or the empty string. The spec
+// grammar and per-entity field whitelist live in pkg/sortspec, so an invalid
+// ?sort= is a 422 before the handler runs, just like a bad filter enum. Pair
+// with `omitempty` so an absent sort is skipped.
+func sortspecValidator(fl validator.FieldLevel) bool {
+	value := fl.Field().String()
+	if value == "" {
+		return true
+	}
+	return sortspec.ValidateSpec(fl.Param(), value) == nil
 }

@@ -1,5 +1,5 @@
 import { keepPreviousData } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { PartiesGrid } from "@/components/pages/admin/grid/PartiesGrid";
@@ -9,15 +9,27 @@ import {
 } from "@/components/pages/admin/parties/FilterSelect";
 import { FilterSheet } from "@/components/pages/admin/parties/FilterSheet";
 import {
+  BUILTIN_PARTY_SORT,
   CIRCLE_OPTIONS,
   INFO_STATUS_OPTIONS,
   INVITATION_TYPE_OPTIONS,
+  PARTY_SORT_FIELD_SET,
+  PARTY_SORT_FIELDS,
+  PARTY_SORT_STORAGE_KEY,
   RELATION_OPTIONS,
   SIDE_OPTIONS,
 } from "@/components/pages/admin/parties/options";
 import { PartyFormDialog } from "@/components/pages/admin/parties/PartyFormDialog";
+import { SortSheet } from "@/components/pages/admin/parties/SortSheet";
 import { useParties, useUpdateParty } from "@/hooks/queries/parties";
 import { useFilterParams } from "@/hooks/useFilterParams";
+import { useSortDefault } from "@/hooks/useSortDefault";
+import {
+  parseSortSpec,
+  serializeSortSpec,
+  sortSpecsEqual,
+  type SortLevel,
+} from "@/libraries/sortSpec";
 import type {
   Circle,
   InfoCollectionStatus,
@@ -34,9 +46,7 @@ import type {
 // Boolean party filters, listed so useFilterParams parses them back from the URL.
 const BOOL_FILTERS = ["info_collection_requested"] as const;
 
-// Filter keys, counted for the "Filters" badge. They are also the only URL
-// params forwarded to the list API (an unknown query key is a 422 from the
-// binder, so a stray utm_ param must never reach it).
+// Filter keys, counted for the "Filters" badge.
 const FILTER_KEYS = [
   "side",
   "relation",
@@ -45,6 +55,12 @@ const FILTER_KEYS = [
   "info_collection_status",
   "info_collection_requested",
 ] as const;
+
+// Every URL param forwarded to the list API: the filters plus the sort (which is
+// not a filter, so it stays out of the badge count). Unknown params (a utm_ tag
+// on a shared link) stay in the URL but never reach the API, whose binder 422s
+// unknown query keys.
+const QUERY_KEYS = [...FILTER_KEYS, "sort"] as const;
 
 /**
  * Admin parties list, edited like a spreadsheet: every cell saves on the spot via
@@ -56,7 +72,7 @@ const FILTER_KEYS = [
  */
 export default function AdminParties() {
   const [filters, setFilter, clearAll] = useFilterParams<ListPartiesQuery>(
-    FILTER_KEYS,
+    QUERY_KEYS,
     BOOL_FILTERS,
   );
   const [editParty, setEditParty] = useState<PartyResponse | undefined>(
@@ -64,11 +80,48 @@ export default function AdminParties() {
   );
   const [editOpen, setEditOpen] = useState(false);
 
-  // keepPreviousData keeps the current rows on screen while a filter change
-  // refetches, instead of flashing the "Loading parties..." state.
-  const partiesQuery = useParties(filters, {
-    placeholderData: keepPreviousData,
-  });
+  // Sort precedence: an explicit URL sort wins, else this browser's saved
+  // default, else the builtin (creation order). The URL holds only a non-default
+  // sort (kept shareable via the same useFilterParams writer as the filters); the
+  // effective sort is always sent to the API so the server order is explicit.
+  const [storedDefaultSort, saveStoredDefaultSort] = useSortDefault(
+    PARTY_SORT_STORAGE_KEY,
+    PARTY_SORT_FIELD_SET,
+  );
+  const urlSort = useMemo(
+    () =>
+      filters.sort ? parseSortSpec(filters.sort, PARTY_SORT_FIELD_SET) : null,
+    [filters.sort],
+  );
+  const defaultSort =
+    storedDefaultSort && storedDefaultSort.length > 0
+      ? storedDefaultSort
+      : BUILTIN_PARTY_SORT;
+  const effectiveSort = urlSort && urlSort.length > 0 ? urlSort : defaultSort;
+  const isSortDirty = urlSort !== null && !sortSpecsEqual(urlSort, defaultSort);
+
+  // Write the sort to the URL, but only when it differs from the default (a
+  // default sort leaves the URL clean and falls through to the same effective
+  // order).
+  const applySort = (next: SortLevel[]) => {
+    const serialized = serializeSortSpec(next);
+    setFilter(
+      "sort",
+      serialized && !sortSpecsEqual(next, defaultSort) ? serialized : undefined,
+    );
+  };
+  const saveSortAsDefault = () => {
+    saveStoredDefaultSort(effectiveSort);
+    setFilter("sort", undefined); // now the default; clear the URL override
+  };
+  const resetSort = () => setFilter("sort", undefined);
+
+  // keepPreviousData keeps the current rows on screen while a filter or sort
+  // change refetches, instead of flashing the "Loading parties..." state.
+  const partiesQuery = useParties(
+    { ...filters, sort: serializeSortSpec(effectiveSort) || undefined },
+    { placeholderData: keepPreviousData },
+  );
   const updateParty = useUpdateParty();
 
   const parties = partiesQuery.data?.items ?? [];
@@ -109,7 +162,7 @@ export default function AdminParties() {
       <div className="flex flex-wrap items-center gap-3">
         <FilterSheet
           activeCount={activeFilterCount}
-          onClearAll={() => clearAll()}
+          onClearAll={() => clearAll(["sort"])}
         >
           <FilterSelect<Side>
             label="Side"
@@ -147,6 +200,14 @@ export default function AdminParties() {
             value={filters.info_collection_requested}
           />
         </FilterSheet>
+        <SortSheet
+          fields={PARTY_SORT_FIELDS}
+          isDirty={isSortDirty}
+          levels={effectiveSort}
+          onChange={applySort}
+          onResetDefault={resetSort}
+          onSaveDefault={saveSortAsDefault}
+        />
       </div>
 
       {partiesQuery.isLoading ? (
