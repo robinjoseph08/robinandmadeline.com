@@ -2,6 +2,7 @@ import { Menu, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 
+import Initials from "@/components/library/Initials";
 import Monogram from "@/components/library/Monogram";
 import Names from "@/components/library/Names";
 import { NAV_LINKS, type NavLinkItem } from "@/components/library/nav-links";
@@ -186,9 +187,7 @@ export default function SiteHeader() {
       role="dialog"
     >
       <div className="flex shrink-0 items-center justify-between px-4 py-5">
-        <span className="font-display text-lg font-normal tracking-wide text-rose">
-          R<span className="px-0.5 text-[0.85em]">&amp;</span>M
-        </span>
+        <Initials className="text-rose" />
         <button
           aria-label="Close navigation menu"
           className="-mr-2 rounded-md p-2 text-ink transition-colors hover:bg-rose-soft"
@@ -228,12 +227,8 @@ export default function SiteHeader() {
           className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/45 to-transparent"
         />
         <div className="relative mx-auto flex max-w-5xl items-center justify-between px-4 py-5">
-          <Link
-            aria-label="Robin and Madeline, home"
-            className="font-display text-lg font-normal tracking-wide text-white [text-shadow:0_1px_4px_rgba(42,38,34,1),0_1px_10px_rgba(42,38,34,0.6)]"
-            to="/"
-          >
-            R<span className="px-0.5 text-[0.85em]">&amp;</span>M
+          <Link aria-label="Robin and Madeline, home" to="/">
+            <Initials className="text-white [text-shadow:0_1px_4px_rgba(42,38,34,1),0_1px_10px_rgba(42,38,34,0.6)]" />
           </Link>
           <nav className="hidden items-center gap-1 md:flex">
             <NavItems items={items} tone="onImage" />
@@ -259,9 +254,7 @@ export default function SiteHeader() {
                 (the full script names crowd that slim row and align awkwardly).
                 Desktop: the script names take over as the centered centerpiece,
                 where there is room and no hero to carry them. */}
-            <span className="font-display text-lg font-normal tracking-wide text-rose md:hidden">
-              R<span className="px-0.5 text-[0.85em]">&amp;</span>M
-            </span>
+            <Initials className="text-rose md:hidden" />
             <Names className="hidden text-[clamp(1.875rem,4.5vw,3rem)] text-rose md:inline-block" />
           </Link>
           <nav className="hidden items-center gap-1 md:flex">
