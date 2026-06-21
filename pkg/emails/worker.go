@@ -381,12 +381,13 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 	// to HTML and wrapped in the shell, the same pipeline the compose preview
 	// shows (RenderEmail).
 	messageID, err := w.client.Send(ctx, Message{
-		From:        w.cfg.From,
-		To:          row.EmailAddress,
-		Subject:     Render(send.Subject, mctx),
-		Text:        Render(send.Body, mctx),
-		HTML:        RenderEmail(send.Subject, send.Body, mctx),
-		RecipientID: row.ID,
+		From:           w.cfg.From,
+		To:             row.EmailAddress,
+		Subject:        Render(send.Subject, mctx),
+		Text:           Render(send.Body, mctx),
+		HTML:           RenderEmail(send.Subject, send.Body, mctx),
+		RecipientID:    row.ID,
+		UnsubscribeURL: unsubscribeURL(mctx),
 	})
 	if err != nil {
 		var rejection *RejectionError

@@ -184,6 +184,15 @@
                 <span style="opacity: 0.6"
                   >With love, Robin &amp; Madeline</span
                 >
+                {{if .UnsubscribeURL}}<br />
+                <span style="opacity: 0.6"
+                  >{{if .RecipientEmail}}This update was sent to
+                  {{.RecipientEmail}}. {{end}}<a
+                    href="{{.UnsubscribeURL}}"
+                    style="color: #161822"
+                    >Unsubscribe</a
+                  >.</span
+                >{{end}}
               </td>
             </tr>
           </table>

@@ -106,7 +106,13 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	// The guest-facing email subscription flow mounts on the open group too:
 	// like the info flow there is no JWT, the guest's own UUID in the URL is the
 	// authentication (ADR 0009).
-	subscriptions.RegisterRoutes(api, subscriptions.NewService(db))
+	subService := subscriptions.NewService(db)
+	subscriptions.RegisterRoutes(api, subService)
+	// The RFC 8058 one-click unsubscribe endpoint the List-Unsubscribe header
+	// points at sits off the /api prefix (a top-level POST /u/:id), so the same
+	// /u/:id path serves the SPA page on GET and the one-click POST here (ADR
+	// 0009).
+	subscriptions.RegisterOneClickRoute(e, subService)
 	// The Mailgun delivery webhook also mounts on the open group: Mailgun
 	// calls it, so there is no JWT; the HMAC signature on each payload is the
 	// authentication (an unconfigured signing key rejects everything).

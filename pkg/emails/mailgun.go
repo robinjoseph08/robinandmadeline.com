@@ -28,6 +28,11 @@ type Message struct {
 	// `sending` row against Mailgun's event log without sending a duplicate
 	// (ADR 0004).
 	RecipientID string
+	// UnsubscribeURL, when set, is added as the RFC 2369 List-Unsubscribe header
+	// plus the RFC 8058 one-click List-Unsubscribe-Post, pointing at the
+	// per-guest unsubscribe link (ADR 0009). Empty for a send with no
+	// addressable guest, in which case no unsubscribe headers are added.
+	UnsubscribeURL string
 }
 
 // RejectionError marks a send Mailgun definitively rejected: a response came
@@ -123,6 +128,13 @@ func (c *HTTPMailgunClient) Send(ctx context.Context, msg Message) (string, erro
 	form.Set("text", msg.Text)
 	form.Set("html", msg.HTML)
 	form.Set("v:recipient_id", msg.RecipientID)
+	if msg.UnsubscribeURL != "" {
+		// RFC 2369 + RFC 8058: a mail client renders a native "Unsubscribe"
+		// control from these headers and POSTs to the URL for one-click. The same
+		// URL renders the unsubscribe page on GET for the in-body footer link.
+		form.Set("h:List-Unsubscribe", "<"+msg.UnsubscribeURL+">")
+		form.Set("h:List-Unsubscribe-Post", "List-Unsubscribe=One-Click")
+	}
 
 	endpoint := fmt.Sprintf("%s/v3/%s/messages", c.baseURL, c.domain)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))

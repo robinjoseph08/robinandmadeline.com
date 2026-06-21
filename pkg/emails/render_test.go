@@ -12,7 +12,7 @@ import (
 // to exercise the absent-value branches.
 func mergeFixture() MergeContext {
 	return MergeContext{
-		Guest: &models.Guest{FullName: "Alice Smith"},
+		Guest: &models.Guest{ID: "11111111-1111-7111-8111-111111111111", FullName: "Alice Smith"},
 		Party: &models.Party{
 			Name:      "The Smiths",
 			InfoToken: "tok123abc",

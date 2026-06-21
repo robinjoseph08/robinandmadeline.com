@@ -22,3 +22,13 @@ func RegisterRoutes(api *echo.Group, service *Service) {
 	g.GET("/:id", h.getSubscription)
 	g.POST("/:id", h.updateSubscription)
 }
+
+// RegisterOneClickRoute mounts the RFC 8058 one-click unsubscribe endpoint at
+// the top level, off the /api prefix, so the same /u/:id path the
+// List-Unsubscribe header points at renders the SPA page on GET (via the static
+// middleware) and unsubscribes on POST here. A mail client POSTs to it when the
+// reader uses the client's native Unsubscribe control.
+func RegisterOneClickRoute(e *echo.Echo, service *Service) {
+	h := &handler{service: service}
+	e.POST("/u/:id", h.oneClickUnsubscribe)
+}

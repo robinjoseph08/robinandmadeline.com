@@ -5,6 +5,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/pkg/errors"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 )
 
 // handler holds the dependencies for the guest-facing subscription HTTP
@@ -40,4 +41,22 @@ func (h *handler) updateSubscription(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, resp)
+}
+
+// oneClickUnsubscribe handles the RFC 8058 one-click POST /u/:id that the
+// List-Unsubscribe header points at: it unsubscribes the guest and answers 200,
+// the success signal a mail provider expects. The POST body
+// (List-Unsubscribe=One-Click) is ignored. A stale or deleted guest still
+// answers 200 (nothing to unsubscribe) so the provider does not record a
+// failure; only an unexpected error surfaces.
+func (h *handler) oneClickUnsubscribe(c echo.Context) error {
+	_, err := h.service.SetSubscription(c.Request().Context(), c.Param("id"), false)
+	var codeErr *errcodes.Error
+	if errors.As(err, &codeErr) && codeErr.Code == string(errcodes.CodeNotFound) {
+		return c.NoContent(http.StatusOK)
+	}
+	if err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusOK)
 }

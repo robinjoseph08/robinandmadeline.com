@@ -29,9 +29,12 @@ func newService(t *testing.T) (*subscriptions.Service, *parties.Service, *bun.DB
 	return subscriptions.NewService(db), parties.NewService(db), db
 }
 
-// newGuest creates a party with one primary guest carrying the given email and
+// testGuestEmail is the email every fixture guest carries.
+const testGuestEmail = "alice@example.com"
+
+// newGuest creates a party with one primary guest (carrying testGuestEmail) and
 // returns it. A freshly created guest is subscribed by default (ADR 0009).
-func newGuest(t *testing.T, partySvc *parties.Service, email string) *models.Guest {
+func newGuest(t *testing.T, partySvc *parties.Service) *models.Guest {
 	t.Helper()
 	p, err := partySvc.CreateParty(ctx(), parties.CreatePartyPayload{
 		Name:           "The Smiths",
@@ -42,7 +45,7 @@ func newGuest(t *testing.T, partySvc *parties.Service, email string) *models.Gue
 	require.NoError(t, err)
 	g, err := partySvc.CreateGuest(ctx(), p.ID, parties.CreateGuestPayload{
 		FullName:  "Alice Smith",
-		Email:     pointerutil.String(email),
+		Email:     pointerutil.String(testGuestEmail),
 		IsPrimary: true,
 	})
 	require.NoError(t, err)
@@ -68,13 +71,13 @@ func assertNotFound(t *testing.T, err error) {
 
 func TestSubscription_ReturnsGuestView(t *testing.T) {
 	svc, partySvc, _ := newService(t)
-	g := newGuest(t, partySvc, "alice@example.com")
+	g := newGuest(t, partySvc)
 
 	resp, err := svc.Subscription(ctx(), g.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "Alice Smith", resp.FullName)
 	require.NotNil(t, resp.Email)
-	assert.Equal(t, "alice@example.com", *resp.Email)
+	assert.Equal(t, testGuestEmail, *resp.Email)
 	assert.True(t, resp.Subscribed) // a new guest is subscribed by default
 }
 
@@ -93,7 +96,7 @@ func TestSubscription_UnknownAndMalformedID_404(t *testing.T) {
 
 func TestSetSubscription_UnsubscribeThenResubscribe(t *testing.T) {
 	svc, partySvc, db := newService(t)
-	g := newGuest(t, partySvc, "alice@example.com")
+	g := newGuest(t, partySvc)
 
 	// Unsubscribe: the response and the stored row both flip to false.
 	resp, err := svc.SetSubscription(ctx(), g.ID, false)
@@ -110,7 +113,7 @@ func TestSetSubscription_UnsubscribeThenResubscribe(t *testing.T) {
 
 func TestSetSubscription_Idempotent(t *testing.T) {
 	svc, partySvc, db := newService(t)
-	g := newGuest(t, partySvc, "alice@example.com")
+	g := newGuest(t, partySvc)
 
 	// Setting the value it already holds is a no-op write, not an error.
 	resp, err := svc.SetSubscription(ctx(), g.ID, true)
