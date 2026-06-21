@@ -81,6 +81,7 @@ func (s *Service) CreatePartyWithGuest(ctx context.Context, in CreatePartyWithGu
 		IsChild:         in.Guest.IsChild,
 		IsDrinking:      in.Guest.IsDrinking,
 		PlaceholderText: in.Guest.PlaceholderText,
+		Subscribed:      true, // the first guest is born subscribed (ADR 0009)
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}

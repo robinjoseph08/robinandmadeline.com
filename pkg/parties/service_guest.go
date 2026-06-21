@@ -36,6 +36,7 @@ func (s *Service) CreateGuest(ctx context.Context, partyID string, in CreateGues
 		DietaryRestrictions: in.DietaryRestrictions,
 		TableNumber:         in.TableNumber,
 		SeatNumber:          in.SeatNumber,
+		Subscribed:          true, // a new guest is born subscribed (ADR 0009)
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
