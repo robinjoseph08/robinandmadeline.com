@@ -10,13 +10,22 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 )
 
-// ResolveRecipients returns the guests a send with the given filter goes to
-// (each with its Party loaded, ordered by creation time) plus the guests that
-// matched the filter but were skipped for having no email address. A guest
-// without an email cannot receive an email, so it is never a recipient; the
-// skipped list lets the compose page surface exactly who the send cannot reach
-// instead of hiding the gap. Both slices are non-nil so callers can range them
-// and report a count without a length guard.
+// RecipientResolution partitions the guests matching a send's filter into the
+// ones the send will reach and the two reasons a match is excluded: no email
+// address on file, or unsubscribed from email updates (ADR 0009). All three
+// slices are non-nil so callers can range and count them without a guard.
+type RecipientResolution struct {
+	Recipients          []*models.Guest
+	SkippedNoEmail      []*models.Guest
+	SkippedUnsubscribed []*models.Guest
+}
+
+// ResolveRecipients returns how a send with the given filter partitions the
+// matching guests (each with its Party loaded, ordered by creation time): the
+// recipients it will reach, and the two excluded buckets. A guest without an
+// email cannot be sent to, and an unsubscribed guest must not be (ADR 0009);
+// surfacing both excluded sets lets the compose page show exactly who the send
+// cannot reach, and why, instead of hiding the gap.
 //
 // The filter semantics mirror the flat guest list (pkg/parties.ListGuests):
 // side/relation/circle/invitation_type constrain through the guest's party,
@@ -25,7 +34,7 @@ import (
 // row is the invitation, ADR 0002). info_collection_status filters on the
 // party's derived status, which cannot be expressed in SQL (ADR 0005), so like
 // parties.ListParties it is applied in Go over the candidates.
-func (s *Service) ResolveRecipients(ctx context.Context, f models.RecipientFilter) (recipients, skipped []*models.Guest, err error) {
+func (s *Service) ResolveRecipients(ctx context.Context, f models.RecipientFilter) (*RecipientResolution, error) {
 	var guests []*models.Guest
 	q := s.db.NewSelect().Model(&guests).Relation("Party").Order("g.created_at ASC", "g.id ASC")
 
@@ -51,29 +60,37 @@ func (s *Service) ResolveRecipients(ctx context.Context, f models.RecipientFilte
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, nil, errors.Wrap(err, "resolve email recipients")
+		return nil, errors.Wrap(err, "resolve email recipients")
 	}
 
 	if f.InfoCollectionStatus != nil {
 		filtered, err := s.filterByInfoCollectionStatus(ctx, guests, *f.InfoCollectionStatus)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		guests = filtered
 	}
 
-	// Partition on email presence: guests with one are recipients, the rest
-	// are collected so the admin sees who the send cannot reach.
-	recipients = make([]*models.Guest, 0, len(guests))
-	skipped = make([]*models.Guest, 0)
+	// Partition the matches: a guest with no email cannot be reached, an
+	// unsubscribed guest must not be (ADR 0009), and the rest are recipients.
+	// The no-email check comes first so a guest who is both unsubscribed and has
+	// no email is reported under the more fundamental reason.
+	res := &RecipientResolution{
+		Recipients:          make([]*models.Guest, 0, len(guests)),
+		SkippedNoEmail:      make([]*models.Guest, 0),
+		SkippedUnsubscribed: make([]*models.Guest, 0),
+	}
 	for _, g := range guests {
-		if g.Email != nil && strings.TrimSpace(*g.Email) != "" {
-			recipients = append(recipients, g)
-		} else {
-			skipped = append(skipped, g)
+		switch {
+		case g.Email == nil || strings.TrimSpace(*g.Email) == "":
+			res.SkippedNoEmail = append(res.SkippedNoEmail, g)
+		case !g.Subscribed:
+			res.SkippedUnsubscribed = append(res.SkippedUnsubscribed, g)
+		default:
+			res.Recipients = append(res.Recipients, g)
 		}
 	}
-	return recipients, skipped, nil
+	return res, nil
 }
 
 // recipientPartySubquery builds the correlated subquery ResolveRecipients uses

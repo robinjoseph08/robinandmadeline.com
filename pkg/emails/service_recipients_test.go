@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/robinjoseph08/golib/pointerutil"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/stretchr/testify/assert"
@@ -20,14 +21,24 @@ func guestNames(gs []*models.Guest) []string {
 	return names
 }
 
+// mustResolve runs ResolveRecipients and returns the recipients and the
+// no-email skipped bucket (the two slices most of these tests assert on),
+// failing the test on error. The unsubscribed bucket has its own focused tests
+// below.
+func mustResolve(t *testing.T, svc *emails.Service, filter models.RecipientFilter) (recipients, skipped []*models.Guest) {
+	t.Helper()
+	res, err := svc.ResolveRecipients(ctx(), filter)
+	require.NoError(t, err)
+	return res.Recipients, res.SkippedNoEmail
+}
+
 func TestResolveRecipients_EmptyFilterMatchesEveryGuestWithEmail(t *testing.T) {
 	f := newFixtures(t)
 	p := createPartyT(t, f, "The Smiths", partyOpts{})
 	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
 	createGuestT(t, f, p.ID, "Bob", guestOpts{}) // no email: skipped
 
-	recipients, skipped, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{})
-	require.NoError(t, err)
+	recipients, skipped := mustResolve(t, f.emails, models.RecipientFilter{})
 	assert.Equal(t, []string{"Alice"}, guestNames(recipients))
 	// Skipped is now the guests themselves (name + party for the double-check
 	// list), not just a count.
@@ -70,8 +81,7 @@ func TestResolveRecipients_FiltersByPartyAttributes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			recipients, _, err := f.emails.ResolveRecipients(ctx(), tc.filter)
-			require.NoError(t, err)
+			recipients, _ := mustResolve(t, f.emails, tc.filter)
 			assert.Equal(t, tc.want, guestNames(recipients))
 		})
 	}
@@ -83,10 +93,9 @@ func TestResolveRecipients_FiltersByTags(t *testing.T) {
 	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com"), tags: []string{"Bridal Party"}})
 	createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
 
-	recipients, _, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{
+	recipients, _ := mustResolve(t, f.emails, models.RecipientFilter{
 		Tags: []string{"Bridal Party"},
 	})
-	require.NoError(t, err)
 	assert.Equal(t, []string{"Alice"}, guestNames(recipients))
 }
 
@@ -99,10 +108,9 @@ func TestResolveRecipients_FiltersByAnyOfMultipleTags(t *testing.T) {
 	createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com"), tags: []string{"Cousin"}})
 	createGuestT(t, f, p.ID, "Carol", guestOpts{email: emailOf("carol@example.com"), tags: []string{"UIUC"}})
 
-	recipients, _, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{
+	recipients, _ := mustResolve(t, f.emails, models.RecipientFilter{
 		Tags: []string{"Bridal Party", "Cousin"},
 	})
-	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"Alice", "Bob"}, guestNames(recipients))
 }
 
@@ -124,22 +132,19 @@ func TestResolveRecipients_FiltersByEventAndRSVPStatus(t *testing.T) {
 	require.NoError(t, err)
 
 	// Event alone matches the invited set.
-	recipients, _, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{EventID: &event.ID})
-	require.NoError(t, err)
+	recipients, _ := mustResolve(t, f.emails, models.RecipientFilter{EventID: &event.ID})
 	assert.ElementsMatch(t, []string{"Alice", "Bob"}, guestNames(recipients))
 
 	// Event plus status narrows within that event.
-	recipients, _, err = f.emails.ResolveRecipients(ctx(), models.RecipientFilter{
+	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
 		EventID: &event.ID, RSVPStatus: pointerutil.String(models.RSVPAttending),
 	})
-	require.NoError(t, err)
 	assert.Equal(t, []string{"Alice"}, guestNames(recipients))
 
 	// Status alone matches a row in that status on any event.
-	recipients, _, err = f.emails.ResolveRecipients(ctx(), models.RecipientFilter{
+	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
 		RSVPStatus: pointerutil.String(models.RSVPPending),
 	})
-	require.NoError(t, err)
 	assert.Equal(t, []string{"Bob"}, guestNames(recipients))
 }
 
@@ -154,16 +159,14 @@ func TestResolveRecipients_FiltersByInfoCollectionStatus(t *testing.T) {
 	incomplete := createPartyT(t, f, "Incomplete party", partyOpts{invitationType: models.InvitationPhysical})
 	createGuestT(t, f, incomplete.ID, "Bob", guestOpts{email: emailOf("bob@example.com"), primary: true})
 
-	recipients, _, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{
+	recipients, _ := mustResolve(t, f.emails, models.RecipientFilter{
 		InfoCollectionStatus: pointerutil.String(models.StatusComplete),
 	})
-	require.NoError(t, err)
 	assert.Equal(t, []string{"Alice"}, guestNames(recipients))
 
-	recipients, _, err = f.emails.ResolveRecipients(ctx(), models.RecipientFilter{
+	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
 		InfoCollectionStatus: pointerutil.String(models.StatusIncomplete),
 	})
-	require.NoError(t, err)
 	assert.Equal(t, []string{"Bob"}, guestNames(recipients))
 }
 
@@ -176,16 +179,14 @@ func TestResolveRecipients_InfoStatusUsesWholePartyNotJustTheRecipient(t *testin
 	createGuestT(t, f, p.ID, "Primary No-Email", guestOpts{primary: true})
 	createGuestT(t, f, p.ID, "Secondary", guestOpts{email: emailOf("secondary@example.com")})
 
-	recipients, _, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{
+	recipients, _ := mustResolve(t, f.emails, models.RecipientFilter{
 		InfoCollectionStatus: pointerutil.String(models.StatusIncomplete),
 	})
-	require.NoError(t, err)
 	assert.Equal(t, []string{"Secondary"}, guestNames(recipients))
 
-	recipients, _, err = f.emails.ResolveRecipients(ctx(), models.RecipientFilter{
+	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
 		InfoCollectionStatus: pointerutil.String(models.StatusComplete),
 	})
-	require.NoError(t, err)
 	assert.Empty(t, recipients)
 }
 
@@ -199,8 +200,42 @@ func TestResolveRecipients_BlankEmailCountsAsSkipped(t *testing.T) {
 		Set("email = ?", "   ").Where("id = ?", g.ID).Exec(ctx())
 	require.NoError(t, err)
 
-	recipients, skipped, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{})
-	require.NoError(t, err)
+	recipients, skipped := mustResolve(t, f.emails, models.RecipientFilter{})
 	assert.Empty(t, recipients)
 	assert.Equal(t, []string{"Blank"}, guestNames(skipped))
+}
+
+func TestResolveRecipients_UnsubscribedGuestIsSkippedSeparately(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Subscribed", guestOpts{email: emailOf("sub@example.com")})
+	// A guest with an email but unsubscribed is excluded from recipients and
+	// reported in its own bucket, distinct from the no-email skips (ADR 0009).
+	gone := createGuestT(t, f, p.ID, "Unsubscribed", guestOpts{email: emailOf("gone@example.com")})
+	_, err := f.db.NewUpdate().Model((*models.Guest)(nil)).
+		Set("subscribed = ?", false).Where("id = ?", gone.ID).Exec(ctx())
+	require.NoError(t, err)
+
+	res, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Subscribed"}, guestNames(res.Recipients))
+	assert.Equal(t, []string{"Unsubscribed"}, guestNames(res.SkippedUnsubscribed))
+	assert.Empty(t, res.SkippedNoEmail)
+}
+
+func TestResolveRecipients_NoEmailTakesPrecedenceOverUnsubscribed(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	// A guest who is both unsubscribed and has no email is reported under the
+	// more fundamental reason: no email.
+	g := createGuestT(t, f, p.ID, "Neither", guestOpts{})
+	_, err := f.db.NewUpdate().Model((*models.Guest)(nil)).
+		Set("subscribed = ?", false).Where("id = ?", g.ID).Exec(ctx())
+	require.NoError(t, err)
+
+	res, err := f.emails.ResolveRecipients(ctx(), models.RecipientFilter{})
+	require.NoError(t, err)
+	assert.Empty(t, res.Recipients)
+	assert.Equal(t, []string{"Neither"}, guestNames(res.SkippedNoEmail))
+	assert.Empty(t, res.SkippedUnsubscribed)
 }

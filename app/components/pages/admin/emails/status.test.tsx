@@ -14,6 +14,7 @@ function makeStats(overrides: Partial<SendStats>): SendStats {
     delivered: 0,
     bounced: 0,
     failed: 0,
+    unsubscribed: 0,
     total: 0,
     ...overrides,
   };

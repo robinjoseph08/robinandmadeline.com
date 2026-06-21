@@ -38,6 +38,7 @@ function makeSend(overrides: Partial<SendResponse>): SendResponse {
       delivered: 2,
       bounced: 1,
       failed: 0,
+      unsubscribed: 0,
       total: 4,
     },
     ...overrides,
@@ -168,6 +169,7 @@ describe("AdminEmails live polling", () => {
     delivered: 0,
     bounced: 0,
     failed: 0,
+    unsubscribed: 0,
     total: 2,
   };
   // A send where everything has been dispatched.
@@ -178,6 +180,7 @@ describe("AdminEmails live polling", () => {
     delivered: 1,
     bounced: 1,
     failed: 0,
+    unsubscribed: 0,
     total: 2,
   };
 

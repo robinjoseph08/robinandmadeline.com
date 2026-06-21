@@ -16,10 +16,11 @@ import (
 // matching recipient, the compose page's pre-send check. With no recipients
 // the sample fields are empty and the (zero) totals tell the story.
 func (s *Service) Preview(ctx context.Context, in PreviewEmailPayload) (*PreviewEmailResponse, error) {
-	recipients, skipped, err := s.ResolveRecipients(ctx, in.Filter)
+	res, err := s.ResolveRecipients(ctx, in.Filter)
 	if err != nil {
 		return nil, err
 	}
+	recipients := res.Recipients
 	event, err := s.filterEvent(ctx, in.Filter)
 	if err != nil {
 		return nil, err
@@ -39,14 +40,18 @@ func (s *Service) Preview(ctx context.Context, in PreviewEmailPayload) (*Preview
 	if warnings == nil {
 		warnings = []MergeFieldWarning{}
 	}
+	// Surface WHO is excluded, and why, not just the counts, so the admin can
+	// verify the exclusions: no-email and unsubscribed are separate buckets.
 	resp := &PreviewEmailResponse{
-		Recipients:     make([]PreviewRecipient, 0, len(recipients)),
-		Total:          len(recipients),
-		SkippedNoEmail: len(skipped),
-		Skipped:        make([]SkippedRecipient, 0, len(skipped)),
-		Warnings:       warnings,
-		DailySendLimit: s.dailySendLimit,
-		DailySendsUsed: used,
+		Recipients:          make([]PreviewRecipient, 0, len(recipients)),
+		Total:               len(recipients),
+		SkippedNoEmail:      len(res.SkippedNoEmail),
+		Skipped:             skippedRecipients(res.SkippedNoEmail),
+		SkippedUnsubscribed: len(res.SkippedUnsubscribed),
+		Unsubscribed:        skippedRecipients(res.SkippedUnsubscribed),
+		Warnings:            warnings,
+		DailySendLimit:      s.dailySendLimit,
+		DailySendsUsed:      used,
 	}
 	for _, g := range recipients {
 		item := PreviewRecipient{GuestID: g.ID, GuestName: g.FullName}
@@ -57,15 +62,6 @@ func (s *Service) Preview(ctx context.Context, in PreviewEmailPayload) (*Preview
 			item.PartyName = g.Party.Name
 		}
 		resp.Recipients = append(resp.Recipients, item)
-	}
-	// Surface WHO is excluded for lacking an email, not just the count, so the
-	// admin can verify the exclusions.
-	for _, g := range skipped {
-		item := SkippedRecipient{GuestID: g.ID, GuestName: g.FullName}
-		if g.Party != nil {
-			item.PartyName = g.Party.Name
-		}
-		resp.Skipped = append(resp.Skipped, item)
 	}
 
 	if len(recipients) > 0 {
@@ -98,10 +94,11 @@ func (s *Service) CreateSend(ctx context.Context, in SendEmailPayload) (*models.
 		}
 	}
 
-	recipients, _, err := s.ResolveRecipients(ctx, in.Filter)
+	res, err := s.ResolveRecipients(ctx, in.Filter)
 	if err != nil {
 		return nil, SendStats{}, err
 	}
+	recipients := res.Recipients
 	if len(recipients) == 0 {
 		return nil, SendStats{}, errcodes.ValidationError("No recipients with an email address match the filter.")
 	}
@@ -241,6 +238,8 @@ func (s *Service) SendStatsBySendIDs(ctx context.Context, sendIDs []string) (map
 			st.Bounced = t.Count
 		case models.EmailFailed:
 			st.Failed = t.Count
+		case models.EmailUnsubscribed:
+			st.Unsubscribed = t.Count
 		}
 		st.Total += t.Count
 		stats[t.SendID] = st
@@ -265,6 +264,20 @@ func (s *Service) filterEvent(ctx context.Context, f models.RecipientFilter) (*m
 		return nil, errors.Wrap(err, "load filter event")
 	}
 	return event, nil
+}
+
+// skippedRecipients projects excluded guests onto the API view the compose page
+// shows. Shared by both excluded buckets (no email, and unsubscribed).
+func skippedRecipients(guests []*models.Guest) []SkippedRecipient {
+	items := make([]SkippedRecipient, 0, len(guests))
+	for _, g := range guests {
+		item := SkippedRecipient{GuestID: g.ID, GuestName: g.FullName}
+		if g.Party != nil {
+			item.PartyName = g.Party.Name
+		}
+		items = append(items, item)
+	}
+	return items
 }
 
 // errcodeIsNotFound reports whether err is an errcodes 404, letting CreateSend

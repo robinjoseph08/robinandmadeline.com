@@ -47,23 +47,26 @@ func (s *Service) SendTest(ctx context.Context, in TestEmailPayload) (*TestEmail
 	}
 
 	// A test send renders from the first guest matching the filter (each list is
-	// ordered by guest creation). Prefer the first guest WITH an email: a real
-	// send only ever renders for emailed guests (it skips the rest), so rendering
+	// ordered by guest creation). Prefer a recipient (has an email and is
+	// subscribed): a real send only ever renders for those guests, so rendering
 	// the test from one mirrors the copy a real send would actually produce. Fall
-	// back to a skipped guest only when nobody matching has an email, since the
-	// render guest's own address is irrelevant here (the row is addressed to the
-	// test inbox, not the guest). With no match at all there is nothing to render
+	// back to any matched-but-excluded guest (no email, or unsubscribed) since the
+	// render guest's own address and subscription are irrelevant here (the row is
+	// addressed to the test inbox, and the worker exempts test sends from the
+	// subscription re-check). With no match at all there is nothing to render
 	// from, so it is a 422.
-	recipients, skipped, err := s.ResolveRecipients(ctx, in.Filter)
+	res, err := s.ResolveRecipients(ctx, in.Filter)
 	if err != nil {
 		return nil, err
 	}
 	var renderGuest *models.Guest
 	switch {
-	case len(recipients) > 0:
-		renderGuest = recipients[0]
-	case len(skipped) > 0:
-		renderGuest = skipped[0]
+	case len(res.Recipients) > 0:
+		renderGuest = res.Recipients[0]
+	case len(res.SkippedNoEmail) > 0:
+		renderGuest = res.SkippedNoEmail[0]
+	case len(res.SkippedUnsubscribed) > 0:
+		renderGuest = res.SkippedUnsubscribed[0]
 	default:
 		return nil, errcodes.ValidationError("No guests match the filter to render a test from.")
 	}

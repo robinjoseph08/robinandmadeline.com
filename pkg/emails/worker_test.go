@@ -317,6 +317,35 @@ func TestProcessBatch_SendsToSnapshottedAddressNotTheGuestsCurrentOne(t *testing
 	assert.Equal(t, "alice@example.com", msgs[0].To)
 }
 
+func TestProcessBatch_GuestUnsubscribedAfterQueueingIsSkippedNotSent(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	bob := createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// Bob unsubscribes after the send was enqueued but before the worker picks
+	// up his row (the two-day send window at the daily cap, ADR 0009). The
+	// re-check at send time must honor it.
+	_, err := f.db.NewUpdate().Model((*models.Guest)(nil)).
+		Set("subscribed = ?", false).Where("id = ?", bob.ID).Exec(ctx())
+	require.NoError(t, err)
+
+	client := newFakeMailgun()
+	w := newWorker(f, client, workerConfig())
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	rows := recipientsForSend(t, f.db, send.ID)
+	assert.Equal(t, models.EmailSent, rows[alice.ID].Status)
+	// Bob's row is terminal-unsubscribed, never sent; Mailgun was called only
+	// for Alice.
+	assert.Equal(t, models.EmailUnsubscribed, rows[bob.ID].Status)
+	assert.Equal(t, 1, client.sendCallCount())
+}
+
 func TestProcessBatch_RejectionReasonWithInvalidUTF8IsSanitized(t *testing.T) {
 	f := newFixtures(t)
 	p := createPartyT(t, f, "The Smiths", partyOpts{})

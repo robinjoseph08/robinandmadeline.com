@@ -375,6 +375,20 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 		return
 	}
 
+	// Re-check subscription at send time for real sends, not just at enqueue: a
+	// full send spans two days at the daily cap (ADR 0004), so a guest can
+	// unsubscribe after the row was queued but before it is dispatched. Honor it,
+	// record the terminal `unsubscribed` status (distinct from a delivery
+	// failed), and never call Mailgun (ADR 0009). Test sends are exempt: their
+	// row is addressed to the couple's own inbox, not the render guest, so the
+	// render guest's subscription is irrelevant to delivery.
+	if !send.IsTest && !guest.Subscribed {
+		row.Status = models.EmailUnsubscribed
+		row.FailureReason = nil
+		w.updateRow(ctx, row)
+		return
+	}
+
 	mctx := MergeContext{Guest: guest, Party: guest.Party, Event: event, PublicBaseURL: w.cfg.PublicBaseURL}
 	// Both bodies carry the same merge-resolved content: Text is the plaintext
 	// fallback (the resolved Markdown source) and HTML is that source rendered
