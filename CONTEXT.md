@@ -85,6 +85,10 @@ _Avoid_: Invited (reserved for events)
 **Info Collection Status**:
 Whether a party's info collection is complete or incomplete.
 
+**Email Subscription**:
+Whether a Guest receives the couple's broadcast email updates. A per-guest attribute with two states, Subscribed and Unsubscribed, that defaults to Subscribed. Because it is per-guest, when two guests share one inbox each controls their own copy independently. Unsubscribing is the act of moving to Unsubscribed; Resubscribing moves back.
+_Avoid_: Opt-out (names the action, not the state), Email preferences (implies a multi-toggle settings panel that does not exist), Marketing consent (wrong register for a wedding)
+
 **Photo Group**:
 A named set of guests needed together for a specific photo, with a shooting order. All group photos happen in the one session between the ceremony and the reception, so photo groups form a single global list; they are not tied to an event.
 _Avoid_: Photo shoot, album (the photo gallery is unrelated); per-event photo groups (there is exactly one photo session)
@@ -102,6 +106,7 @@ _Avoid_: Photo shoot, album (the photo gallery is unrelated); per-event photo gr
 - An **Event** has an optional **Location**, which may carry an optional **Location Link**. A **Location Link** cannot exist without a **Location**: the link decorates the label, so a link with no label is rejected.
 - A **Photo Group** contains zero or more **Guests** (it may sit empty while the shot list is drafted, and an empty group still shifts the positions every party sees). Photo groups belong to no **Event**: they form one global shooting order for the single photo session between the ceremony and the reception.
 - A **Guest** carries individual email, phone, dietary restrictions, and RSVP responses; the mailing **address** lives on the **Party**.
+- A **Guest** has an **Email Subscription** (defaulting to Subscribed) that governs whether broadcast email reaches them; it is independent per guest even when guests share an inbox.
 - A **Party** becomes **Info Collection Requested** once its info link is sent; requesting resets its **Info Collection Status** to incomplete.
 - A **Party**'s **Info Collection Status** can be complete only when all required fields are present; until collection is requested it is derived from whether those fields are present.
 - Overall attendance is derived: a **Guest** is "coming" if they are attending at least one **Event**.
