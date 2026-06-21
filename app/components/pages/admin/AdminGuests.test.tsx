@@ -33,6 +33,7 @@ function makeGuestItem(overrides: Partial<GuestListItem>): GuestListItem {
     is_primary: false,
     is_child: false,
     is_drinking: false,
+    subscribed: true,
     placeholder_text: undefined,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
