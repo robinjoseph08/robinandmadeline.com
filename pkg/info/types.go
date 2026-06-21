@@ -26,6 +26,9 @@ type Guest struct {
 	IsPrimary bool    `json:"is_primary"`
 	Email     *string `json:"email"`
 	Phone     *string `json:"phone"`
+	// Subscribed seeds the email-updates checkbox shown beside the email field;
+	// it is meaningful only alongside an email (ADR 0009).
+	Subscribed bool `json:"subscribed"`
 }
 
 // PartyInfoResponse is the body of GET /api/info/:token (and of a successful
@@ -85,16 +88,23 @@ type GuestInfoUpdate struct {
 	FullName *string `json:"full_name" mod:"trim" validate:"omitempty,max=200"`
 	Email    *string `json:"email" mod:"trim" validate:"omitempty,emailblank,max=320"`
 	Phone    *string `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
-	Remove   bool    `json:"remove"`
+	// Subscribed sets the guest's email subscription (ADR 0009). A pointer so an
+	// omitted value leaves the stored state untouched; the form always sends the
+	// current checkbox state for an included guest, which keeps clearing an email
+	// and unsubscribing independent (the primary's required email can stay on
+	// file while they are unsubscribed).
+	Subscribed *bool `json:"subscribed"`
+	Remove     bool  `json:"remove"`
 }
 
 // newGuestView projects a loaded guest model onto its guest-facing view.
 func newGuestView(g *models.Guest) Guest {
 	return Guest{
-		ID:        g.ID,
-		FullName:  g.FullName,
-		IsPrimary: g.IsPrimary,
-		Email:     g.Email,
-		Phone:     g.Phone,
+		ID:         g.ID,
+		FullName:   g.FullName,
+		IsPrimary:  g.IsPrimary,
+		Email:      g.Email,
+		Phone:      g.Phone,
+		Subscribed: g.Subscribed,
 	}
 }

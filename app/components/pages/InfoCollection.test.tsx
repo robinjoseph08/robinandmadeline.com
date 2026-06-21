@@ -40,6 +40,7 @@ function makeData(
         is_primary: true,
         email: "alice@example.com",
         phone: undefined,
+        subscribed: true,
       },
       {
         id: "g2",
@@ -47,6 +48,7 @@ function makeData(
         is_primary: false,
         email: undefined,
         phone: undefined,
+        subscribed: true,
       },
     ],
     ...overrides,
@@ -119,17 +121,51 @@ describe("InfoCollection", () => {
     ).toBeInTheDocument();
   });
 
-  it("tells the party that submitted emails receive the rare updates", async () => {
+  it("offers an email opt-in per emailed guest and drops the old opt-out note", async () => {
     apiRequest.mockResolvedValue(makeData());
     renderPage();
     await screen.findByRole("heading", { name: /^Hi / });
 
-    // Pin both halves of the note: that submitted emails receive the updates,
-    // and the opt-out (leave an email blank).
+    // The old "leave the email blank to opt out" disclaimer is gone, replaced
+    // by the reassurance and a per-guest checkbox (ADR 0009).
     expect(
-      screen.getByText(/every email entered above gets a copy/i),
+      screen.queryByText(/leave their email blank/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("We only send the occasional update."),
     ).toBeInTheDocument();
-    expect(screen.getByText(/leave their email blank/i)).toBeInTheDocument();
+
+    // The opt-in shows (checked) for the guest with an email, and not at all
+    // for the guest without one.
+    expect(
+      screen.getByRole("checkbox", {
+        name: /Send Alice wedding updates by email/i,
+      }),
+    ).toBeChecked();
+    expect(
+      screen.queryByRole("checkbox", {
+        name: /Send Bob wedding updates by email/i,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("submits the unchecked opt-in as unsubscribed", async () => {
+    const user = userEvent.setup();
+    // A digital party needs no address, so the submit is just the guest cards.
+    apiRequest.mockResolvedValue(makeData({ invitation_type: "digital" }));
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /Send Alice wedding updates by email/i,
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save your info" }));
+    await screen.findByRole("heading", { name: "Thank you!" });
+
+    const alice = submittedPayload().guests.find((g) => g.guest_id === "g1");
+    expect(alice?.subscribed).toBe(false);
   });
 
   it("shows example placeholders in the empty fields", async () => {
@@ -171,6 +207,7 @@ describe("InfoCollection", () => {
             is_primary: true,
             email: "alice@example.com",
             phone: "+19723121234",
+            subscribed: true,
           },
         ],
       }),
@@ -268,14 +305,17 @@ describe("InfoCollection", () => {
         full_name: "Alicia Smith",
         email: "alice@example.com",
         phone: "+1 415 555 2671",
+        subscribed: true,
         remove: false,
       },
       {
         // An untouched prefilled name is sent back as-is (a no-op correction).
+        // subscribed rides along full-state even though Bob has no email field.
         guest_id: "g2",
         full_name: "Bob Smith",
         email: "",
         phone: "",
+        subscribed: true,
         remove: false,
       },
     ]);
