@@ -58,6 +58,14 @@ packages:
     include_files:
       - types.go
 
+  # The guest-facing email subscription flow's payload and response types. Only
+  # types.go is emitted; the view is a plain guest-facing projection with no
+  # model references, so no frontmatter import is needed.
+  - path: "github.com/robinjoseph08/robinandmadeline.com/pkg/subscriptions"
+    output_path: "app/types/generated/subscriptions.ts"
+    include_files:
+      - types.go
+
   # The emails API payload and response types. Only types.go is emitted; the
   # payloads embed RecipientFilter and the responses embed the email models,
   # imported from the generated models module.

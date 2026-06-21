@@ -30,6 +30,7 @@ import RSVPForm from "@/components/pages/RSVPForm";
 import Schedule from "@/components/pages/Schedule";
 import Story from "@/components/pages/Story";
 import Travel from "@/components/pages/Travel";
+import Unsubscribe from "@/components/pages/Unsubscribe";
 
 // The route table is exported on its own so tests can mount the real routes
 // in a memory router (see router.test.tsx) instead of mirroring them.
@@ -59,6 +60,9 @@ export const routes = [
       { path: "rsvp/form", Component: RSVPForm },
       { path: "rsvp/confirmation", Component: RSVPConfirmation },
       { path: "i/:token", Component: InfoCollection },
+      // The email unsubscribe landing page; the guest's UUID in the URL is the
+      // authentication (ADR 0009). The link lives in every email footer.
+      { path: "u/:guestId", Component: Unsubscribe },
     ],
   },
   // The admin login sits outside the guard so unauthenticated users can reach it.

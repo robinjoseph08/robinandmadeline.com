@@ -24,6 +24,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/photogroups"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/rsvps"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/settings"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/subscriptions"
 	"github.com/uptrace/bun"
 )
 
@@ -102,6 +103,10 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	// opaque high-entropy per-party info token in the URL is the authentication
 	// (ADR 0003), so unlike the guessable RSVP codes it needs no rate limiter.
 	info.RegisterRoutes(api, info.NewService(db))
+	// The guest-facing email subscription flow mounts on the open group too:
+	// like the info flow there is no JWT, the guest's own UUID in the URL is the
+	// authentication (ADR 0009).
+	subscriptions.RegisterRoutes(api, subscriptions.NewService(db))
 	// The Mailgun delivery webhook also mounts on the open group: Mailgun
 	// calls it, so there is no JWT; the HMAC signature on each payload is the
 	// authentication (an unconfigured signing key rejects everything).
