@@ -22,6 +22,13 @@ import (
 // arrives as a non-nil slice (defaulted to []) so it stores '{}', not NULL.
 func (s *Service) CreateGuest(ctx context.Context, partyID string, in CreateGuestPayload) (*models.Guest, error) {
 	now := time.Now()
+	// A new guest is born subscribed unless the create form opts out (ADR 0009);
+	// a Go bool's false zero value is the wrong default, so a nil payload pointer
+	// resolves to subscribed here.
+	subscribed := true
+	if in.Subscribed != nil {
+		subscribed = *in.Subscribed
+	}
 	guest := &models.Guest{
 		ID:                  newID(),
 		PartyID:             partyID,
@@ -36,7 +43,7 @@ func (s *Service) CreateGuest(ctx context.Context, partyID string, in CreateGues
 		DietaryRestrictions: in.DietaryRestrictions,
 		TableNumber:         in.TableNumber,
 		SeatNumber:          in.SeatNumber,
-		Subscribed:          true, // a new guest is born subscribed (ADR 0009)
+		Subscribed:          subscribed,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
@@ -129,6 +136,7 @@ func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayl
 		guest.IsPrimary = in.IsPrimary
 		guest.IsChild = in.IsChild
 		guest.IsDrinking = in.IsDrinking
+		guest.Subscribed = in.Subscribed
 		guest.PlaceholderText = in.PlaceholderText
 		guest.DietaryRestrictions = in.DietaryRestrictions
 		guest.TableNumber = in.TableNumber
@@ -141,7 +149,7 @@ func (s *Service) UpdateGuest(ctx context.Context, id string, in UpdateGuestPayl
 		// rather than a raw unique violation.
 		_, err := tx.NewUpdate().Model(guest).
 			Column("full_name", "email", "phone", "tags", "is_primary",
-				"is_child", "is_drinking", "placeholder_text", "dietary_restrictions",
+				"is_child", "is_drinking", "subscribed", "placeholder_text", "dietary_restrictions",
 				"table_number", "seat_number", "updated_at").
 			WherePK().Exec(ctx)
 		if err != nil {

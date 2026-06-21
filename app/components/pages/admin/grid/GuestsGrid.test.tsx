@@ -121,4 +121,17 @@ describe("GuestsGrid phone cell", () => {
       }),
     );
   });
+
+  it("shows an Unsubscribed marker only for opted-out guests", () => {
+    renderGrid(
+      [
+        makeGuest({ id: "g1", full_name: "Alice", subscribed: true }),
+        makeGuest({ id: "g2", full_name: "Bob", subscribed: false }),
+      ],
+      (g) => g.party_id,
+    );
+
+    // Only the unsubscribed guest is flagged; the subscribed norm shows nothing.
+    expect(screen.getAllByText("Unsubscribed")).toHaveLength(1);
+  });
 });

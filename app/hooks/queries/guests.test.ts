@@ -107,6 +107,7 @@ describe("useUpdateGuest", () => {
           is_primary: true,
           is_child: false,
           is_drinking: false,
+          subscribed: true,
         },
       }),
     );

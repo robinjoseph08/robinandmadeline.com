@@ -100,3 +100,28 @@ describe("GuestFormDialog phone", () => {
     );
   });
 });
+
+describe("GuestFormDialog subscription", () => {
+  it("seeds the subscribed flag and submits it toggled off", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(
+      <GuestFormDialog
+        guest={makeGuest({ subscribed: true })}
+        isPending={false}
+        onOpenChange={() => {}}
+        onSubmit={onSubmit}
+        open
+      />,
+    );
+
+    const checkbox = screen.getByRole("checkbox", { name: "Subscribed" });
+    expect(checkbox).toBeChecked();
+    await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ subscribed: false }),
+    );
+  });
+});
