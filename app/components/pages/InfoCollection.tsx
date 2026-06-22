@@ -340,7 +340,7 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                     value={emails[guest.id] ?? ""}
                   />
                   {/* The email-updates opt-in only appears once there's an
-                      address to send to; while hidden, the loaded value still
+                      email to send to; while hidden, the loaded value still
                       rides along on submit (ADR 0009). */}
                   {(emails[guest.id] ?? "").trim() !== "" ? (
                     <label className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">

@@ -135,6 +135,49 @@ func TestCreateSend_CreatesQueuedRecipientRows(t *testing.T) {
 	assert.Equal(t, models.EmailQueued, rows[bob.ID].Status)
 }
 
+func TestCreateSend_ExcludesUnsubscribedGuests(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	gone := createGuestT(t, f, p.ID, "Gone", guestOpts{email: emailOf("gone@example.com")})
+	_, err := f.db.NewUpdate().Model((*models.Guest)(nil)).
+		Set("subscribed = ?", false).Where("id = ?", gone.ID).Exec(ctx())
+	require.NoError(t, err)
+
+	send, stats, err := f.emails.CreateSend(ctx(), emails.SendEmailPayload{
+		Subject: "Hi", Body: "Save the date!",
+	})
+	require.NoError(t, err)
+	// Only the subscribed guest is enqueued; the unsubscribed one never gets a row.
+	assert.Equal(t, emails.SendStats{Queued: 1, Total: 1}, stats)
+
+	rows := recipientsForSend(t, f.db, send.ID)
+	require.Len(t, rows, 1)
+	_, hasAlice := rows[alice.ID]
+	_, hasGone := rows[gone.ID]
+	assert.True(t, hasAlice)
+	assert.False(t, hasGone)
+}
+
+func TestPreview_SeparatesUnsubscribedFromNoEmail(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	createGuestT(t, f, p.ID, "Carol", guestOpts{}) // no email
+	gone := createGuestT(t, f, p.ID, "Gone", guestOpts{email: emailOf("gone@example.com")})
+	_, err := f.db.NewUpdate().Model((*models.Guest)(nil)).
+		Set("subscribed = ?", false).Where("id = ?", gone.ID).Exec(ctx())
+	require.NoError(t, err)
+
+	resp, err := f.emails.Preview(ctx(), emails.PreviewEmailPayload{Subject: "Hi", Body: "Body"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, resp.Total)               // Alice
+	assert.Equal(t, 1, resp.SkippedNoEmail)      // Carol
+	assert.Equal(t, 1, resp.SkippedUnsubscribed) // Gone
+	require.Len(t, resp.Unsubscribed, 1)
+	assert.Equal(t, "Gone", resp.Unsubscribed[0].GuestName)
+}
+
 func TestCreateSend_RecordsTemplateProvenance(t *testing.T) {
 	f := newFixtures(t)
 	tpl := createTemplateT(t, f, templateInput())

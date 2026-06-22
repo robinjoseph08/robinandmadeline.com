@@ -31,6 +31,7 @@ describe("StatusBadge", () => {
     ["delivered", "Delivered"],
     ["bounced", "Bounced"],
     ["failed", "Failed"],
+    ["unsubscribed", "Unsubscribed"],
   ];
 
   it.each(cases)("renders the %s status as its label", (status, label) => {
@@ -58,5 +59,12 @@ describe("SendStatsSummary", () => {
   it("uses the singular recipient noun for a single recipient", () => {
     render(<SendStatsSummary stats={makeStats({ sent: 1, total: 1 })} />);
     expect(screen.getByText(/of 1 recipient$/)).toBeInTheDocument();
+  });
+
+  it("counts unsubscribed recipients", () => {
+    render(
+      <SendStatsSummary stats={makeStats({ unsubscribed: 2, total: 2 })} />,
+    );
+    expect(screen.getByText(/2 unsubscribed/)).toBeInTheDocument();
   });
 });

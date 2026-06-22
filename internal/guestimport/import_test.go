@@ -173,6 +173,7 @@ func TestImport_PersistsPlaceholdersAfterTheirHostGuest(t *testing.T) {
 	require.Equal(t, "Alice Adams", guests[0].FullName)
 	require.True(t, guests[0].IsPrimary)
 	require.Nil(t, guests[0].PlaceholderText)
+	require.True(t, guests[0].Subscribed, "imported guests are born subscribed (ADR 0009)")
 
 	require.Equal(t, "Guest of Alice Adams", guests[1].FullName,
 		"the placeholder sorts right after its host under the created_at/id order the API uses")
@@ -184,6 +185,7 @@ func TestImport_PersistsPlaceholdersAfterTheirHostGuest(t *testing.T) {
 	require.Equal(t, []string{}, guests[1].Tags)
 	require.Nil(t, guests[1].Email)
 	require.Nil(t, guests[1].Phone)
+	require.True(t, guests[1].Subscribed)
 
 	require.Equal(t, "Bob Adams", guests[2].FullName)
 	require.Nil(t, guests[2].PlaceholderText)

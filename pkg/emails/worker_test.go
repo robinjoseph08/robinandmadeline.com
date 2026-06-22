@@ -344,6 +344,39 @@ func TestProcessBatch_GuestUnsubscribedAfterQueueingIsSkippedNotSent(t *testing.
 	// for Alice.
 	assert.Equal(t, models.EmailUnsubscribed, rows[bob.ID].Status)
 	assert.Equal(t, 1, client.sendCallCount())
+
+	// The unsubscribed row is tallied in its own bucket, not as sent or failed.
+	stats, err := f.emails.SendStatsBySendIDs(ctx(), []string{send.ID})
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats[send.ID].Sent)
+	assert.Equal(t, 1, stats[send.ID].Unsubscribed)
+}
+
+func TestProcessBatch_TestSendDeliversEvenWhenRenderGuestUnsubscribed(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	g := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	// Unsubscribe the only matching guest. SendTest still renders from them, but
+	// the worker must NOT suppress a test send: its row is addressed to the
+	// couple's inbox, not the render guest (ADR 0009).
+	_, err := f.db.NewUpdate().Model((*models.Guest)(nil)).
+		Set("subscribed = ?", false).Where("id = ?", g.ID).Exec(ctx())
+	require.NoError(t, err)
+
+	resp, err := f.emails.WithTestSend([]string{"Robin <robin@example.com>"}).
+		SendTest(ctx(), emails.TestEmailPayload{Subject: "s", Body: "b"})
+	require.NoError(t, err)
+
+	client := newFakeMailgun()
+	w := newWorker(f, client, workerConfig())
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	rows := recipientsForSend(t, f.db, resp.SendID)
+	require.Len(t, rows, 1)
+	assert.Equal(t, models.EmailSent, rows[g.ID].Status)
+	assert.Equal(t, 1, client.sendCallCount())
 }
 
 func TestProcessBatch_RejectionReasonWithInvalidUTF8IsSanitized(t *testing.T) {
