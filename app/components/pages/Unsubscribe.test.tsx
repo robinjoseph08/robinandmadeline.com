@@ -112,4 +112,18 @@ describe("Unsubscribe", () => {
       await screen.findByText("This link is no longer valid"),
     ).toBeInTheDocument();
   });
+
+  it("surfaces an error when the update fails", async () => {
+    apiRequest
+      .mockResolvedValueOnce(makeData({ subscribed: true }))
+      .mockRejectedValueOnce(new ApiError(500, "Server error"));
+
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Unsubscribe" }),
+    );
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
 });

@@ -2,7 +2,7 @@
 // unsubscribe and resubscribe endpoints behind the per-guest link in every
 // email footer (ADR 0009). Like the info flow it mounts on the open /api group
 // with no JWT; the guest's own UUID in the URL is the entire authentication, and
-// an unguessable 122-bit id is all a low-stakes unsubscribe action needs.
+// an unguessable random UUID is all a low-stakes unsubscribe action needs.
 package subscriptions
 
 import (

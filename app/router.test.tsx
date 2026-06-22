@@ -85,6 +85,16 @@ describe("router", () => {
     expect(screen.getByRole("heading", { name: "Travel" })).toBeInTheDocument();
   });
 
+  it("wires the unsubscribe page at /u/:guestId", () => {
+    // A public, ungated route (the guest UUID in the URL is the auth, ADR 0009):
+    // guards the { path: "u/:guestId" } wiring with no admin token. The page
+    // fetches on mount, so its initial render is the loading state.
+    const router = renderAt("/u/some-guest-id");
+
+    expect(router.state.location.pathname).toBe("/u/some-guest-id");
+    expect(screen.getByText("Loading...")).toBeInTheDocument();
+  });
+
   it.each(["mini", "crossword"])(
     "redirects a guest from /games/%s back to the games landing",
     (slug) => {
