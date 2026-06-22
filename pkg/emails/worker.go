@@ -376,7 +376,7 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 	}
 
 	// Re-check subscription at send time for real sends, not just at enqueue: a
-	// large send can span two days at the daily cap (ADR 0004), so a guest can
+	// large send can span two days at the daily send cap, so a guest can
 	// unsubscribe after the row was queued but before it is dispatched. Honor it,
 	// record the terminal `unsubscribed` status (distinct from a delivery
 	// failed), and never call Mailgun (ADR 0009). Test sends are exempt: their
