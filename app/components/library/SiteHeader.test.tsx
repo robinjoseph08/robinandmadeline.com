@@ -185,12 +185,18 @@ describe("SiteHeader", () => {
     renderHeader("/");
 
     // On the home page the full names live on the hero photo, so the header
-    // shows only the compact RM monogram mark (no spelled-out names).
+    // shows only the compact R&M monogram mark (no spelled-out names).
     const brand = screen.getByRole("link", {
       name: /robin and madeline, home/i,
     });
-    expect(brand.querySelector("svg")).not.toBeNull();
+    const overlayMark = brand.querySelector("svg");
+    expect(overlayMark).not.toBeNull();
     expect(brand).not.toHaveTextContent(/Madeline/);
+    // The mark is decorative inside the already-labeled link (no double-naming),
+    // and renders white with a drop-shadow so it stays legible over the hero.
+    expect(within(brand).queryByRole("img")).toBeNull();
+    expect(overlayMark).toHaveClass("text-white");
+    expect(overlayMark?.getAttribute("class")).toMatch(/drop-shadow/);
   });
 
   it("shows the compact mark on mobile and the script names on desktop off home", () => {
@@ -202,11 +208,12 @@ describe("SiteHeader", () => {
     // jsdom applies no CSS, so both variants are in the DOM; assert the
     // responsive contract via classes instead. Inverting the two (the bug a
     // class swap would introduce) flips which is shown at each breakpoint.
-    // Mobile mark: the compact RM monogram (SVG), visible by default and hidden
-    // at md+.
+    // Mobile mark: the compact R&M monogram (SVG), rose, visible by default and
+    // hidden at md+.
     const compact = brand.querySelector(".md\\:hidden");
     expect(compact).not.toBeNull();
     expect(compact?.tagName.toLowerCase()).toBe("svg");
+    expect(compact).toHaveClass("text-rose");
     expect(compact).not.toHaveClass("hidden");
     // Desktop mark: the script names, hidden on mobile and shown at md+.
     const names = brand.querySelector(".md\\:inline-block");

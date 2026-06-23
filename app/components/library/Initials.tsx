@@ -5,9 +5,10 @@ interface InitialsProps {
   /** Color, shadow, and visibility classes for the context it sits in. */
   className?: string;
   /**
-   * Hide the mark from assistive tech. Set this when an ancestor already names
-   * the brand (the header and overlay wrap it in a link labeled "Robin and
-   * Madeline, home"), so a screen reader does not announce it twice.
+   * Hide the mark from assistive tech. Set this when an ancestor link already
+   * names the brand (the header and overlay wrap the mark in a link labeled
+   * "Robin and Madeline, home"). Leave it unset where the mark stands alone,
+   * like the mobile menu's top bar, so a screen reader still announces it once.
    */
   decorative?: boolean;
 }
