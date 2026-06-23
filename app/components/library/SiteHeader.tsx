@@ -186,7 +186,7 @@ export default function SiteHeader() {
       ref={menuRef}
       role="dialog"
     >
-      <div className="flex shrink-0 items-center justify-between px-4 py-5">
+      <div className="flex shrink-0 items-center justify-between px-4 py-3">
         <Initials className="text-rose" />
         <button
           aria-label="Close navigation menu"
@@ -226,9 +226,12 @@ export default function SiteHeader() {
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/45 to-transparent"
         />
-        <div className="relative mx-auto flex max-w-5xl items-center justify-between px-4 py-5">
+        <div className="relative mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <Link aria-label="Robin and Madeline, home" to="/">
-            <Initials className="text-white [text-shadow:0_1px_4px_rgba(42,38,34,1),0_1px_10px_rgba(42,38,34,0.6)]" />
+            <Initials
+              className="text-white [filter:drop-shadow(0_1px_4px_rgba(42,38,34,1))_drop-shadow(0_1px_10px_rgba(42,38,34,0.6))]"
+              decorative
+            />
           </Link>
           <nav className="hidden items-center gap-1 md:flex">
             <NavItems items={items} tone="onImage" />
@@ -243,7 +246,7 @@ export default function SiteHeader() {
   return (
     <header className="relative z-30 border-b border-line bg-page">
       <div className="mx-auto max-w-5xl px-4">
-        <div className="flex items-center justify-between py-5 md:flex-col md:items-center md:gap-4 md:py-7">
+        <div className="flex items-center justify-between py-3 md:flex-col md:items-center md:gap-4 md:py-7">
           <Link
             aria-label="Robin and Madeline, home"
             className="transition-opacity hover:opacity-80"
@@ -254,7 +257,7 @@ export default function SiteHeader() {
                 (the full script names crowd that slim row and align awkwardly).
                 Desktop: the script names take over as the centered centerpiece,
                 where there is room and no hero to carry them. */}
-            <Initials className="text-rose md:hidden" />
+            <Initials className="text-rose md:hidden" decorative />
             <Names className="hidden text-[clamp(1.875rem,4.5vw,3rem)] text-rose md:inline-block" />
           </Link>
           <nav className="hidden items-center gap-1 md:flex">

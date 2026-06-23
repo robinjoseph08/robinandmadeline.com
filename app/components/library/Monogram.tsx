@@ -11,7 +11,7 @@ interface MonogramProps {
 }
 
 /**
- * The couple's floral wreath monogram (the "RM" brand mark). Used full-strength
+ * The couple's floral wreath monogram (the "R&M" brand mark). Used full-strength
  * as a hero anchor or footer mark on the page background; never tinted, since
  * its watercolor hues are the source of the site palette.
  */
@@ -30,7 +30,7 @@ export default function Monogram({
         alt="Robin and Madeline floral monogram"
         className={cn("select-none", className)}
         decoding="async"
-        height={1000}
+        height={1190}
         loading="lazy"
         src={monogramPng720}
         width={1080}
