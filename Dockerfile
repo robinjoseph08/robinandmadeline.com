@@ -43,6 +43,9 @@ RUN pnpm install --frozen-lockfile
 COPY index.html vite.config.ts vitest.config.ts vitest.setup.ts ./
 COPY tsconfig.json tsconfig.app.json tsconfig.node.json tsconfig.test.json ./
 COPY app/ ./app/
+# Vite copies public/ (the favicon set and any other static root files) into
+# the bundle root at build time, so it must be present in the build context.
+COPY public/ ./public/
 COPY --from=typegen /src/app/types/generated/ ./app/types/generated/
 
 # Outputs the bundle to build/app (vite.config.ts build.outDir).
