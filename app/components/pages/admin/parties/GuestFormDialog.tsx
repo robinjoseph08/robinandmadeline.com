@@ -53,6 +53,7 @@ interface FormState {
   isPrimary: boolean;
   isChild: boolean;
   isDrinking: boolean;
+  subscribed: boolean;
 }
 
 const EMPTY_FORM: FormState = {
@@ -67,6 +68,8 @@ const EMPTY_FORM: FormState = {
   isPrimary: false,
   isChild: false,
   isDrinking: false,
+  // A new guest defaults to subscribed (ADR 0009); the admin can opt them out.
+  subscribed: true,
 };
 
 function formFromGuest(guest: Guest): FormState {
@@ -82,6 +85,7 @@ function formFromGuest(guest: Guest): FormState {
     isPrimary: guest.is_primary,
     isChild: guest.is_child,
     isDrinking: guest.is_drinking,
+    subscribed: guest.subscribed,
   };
 }
 
@@ -144,6 +148,7 @@ export function GuestFormDialog({
       is_primary: form.isPrimary,
       is_child: form.isChild,
       is_drinking: form.isDrinking,
+      subscribed: form.subscribed,
     };
     await onSubmit(payload);
   };
@@ -152,11 +157,12 @@ export function GuestFormDialog({
 
   // Narrowing the keys to the boolean fields lets the generic update() accept
   // `checked` directly: FormState[FlagKey] is boolean, so no cast is needed.
-  type FlagKey = "isPrimary" | "isChild" | "isDrinking";
+  type FlagKey = "isPrimary" | "isChild" | "isDrinking" | "subscribed";
   const flags: { key: FlagKey; label: string }[] = [
     { key: "isPrimary", label: "Primary guest" },
     { key: "isChild", label: "Child" },
     { key: "isDrinking", label: "Drinking" },
+    { key: "subscribed", label: "Subscribed" },
   ];
 
   return (

@@ -68,9 +68,9 @@ type MergeFieldWarning struct {
 	Message string `json:"message"`
 }
 
-// SkippedRecipient is a guest the send cannot reach because it has no email
-// address, surfaced so the admin can verify the exclusions rather than only
-// seeing a count.
+// SkippedRecipient is a guest excluded from a send, surfaced so the admin can
+// verify the exclusions rather than only seeing a count. The preview groups
+// these by reason: no email address, or unsubscribed (ADR 0009).
 type SkippedRecipient struct {
 	GuestID   string `json:"guest_id"`
 	GuestName string `json:"guest_name"`
@@ -78,27 +78,30 @@ type SkippedRecipient struct {
 }
 
 // PreviewEmailResponse is what the compose page renders before sending: the
-// matched recipients, the guests skipped for having no email address (both the
-// count and who they are), and the subject/body with merge fields resolved for
-// the first recipient (the sample), as both an HTML email (shell-wrapped) and a
-// plaintext fallback. With no recipients the sample fields are empty.
-// DailySendLimit and DailySendsUsed describe the worker's per-UTC-day dispatch
-// budget so the confirm step can warn when a send will span multiple days; a
-// non-positive limit means unlimited. Warnings lists merge fields that would
-// resolve empty for some recipient, so the page can disable Send until the
-// draft or filter is fixed (it is empty, never null).
+// matched recipients, the two excluded buckets (guests with no email address,
+// and guests who unsubscribed, each as both a count and who they are), and the
+// subject/body with merge fields resolved for the first recipient (the sample),
+// as both an HTML email (shell-wrapped) and a plaintext fallback. With no
+// recipients the sample fields are empty. DailySendLimit and DailySendsUsed
+// describe the worker's per-UTC-day dispatch budget so the confirm step can warn
+// when a send will span multiple days; a non-positive limit means unlimited.
+// Warnings lists merge fields that would resolve empty for some recipient, so
+// the page can disable Send until the draft or filter is fixed (it is empty,
+// never null).
 type PreviewEmailResponse struct {
-	Recipients      []PreviewRecipient  `json:"recipients"`
-	Total           int                 `json:"total"`
-	SkippedNoEmail  int                 `json:"skipped_no_email"`
-	Skipped         []SkippedRecipient  `json:"skipped"`
-	SampleGuestName string              `json:"sample_guest_name"`
-	SampleSubject   string              `json:"sample_subject"`
-	SampleBody      string              `json:"sample_body"`
-	SampleHTML      string              `json:"sample_html"`
-	Warnings        []MergeFieldWarning `json:"warnings"`
-	DailySendLimit  int                 `json:"daily_send_limit"`
-	DailySendsUsed  int                 `json:"daily_sends_used"`
+	Recipients          []PreviewRecipient  `json:"recipients"`
+	Total               int                 `json:"total"`
+	SkippedNoEmail      int                 `json:"skipped_no_email"`
+	Skipped             []SkippedRecipient  `json:"skipped"`
+	SkippedUnsubscribed int                 `json:"skipped_unsubscribed"`
+	Unsubscribed        []SkippedRecipient  `json:"unsubscribed"`
+	SampleGuestName     string              `json:"sample_guest_name"`
+	SampleSubject       string              `json:"sample_subject"`
+	SampleBody          string              `json:"sample_body"`
+	SampleHTML          string              `json:"sample_html"`
+	Warnings            []MergeFieldWarning `json:"warnings"`
+	DailySendLimit      int                 `json:"daily_send_limit"`
+	DailySendsUsed      int                 `json:"daily_sends_used"`
 }
 
 // SendEmailPayload is the body for POST /emails/send. template_id is
@@ -138,13 +141,14 @@ type TestEmailResponse struct {
 // SendStats is a send's tally of recipient rows by delivery status. Total is
 // the recipient count.
 type SendStats struct {
-	Queued    int `json:"queued"`
-	Sending   int `json:"sending"`
-	Sent      int `json:"sent"`
-	Delivered int `json:"delivered"`
-	Bounced   int `json:"bounced"`
-	Failed    int `json:"failed"`
-	Total     int `json:"total"`
+	Queued       int `json:"queued"`
+	Sending      int `json:"sending"`
+	Sent         int `json:"sent"`
+	Delivered    int `json:"delivered"`
+	Bounced      int `json:"bounced"`
+	Failed       int `json:"failed"`
+	Unsubscribed int `json:"unsubscribed"`
+	Total        int `json:"total"`
 }
 
 // SendResponse is the API representation of a send: the stored model plus its

@@ -39,6 +39,14 @@ type Guest struct {
 	IsChild    bool `bun:"is_child" json:"is_child"`
 	IsDrinking bool `bun:"is_drinking" json:"is_drinking"`
 
+	// Subscribed is the per-guest Email Subscription flag (ADR 0009): whether the
+	// guest receives broadcast email updates. New guests are created subscribed;
+	// unsubscribing (the email footer link, the info-form checkbox, or the admin
+	// edit) flips it to false and resubscribing flips it back. The column
+	// defaults true, but the creation paths set it explicitly because a Go bool's
+	// zero value is false, which bun would otherwise write over the default.
+	Subscribed bool `bun:"subscribed" json:"subscribed"`
+
 	PlaceholderText     *string `bun:"placeholder_text" json:"placeholder_text"`
 	DietaryRestrictions *string `bun:"dietary_restrictions" json:"dietary_restrictions"`
 	TableNumber         *int    `bun:"table_number" json:"table_number"`

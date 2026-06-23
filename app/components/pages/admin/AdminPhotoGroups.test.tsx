@@ -58,6 +58,7 @@ function makeGuest(overrides: Partial<GuestListItem>): GuestListItem {
     is_primary: true,
     is_child: false,
     is_drinking: true,
+    subscribed: true,
     placeholder_text: undefined,
     dietary_restrictions: undefined,
     table_number: undefined,

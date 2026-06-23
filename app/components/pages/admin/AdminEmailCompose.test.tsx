@@ -45,6 +45,8 @@ function makePreview(
     total: 1,
     skipped_no_email: 0,
     skipped: [],
+    skipped_unsubscribed: 0,
+    unsubscribed: [],
     sample_guest_name: "Alice",
     sample_subject: "Hi Alice",
     sample_body: "Welcome, friends!",
@@ -156,8 +158,32 @@ describe("AdminEmailCompose preview", () => {
     await user.click(screen.getByRole("button", { name: "Preview" }));
 
     expect(
-      await screen.findByText(/2 matching guests skipped \(no email address\)/),
+      await screen.findByText(/2 skipped \(no email address\)/),
     ).toBeInTheDocument();
+  });
+
+  it("calls out matching guests skipped for being unsubscribed", async () => {
+    setMock({
+      preview: makePreview({
+        skipped_unsubscribed: 1,
+        unsubscribed: [
+          { guest_id: "g9", guest_name: "Gone", party_name: "The Smiths" },
+        ],
+      }),
+    });
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    expect(
+      await screen.findByText(/1 skipped \(unsubscribed\)/),
+    ).toBeInTheDocument();
+    // The unsubscribed guest is listed by name in its own section.
+    expect(screen.getByText("Unsubscribed (1)")).toBeInTheDocument();
+    expect(screen.getByText("Gone")).toBeInTheDocument();
   });
 
   it("notes in the preview panel when the send will span multiple days", async () => {

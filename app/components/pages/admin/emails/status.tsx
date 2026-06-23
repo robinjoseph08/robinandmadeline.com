@@ -15,6 +15,7 @@ const STATUS_LABELS: Record<EmailRecipientStatus, string> = {
   delivered: "Delivered",
   bounced: "Bounced",
   failed: "Failed",
+  unsubscribed: "Unsubscribed",
 };
 
 const STATUS_VARIANTS: Record<
@@ -27,6 +28,9 @@ const STATUS_VARIANTS: Record<
   delivered: "success",
   bounced: "destructive",
   failed: "destructive",
+  // Unsubscribed is an intentional suppression, not a delivery failure, so it
+  // reads neutral rather than destructive (ADR 0009).
+  unsubscribed: "secondary",
 };
 
 /** A recipient's delivery status as a colored badge. */
@@ -49,6 +53,7 @@ export function SendStatsSummary({ stats }: { stats: SendStats }) {
       ["delivered", stats.delivered],
       ["bounced", stats.bounced],
       ["failed", stats.failed],
+      ["unsubscribed", stats.unsubscribed],
     ] as const
   )
     .filter(([, count]) => count > 0)

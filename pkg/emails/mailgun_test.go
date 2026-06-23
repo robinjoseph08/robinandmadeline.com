@@ -59,6 +59,36 @@ func TestHTTPMailgunClient_SendFormatsRequestAndParsesID(t *testing.T) {
 	}, gotForm)
 }
 
+func TestHTTPMailgunClient_SendAddsUnsubscribeHeaders(t *testing.T) {
+	var gotForm map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotForm = map[string]string{}
+		for k := range r.PostForm {
+			gotForm[k] = r.PostForm.Get(k)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"<abc@mg.example.test>"}`))
+	}))
+	defer srv.Close()
+
+	client := emails.NewMailgunClient(srv.URL, "mg.example.test", "key-secret")
+	_, err := client.Send(context.Background(), emails.Message{
+		From:           "Robin & Madeline <hello@example.test>",
+		To:             "alice@example.com",
+		Subject:        "Hi Alice",
+		Text:           "Body",
+		HTML:           "<p>Body</p>",
+		RecipientID:    "rec-1",
+		UnsubscribeURL: "https://robinandmadeline.com/u/guest-9",
+	})
+	require.NoError(t, err)
+
+	// RFC 2369 List-Unsubscribe (angle-bracketed) plus RFC 8058 one-click.
+	assert.Equal(t, "<https://robinandmadeline.com/u/guest-9>", gotForm["h:List-Unsubscribe"])
+	assert.Equal(t, "List-Unsubscribe=One-Click", gotForm["h:List-Unsubscribe-Post"])
+}
+
 func TestHTTPMailgunClient_SendNon2xxIsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

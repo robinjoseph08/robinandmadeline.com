@@ -39,6 +39,7 @@ function makeDetail(
       delivered: 0,
       bounced: 0,
       failed: 0,
+      unsubscribed: 0,
       total: 1,
     },
     recipients: [],
@@ -109,6 +110,7 @@ describe("AdminEmailSendDetail live polling", () => {
     delivered: 0,
     bounced: 0,
     failed: 0,
+    unsubscribed: 0,
     total: 2,
   };
   // Everything dispatched: nothing queued or sending.
@@ -119,6 +121,7 @@ describe("AdminEmailSendDetail live polling", () => {
     delivered: 1,
     bounced: 1,
     failed: 0,
+    unsubscribed: 0,
     total: 2,
   };
 

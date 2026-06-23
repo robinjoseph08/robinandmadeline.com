@@ -494,6 +494,7 @@ func (p *parser) buildParty(name string, rows []parsedRow, codeOwners map[string
 			IsPrimary:  i == 0, // the first row of a party is its primary guest
 			IsChild:    row.isChild,
 			IsDrinking: row.isDrinking,
+			Subscribed: true, // imported guests are born subscribed (ADR 0009)
 		})
 		guests = append(guests, placeholderGuests(row)...)
 	}
@@ -560,6 +561,7 @@ func placeholderGuests(row parsedRow) []*models.Guest {
 			FullName:        name,
 			Tags:            []string{},
 			PlaceholderText: pointerutil.String(name),
+			Subscribed:      true, // consistent default (placeholders have no email)
 		})
 	}
 	return guests

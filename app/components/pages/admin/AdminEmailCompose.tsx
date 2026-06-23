@@ -174,10 +174,21 @@ export default function AdminEmailCompose() {
   // which handleSend refreshes (via the pre-send re-resolve) immediately before
   // opening the dialog, so what it shows is the live audience that will send.
   const confirmTotal = preview?.total ?? 0;
-  const confirmSkippedNote =
-    preview && preview.skipped_no_email > 0
-      ? `${preview.skipped_no_email} matching guest${preview.skipped_no_email === 1 ? "" : "s"} without an email will be skipped.`
-      : undefined;
+  const confirmSkippedNote = (() => {
+    if (!preview) return undefined;
+    const notes: string[] = [];
+    if (preview.skipped_no_email > 0) {
+      notes.push(
+        `${preview.skipped_no_email} matching guest${preview.skipped_no_email === 1 ? "" : "s"} without an email will be skipped.`,
+      );
+    }
+    if (preview.skipped_unsubscribed > 0) {
+      notes.push(
+        `${preview.skipped_unsubscribed} unsubscribed guest${preview.skipped_unsubscribed === 1 ? "" : "s"} will be skipped.`,
+      );
+    }
+    return notes.length > 0 ? notes.join(" ") : undefined;
+  })();
   // A preview with merge-field warnings means the send would contain a blank
   // field, which the backend hard-refuses; disable Send until it is resolved.
   // The backend always sends warnings as [] (never null), but guard defensively
@@ -499,7 +510,9 @@ export default function AdminEmailCompose() {
             <p className="text-sm text-muted-foreground">
               {preview.total} recipient{preview.total === 1 ? "" : "s"}
               {preview.skipped_no_email > 0 &&
-                `, ${preview.skipped_no_email} matching guest${preview.skipped_no_email === 1 ? "" : "s"} skipped (no email address)`}
+                `, ${preview.skipped_no_email} skipped (no email address)`}
+              {preview.skipped_unsubscribed > 0 &&
+                `, ${preview.skipped_unsubscribed} skipped (unsubscribed)`}
             </p>
             {previewDayNote && (
               <p className="text-sm text-muted-foreground">{previewDayNote}</p>
@@ -586,6 +599,32 @@ export default function AdminEmailCompose() {
                   </TableHeader>
                   <TableBody>
                     {preview.skipped.map((guest) => (
+                      <TableRow key={guest.guest_id}>
+                        <TableCell>{guest.guest_name}</TableCell>
+                        <TableCell>{guest.party_name}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+
+          {preview.unsubscribed.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-muted-foreground">
+                Unsubscribed ({preview.unsubscribed.length})
+              </h3>
+              <div className="max-h-48 overflow-y-auto rounded-md border border-ink/10">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Guest</TableHead>
+                      <TableHead>Party</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {preview.unsubscribed.map((guest) => (
                       <TableRow key={guest.guest_id}>
                         <TableCell>{guest.guest_name}</TableCell>
                         <TableCell>{guest.party_name}</TableCell>

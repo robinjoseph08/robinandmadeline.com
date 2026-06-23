@@ -375,18 +375,33 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 		return
 	}
 
+	// Re-check subscription at send time for real sends, not just at enqueue: a
+	// large send can span two days at the daily send cap, so a guest can
+	// unsubscribe after the row was queued but before it is dispatched. Honor it,
+	// record the terminal `unsubscribed` status (distinct from a delivery
+	// failed), and never call Mailgun (ADR 0009). Test sends are exempt: their
+	// row is addressed to the couple's own inbox, not the render guest, so the
+	// render guest's subscription is irrelevant to delivery.
+	if !send.IsTest && !guest.Subscribed {
+		row.Status = models.EmailUnsubscribed
+		row.FailureReason = nil
+		w.updateRow(ctx, row)
+		return
+	}
+
 	mctx := MergeContext{Guest: guest, Party: guest.Party, Event: event, PublicBaseURL: w.cfg.PublicBaseURL}
 	// Both bodies carry the same merge-resolved content: Text is the plaintext
 	// fallback (the resolved Markdown source) and HTML is that source rendered
 	// to HTML and wrapped in the shell, the same pipeline the compose preview
 	// shows (RenderEmail).
 	messageID, err := w.client.Send(ctx, Message{
-		From:        w.cfg.From,
-		To:          row.EmailAddress,
-		Subject:     Render(send.Subject, mctx),
-		Text:        Render(send.Body, mctx),
-		HTML:        RenderEmail(send.Subject, send.Body, mctx),
-		RecipientID: row.ID,
+		From:           w.cfg.From,
+		To:             row.EmailAddress,
+		Subject:        Render(send.Subject, mctx),
+		Text:           Render(send.Body, mctx),
+		HTML:           RenderEmail(send.Subject, send.Body, mctx),
+		RecipientID:    row.ID,
+		UnsubscribeURL: unsubscribeURL(mctx),
 	})
 	if err != nil {
 		var rejection *RejectionError

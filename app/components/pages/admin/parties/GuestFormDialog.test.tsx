@@ -15,6 +15,7 @@ function makeGuest(overrides: Partial<Guest>): Guest {
     is_primary: false,
     is_child: false,
     is_drinking: false,
+    subscribed: true,
     placeholder_text: undefined,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
@@ -96,6 +97,31 @@ describe("GuestFormDialog phone", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ phone: "(415) 555-2671" }),
+    );
+  });
+});
+
+describe("GuestFormDialog subscription", () => {
+  it("seeds the subscribed flag and submits it toggled off", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(
+      <GuestFormDialog
+        guest={makeGuest({ subscribed: true })}
+        isPending={false}
+        onOpenChange={() => {}}
+        onSubmit={onSubmit}
+        open
+      />,
+    );
+
+    const checkbox = screen.getByRole("checkbox", { name: "Subscribed" });
+    expect(checkbox).toBeChecked();
+    await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ subscribed: false }),
     );
   });
 });

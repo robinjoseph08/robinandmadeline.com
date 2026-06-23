@@ -164,17 +164,22 @@ type ListPartiesQuery struct {
 // value is a 422 (a guest either has a descriptor or arrives as JSON null, a
 // regular guest).
 type CreateGuestPayload struct {
-	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
-	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
-	Phone               *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
-	Tags                []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
-	IsPrimary           bool     `json:"is_primary"`
-	IsChild             bool     `json:"is_child"`
-	IsDrinking          bool     `json:"is_drinking"`
-	PlaceholderText     *string  `json:"placeholder_text" mod:"trim" validate:"omitempty,min=1,max=200"`
-	DietaryRestrictions *string  `json:"dietary_restrictions" mod:"trim" validate:"omitempty,max=1000"`
-	TableNumber         *int     `json:"table_number" validate:"omitempty,min=1"`
-	SeatNumber          *int     `json:"seat_number" validate:"omitempty,min=1"`
+	FullName   string   `json:"full_name" mod:"trim" validate:"required,max=200"`
+	Email      *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
+	Phone      *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
+	Tags       []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
+	IsPrimary  bool     `json:"is_primary"`
+	IsChild    bool     `json:"is_child"`
+	IsDrinking bool     `json:"is_drinking"`
+	// Subscribed is the email opt-in (ADR 0009). A pointer so an omitted value
+	// defaults to subscribed in the service: a new guest is born subscribed
+	// unless the create form unchecks it (its Go zero value is false, the wrong
+	// default).
+	Subscribed          *bool   `json:"subscribed"`
+	PlaceholderText     *string `json:"placeholder_text" mod:"trim" validate:"omitempty,min=1,max=200"`
+	DietaryRestrictions *string `json:"dietary_restrictions" mod:"trim" validate:"omitempty,max=1000"`
+	TableNumber         *int    `json:"table_number" validate:"omitempty,min=1"`
+	SeatNumber          *int    `json:"seat_number" validate:"omitempty,min=1"`
 }
 
 // UpdateGuestPayload is the full desired state of a guest's editable fields
@@ -185,17 +190,20 @@ type CreateGuestPayload struct {
 // is a 422 (min=1), and an omitted key (the dialog's blanked-field behavior)
 // stores NULL, turning the row into a regular guest.
 type UpdateGuestPayload struct {
-	FullName            string   `json:"full_name" mod:"trim" validate:"required,max=200"`
-	Email               *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
-	Phone               *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
-	Tags                []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
-	IsPrimary           bool     `json:"is_primary"`
-	IsChild             bool     `json:"is_child"`
-	IsDrinking          bool     `json:"is_drinking"`
-	PlaceholderText     *string  `json:"placeholder_text" mod:"trim" validate:"omitempty,min=1,max=200"`
-	DietaryRestrictions *string  `json:"dietary_restrictions" mod:"trim" validate:"omitempty,max=1000"`
-	TableNumber         *int     `json:"table_number" validate:"omitempty,min=1"`
-	SeatNumber          *int     `json:"seat_number" validate:"omitempty,min=1"`
+	FullName   string   `json:"full_name" mod:"trim" validate:"required,max=200"`
+	Email      *string  `json:"email" mod:"trim" validate:"omitempty,email,max=320"`
+	Phone      *string  `json:"phone" mod:"trim,phone" validate:"omitempty,phone,max=32"`
+	Tags       []string `json:"tags" mod:"dive,trim" validate:"omitempty,dive,min=1,max=100" default:"[]"`
+	IsPrimary  bool     `json:"is_primary"`
+	IsChild    bool     `json:"is_child"`
+	IsDrinking bool     `json:"is_drinking"`
+	// Subscribed is the email opt-in (ADR 0009). Plain bool, full-state like the
+	// other flags: the edit dialog always sends the current value.
+	Subscribed          bool    `json:"subscribed"`
+	PlaceholderText     *string `json:"placeholder_text" mod:"trim" validate:"omitempty,min=1,max=200"`
+	DietaryRestrictions *string `json:"dietary_restrictions" mod:"trim" validate:"omitempty,max=1000"`
+	TableNumber         *int    `json:"table_number" validate:"omitempty,min=1"`
+	SeatNumber          *int    `json:"seat_number" validate:"omitempty,min=1"`
 }
 
 // PatchGuestPayload is a partial update of a guest's editable fields, the guest

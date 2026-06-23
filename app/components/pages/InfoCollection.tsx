@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 
 import { PhoneField } from "@/components/library/PhoneField";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePartyInfo, useUpdatePartyInfo } from "@/hooks/queries/info";
@@ -189,6 +190,12 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
       data.guests.map((g) => [g.id, formatPhone(g.phone ?? "")]),
     ),
   );
+  // The email-updates opt-in, seeded from each guest's stored subscription so a
+  // guest who unsubscribed shows unchecked and re-saving never silently
+  // resubscribes them (ADR 0009).
+  const [subscribed, setSubscribed] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(data.guests.map((g) => [g.id, g.subscribed])),
+  );
   const [address, setAddress] = useState<Record<AddressKey, string>>(() => {
     const initial = {} as Record<AddressKey, string>;
     for (const field of addressFields) {
@@ -231,6 +238,10 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
           full_name: submittedName(names[guest.id] ?? ""),
           email: (emails[guest.id] ?? "").trim(),
           phone: (phones[guest.id] ?? "").trim(),
+          // Full-state, like email/phone: the current checkbox value is always
+          // sent for an included guest (the loaded value when the checkbox is
+          // hidden for lack of an email), so nothing is silently clobbered.
+          subscribed: subscribed[guest.id],
           remove: false,
         };
       }),
@@ -328,6 +339,24 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                     type="email"
                     value={emails[guest.id] ?? ""}
                   />
+                  {/* The email-updates opt-in only appears once there's an
+                      email to send to; while hidden, the loaded value still
+                      rides along on submit (ADR 0009). */}
+                  {(emails[guest.id] ?? "").trim() !== "" ? (
+                    <label className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                      <Checkbox
+                        checked={subscribed[guest.id] ?? true}
+                        onCheckedChange={(checked) =>
+                          setSubscribed((prev) => ({
+                            ...prev,
+                            [guest.id]: checked === true,
+                          }))
+                        }
+                      />
+                      Send {guest.full_name.split(" ")[0]} wedding updates by
+                      email
+                    </label>
+                  ) : null}
                 </div>
                 <div className="mt-3 flex flex-col gap-1.5">
                   <Label htmlFor={`phone-${guest.id}`}>Phone</Label>
@@ -381,6 +410,10 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
           </section>
         ))}
 
+        <p className="text-center text-sm text-muted-foreground">
+          We only send the occasional update.
+        </p>
+
         <p className="text-center text-sm italic text-muted-foreground">
           If there are additional people in your party that we missed, message
           us so we can add them!
@@ -431,12 +464,6 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
         <Button disabled={updateInfo.isPending} type="submit">
           {updateInfo.isPending ? "Saving..." : "Save your info"}
         </Button>
-
-        <p className="text-sm text-muted-foreground">
-          On the rare occasion we send an email update, every email entered
-          above gets a copy so the whole party stays in the loop. If someone
-          would rather not get these updates, just leave their email blank.
-        </p>
       </form>
     </section>
   );

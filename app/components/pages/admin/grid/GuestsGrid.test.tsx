@@ -27,6 +27,7 @@ function makeGuest(overrides: Partial<Guest>): Guest {
     is_primary: false,
     is_child: false,
     is_drinking: false,
+    subscribed: true,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -119,5 +120,18 @@ describe("GuestsGrid phone cell", () => {
         body: { phone: "(972) 555-1234" },
       }),
     );
+  });
+
+  it("shows an Unsubscribed marker only for opted-out guests", () => {
+    renderGrid(
+      [
+        makeGuest({ id: "g1", full_name: "Alice", subscribed: true }),
+        makeGuest({ id: "g2", full_name: "Bob", subscribed: false }),
+      ],
+      (g) => g.party_id,
+    );
+
+    // Only the unsubscribed guest is flagged; the subscribed norm shows nothing.
+    expect(screen.getAllByText("Unsubscribed")).toHaveLength(1);
   });
 });

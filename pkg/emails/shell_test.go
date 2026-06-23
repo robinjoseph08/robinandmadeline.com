@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -69,4 +70,27 @@ func TestRenderEmail_DropsRawHTMLInTheBody(t *testing.T) {
 	// The visible text survives; only the raw tag is stripped.
 	assert.Contains(t, html, "Watch out")
 	assert.Contains(t, html, "alert(1)")
+}
+
+func TestRenderEmail_FooterCarriesPerGuestUnsubscribeLink(t *testing.T) {
+	mctx := mergeFixture()
+	mctx.Guest.Email = pointerutil.String("alice@example.com")
+	html := RenderEmail("s", "Hello", mctx)
+
+	// The footer links to the guest's own unsubscribe page and names the address
+	// the mail went to (ADR 0009).
+	assert.Contains(t, html, `href="https://robinandmadeline.com/u/11111111-1111-7111-8111-111111111111"`)
+	assert.Contains(t, html, "This update was sent to")
+	assert.Contains(t, html, "alice@example.com")
+	assert.Contains(t, html, ">Unsubscribe</a")
+}
+
+func TestRenderEmail_OmitsUnsubscribeLinkWithoutGuestID(t *testing.T) {
+	mctx := mergeFixture()
+	// A sample/preview context with no addressable guest: no dead /u/ link.
+	mctx.Guest.ID = ""
+	html := RenderEmail("s", "Hello", mctx)
+
+	assert.NotContains(t, html, "/u/")
+	assert.NotContains(t, html, ">Unsubscribe</a")
 }

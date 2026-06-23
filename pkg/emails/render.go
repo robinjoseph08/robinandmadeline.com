@@ -119,3 +119,25 @@ func formatEventDate(date string) string {
 	}
 	return d.Format("Monday, January 2, 2006")
 }
+
+// unsubscribeURL is the per-recipient unsubscribe link placed in the email
+// footer and the List-Unsubscribe header (ADR 0009): the public site origin
+// plus /u/ and the guest's id. It is empty when there is no addressable guest
+// id (a sample or preview context) or no configured base URL, so the footer
+// line and the header are omitted rather than pointing at a dead /u/ link.
+func unsubscribeURL(mctx MergeContext) string {
+	if mctx.Guest == nil || mctx.Guest.ID == "" || mctx.PublicBaseURL == "" {
+		return ""
+	}
+	return mctx.PublicBaseURL + "/u/" + mctx.Guest.ID
+}
+
+// recipientEmail is the guest's email, shown in the footer beside the
+// unsubscribe link so the reader knows which inbox it affects. Empty when the
+// guest has no email on file (then the footer shows just the link).
+func recipientEmail(mctx MergeContext) string {
+	if mctx.Guest == nil || mctx.Guest.Email == nil {
+		return ""
+	}
+	return *mctx.Guest.Email
+}

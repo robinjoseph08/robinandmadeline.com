@@ -248,10 +248,16 @@ func applyGuestInfo(ctx context.Context, tx bun.Tx, guest *models.Guest, update 
 	if update.Phone != nil {
 		guest.Phone = pointerutil.EmptyString(*update.Phone)
 	}
+	// Subscription is independent of email presence (ADR 0009): an omitted value
+	// leaves it untouched, a present one sets it, so the primary's required email
+	// can be on file while they stay unsubscribed.
+	if update.Subscribed != nil {
+		guest.Subscribed = *update.Subscribed
+	}
 	guest.UpdatedAt = now
 
 	_, err := tx.NewUpdate().Model(guest).
-		Column("full_name", "email", "phone", "updated_at").
+		Column("full_name", "email", "phone", "subscribed", "updated_at").
 		WherePK().Exec(ctx)
 	if err != nil {
 		return errors.Wrap(err, "update guest info")

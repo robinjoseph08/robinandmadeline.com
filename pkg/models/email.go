@@ -10,15 +10,19 @@ import (
 // constraint (like event_rsvps.status). A recipient row is born queued; the
 // background worker claims it as sending, then records sent or failed; the
 // Mailgun webhook later upgrades sent rows to delivered, bounced, or failed
-// (ADR 0004). The //tygo:emit line generates the matching TypeScript union.
+// (ADR 0004). The worker records unsubscribed instead of sending when the guest
+// unsubscribed between the send's enqueue and its dispatch (ADR 0009): a
+// terminal status kept distinct from a delivery failed. The //tygo:emit line
+// generates the matching TypeScript union.
 const (
-	//tygo:emit export type EmailRecipientStatus = typeof EmailQueued | typeof EmailSending | typeof EmailSent | typeof EmailDelivered | typeof EmailBounced | typeof EmailFailed;
-	EmailQueued    = "queued"
-	EmailSending   = "sending"
-	EmailSent      = "sent"
-	EmailDelivered = "delivered"
-	EmailBounced   = "bounced"
-	EmailFailed    = "failed"
+	//tygo:emit export type EmailRecipientStatus = typeof EmailQueued | typeof EmailSending | typeof EmailSent | typeof EmailDelivered | typeof EmailBounced | typeof EmailFailed | typeof EmailUnsubscribed;
+	EmailQueued       = "queued"
+	EmailSending      = "sending"
+	EmailSent         = "sent"
+	EmailDelivered    = "delivered"
+	EmailBounced      = "bounced"
+	EmailFailed       = "failed"
+	EmailUnsubscribed = "unsubscribed"
 )
 
 // EmailTemplate is a reusable email the couple composes once and sends many

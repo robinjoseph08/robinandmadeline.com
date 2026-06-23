@@ -189,7 +189,7 @@ export function GuestsGrid<TGuest extends Guest>({
   }, [parties]);
   // Base columns: Name, Email, Phone, Tags, Flags, Placeholder, Primary,
   // Actions. The flat list adds Party, Side, Relation.
-  const columnCount = 8 + (showPartyColumn ? 3 : 0);
+  const columnCount = 9 + (showPartyColumn ? 3 : 0);
 
   // Existing tags across the loaded guests, to suggest in every tag cell.
   const tagSuggestions = useMemo(() => {
@@ -259,6 +259,7 @@ export function GuestsGrid<TGuest extends Guest>({
               <TableHead className="w-28">Relation</TableHead>
             </>
           ) : null}
+          <TableHead className="w-28">Updates</TableHead>
           <TableHead className="w-20 text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
@@ -360,6 +361,14 @@ export function GuestsGrid<TGuest extends Guest>({
                   />
                 </>
               ) : null}
+              {/* A light, read-only indicator of email subscription: blank for
+                  the subscribed norm, a muted marker for the rare opt-out (ADR
+                  0009). The toggle itself lives in the guest edit dialog. */}
+              <GridReadOnlyCell className="p-0">
+                <div className="flex h-8 items-center px-3 text-xs text-muted-foreground">
+                  {guest.subscribed ? null : "Unsubscribed"}
+                </div>
+              </GridReadOnlyCell>
               <GridReadOnlyCell className="p-0">
                 <div className="flex h-8 items-center justify-end gap-1 px-3">
                   <TooltipIconButton
@@ -698,6 +707,11 @@ function AddGuestRow({
           )}
         </>
       ) : null}
+      {/* A new guest defaults to subscribed, so the Updates indicator is blank
+          in the add row. */}
+      <GridReadOnlyCell className="p-0">
+        <div className="flex h-8 items-center px-3" />
+      </GridReadOnlyCell>
       <GridReadOnlyCell className="p-0">
         <div className="flex h-8 items-center justify-end gap-1 px-3">
           <TooltipIconButton label="Cancel" onClick={cancelAdd}>

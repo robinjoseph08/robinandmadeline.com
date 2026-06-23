@@ -46,6 +46,13 @@ type shellData struct {
 	// snippet from the HTML previews the message rather than the shell's monogram.
 	Preheader string
 	Content   template.HTML
+	// UnsubscribeURL is the per-recipient unsubscribe link in the footer (ADR
+	// 0009). Empty when there is no addressable guest (a sample/preview with no
+	// id), in which case the footer renders without the unsubscribe line.
+	UnsubscribeURL string
+	// RecipientEmail is the address the message went to, shown beside the
+	// unsubscribe link so the reader knows which inbox the link affects.
+	RecipientEmail string
 }
 
 // RenderEmail resolves the merge fields in the subject and Markdown body for one
@@ -73,7 +80,9 @@ func RenderEmail(subject, body string, mctx MergeContext) string {
 		Preheader: preheaderText(resolvedBody),
 		// #nosec G203 -- the content is goldmark's own escaped HTML output (safe
 		// defaults), not raw user input; injecting it verbatim is the point.
-		Content: template.HTML(htmlBody.String()), //nolint:gosec
+		Content:        template.HTML(htmlBody.String()), //nolint:gosec
+		UnsubscribeURL: unsubscribeURL(mctx),
+		RecipientEmail: recipientEmail(mctx),
 	}); err != nil {
 		// A shell execution failure is a programming error in an in-repo asset;
 		// fall back to the rendered body so a send still carries content.
