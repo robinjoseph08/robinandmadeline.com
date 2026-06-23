@@ -167,8 +167,27 @@ jobs:
         with:
           context: .
           push: false
+          # Load the built image into the local daemon so the next step can
+          # inspect its contents.
+          load: true
+          tags: robinandmadeline:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # The favicon set lives in public/, which Vite copies into the bundle and
+      # the runtime image serves from STATIC_DIR. A past regression left public/
+      # out of the build context, so the icons 404'd in production; assert the
+      # built image actually contains them so it cannot silently recur. Running
+      # sh rather than the default entrypoint keeps this independent of a
+      # database, since the API binary needs one to boot.
+      - name: Verify the image bundles the public/ static assets
+        run: |
+          docker run --rm --entrypoint sh robinandmadeline:ci -c '
+            set -e
+            for f in favicon.ico favicon.svg apple-touch-icon.png; do
+              test -f "/app/public/$f" || { echo "missing /app/public/$f"; exit 1; }
+            done
+            echo "public/ static assets present in image"
+          '
 
   e2e:
     name: E2E
