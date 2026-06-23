@@ -30,7 +30,7 @@ export default function Monogram({
         alt="Robin and Madeline floral monogram"
         className={cn("select-none", className)}
         decoding="async"
-        height={1000}
+        height={1190}
         loading="lazy"
         src={monogramPng720}
         width={1080}
