@@ -1,35 +1,50 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import FAQ from "@/components/pages/FAQ";
 
-// The questions inlined in FAQ.tsx, each paired with a snippet of its answer.
-// Kept here (rather than imported) now that the content lives as JSX in the
-// component itself.
+// Each question inlined in FAQ.tsx, paired with a snippet from every paragraph
+// of its answer (so multi-paragraph answers are fully covered). Kept here
+// rather than imported now that the copy lives as JSX in the component itself.
 const FAQ_ITEMS = [
   {
     question: "Where will the wedding take place?",
-    answer: "This is in Palmer, TX.",
+    answers: ["This is in Palmer, TX."],
   },
   {
     question: "Do I need to rent a car?",
-    answer: "We definitely recommend having a car",
+    answers: ["We definitely recommend having a car"],
   },
   {
     question: "What's a Madhuram Veppu?",
-    answer: "Sweetening Ceremony",
+    answers: [
+      "traditional ceremony that happens on the day before a Kerala wedding",
+      "Sweetening Ceremony",
+    ],
   },
   {
     question: "What's the dress code for the events?",
-    answer: "the dress code is semi-formal",
+    answers: [
+      "the dress code is semi-formal",
+      "the ceremony and reception will be outdoors",
+    ],
   },
   {
     question: "Do you have a gift registry?",
-    answer: "Your presence at our wedding is gift enough",
+    answers: [
+      "Your presence at our wedding is gift enough",
+      "not bring any boxed gifts",
+    ],
   },
 ];
+
+// The exact Zelle deep link from the source copy. Pinned in full (not just the
+// host) because it is a payment link: a corrupted token would route money to
+// the wrong recipient, so any drift should fail the test.
+const ZELLE_URL =
+  "https://enroll.zellepay.com/qr-codes?data=ewogICJ0b2tlbiIgOiAiOTcyNzU0NzIzNyIsCiAgImFjdGlvbiIgOiAicGF5bWVudCIsCiAgIm5hbWUiIDogIlJPQklOIgp9";
 
 function renderFAQ() {
   return render(
@@ -37,6 +52,11 @@ function renderFAQ() {
       <FAQ />
     </MemoryRouter>,
   );
+}
+
+// Reports the current router path so a test can prove client-side navigation.
+function LocationProbe() {
+  return <div data-testid="location">{useLocation().pathname}</div>;
 }
 
 // The answer panel a question's toggle controls. It stays mounted while
@@ -69,7 +89,9 @@ describe("FAQ", () => {
       const panel = panelFor(item.question);
       expect(toggle).toHaveAttribute("aria-expanded", "false");
       expect(panel).toHaveAttribute("role", "region");
-      expect(panel).toHaveTextContent(item.answer);
+      for (const snippet of item.answers) {
+        expect(panel).toHaveTextContent(snippet);
+      }
       expect(panel).not.toBeVisible();
     }
   });
@@ -124,24 +146,46 @@ describe("FAQ", () => {
     expect(panelFor(second.question)).toBeVisible();
   });
 
-  it("links the Travel reference internally and preserves external links", () => {
+  it("preserves the external links from the source copy", () => {
     renderFAQ();
 
-    // The Travel reference points at the in-app route, not an external URL.
-    expect(screen.getByText("Travel")).toHaveAttribute("href", "/travel");
+    // Each external link keeps its exact href and opens safely in a new tab.
+    const externals = [
+      {
+        name: "Arrowwood Weddings & Events",
+        href: "https://arrowwoodevents.com/",
+      },
+      { name: "Venmo", href: "https://venmo.com/u/robinjoseph08" },
+      { name: "Zelle", href: ZELLE_URL },
+    ];
+    for (const { name, href } of externals) {
+      const link = screen.getByText(name);
+      expect(link).toHaveAttribute("href", href);
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    }
+  });
 
-    // Links carried over from the source copy are preserved verbatim.
-    expect(screen.getByText("Arrowwood Weddings & Events")).toHaveAttribute(
-      "href",
-      "https://arrowwoodevents.com/",
+  it("navigates within the app when the Travel link is clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/faq"]}>
+        <FAQ />
+        <LocationProbe />
+      </MemoryRouter>,
     );
-    expect(screen.getByText("Venmo")).toHaveAttribute(
-      "href",
-      "https://venmo.com/u/robinjoseph08",
+
+    // The link lives in a collapsed panel; open it the way a guest would.
+    await user.click(
+      screen.getByRole("button", { name: "Do I need to rent a car?" }),
     );
-    expect(screen.getByText("Zelle")).toHaveAttribute(
-      "href",
-      expect.stringContaining("enroll.zellepay.com"),
-    );
+    const travel = screen.getByRole("link", { name: "Travel" });
+    expect(travel).toHaveAttribute("href", "/travel");
+
+    await user.click(travel);
+
+    // Client-side navigation updates the router location without a full
+    // reload; a plain <a href="/travel"> would not change it here.
+    expect(screen.getByTestId("location")).toHaveTextContent("/travel");
   });
 });
