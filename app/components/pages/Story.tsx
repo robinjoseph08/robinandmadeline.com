@@ -1,12 +1,21 @@
 import { Heart, Image as ImageIcon } from "lucide-react";
 import { type ReactNode } from "react";
 
+import firstDate2Avif640 from "@/assets/story/first-date-2-640.avif";
+import firstDate2Avif1080 from "@/assets/story/first-date-2-1080.avif";
+import firstDate2Jpg from "@/assets/story/first-date-2-1080.jpg";
 import firstDateAvif640 from "@/assets/story/first-date-640.avif";
 import firstDateAvif1080 from "@/assets/story/first-date-1080.avif";
 import firstDateJpg from "@/assets/story/first-date-1080.jpg";
+import howWeMet2Avif640 from "@/assets/story/how-we-met-2-640.avif";
+import howWeMet2Avif1080 from "@/assets/story/how-we-met-2-1080.avif";
+import howWeMet2Jpg from "@/assets/story/how-we-met-2-1080.jpg";
 import howWeMetAvif640 from "@/assets/story/how-we-met-640.avif";
 import howWeMetAvif1080 from "@/assets/story/how-we-met-1080.avif";
 import howWeMetJpg from "@/assets/story/how-we-met-1080.jpg";
+import proposal2Avif640 from "@/assets/story/proposal-2-640.avif";
+import proposal2Avif1080 from "@/assets/story/proposal-2-1080.avif";
+import proposal2Jpg from "@/assets/story/proposal-2-1080.jpg";
 import proposalAvif640 from "@/assets/story/proposal-640.avif";
 import proposalAvif1080 from "@/assets/story/proposal-1080.avif";
 import proposalJpg from "@/assets/story/proposal-1080.jpg";
@@ -14,18 +23,21 @@ import weddingAvif640 from "@/assets/story/wedding-640.avif";
 import weddingAvif1080 from "@/assets/story/wedding-1080.avif";
 import weddingJpg from "@/assets/story/wedding-1080.jpg";
 import PageHeader from "@/components/library/PageHeader";
+import { useInView } from "@/hooks/useInView";
 import { cn } from "@/libraries/utils";
 
 /**
- * A photo for a milestone. The variants are pre-generated from an original with
- * all metadata stripped (privacy) into an AVIF ladder plus a JPEG fallback,
- * mirroring the gallery. To add or replace one, for an original `<slug>.jpg`:
+ * A framed photo for a milestone. The variants are pre-generated from an
+ * original with all metadata stripped (privacy) into an AVIF ladder plus a JPEG
+ * fallback, mirroring the gallery. To add or replace one, for an `<slug>.jpg`:
  *
  *   magick orig.jpg -auto-orient -strip -resize 640x  -quality 55 app/assets/story/<slug>-640.avif
  *   magick orig.jpg -auto-orient -strip -resize 1080x -quality 58 app/assets/story/<slug>-1080.avif
  *   magick orig.jpg -auto-orient -strip -resize 1080x -quality 80 -interlace JPEG app/assets/story/<slug>-1080.jpg
  *
- * then import the variants and pass a `photo` to the milestone below.
+ * then import the variants and add it to a milestone's `photos` below. Within a
+ * milestone, `photos` are laid out left to right and overlap; `front` marks the
+ * one that sits on top of the others, and `tilt` is its resting angle.
  */
 interface MilestonePhoto {
   /** Alt text describing the photo, used as its accessible name. */
@@ -34,40 +46,89 @@ interface MilestonePhoto {
   avifSrcSet: string;
   /** JPEG fallback for browsers without AVIF support. */
   fallbackSrc: string;
-  /** `sizes` hint for the displayed width. */
+  /**
+   * Responsive `sizes`, e.g. "(min-width: 640px) 18rem, 14rem" (first value is
+   * desktop, last is mobile). This is what actually drives each photo's
+   * displayed width, not the `max-w`/`max-h` classes: because the `<source>`
+   * uses `srcset` width descriptors and the `<img>` is `width: auto`, the
+   * browser lays the image out at its `sizes` width (its density-corrected
+   * intrinsic size). The `max-w`/`max-h` classes are only safety clamps. So to
+   * resize the photos per breakpoint, change these `sizes` values, not the caps.
+   */
   sizes: string;
   /** Intrinsic dimensions; set the aspect ratio and reserve space pre-load. */
   width: number;
   height: number;
+  /** Resting rotation the framed print settles into as it reveals, e.g. "-2deg". */
+  tilt: string;
+  /** Whether this print stacks on top of the others in its milestone. */
+  front?: boolean;
 }
 
+// How we met: the crossword conversation (front) over Robin's interests list.
 const howWeMetPhoto: MilestonePhoto = {
   alt: "A screenshot of our first Hinge conversation, about the crossword",
   avifSrcSet: `${howWeMetAvif640} 640w, ${howWeMetAvif1080} 1080w`,
   fallbackSrc: howWeMetJpg,
-  sizes: "18rem",
+  sizes: "(min-width: 640px) 18rem, 14rem",
   width: 1080,
   height: 1662,
+  tilt: "-2.2deg",
+  front: true,
+};
+const howWeMetListPhoto: MilestonePhoto = {
+  alt: "The list of interests from Robin's Hinge profile",
+  avifSrcSet: `${howWeMet2Avif640} 640w, ${howWeMet2Avif1080} 1080w`,
+  fallbackSrc: howWeMet2Jpg,
+  sizes: "(min-width: 640px) 18rem, 14rem",
+  width: 1080,
+  height: 1546,
+  tilt: "3.5deg",
 };
 
+// First date: the Snapchat (front) over the BCD Tofu House storefront.
 const firstDatePhoto: MilestonePhoto = {
   alt: "A Snapchat of the pile of outfits Madeline tried on before our first date",
   avifSrcSet: `${firstDateAvif640} 640w, ${firstDateAvif1080} 1080w`,
   fallbackSrc: firstDateJpg,
-  sizes: "16rem",
+  sizes: "(min-width: 640px) 18rem, 14rem",
   width: 1080,
   height: 1920,
+  tilt: "1.8deg",
+  front: true,
+};
+const firstDateBcdPhoto: MilestonePhoto = {
+  alt: "The exterior of BCD Tofu House, where we had our first date",
+  avifSrcSet: `${firstDate2Avif640} 640w, ${firstDate2Avif1080} 1080w`,
+  fallbackSrc: firstDate2Jpg,
+  sizes: "(min-width: 640px) 20rem, 16rem",
+  width: 1000,
+  height: 750,
+  tilt: "-3deg",
 };
 
-const proposalPhoto: MilestonePhoto = {
+// Proposal: the moment itself (front) over the ring photo.
+const proposalMomentPhoto: MilestonePhoto = {
+  alt: "Robin presenting the ring to Madeline during the proposal",
+  avifSrcSet: `${proposal2Avif640} 640w, ${proposal2Avif1080} 1080w`,
+  fallbackSrc: proposal2Jpg,
+  sizes: "(min-width: 640px) 20rem, 16rem",
+  width: 1080,
+  height: 773,
+  tilt: "-1.4deg",
+  front: true,
+};
+const proposalRingPhoto: MilestonePhoto = {
   alt: "Robin and Madeline showing off the engagement ring just after the proposal",
   avifSrcSet: `${proposalAvif640} 640w, ${proposalAvif1080} 1080w`,
   fallbackSrc: proposalJpg,
-  sizes: "19rem",
+  sizes: "(min-width: 640px) 18rem, 14rem",
   width: 1080,
   height: 1620,
+  tilt: "3.5deg",
 };
 
+// The wedding: a single engagement-shoot photo (for now).
 const weddingPhoto: MilestonePhoto = {
   alt: "Robin and Madeline smiling at each other at their engagement shoot",
   avifSrcSet: `${weddingAvif640} 640w, ${weddingAvif1080} 1080w`,
@@ -75,6 +136,8 @@ const weddingPhoto: MilestonePhoto = {
   sizes: "(min-width: 672px) 600px, 100vw",
   width: 1080,
   height: 805,
+  tilt: "2.4deg",
+  front: true,
 };
 
 /**
@@ -111,24 +174,40 @@ function Pink({ children }: { children: ReactNode }) {
 
 /**
  * A single milestone on the Our Story timeline: a date, a title, free-form
- * content, and an optional photo. `children` is plain JSX, so a milestone can
- * hold rich text (links, lists, multiple paragraphs) as the copy gets fleshed
- * out. Milestones without a photo yet show a "coming soon" placeholder.
+ * content, and any number of photos. `children` is plain JSX, so a milestone
+ * can hold rich text (links, lists, multiple paragraphs).
+ *
+ * The whole milestone fades up as it scrolls into view, and its photos read as
+ * framed prints that settle into a slight tilt. With more than one, they sit as
+ * a centered, overlapping cluster. Both effects honor reduced motion via
+ * useInView (which reveals everything immediately in that case).
  */
 function Milestone({
   date,
   title,
-  photo,
+  photos = [],
+  overlap = "-ml-[2rem] sm:-ml-[3rem]",
   children,
 }: {
   /** Display date, e.g. "June 2019". Placeholder until real dates are set. */
   date: string;
   title: string;
-  photo?: MilestonePhoto;
+  /** Framed photos, laid out left to right as a centered, overlapping cluster. */
+  photos?: MilestonePhoto[];
+  /** Negative-margin classes setting how far each photo overlaps the previous. */
+  overlap?: string;
   children: ReactNode;
 }) {
+  const { ref, inView } = useInView<HTMLLIElement>();
+  const clustered = photos.length > 1;
   return (
-    <li className="relative">
+    <li
+      className={cn(
+        "relative transition-[opacity,transform] duration-700 ease-[cubic-bezier(0.2,0.7,0.2,1)] motion-reduce:transition-none",
+        inView ? "translate-y-0 opacity-100" : "translate-y-5 opacity-0",
+      )}
+      ref={ref}
+    >
       {/* Timeline dot, centered on the list's left border. */}
       <span
         aria-hidden
@@ -139,23 +218,50 @@ function Milestone({
       </p>
       <h2 className="mt-1 text-xl font-semibold">{title}</h2>
       <div className="mt-2 leading-relaxed text-ink/80">{children}</div>
-      {photo ? (
-        <picture>
-          <source
-            sizes={photo.sizes}
-            srcSet={photo.avifSrcSet}
-            type="image/avif"
-          />
-          <img
-            alt={photo.alt}
-            className="mx-auto mt-5 block max-h-[28rem] w-auto max-w-full rounded-xl"
-            decoding="async"
-            height={photo.height}
-            loading="lazy"
-            src={photo.fallbackSrc}
-            width={photo.width}
-          />
-        </picture>
+      {photos.length > 0 ? (
+        <figure className="mt-5 flex items-center justify-center">
+          {photos.map((photo, index) => (
+            // Framed print: thin white border with a longer polaroid foot and a
+            // soft shadow, settling into its tilt as the milestone reveals.
+            <span
+              className={cn(
+                "rounded bg-white p-[0.5rem] pb-[2rem] shadow-[0_12px_30px_rgba(42,38,34,0.14)] transition-transform duration-1000 ease-[cubic-bezier(0.2,0.7,0.2,1)] motion-reduce:transition-none",
+                photo.front ? "z-10" : "z-0",
+                index > 0 && overlap,
+              )}
+              key={photo.fallbackSrc}
+              style={{
+                transform: inView
+                  ? `rotate(${photo.tilt})`
+                  : "rotate(0deg) translateY(12px)",
+              }}
+            >
+              <picture>
+                <source
+                  sizes={photo.sizes}
+                  srcSet={photo.avifSrcSet}
+                  type="image/avif"
+                />
+                {/* Displayed size is driven by each photo's `sizes`, not these
+                    max-* classes (see MilestonePhoto.sizes); they are clamps. */}
+                <img
+                  alt={photo.alt}
+                  className={cn(
+                    "block w-auto",
+                    clustered
+                      ? "max-h-[13rem] max-w-[12.5rem] sm:max-h-[30rem] sm:max-w-[26rem]"
+                      : "max-h-[28rem] max-w-full",
+                  )}
+                  decoding="async"
+                  height={photo.height}
+                  loading="lazy"
+                  src={photo.fallbackSrc}
+                  width={photo.width}
+                />
+              </picture>
+            </span>
+          ))}
+        </figure>
       ) : (
         <div className="mt-5 flex aspect-[4/3] items-center justify-center gap-2 rounded-xl bg-ink/5 text-sm text-ink/70">
           <ImageIcon aria-hidden className="size-5" />
@@ -183,7 +289,8 @@ export default function Story() {
       <ol className="mt-12 space-y-12 border-l-2 border-ink/10 pl-6 sm:pl-10">
         <Milestone
           date="October 31, 2023"
-          photo={howWeMetPhoto}
+          overlap="-ml-[1.25rem] sm:-ml-[2rem]"
+          photos={[howWeMetPhoto, howWeMetListPhoto]}
           title="How we met"
         >
           <p>
@@ -207,7 +314,7 @@ export default function Story() {
 
         <Milestone
           date="November 2, 2023"
-          photo={firstDatePhoto}
+          photos={[firstDateBcdPhoto, firstDatePhoto]}
           title="The first date"
         >
           <p>
@@ -228,7 +335,7 @@ export default function Story() {
 
         <Milestone
           date="November 2, 2025"
-          photo={proposalPhoto}
+          photos={[proposalMomentPhoto, proposalRingPhoto]}
           title="The proposal"
         >
           <p>
@@ -258,7 +365,7 @@ export default function Story() {
 
         <Milestone
           date="April 10, 2027"
-          photo={weddingPhoto}
+          photos={[weddingPhoto]}
           title="The wedding"
         >
           <p>

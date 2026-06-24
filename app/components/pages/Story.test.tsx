@@ -38,13 +38,13 @@ describe("Story", () => {
     });
   });
 
-  it("shows a photo in every milestone", () => {
+  it("shows at least one photo in every milestone", () => {
     render(<Story />);
 
-    // Every milestone now has a real photo, so none show the placeholder.
+    // Every milestone now has real photos, so none show the placeholder.
     const items = screen.getAllByRole("listitem");
     for (const item of items) {
-      expect(within(item).getByRole("img")).toBeInTheDocument();
+      expect(within(item).getAllByRole("img").length).toBeGreaterThan(0);
     }
     expect(screen.queryByText(/photo coming soon/i)).not.toBeInTheDocument();
   });
