@@ -97,14 +97,17 @@ describe("Story", () => {
     expect(back).toHaveClass("z-0");
   });
 
-  it("closes the wedding with a blue and a pink heart", () => {
+  it("closes the wedding with a blue heart then a pink heart", () => {
     render(<Story />);
 
     const wedding = screen
       .getByRole("heading", { name: "The wedding" })
       .closest("li");
-    expect(wedding?.querySelectorAll("svg.fill-blue")).toHaveLength(1);
-    expect(wedding?.querySelectorAll("svg.fill-rose")).toHaveLength(1);
+    // Order matters: blue first, then pink, matching the site's blue+pink motif.
+    const hearts = [...(wedding?.querySelectorAll("svg") ?? [])];
+    expect(hearts).toHaveLength(2);
+    expect(hearts[0]).toHaveClass("fill-blue");
+    expect(hearts[1]).toHaveClass("fill-rose");
   });
 
   it("renders blue and pink highlight marks", () => {
