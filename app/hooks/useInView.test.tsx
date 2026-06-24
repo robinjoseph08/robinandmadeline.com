@@ -26,26 +26,57 @@ describe("useInView", () => {
     expect(screen.getByTestId("probe")).toHaveTextContent("in");
   });
 
-  it("reveals once the observed element intersects", () => {
-    let fire: (entries: { isIntersecting: boolean }[]) => void = () => {};
+  it("reveals immediately, without observing, when reduced motion is preferred", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    const observe = vi.fn();
     vi.stubGlobal(
       "IntersectionObserver",
       class {
-        constructor(
-          callback: (entries: { isIntersecting: boolean }[]) => void,
-        ) {
-          fire = callback;
-        }
-        observe() {}
+        observe = observe;
         disconnect() {}
         unobserve() {}
       },
     );
 
     render(<Probe />);
+
+    expect(screen.getByTestId("probe")).toHaveTextContent("in");
+    expect(observe).not.toHaveBeenCalled();
+  });
+
+  it("observes the element and reveals once it intersects", () => {
+    let fire: (entries: { isIntersecting: boolean }[]) => void = () => {};
+    let options: IntersectionObserverInit | undefined;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(
+          callback: (entries: { isIntersecting: boolean }[]) => void,
+          opts?: IntersectionObserverInit,
+        ) {
+          fire = callback;
+          options = opts;
+        }
+        observe = observe;
+        disconnect = disconnect;
+        unobserve() {}
+      },
+    );
+
+    render(<Probe />);
+    expect(screen.getByTestId("probe")).toHaveTextContent("out");
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(options).toEqual({ rootMargin: "0px 0px -12% 0px" });
+
+    // A non-intersecting entry must not reveal it.
+    act(() => fire([{ isIntersecting: false }]));
     expect(screen.getByTestId("probe")).toHaveTextContent("out");
 
+    // Once it intersects it reveals and disconnects (reveal once, then stop).
     act(() => fire([{ isIntersecting: true }]));
     expect(screen.getByTestId("probe")).toHaveTextContent("in");
+    expect(disconnect).toHaveBeenCalled();
   });
 });

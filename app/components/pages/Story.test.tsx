@@ -38,14 +38,85 @@ describe("Story", () => {
     });
   });
 
-  it("shows at least one photo in every milestone", () => {
+  it("renders the expected photo count in every milestone", () => {
     render(<Story />);
 
-    // Every milestone now has real photos, so none show the placeholder.
+    // How we met, the first date, and the proposal each show two overlapping
+    // photos; the wedding shows one. Lock the counts so a dropped cluster photo
+    // (or a stray placeholder) fails rather than silently shipping.
+    const expectedCounts = [2, 2, 2, 1];
     const items = screen.getAllByRole("listitem");
-    for (const item of items) {
-      expect(within(item).getAllByRole("img").length).toBeGreaterThan(0);
-    }
+    items.forEach((item, index) => {
+      expect(within(item).getAllByRole("img")).toHaveLength(
+        expectedCounts[index],
+      );
+    });
+    expect(screen.getAllByRole("img")).toHaveLength(7);
     expect(screen.queryByText(/photo coming soon/i)).not.toBeInTheDocument();
+  });
+
+  it("gives every photo descriptive alt text", () => {
+    render(<Story />);
+
+    // Each photo must have a non-empty accessible name (an empty alt would make
+    // it presentational and drop out of the count above).
+    for (const img of screen.getAllByRole("img")) {
+      expect(img).toHaveAccessibleName();
+    }
+    // A few distinctive ones, to catch a swapped or wrong alt.
+    expect(
+      screen.getByAltText(/first Hinge conversation/i),
+    ).toBeInTheDocument();
+    expect(screen.getByAltText(/BCD Tofu House/i)).toBeInTheDocument();
+    expect(screen.getByAltText(/presenting the ring/i)).toBeInTheDocument();
+    expect(screen.getByAltText(/engagement shoot/i)).toBeInTheDocument();
+  });
+
+  it("reveals every milestone (none left in the hidden state)", () => {
+    render(<Story />);
+
+    // jsdom has no IntersectionObserver, so useInView reveals immediately; every
+    // milestone must carry the revealed classes. This pins the reveal mapping so
+    // an inverted ternary (which would hide everything in a real browser) fails.
+    for (const item of screen.getAllByRole("listitem")) {
+      expect(item).toHaveClass("opacity-100");
+      expect(item).not.toHaveClass("opacity-0");
+    }
+  });
+
+  it("stacks the front photo above the others in a cluster", () => {
+    render(<Story />);
+
+    // In "How we met" the crossword conversation sits in front of the interests
+    // list. Each framed print is the nearest <span> wrapping its <img>.
+    const front = screen
+      .getByAltText(/first Hinge conversation/i)
+      .closest("span");
+    const back = screen.getByAltText(/list of interests/i).closest("span");
+    expect(front).toHaveClass("z-10");
+    expect(back).toHaveClass("z-0");
+  });
+
+  it("closes the wedding with a blue and a pink heart", () => {
+    render(<Story />);
+
+    const wedding = screen
+      .getByRole("heading", { name: "The wedding" })
+      .closest("li");
+    expect(wedding?.querySelectorAll("svg.fill-blue")).toHaveLength(1);
+    expect(wedding?.querySelectorAll("svg.fill-rose")).toHaveLength(1);
+  });
+
+  it("renders blue and pink highlight marks", () => {
+    const { container } = render(<Story />);
+
+    // <Blue> is a periwinkle chip with blue text; <Pink> a rose chip with rose
+    // text. Asserting both colors appear catches a swap or a dropped highlight.
+    expect(
+      container.querySelectorAll("span.bg-secondary.text-blue").length,
+    ).toBeGreaterThan(0);
+    expect(
+      container.querySelectorAll("span.bg-rose-soft.text-rose").length,
+    ).toBeGreaterThan(0);
   });
 });

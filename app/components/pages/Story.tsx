@@ -31,9 +31,13 @@ import { cn } from "@/libraries/utils";
  * original with all metadata stripped (privacy) into an AVIF ladder plus a JPEG
  * fallback, mirroring the gallery. To add or replace one, for an `<slug>.jpg`:
  *
- *   magick orig.jpg -auto-orient -strip -resize 640x  -quality 55 app/assets/story/<slug>-640.avif
- *   magick orig.jpg -auto-orient -strip -resize 1080x -quality 58 app/assets/story/<slug>-1080.avif
- *   magick orig.jpg -auto-orient -strip -resize 1080x -quality 80 -interlace JPEG app/assets/story/<slug>-1080.jpg
+ *   magick orig.jpg -auto-orient -strip -resize "640x>"  -quality 55 app/assets/story/<slug>-640.avif
+ *   magick orig.jpg -auto-orient -strip -resize "1080x>" -quality 58 app/assets/story/<slug>-1080.avif
+ *   magick orig.jpg -auto-orient -strip -resize "1080x>" -quality 80 -interlace JPEG app/assets/story/<slug>-1080.jpg
+ *
+ * The `>` caps the width without upscaling, so a `-1080` file ends up narrower
+ * when the original is smaller (e.g. the 1000px-wide BCD photo). Match each
+ * variant's `avifSrcSet` `w` descriptor to its real width, not the filename.
  *
  * then import the variants and add it to a milestone's `photos` below. Within a
  * milestone, `photos` are laid out left to right and overlap; `front` marks the
@@ -54,6 +58,9 @@ interface MilestonePhoto {
    * browser lays the image out at its `sizes` width (its density-corrected
    * intrinsic size). The `max-w`/`max-h` classes are only safety clamps. So to
    * resize the photos per breakpoint, change these `sizes` values, not the caps.
+   * (A browser without AVIF support falls back to the `<img>`'s `src`, which has
+   * no `srcset`/`sizes`, so there the image lays out at its intrinsic width
+   * clamped by those caps instead, so keep the caps sane for that path too.)
    */
   sizes: string;
   /** Intrinsic dimensions; set the aspect ratio and reserve space pre-load. */
@@ -99,7 +106,7 @@ const firstDatePhoto: MilestonePhoto = {
 };
 const firstDateBcdPhoto: MilestonePhoto = {
   alt: "The exterior of BCD Tofu House, where we had our first date",
-  avifSrcSet: `${firstDate2Avif640} 640w, ${firstDate2Avif1080} 1080w`,
+  avifSrcSet: `${firstDate2Avif640} 640w, ${firstDate2Avif1080} 1000w`,
   fallbackSrc: firstDate2Jpg,
   sizes: "(min-width: 640px) 20rem, 16rem",
   width: 1000,
