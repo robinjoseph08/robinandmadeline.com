@@ -8,9 +8,12 @@ import "github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 //
 // Like the RSVP flow, the guest-facing guest view does not embed models.Guest:
 // the model carries admin-only fields (tags, table/seat assignments) that the
-// info form has no business exposing, so Guest names exactly the fields
-// the form needs. The party name is deliberately absent from the response: it
-// is an internal admin label for identifying groups, never shown to guests
+// info form has no business exposing, so Guest names exactly the fields the
+// form needs. is_child is the one admin flag it surfaces, and not as data to
+// display: the form reads it as a presentation signal, to decide whether to
+// render the contact fields (the RSVP view has no such need, so it omits the
+// flag). The party name is deliberately absent from the response: it is an
+// internal admin label for identifying groups, never shown to guests
 // (CONTEXT.md); the page greets the party by its members' names instead.
 
 // Guest is the guest-facing view of one party member for the info form: the
@@ -19,11 +22,14 @@ import "github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 // the couple already knows, and the slots only surface later, in the RSVP
 // flow, so the view carries no placeholder descriptor at all. is_primary
 // tells the form which guest's email is required and which guests carry a
-// remove action (the primary cannot be removed).
+// remove action (the primary cannot be removed); is_child drops the email and
+// phone inputs for a child, who has no contact details of their own to collect
+// (the primary keeps their email, which is always required).
 type Guest struct {
 	ID        string  `json:"id"`
 	FullName  string  `json:"full_name"`
 	IsPrimary bool    `json:"is_primary"`
+	IsChild   bool    `json:"is_child"`
 	Email     *string `json:"email"`
 	Phone     *string `json:"phone"`
 	// Subscribed seeds the email-updates checkbox shown beside the email field;
@@ -103,6 +109,7 @@ func newGuestView(g *models.Guest) Guest {
 		ID:         g.ID,
 		FullName:   g.FullName,
 		IsPrimary:  g.IsPrimary,
+		IsChild:    g.IsChild,
 		Email:      g.Email,
 		Phone:      g.Phone,
 		Subscribed: g.Subscribed,
