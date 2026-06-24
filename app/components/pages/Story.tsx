@@ -358,8 +358,8 @@ export default function Story() {
             light up, rearrange themselves, and spell out &quot;Will you marry
             me?&quot;. It was perfect, except for the fact that there was no
             crossword hosting platform that allowed you to do that. So{" "}
-            <Blue>he built it himself</Blue>. And he constructed the actual
-            puzzle that she would solve as well. He told Madeline that he was
+            <Blue>he built it himself</Blue>. He also constructed the actual
+            puzzle that she would solve. He told Madeline that he was
             building a general crossword hosting platform, and{" "}
             <Pink>she easily believed him</Pink> since that&apos;s definitely
             something he would do. And on our 2 year anniversary, Robin
