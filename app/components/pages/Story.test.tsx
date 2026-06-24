@@ -2,7 +2,16 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import Story from "@/components/pages/Story";
-import { MILESTONES } from "@/components/pages/story-content";
+
+// The milestone copy is inlined in the component; this mirrors each milestone's
+// title, in order. Dates and body text are left out on purpose: they are
+// free-form content the couple edits, so asserting them would be brittle.
+const MILESTONE_TITLES = [
+  "How we met",
+  "The first date",
+  "The proposal",
+  "The wedding",
+];
 
 describe("Story", () => {
   it("renders the page heading and subtitle", () => {
@@ -16,27 +25,27 @@ describe("Story", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders every milestone in order with its date, title, and blurb", () => {
+  it("renders every milestone heading in order", () => {
     render(<Story />);
 
     const items = screen.getAllByRole("listitem");
-    expect(items).toHaveLength(MILESTONES.length);
+    expect(items).toHaveLength(MILESTONE_TITLES.length);
 
-    MILESTONES.forEach((milestone, index) => {
-      const item = within(items[index]);
-      expect(item.getByText(milestone.date)).toBeInTheDocument();
+    MILESTONE_TITLES.forEach((title, index) => {
       expect(
-        item.getByRole("heading", { name: milestone.title }),
+        within(items[index]).getByRole("heading", { name: title }),
       ).toBeInTheDocument();
-      expect(item.getByText(milestone.blurb)).toBeInTheDocument();
     });
   });
 
-  it("renders a photo placeholder for every milestone", () => {
+  it("shows a photo in every milestone", () => {
     render(<Story />);
 
-    expect(screen.getAllByText(/photo coming soon/i)).toHaveLength(
-      MILESTONES.length,
-    );
+    // Every milestone now has a real photo, so none show the placeholder.
+    const items = screen.getAllByRole("listitem");
+    for (const item of items) {
+      expect(within(item).getByRole("img")).toBeInTheDocument();
+    }
+    expect(screen.queryByText(/photo coming soon/i)).not.toBeInTheDocument();
   });
 });
