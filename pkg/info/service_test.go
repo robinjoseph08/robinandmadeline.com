@@ -131,7 +131,7 @@ func TestPartyInfo_ReturnsPartyAndGuestDetails(t *testing.T) {
 		Phone:     pointerutil.String("+14155552671"),
 		IsPrimary: true,
 	})
-	bob := addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Bob Smith"})
+	bob := addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Bob Smith", IsChild: true})
 	// The party's +1 slot exists but never surfaces here: placeholders are an
 	// RSVP-flow concern, and info collection only covers known people.
 	addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
@@ -149,11 +149,13 @@ func TestPartyInfo_ReturnsPartyAndGuestDetails(t *testing.T) {
 	assert.Equal(t, alice.ID, resp.Guests[0].ID)
 	assert.Equal(t, "Alice Smith", resp.Guests[0].FullName)
 	assert.True(t, resp.Guests[0].IsPrimary)
+	assert.False(t, resp.Guests[0].IsChild)
 	assert.Equal(t, pointerutil.String("alice@example.com"), resp.Guests[0].Email)
 	assert.Equal(t, pointerutil.String("+14155552671"), resp.Guests[0].Phone)
 
 	assert.Equal(t, bob.ID, resp.Guests[1].ID)
 	assert.False(t, resp.Guests[1].IsPrimary)
+	assert.True(t, resp.Guests[1].IsChild, "the child flag projects through to the form view")
 	assert.Nil(t, resp.Guests[1].Email)
 }
 

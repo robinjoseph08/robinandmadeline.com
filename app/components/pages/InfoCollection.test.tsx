@@ -38,6 +38,7 @@ function makeData(
         id: "g1",
         full_name: "Alice Smith",
         is_primary: true,
+        is_child: false,
         email: "alice@example.com",
         phone: undefined,
         subscribed: true,
@@ -46,6 +47,7 @@ function makeData(
         id: "g2",
         full_name: "Bob Smith",
         is_primary: false,
+        is_child: false,
         email: undefined,
         phone: undefined,
         subscribed: true,
@@ -205,6 +207,7 @@ describe("InfoCollection", () => {
             id: "g1",
             full_name: "Alice Smith",
             is_primary: true,
+            is_child: false,
             email: "alice@example.com",
             phone: "+19723121234",
             subscribed: true,
@@ -219,6 +222,68 @@ describe("InfoCollection", () => {
     expect(guestSection("Alice Smith").getByLabelText(/^Phone/)).toHaveValue(
       "(972) 312-1234",
     );
+  });
+
+  it("hides the email and phone fields for a child guest", async () => {
+    const user = userEvent.setup();
+    // Bob is a child: a child has no contact details of their own, so the form
+    // drops both fields for him while keeping them for the adult primary.
+    apiRequest.mockResolvedValue(
+      makeData({
+        invitation_type: "digital",
+        guests: [
+          {
+            id: "g1",
+            full_name: "Alice Smith",
+            is_primary: true,
+            is_child: false,
+            email: "alice@example.com",
+            phone: undefined,
+            subscribed: true,
+          },
+          {
+            id: "g2",
+            full_name: "Bob Smith",
+            is_primary: false,
+            is_child: true,
+            email: undefined,
+            phone: undefined,
+            subscribed: true,
+          },
+        ],
+      }),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    // The adult keeps name, email, and phone.
+    const alice = guestSection("Alice Smith");
+    expect(alice.getByLabelText(/^Name/)).toBeInTheDocument();
+    expect(alice.getByLabelText(/^Email/)).toBeInTheDocument();
+    expect(alice.getByLabelText(/^Phone/)).toBeInTheDocument();
+
+    // The child keeps an editable name but loses the contact fields entirely.
+    const bob = guestSection("Bob Smith");
+    expect(bob.getByLabelText(/^Name/)).toBeInTheDocument();
+    expect(bob.queryByLabelText(/^Email/)).not.toBeInTheDocument();
+    expect(bob.queryByLabelText(/^Phone/)).not.toBeInTheDocument();
+
+    // Submitting still sends the child full-state, so any saved values ride
+    // along untouched rather than being silently dropped.
+    await user.click(screen.getByRole("button", { name: "Save your info" }));
+    await screen.findByRole("heading", { name: "Thank you!" });
+
+    const bobPayload = submittedPayload().guests.find(
+      (g) => g.guest_id === "g2",
+    );
+    expect(bobPayload).toEqual({
+      guest_id: "g2",
+      full_name: "Bob Smith",
+      email: "",
+      phone: "",
+      subscribed: true,
+      remove: false,
+    });
   });
 
   it("requires the primary email and the address fields for a physical party", async () => {

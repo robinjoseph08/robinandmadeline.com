@@ -324,49 +324,57 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                     value={names[guest.id] ?? ""}
                   />
                 </div>
-                <div className="mt-3 flex flex-col gap-1.5">
-                  <Label htmlFor={`email-${guest.id}`}>
-                    Email
-                    {guest.is_primary ? <RequiredMark /> : null}
-                  </Label>
-                  <Input
-                    id={`email-${guest.id}`}
-                    onChange={(e) =>
-                      setKeyed(setEmails, guest.id, e.target.value)
-                    }
-                    placeholder="example@gmail.com"
-                    required={guest.is_primary}
-                    type="email"
-                    value={emails[guest.id] ?? ""}
-                  />
-                  {/* The email-updates opt-in only appears once there's an
-                      email to send to; while hidden, the loaded value still
-                      rides along on submit (ADR 0009). */}
-                  {(emails[guest.id] ?? "").trim() !== "" ? (
-                    <label className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
-                      <Checkbox
-                        checked={subscribed[guest.id] ?? true}
-                        onCheckedChange={(checked) =>
-                          setSubscribed((prev) => ({
-                            ...prev,
-                            [guest.id]: checked === true,
-                          }))
+                {/* A child has no email or phone of their own to collect, so
+                    both contact fields drop away for them. Their seeded form
+                    state still rides along on submit, leaving any saved values
+                    untouched. */}
+                {!guest.is_child ? (
+                  <>
+                    <div className="mt-3 flex flex-col gap-1.5">
+                      <Label htmlFor={`email-${guest.id}`}>
+                        Email
+                        {guest.is_primary ? <RequiredMark /> : null}
+                      </Label>
+                      <Input
+                        id={`email-${guest.id}`}
+                        onChange={(e) =>
+                          setKeyed(setEmails, guest.id, e.target.value)
                         }
+                        placeholder="example@gmail.com"
+                        required={guest.is_primary}
+                        type="email"
+                        value={emails[guest.id] ?? ""}
                       />
-                      Send {guest.full_name.split(" ")[0]} wedding updates by
-                      email
-                    </label>
-                  ) : null}
-                </div>
-                <div className="mt-3 flex flex-col gap-1.5">
-                  <Label htmlFor={`phone-${guest.id}`}>Phone</Label>
-                  <PhoneField
-                    id={`phone-${guest.id}`}
-                    onChange={(v) => setKeyed(setPhones, guest.id, v)}
-                    placeholder="9725551234"
-                    value={phones[guest.id] ?? ""}
-                  />
-                </div>
+                      {/* The email-updates opt-in only appears once there's an
+                          email to send to; while hidden, the loaded value still
+                          rides along on submit (ADR 0009). */}
+                      {(emails[guest.id] ?? "").trim() !== "" ? (
+                        <label className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                          <Checkbox
+                            checked={subscribed[guest.id] ?? true}
+                            onCheckedChange={(checked) =>
+                              setSubscribed((prev) => ({
+                                ...prev,
+                                [guest.id]: checked === true,
+                              }))
+                            }
+                          />
+                          Send {guest.full_name.split(" ")[0]} wedding updates
+                          by email
+                        </label>
+                      ) : null}
+                    </div>
+                    <div className="mt-3 flex flex-col gap-1.5">
+                      <Label htmlFor={`phone-${guest.id}`}>Phone</Label>
+                      <PhoneField
+                        id={`phone-${guest.id}`}
+                        onChange={(v) => setKeyed(setPhones, guest.id, v)}
+                        placeholder="9725551234"
+                        value={phones[guest.id] ?? ""}
+                      />
+                    </div>
+                  </>
+                ) : null}
 
                 {!guest.is_primary ? (
                   <div className="mt-4">

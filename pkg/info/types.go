@@ -19,11 +19,13 @@ import "github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 // the couple already knows, and the slots only surface later, in the RSVP
 // flow, so the view carries no placeholder descriptor at all. is_primary
 // tells the form which guest's email is required and which guests carry a
-// remove action (the primary cannot be removed).
+// remove action (the primary cannot be removed); is_child drops the email and
+// phone inputs, since a child has no contact details of their own to collect.
 type Guest struct {
 	ID        string  `json:"id"`
 	FullName  string  `json:"full_name"`
 	IsPrimary bool    `json:"is_primary"`
+	IsChild   bool    `json:"is_child"`
 	Email     *string `json:"email"`
 	Phone     *string `json:"phone"`
 	// Subscribed seeds the email-updates checkbox shown beside the email field;
@@ -103,6 +105,7 @@ func newGuestView(g *models.Guest) Guest {
 		ID:         g.ID,
 		FullName:   g.FullName,
 		IsPrimary:  g.IsPrimary,
+		IsChild:    g.IsChild,
 		Email:      g.Email,
 		Phone:      g.Phone,
 		Subscribed: g.Subscribed,
