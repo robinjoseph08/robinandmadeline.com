@@ -325,10 +325,12 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
                   />
                 </div>
                 {/* A child has no email or phone of their own to collect, so
-                    both contact fields drop away for them. Their seeded form
-                    state still rides along on submit, leaving any saved values
-                    untouched. */}
-                {!guest.is_child ? (
+                    both contact fields drop away for them. The primary is the
+                    exception: their email is always required (the backend
+                    completion gate enforces it), so their fields stay even when
+                    they're flagged a child. Either way the seeded form state
+                    rides along on submit, leaving any saved values untouched. */}
+                {!guest.is_child || guest.is_primary ? (
                   <>
                     <div className="mt-3 flex flex-col gap-1.5">
                       <Label htmlFor={`email-${guest.id}`}>

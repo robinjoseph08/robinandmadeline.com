@@ -246,9 +246,11 @@ describe("InfoCollection", () => {
             full_name: "Bob Smith",
             is_primary: false,
             is_child: true,
-            email: undefined,
-            phone: undefined,
-            subscribed: true,
+            // An admin already entered contact details for this child; hiding
+            // the fields must not wipe them on save.
+            email: "bob@example.com",
+            phone: "+19723121234",
+            subscribed: false,
           },
         ],
       }),
@@ -268,8 +270,9 @@ describe("InfoCollection", () => {
     expect(bob.queryByLabelText(/^Email/)).not.toBeInTheDocument();
     expect(bob.queryByLabelText(/^Phone/)).not.toBeInTheDocument();
 
-    // Submitting still sends the child full-state, so any saved values ride
-    // along untouched rather than being silently dropped.
+    // Submitting still sends the child full-state, so the admin-entered values
+    // (email, the stored phone, and the subscription) ride along untouched
+    // rather than being silently dropped.
     await user.click(screen.getByRole("button", { name: "Save your info" }));
     await screen.findByRole("heading", { name: "Thank you!" });
 
@@ -279,11 +282,42 @@ describe("InfoCollection", () => {
     expect(bobPayload).toEqual({
       guest_id: "g2",
       full_name: "Bob Smith",
-      email: "",
-      phone: "",
-      subscribed: true,
+      email: "bob@example.com",
+      // Seeded from the stored E.164 and re-sent in the displayed format.
+      phone: "(972) 312-1234",
+      subscribed: false,
       remove: false,
     });
+  });
+
+  it("keeps the contact fields for a child flagged as the primary guest", async () => {
+    // A child should never be the party's primary contact, but the two flags
+    // are independent and nothing forbids the combination. The primary's email
+    // is always required (the backend completion gate), so the contact fields
+    // must stay visible even when the primary is flagged a child, or the form
+    // can't be submitted.
+    apiRequest.mockResolvedValue(
+      makeData({
+        invitation_type: "digital",
+        guests: [
+          {
+            id: "g1",
+            full_name: "Alice Smith",
+            is_primary: true,
+            is_child: true,
+            email: "alice@example.com",
+            phone: undefined,
+            subscribed: true,
+          },
+        ],
+      }),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    const alice = guestSection("Alice Smith");
+    expect(alice.getByLabelText(/^Email/)).toBeRequired();
+    expect(alice.getByLabelText(/^Phone/)).toBeInTheDocument();
   });
 
   it("requires the primary email and the address fields for a physical party", async () => {
