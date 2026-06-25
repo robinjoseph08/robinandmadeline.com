@@ -17,13 +17,15 @@ func withPrimaryEmail(email *string) []*models.Guest {
 	return []*models.Guest{{IsPrimary: true, Email: email}}
 }
 
-// fullAddress sets the five required address fields on a party.
+// fullAddress sets the five required address fields on a party. Country is the
+// US so the postal code is genuinely required (a complete US address), the
+// strictest gate.
 func fullAddress(p *models.Party) {
 	p.AddressLine1 = pointerutil.String("x")
 	p.City = pointerutil.String("x")
 	p.StateOrProvince = pointerutil.String("x")
 	p.PostalCode = pointerutil.String("x")
-	p.Country = pointerutil.String("x")
+	p.Country = pointerutil.String("United States")
 }
 
 func TestPrimaryGuest(t *testing.T) {
@@ -106,14 +108,15 @@ func TestMissingRequiredFields_ItemizesWhatTheGateChecks(t *testing.T) {
 	digital := &models.Party{InvitationType: models.InvitationDigital}
 	assert.Equal(t, []string{"primary guest's email"}, digital.MissingRequiredFields())
 
-	// A physical party itemizes each absent address field too (line 2 is
-	// optional and never listed).
+	// A US physical party itemizes each absent address field too, the postal
+	// code included (line 2 is optional and never listed).
 	physical := &models.Party{InvitationType: models.InvitationPhysical}
 	physical.Guests = withPrimaryEmail(pointerutil.String("a@b.com"))
 	physical.AddressLine1 = pointerutil.String("123 Main St")
+	physical.Country = pointerutil.String("United States")
 	physical.PostalCode = pointerutil.String("   ") // blank counts as absent
 	assert.Equal(t,
-		[]string{"city", "state or province", "postal code", "country"},
+		[]string{"city", "state or province", "postal code"},
 		physical.MissingRequiredFields())
 
 	// A complete party misses nothing: the list is empty (and non-nil, so it
@@ -122,6 +125,39 @@ func TestMissingRequiredFields_ItemizesWhatTheGateChecks(t *testing.T) {
 	assert.NotNil(t, physical.MissingRequiredFields())
 	assert.Empty(t, physical.MissingRequiredFields())
 	assert.True(t, physical.RequiredFieldsPresent())
+}
+
+func TestMissingRequiredFields_PostalCodeOptionalAbroad(t *testing.T) {
+	t.Parallel()
+
+	// The street, city, and state/province of an international address, with no
+	// postal code and no country yet.
+	base := func() *models.Party {
+		p := &models.Party{InvitationType: models.InvitationPhysical}
+		p.Guests = withPrimaryEmail(pointerutil.String("a@b.com"))
+		p.AddressLine1 = pointerutil.String("123 King St")
+		p.City = pointerutil.String("Toronto")
+		p.StateOrProvince = pointerutil.String("ON")
+		return p
+	}
+
+	// A non-US country with no postal code is still complete: many countries
+	// (Hong Kong, the UAE, Qatar, ...) have none, so the gate doesn't ask.
+	intl := base()
+	intl.Country = pointerutil.String("Canada")
+	assert.Empty(t, intl.MissingRequiredFields())
+	assert.True(t, intl.RequiredFieldsPresent())
+
+	// The very same address as a US party does require the postal code, matched
+	// case-insensitively against the canonical country name.
+	us := base()
+	us.Country = pointerutil.String("united states")
+	assert.Equal(t, []string{"postal code"}, us.MissingRequiredFields())
+
+	// A not-yet-known (blank) country isn't gated on the postal code either, but
+	// the country itself is still missing until the guest fills it in.
+	unknown := base()
+	assert.Equal(t, []string{"country"}, unknown.MissingRequiredFields())
 }
 
 func TestInfoCollectionStatus_NotRequested_DerivedFromFields(t *testing.T) {

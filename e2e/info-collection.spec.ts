@@ -60,6 +60,22 @@ async function adminPost(
   return (await res.json()) as Record<string, unknown>;
 }
 
+/** Performs an authenticated admin API PATCH, failing loudly on a non-2xx. */
+async function adminPatch(
+  request: APIRequestContext,
+  token: string,
+  path: string,
+  data: unknown,
+): Promise<void> {
+  const res = await request.patch(path, {
+    data,
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok()) {
+    throw new Error(`${path} failed: ${res.status()} ${await res.text()}`);
+  }
+}
+
 /**
  * Seeds a physical party with a best-guess-named primary, a second guest, and
  * a placeholder slot (which the info page must never show), returning its
@@ -78,6 +94,14 @@ async function seedPhysicalParty(request: APIRequestContext): Promise<string> {
   const partyId = party.id as string;
   const infoToken = party.info_token as string;
   expect(infoToken).toBeTruthy();
+
+  // The quick-create endpoint omits address fields, so set the country to the
+  // US here (a later party edit would do the same). That keeps the info form on
+  // the common US journey this spec covers: the country field stays hidden and
+  // the US-format labels apply.
+  await adminPatch(request, token, `/api/admin/parties/${partyId}`, {
+    country: "United States",
+  });
 
   await adminPost(request, token, `/api/admin/parties/${partyId}/guests`, {
     full_name: bobName,
@@ -166,7 +190,7 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   await expect(bobCard.getByText(/will be removed/)).toBeVisible();
 
   // --- Fill the mailing address and submit -----------------------------------
-  // Country isn't asked on the form; it defaults to the US on submit.
+  // This US party hides the country field; it defaults to the US on submit.
   await addressCard.getByLabel(/Address line 1/).fill("123 Main St");
   await addressCard.getByLabel(/City/).fill("Springfield");
   await addressCard.getByLabel(/State/).fill("IL");

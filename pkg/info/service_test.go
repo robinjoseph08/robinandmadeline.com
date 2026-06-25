@@ -93,15 +93,17 @@ func addPlaceholderT(t *testing.T, svc *parties.Service, partyID, descriptor str
 	})
 }
 
-// fullAddress returns an UpdatePartyInfoPayload pre-filled with a complete
-// mailing address (line 2 deliberately absent: it is optional).
+// fullAddress returns an UpdatePartyInfoPayload pre-filled with a complete US
+// mailing address (line 2 deliberately absent: it is optional). The country is
+// the canonical "United States" so the postal code is genuinely gated, the
+// strictest path.
 func fullAddress() info.UpdatePartyInfoPayload {
 	return info.UpdatePartyInfoPayload{
 		AddressLine1:    pointerutil.String("123 Main St"),
 		City:            pointerutil.String("Springfield"),
 		StateOrProvince: pointerutil.String("IL"),
 		PostalCode:      pointerutil.String("62701"),
-		Country:         pointerutil.String("USA"),
+		Country:         pointerutil.String("United States"),
 	}
 }
 
@@ -245,6 +247,50 @@ func TestUpdatePartyInfo_MissingRequiredFieldsIs422AndRollsBack(t *testing.T) {
 	saved := partyRow(t, db, p.ID)
 	assert.False(t, saved.InfoCollectionRequested)
 	assert.False(t, saved.InfoCollectionConfirmed)
+}
+
+func TestUpdatePartyInfo_USAddressNeedsPostalCode(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	// A US address is gated on the postal code: an otherwise-complete address
+	// missing only the ZIP fails the completion gate and rolls back.
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationPhysical)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+
+	payload := fullAddress() // Country is "United States".
+	payload.PostalCode = nil // the one missing field
+	payload.Guests = []info.GuestInfoUpdate{{
+		GuestID: alice.ID,
+		Email:   pointerutil.String("alice@example.com"),
+	}}
+
+	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, payload)
+	assertErrCode(t, err, errcodes.CodeValidationError)
+	assert.False(t, partyRow(t, db, p.ID).InfoCollectionConfirmed, "a rejected submit doesn't confirm")
+}
+
+func TestUpdatePartyInfo_InternationalAddressNeedsNoPostalCode(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	// A non-US address has no postal-code requirement (many countries have
+	// none), so the very same address minus the ZIP saves and confirms.
+	p := createPartyT(t, partySvc, "The Tremblays", models.InvitationPhysical)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Tremblay")
+
+	payload := fullAddress()
+	payload.PostalCode = nil
+	payload.Country = pointerutil.String("Canada")
+	payload.Guests = []info.GuestInfoUpdate{{
+		GuestID: alice.ID,
+		Email:   pointerutil.String("alice@example.com"),
+	}}
+
+	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, payload)
+	require.NoError(t, err)
+
+	saved := partyRow(t, db, p.ID)
+	assert.True(t, saved.InfoCollectionConfirmed, "a complete non-US address confirms")
+	assert.Nil(t, saved.PostalCode, "no postal code was provided or required")
 }
 
 func TestUpdatePartyInfo_MissingPrimaryEmailIs422(t *testing.T) {
