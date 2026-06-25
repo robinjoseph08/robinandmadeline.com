@@ -221,9 +221,10 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
     return initial;
   });
   // The mailing country, kept out of `address` because it's only sometimes
-  // shown (see showCountryField). Seeded from any country already on the party
-  // so an international value rides along pre-filled.
-  const [country, setCountry] = useState(() => data.country ?? "");
+  // shown (see showCountryField). Seeded (trimmed, matching how it's compared
+  // and sent) from any country already on the party so an international value
+  // rides along pre-filled.
+  const [country, setCountry] = useState(() => (data.country ?? "").trim());
   // Postal code is required only for a US address (many countries have none),
   // so it follows the country the form currently holds: the live input when the
   // country field shows, otherwise the party's stored US value. This mirrors

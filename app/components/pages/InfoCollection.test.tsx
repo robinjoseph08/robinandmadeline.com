@@ -506,8 +506,33 @@ describe("InfoCollection", () => {
 
     // Typing the US as the country makes the postal code required, matching the
     // backend gate, so the requirement can't slip through as a confusing 422.
-    await user.type(address.getByLabelText(/Country/), "United States");
+    // Lowercased, to pin the case-insensitive match (the backend uses EqualFold).
+    await user.type(address.getByLabelText(/Country/), "united states");
     expect(address.getByLabelText(/Postal code/)).toBeRequired();
+  });
+
+  it("submits an international address without a postal code", async () => {
+    const user = userEvent.setup();
+    // Postal code is optional abroad, so the guest can leave it blank and still
+    // save (many countries have none).
+    apiRequest.mockResolvedValue(makeData({ country: "Australia" }));
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    const address = within(screen.getByRole("region", { name: /address/i }));
+    await user.type(address.getByLabelText(/Address line 1/), "1 Macquarie St");
+    await user.type(address.getByLabelText(/City/), "Sydney");
+    await user.type(address.getByLabelText(/State \/ Province/), "NSW");
+    // Postal code deliberately left blank.
+
+    await user.click(screen.getByRole("button", { name: "Save your info" }));
+    await screen.findByRole("heading", { name: "Thank you!" });
+
+    // The submit goes through with an empty postal code and the pre-filled
+    // country, exactly the behavior the US-only requirement is meant to allow.
+    const payload = submittedPayload();
+    expect(payload.postal_code).toBe("");
+    expect(payload.country).toBe("Australia");
   });
 
   it("removes a non-primary guest after an inline confirmation", async () => {
