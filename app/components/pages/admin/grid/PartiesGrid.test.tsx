@@ -142,6 +142,18 @@ describe("PartiesGrid racing commits", () => {
   });
 });
 
+describe("PartiesGrid side chip", () => {
+  it("renders the Side value as a value-colored chip in the cell", () => {
+    renderGrid([makeParty({ id: "p1", name: "Fam", side: "madeline" })]);
+
+    // The Side combobox renders its selected option through renderOption as a
+    // chip colored by the wire value (madeline -> pink), not plain text. This
+    // guards the renderOption plumbing from trigger to chip.
+    const side = screen.getByText("Madeline");
+    expect(side).toHaveClass("bg-pink-200");
+  });
+});
+
 describe("PartiesGrid address columns", () => {
   it("patches an address cell under its own key", async () => {
     const user = userEvent.setup();
