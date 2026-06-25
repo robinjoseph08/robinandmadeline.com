@@ -48,9 +48,8 @@ const (
 )
 
 // countryUS is the canonical mailing country whose addresses are gated on a
-// postal code; the info form fills it in for any party not given another
-// country. Other countries (and a not-yet-known one) skip that gate, since many
-// have no postal code at all.
+// postal code. Any other country, and a not-yet-known (blank) one, skips that
+// gate, since many countries have no postal code at all.
 const countryUS = "United States"
 
 // Party is a group that receives a single invitation and shares one mailing
