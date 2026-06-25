@@ -141,3 +141,23 @@ describe("PartiesGrid racing commits", () => {
     expect(cell.closest("td")).not.toHaveClass("bg-destructive/10");
   });
 });
+
+describe("PartiesGrid address columns", () => {
+  it("patches an address cell under its own key", async () => {
+    const user = userEvent.setup();
+    renderGrid([makeParty({ id: "p1", name: "Fam" })]);
+
+    // The six mailing-address cells are near-identical; this guards City against
+    // being wired to another field's key (e.g. state_or_province).
+    const city = screen.getByRole("textbox", { name: "City" });
+    await user.type(city, "Springfield");
+    await user.tab();
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/parties/p1", {
+        method: "PATCH",
+        body: { city: "Springfield" },
+      });
+    });
+  });
+});

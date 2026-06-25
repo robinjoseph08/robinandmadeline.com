@@ -285,6 +285,8 @@ func TestValidators(t *testing.T) {
 		{"negative seat rejected", `{"seat":"-3"}`, false},
 		{"non-numeric seat rejected", `{"seat":"abc"}`, false},
 		{"fractional seat rejected", `{"seat":"1.5"}`, false},
+		{"int32 max allowed", `{"seat":"2147483647"}`, true},
+		{"above int32 max rejected", `{"seat":"2147483648"}`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

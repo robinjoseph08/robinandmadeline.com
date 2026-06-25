@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { Guest } from "@/types/generated/models";
+import type { PartyResponse } from "@/types/generated/parties";
 
 import { GuestsGrid } from "./GuestsGrid";
 
@@ -34,6 +35,26 @@ function makeGuest(overrides: Partial<Guest>): Guest {
   };
 }
 
+function makeParty(overrides: Partial<PartyResponse>): PartyResponse {
+  return {
+    id: "p7",
+    name: "The Smiths",
+    side: "robin",
+    relation: "family",
+    circle: [],
+    invitation_type: "digital",
+    info_token: "tok",
+    info_collection_requested: false,
+    info_collection_confirmed: false,
+    info_collection_status: "incomplete",
+    missing_required_fields: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    guests: [],
+    ...overrides,
+  };
+}
+
 // Detail-page mode: the add row creates into addPartyId, so no party picker is
 // involved and the row is driven entirely by its own draft.
 function renderGrid(guests: Guest[], partyIdFor: (guest: Guest) => string) {
@@ -49,6 +70,28 @@ function renderGrid(guests: Guest[], partyIdFor: (guest: Guest) => string) {
             guests={guests}
             onEditGuest={() => {}}
             partyIdFor={partyIdFor}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </TooltipProvider>,
+  );
+}
+
+// Flat-list mode: passing parties turns on the editable Party picker and the
+// read-only party-attribute columns resolved from each guest's party.
+function renderFlatGrid(guests: Guest[], parties: PartyResponse[]) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <TooltipProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <GuestsGrid<Guest>
+            guests={guests}
+            onEditGuest={() => {}}
+            parties={parties}
+            partyIdFor={(guest) => guest.party_id}
           />
         </MemoryRouter>
       </QueryClientProvider>
@@ -166,5 +209,56 @@ describe("GuestsGrid guest columns", () => {
         body: { table_number: "9" },
       }),
     );
+  });
+
+  it("patches the seat number under its own key", async () => {
+    adminRequest.mockResolvedValue(makeGuest({ id: "g1", seat_number: 7 }));
+    const user = userEvent.setup();
+    renderGrid(
+      [makeGuest({ id: "g1", full_name: "Alice", seat_number: 2 })],
+      (g) => g.party_id,
+    );
+
+    // Seat is a sibling of Table; this guards against the two near-identical
+    // number cells being wired to the same field key.
+    const seat = screen.getByRole("spinbutton", { name: "Seat number" });
+    expect(seat).toHaveValue(2);
+    await user.clear(seat);
+    await user.type(seat, "7");
+    await user.tab();
+    await waitFor(() =>
+      expect(adminRequest).toHaveBeenCalledWith("/admin/guests/g1", {
+        method: "PATCH",
+        body: { seat_number: "7" },
+      }),
+    );
+  });
+});
+
+describe("GuestsGrid flat list party columns", () => {
+  it("renders the owning party's side as a colored chip and surfaces its attributes read-only", () => {
+    renderFlatGrid(
+      [makeGuest({ id: "g1", full_name: "Alice", party_id: "p7" })],
+      [
+        makeParty({
+          id: "p7",
+          name: "The Smiths",
+          side: "robin",
+          circle: ["College"],
+          city: "Springfield",
+        }),
+      ],
+    );
+
+    // Side reads as a chip colored by the wire value (robin -> blue), not as
+    // plain muted text. The label is "Robin", the color keys off "robin".
+    const side = screen.getByText("Robin");
+    expect(side).toHaveClass("bg-blue-200");
+
+    // The rest of the owning party is surfaced read-only: the circle as a chip
+    // and the mailing address. Their presence guards the party columns resolving
+    // from the guest's party rather than rendering blank.
+    expect(screen.getByText("College")).toBeInTheDocument();
+    expect(screen.getByText("Springfield")).toBeInTheDocument();
   });
 });

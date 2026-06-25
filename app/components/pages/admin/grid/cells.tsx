@@ -255,10 +255,11 @@ export function GridTextCell({
         // field is expected (not a surprise focus steal on page load).
         autoFocus={autoFocus}
         className={cn(GRID_CONTROL_CLASS, className)}
-        // A number field constrains entry to a non-negative count; min bars the
-        // spinner from dropping below 1, matching the backend's positive-integer
-        // rule (the seating numbers). `size` is meaningless on a number input, so
-        // the width-to-content trick stays text/email only (see size below).
+        // A number field surfaces a stepper and a positive-integer validity hint;
+        // min only keeps the spinner from stepping below 1. It does not block
+        // typing or pasting other values (the backend's posintblank rule rejects
+        // those, and the cell rolls back). `size` is meaningless on a number
+        // input, so the width-to-content trick stays text/email only (see size).
         min={type === "number" ? 1 : undefined}
         onBlur={commitOnChange ? undefined : cell.commit}
         onChange={
