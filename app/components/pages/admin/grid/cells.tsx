@@ -43,7 +43,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/libraries/utils";
 
-import { chipColorClass } from "./chips";
+import { Chip } from "./Chip";
 import { InfoHint } from "./grid-buttons";
 import { focusCellBelow } from "./grid-nav";
 
@@ -536,15 +536,7 @@ export function GridChipsCell({
             ) : (
               <span className="flex items-center gap-1">
                 {cell.value.map((item) => (
-                  <span
-                    className={cn(
-                      "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
-                      chipColorClass(item),
-                    )}
-                    key={item}
-                  >
-                    {item}
-                  </span>
+                  <Chip key={item} label={item} />
                 ))}
               </span>
             )}
@@ -576,14 +568,7 @@ export function GridChipsCell({
                           : "opacity-0",
                       )}
                     />
-                    <span
-                      className={cn(
-                        "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
-                        chipColorClass(option),
-                      )}
-                    >
-                      {option}
-                    </span>
+                    <Chip label={option} />
                   </CommandItem>
                 ))}
                 {canCreate ? (
@@ -679,15 +664,7 @@ export function GridFlagsCell({
             ) : (
               <span className="flex items-center gap-1">
                 {selected.map((option) => (
-                  <span
-                    className={cn(
-                      "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
-                      chipColorClass(option.label),
-                    )}
-                    key={option.key}
-                  >
-                    {option.label}
-                  </span>
+                  <Chip key={option.key} label={option.label} />
                 ))}
               </span>
             )}
@@ -717,14 +694,7 @@ export function GridFlagsCell({
                         cell.value[option.key] ? "opacity-100" : "opacity-0",
                       )}
                     />
-                    <span
-                      className={cn(
-                        "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
-                        chipColorClass(option.label),
-                      )}
-                    >
-                      {option.label}
-                    </span>
+                    <Chip label={option.label} />
                     {/* Stop the info icon from toggling the flag; it only shows
                         the tooltip on hover. */}
                     <span
