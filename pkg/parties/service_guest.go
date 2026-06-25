@@ -3,6 +3,7 @@ package parties
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"time"
 
 	"github.com/pkg/errors"
@@ -197,7 +198,7 @@ func (s *Service) PatchGuest(ctx context.Context, id string, in PatchGuestPayloa
 			return errcodes.ValidationError("A party must have a primary guest; promote another guest first.")
 		}
 
-		cols := make([]string, 0, 12)
+		cols := make([]string, 0, 14)
 		if moving {
 			// Lock the source party row before any guest write so the source mend
 			// below (delete-if-empty, re-primary) serializes per party and cannot
@@ -241,6 +242,10 @@ func (s *Service) PatchGuest(ctx context.Context, id string, in PatchGuestPayloa
 			guest.IsDrinking = *in.IsDrinking
 			cols = append(cols, "is_drinking")
 		}
+		if in.Subscribed != nil {
+			guest.Subscribed = *in.Subscribed
+			cols = append(cols, "subscribed")
+		}
 		if in.PlaceholderText != nil {
 			// A provided blank is the "clear this cell" gesture: NULL turns the
 			// row back into a regular guest.
@@ -252,11 +257,13 @@ func (s *Service) PatchGuest(ctx context.Context, id string, in PatchGuestPayloa
 			cols = append(cols, "dietary_restrictions")
 		}
 		if in.TableNumber != nil {
-			guest.TableNumber = in.TableNumber
+			// A provided blank clears the seating number to NULL; any other value is
+			// the positive integer the binder's posintblank rule already validated.
+			guest.TableNumber = patchInt(*in.TableNumber)
 			cols = append(cols, "table_number")
 		}
 		if in.SeatNumber != nil {
-			guest.SeatNumber = in.SeatNumber
+			guest.SeatNumber = patchInt(*in.SeatNumber)
 			cols = append(cols, "seat_number")
 		}
 
@@ -367,6 +374,18 @@ func (s *Service) DeleteGuest(ctx context.Context, id string) error {
 		}
 		return nil
 	})
+}
+
+// patchInt converts a clearable integer PATCH field (table/seat number) to its
+// nullable column value: a blank string is the grid's "clear this cell" gesture
+// (NULL), and any other value is the positive integer the binder's posintblank
+// rule already validated, so the parse cannot fail.
+func patchInt(s string) *int {
+	if s == "" {
+		return nil
+	}
+	n, _ := strconv.Atoi(s)
+	return &n
 }
 
 // promoteOldestGuest makes a party's oldest remaining guest its primary, used

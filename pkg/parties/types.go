@@ -219,10 +219,19 @@ type UpdateGuestPayload struct {
 // still format-checked. placeholder_text permits blank (max-only) because a
 // provided blank is the grid's "clear this cell" gesture, stored as SQL NULL,
 // which turns the row back into a regular guest. tags is a plain slice: nil
-// leaves it unchanged, a present array (including []) replaces it. party_id
-// moves the guest to another party (the flat guest list edits it inline); the
-// service checks the target party exists and keeps the single-primary
-// invariant in the destination.
+// leaves it unchanged, a present array (including []) replaces it. subscribed is
+// the email opt-in (ADR 0009), togglable inline from the grid. party_id moves
+// the guest to another party (the flat guest list edits it inline); the service
+// checks the target party exists and keeps the single-primary invariant in the
+// destination.
+//
+// table_number and seat_number are strings, not ints, so the grid can clear
+// them: a blank string is the "clear this cell" gesture (stored as SQL NULL)
+// and a present value is the positive integer the posintblank rule validates.
+// A *int could not express the clear, because JSON null and an omitted key both
+// decode to a nil pointer, indistinguishable from "leave unchanged"; a non-nil
+// pointer to "" is distinct, so blank stays distinguishable from absent. This is
+// the same blank-clears convention every other nullable PATCH field uses.
 type PatchGuestPayload struct {
 	PartyID             *string  `json:"party_id,omitempty" validate:"omitempty,uuid"`
 	FullName            *string  `json:"full_name,omitempty" mod:"trim" validate:"omitempty,min=1,max=200"`
@@ -232,10 +241,11 @@ type PatchGuestPayload struct {
 	IsPrimary           *bool    `json:"is_primary,omitempty"`
 	IsChild             *bool    `json:"is_child,omitempty"`
 	IsDrinking          *bool    `json:"is_drinking,omitempty"`
+	Subscribed          *bool    `json:"subscribed,omitempty"`
 	PlaceholderText     *string  `json:"placeholder_text,omitempty" mod:"trim" validate:"omitempty,max=200"`
 	DietaryRestrictions *string  `json:"dietary_restrictions,omitempty" mod:"trim" validate:"omitempty,max=1000"`
-	TableNumber         *int     `json:"table_number,omitempty" validate:"omitempty,min=1"`
-	SeatNumber          *int     `json:"seat_number,omitempty" validate:"omitempty,min=1"`
+	TableNumber         *string  `json:"table_number,omitempty" mod:"trim" validate:"omitempty,posintblank"`
+	SeatNumber          *string  `json:"seat_number,omitempty" mod:"trim" validate:"omitempty,posintblank"`
 }
 
 // ListGuestsQuery is the set of flat guest-list filters plus the sort, bound from

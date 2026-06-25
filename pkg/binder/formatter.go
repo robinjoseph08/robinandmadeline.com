@@ -28,6 +28,7 @@ const (
 	ne            = "ne"
 	oneof         = "oneof"
 	phone         = "phone"
+	posintblank   = "posintblank"
 	required      = "required"
 	urlTag        = "url"
 	httpURL       = "httpurl"
@@ -137,6 +138,8 @@ func formatValidationError(err validator.FieldError) string {
 		return fmt.Sprintf("%s must be one of: %s.", field, strings.Join(valids, ", "))
 	case phone:
 		return field + " must be a valid phone number."
+	case posintblank:
+		return field + " must be a positive whole number."
 	case required:
 		return field + " is required."
 	case urlTag:

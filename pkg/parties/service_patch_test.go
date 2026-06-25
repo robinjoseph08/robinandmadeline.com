@@ -192,6 +192,56 @@ func TestPatchGuest_SetsAndClearsPlaceholderText(t *testing.T) {
 	assert.Nil(t, reloaded.PlaceholderText)
 }
 
+func TestPatchGuest_TogglesSubscribed(t *testing.T) {
+	svc, _ := newService(t)
+	p := createPartyT(t, svc, digitalPartyInput())
+	// A new guest is born subscribed (ADR 0009).
+	g := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat"})
+	require.True(t, g.Subscribed)
+
+	// The grid can opt a guest out inline, then back in, touching only the flag.
+	off, err := svc.PatchGuest(ctx(), g.ID, parties.PatchGuestPayload{Subscribed: pointerutil.Bool(false)})
+	require.NoError(t, err)
+	assert.False(t, off.Subscribed, "subscribed should flip to false")
+
+	on, err := svc.PatchGuest(ctx(), g.ID, parties.PatchGuestPayload{Subscribed: pointerutil.Bool(true)})
+	require.NoError(t, err)
+	assert.True(t, on.Subscribed, "subscribed should flip back to true")
+}
+
+func TestPatchGuest_SetsAndClearsTableAndSeat(t *testing.T) {
+	svc, _ := newService(t)
+	p := createPartyT(t, svc, digitalPartyInput())
+	g := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Pat"})
+
+	// Setting the seating numbers persists them: the grid sends the integer as a
+	// string (the field is clearable, so blank can mean "unassign").
+	set, err := svc.PatchGuest(ctx(), g.ID, parties.PatchGuestPayload{
+		TableNumber: pointerutil.String("4"),
+		SeatNumber:  pointerutil.String("11"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, set.TableNumber)
+	assert.Equal(t, 4, *set.TableNumber)
+	require.NotNil(t, set.SeatNumber)
+	assert.Equal(t, 11, *set.SeatNumber)
+
+	// A provided blank is the grid's "clear this cell" gesture: it un-assigns the
+	// seating number, stored as SQL NULL rather than 0.
+	cleared, err := svc.PatchGuest(ctx(), g.ID, parties.PatchGuestPayload{
+		TableNumber: pointerutil.String(""),
+		SeatNumber:  pointerutil.String(""),
+	})
+	require.NoError(t, err)
+	assert.Nil(t, cleared.TableNumber, "a blank table_number patch must clear to NULL")
+	assert.Nil(t, cleared.SeatNumber, "a blank seat_number patch must clear to NULL")
+
+	reloaded, err := svc.GetGuest(ctx(), g.ID)
+	require.NoError(t, err)
+	assert.Nil(t, reloaded.TableNumber)
+	assert.Nil(t, reloaded.SeatNumber)
+}
+
 func TestPatchGuest_NotFound(t *testing.T) {
 	svc, _ := newService(t)
 	_, err := svc.PatchGuest(ctx(), "00000000-0000-0000-0000-000000000000", parties.PatchGuestPayload{

@@ -45,8 +45,14 @@ import type {
 import type {
   GuestListItem,
   ListGuestsQuery,
+  PartyResponse,
   UpdateGuestPayload,
 } from "@/types/generated/parties";
+
+// Stable empty list so the parties prop keeps the same reference while the
+// parties query is still loading (a fresh [] each render would needlessly
+// recompute the grid's party lookups).
+const EMPTY_PARTIES: PartyResponse[] = [];
 
 // Boolean guest filters, listed so useFilterParams parses them back from the URL.
 const BOOL_FILTERS = ["is_drinking", "is_child", "is_placeholder"] as const;
@@ -173,23 +179,16 @@ export default function AdminGuests() {
   const guests = guestsQuery.data?.items ?? [];
   const updateGuest = useUpdateGuest();
 
-  // Every party, for the Party filter, the editable Party combobox, the add row's
-  // party picker, and the read-only Side/Relation columns (looked up by party).
+  // Every party (the full response), for the Party filter, the editable Party
+  // combobox, the add row's party picker, and the read-only party-attribute
+  // columns the flat list surfaces (side, relation, circle, invitation, address,
+  // rsvp, info status), all looked up by the guest's party.
   const partiesQuery = useParties({});
-  const partyOptions = useMemo(
-    () =>
-      (partiesQuery.data?.items ?? []).map((party) => ({
-        id: party.id,
-        name: party.name,
-        side: party.side,
-        relation: party.relation,
-      })),
-    [partiesQuery.data],
-  );
+  const parties = partiesQuery.data?.items ?? EMPTY_PARTIES;
   // Parties as filter options (by id), for the Party filter at the top.
   const partyFilterOptions = useMemo<Option<string>[]>(
-    () => partyOptions.map((party) => ({ value: party.id, label: party.name })),
-    [partyOptions],
+    () => parties.map((party) => ({ value: party.id, label: party.name })),
+    [parties],
   );
 
   // Events as filter options (by id), for the Event filter: picking one narrows
@@ -370,7 +369,7 @@ export default function AdminGuests() {
             <GuestsGrid<GuestListItem>
               guests={guests}
               onEditGuest={openEdit}
-              parties={partyOptions}
+              parties={parties}
               partyIdFor={(guest) => guest.party_id}
             />
           </div>

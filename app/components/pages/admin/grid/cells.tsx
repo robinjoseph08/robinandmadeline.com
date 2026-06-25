@@ -177,7 +177,7 @@ interface GridTextCellProps {
   onCommit: (value: string) => void | Promise<void>;
   ariaLabel: string;
   placeholder?: string;
-  type?: "text" | "email";
+  type?: "text" | "email" | "number";
   /** Add-row mode: commit every keystroke into the draft instead of on blur. */
   commitOnChange?: boolean;
   /** Overrides Enter: the add row passes its create handler here. */
@@ -255,6 +255,11 @@ export function GridTextCell({
         // field is expected (not a surprise focus steal on page load).
         autoFocus={autoFocus}
         className={cn(GRID_CONTROL_CLASS, className)}
+        // A number field constrains entry to a non-negative count; min bars the
+        // spinner from dropping below 1, matching the backend's positive-integer
+        // rule (the seating numbers). `size` is meaningless on a number input, so
+        // the width-to-content trick stays text/email only (see size below).
+        min={type === "number" ? 1 : undefined}
         onBlur={commitOnChange ? undefined : cell.commit}
         onChange={
           phoneFormat
@@ -295,7 +300,7 @@ export function GridTextCell({
         }}
         placeholder={placeholder}
         ref={phoneFormat ? inputRef : undefined}
-        size={fieldSize}
+        size={type === "number" ? undefined : fieldSize}
         type={type}
         value={cell.value}
       />
@@ -311,6 +316,10 @@ interface GridComboboxCellProps {
   placeholder?: string;
   /** Show the save-status tint (off for add-row draft cells, which do not save). */
   showStatus?: boolean;
+  /** Extra classes for the cell's <td> (e.g. the guest/party divider border). */
+  className?: string;
+  /** Custom render for an option (e.g. a colored chip), in the trigger and list. */
+  renderOption?: (option: ComboboxOption) => ReactNode;
 }
 
 /**
@@ -325,6 +334,8 @@ export function GridComboboxCell({
   ariaLabel,
   placeholder = "Select...",
   showStatus = true,
+  className,
+  renderOption,
 }: GridComboboxCellProps) {
   const cell = useCommittableValue<string | undefined>(value, (next) =>
     next === undefined ? undefined : onCommit(next),
@@ -335,6 +346,7 @@ export function GridComboboxCell({
       className={cn(
         "p-0 transition-colors",
         statusBgClass(cell.status, showStatus),
+        className,
       )}
     >
       <Combobox
@@ -344,6 +356,7 @@ export function GridComboboxCell({
         }}
         options={options}
         placeholder={placeholder}
+        renderOption={renderOption}
         triggerClassName="h-8 rounded-none"
         value={cell.value}
       />
@@ -737,6 +750,8 @@ interface GridCreatablePartyCellProps {
   newPartyName?: string;
   onSelectExisting: (id: string) => void;
   onCreateNew: (name: string) => void;
+  /** Extra classes for the cell's <td> (e.g. the guest/party divider border). */
+  className?: string;
 }
 
 /**
@@ -751,6 +766,7 @@ export function GridCreatablePartyCell({
   newPartyName,
   onSelectExisting,
   onCreateNew,
+  className,
 }: GridCreatablePartyCellProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -768,7 +784,7 @@ export function GridCreatablePartyCell({
     );
 
   return (
-    <TableCell className="p-0">
+    <TableCell className={cn("p-0", className)}>
       <Popover
         onOpenChange={(next) => {
           setOpen(next);

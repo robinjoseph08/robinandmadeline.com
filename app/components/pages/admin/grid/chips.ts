@@ -5,7 +5,10 @@ import {
   CircleImmediate,
   CircleOther,
   CircleWork,
+  SideMadeline,
+  SideRobin,
   type Circle,
+  type Side,
 } from "@/types/generated/models";
 
 /**
@@ -56,6 +59,14 @@ const CIRCLE_CHIP_COLOR: Record<Circle, string> = {
   [CircleOther]: "bg-stone-200 text-stone-900",
 };
 
+// A party's side reads in the couple's colors: blue for Robin, pink for
+// Madeline. Keyed by the wire value ("robin"/"madeline") so a chip can show the
+// "Robin"/"Madeline" label while coloring by value.
+const SIDE_CHIP_COLOR: Record<Side, string> = {
+  [SideRobin]: "bg-blue-200 text-blue-900",
+  [SideMadeline]: "bg-pink-200 text-pink-900",
+};
+
 // A guest's flags, keyed by the chip label GridFlagsCell renders (mirrors
 // GUEST_FLAG_OPTIONS in GuestsGrid).
 const FLAG_CHIP_COLOR: Record<string, string> = {
@@ -66,6 +77,7 @@ const FLAG_CHIP_COLOR: Record<string, string> = {
 // Merged lookup for the explicit (non-hashed) values. A Map so an exotic value
 // (e.g. a tag literally named "constructor") can't match an inherited property.
 const EXPLICIT_CHIP_COLOR = new Map<string, string>([
+  ...Object.entries(SIDE_CHIP_COLOR),
   ...Object.entries(CIRCLE_CHIP_COLOR),
   ...Object.entries(FLAG_CHIP_COLOR),
 ]);

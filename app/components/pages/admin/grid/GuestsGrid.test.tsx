@@ -121,17 +121,50 @@ describe("GuestsGrid phone cell", () => {
       }),
     );
   });
+});
 
-  it("shows an Unsubscribed marker only for opted-out guests", () => {
+describe("GuestsGrid guest columns", () => {
+  it("reflects the subscribed flag and toggles it inline via PATCH", async () => {
+    adminRequest.mockResolvedValue(makeGuest({ id: "g1", subscribed: false }));
+    const user = userEvent.setup();
     renderGrid(
-      [
-        makeGuest({ id: "g1", full_name: "Alice", subscribed: true }),
-        makeGuest({ id: "g2", full_name: "Bob", subscribed: false }),
-      ],
+      [makeGuest({ id: "g1", full_name: "Alice", subscribed: true })],
       (g) => g.party_id,
     );
 
-    // Only the unsubscribed guest is flagged; the subscribed norm shows nothing.
-    expect(screen.getAllByText("Unsubscribed")).toHaveLength(1);
+    // The subscription opt-in (ADR 0009) is now an editable checkbox, not a
+    // read-only marker: it mirrors the stored flag and unchecking it PATCHes.
+    const subscribed = screen.getByRole("checkbox", { name: "Subscribed" });
+    expect(subscribed).toBeChecked();
+    await user.click(subscribed);
+    await waitFor(() =>
+      expect(adminRequest).toHaveBeenCalledWith("/admin/guests/g1", {
+        method: "PATCH",
+        body: { subscribed: false },
+      }),
+    );
+  });
+
+  it("sends a seating number as a string so a blank can clear it", async () => {
+    adminRequest.mockResolvedValue(makeGuest({ id: "g1", table_number: 9 }));
+    const user = userEvent.setup();
+    renderGrid(
+      [makeGuest({ id: "g1", full_name: "Alice", table_number: 4 })],
+      (g) => g.party_id,
+    );
+
+    // The table-number cell is a number input; it commits the value as a string
+    // (the clearable PATCH convention), so a later blank can mean "un-assign".
+    const table = screen.getByRole("spinbutton", { name: "Table number" });
+    expect(table).toHaveValue(4);
+    await user.clear(table);
+    await user.type(table, "9");
+    await user.tab();
+    await waitFor(() =>
+      expect(adminRequest).toHaveBeenCalledWith("/admin/guests/g1", {
+        method: "PATCH",
+        body: { table_number: "9" },
+      }),
+    );
   });
 });

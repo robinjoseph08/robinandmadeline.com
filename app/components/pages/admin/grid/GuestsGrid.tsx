@@ -2,7 +2,9 @@ import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { InfoStatusBadge } from "@/components/pages/admin/parties/InfoStatusBadge";
 import {
+  INVITATION_TYPE_OPTIONS,
   labelFor,
   RELATION_OPTIONS,
   SIDE_OPTIONS,
@@ -26,6 +28,7 @@ import { formatPhone } from "@/libraries/phone";
 import type { Guest, Relation, Side } from "@/types/generated/models";
 import type {
   CreateGuestPayload,
+  PartyResponse,
   PatchGuestPayload,
 } from "@/types/generated/parties";
 
@@ -39,6 +42,7 @@ import {
   GridTextCell,
   type FlagOption,
 } from "./cells";
+import { Chip } from "./Chip";
 import { InfoHint, TooltipIconButton } from "./grid-buttons";
 
 // Tooltip copy for the guest flags. Primary keeps its own header hint; the
@@ -62,6 +66,9 @@ const NEW_PARTY_PRIMARY_HINT =
 const PRIMARY_LOCK_HINT =
   "The party's primary. Check another guest to make them the primary instead.";
 
+const SUBSCRIBED_HINT =
+  "Whether the guest receives broadcast email updates (ADR 0009). New guests are subscribed; unchecking opts them out, and they can be resubscribed.";
+
 // The two boolean flags collapsed into one chip multi-select, each chip
 // carrying its own tooltip in the dropdown.
 const GUEST_FLAG_OPTIONS: FlagOption[] = [
@@ -69,25 +76,20 @@ const GUEST_FLAG_OPTIONS: FlagOption[] = [
   { key: "is_drinking", label: "Drinking", hint: FLAG_HINTS.drinking },
 ];
 
-interface PartyOption {
-  id: string;
-  name: string;
-  side: Side;
-  relation: Relation;
-}
-
 interface GuestsGridProps<TGuest extends Guest> {
   guests: TGuest[];
   /** Party id used to scope each guest write's cache invalidation. */
   partyIdFor: (guest: TGuest) => string;
-  /** Opens the full-edit dialog (dietary restrictions, table/seat numbers). */
+  /** Opens the full-edit dialog (the same fields, in a focused form). */
   onEditGuest: (guest: TGuest) => void;
   /**
-   * Flat-list mode: every party, so the Party column becomes editable (reassign a
-   * guest) and the add row can pick or create a party (with the Side/Relation
-   * columns alongside). Mutually exclusive with addPartyId.
+   * Flat-list mode: every party (the full response), so the Party column becomes
+   * editable (reassign a guest), the add row can pick or create a party, and the
+   * read-only party-attribute columns (side, relation, circle, invitation,
+   * address, rsvp, info status) resolve from the guest's party. Mutually
+   * exclusive with addPartyId.
    */
-  parties?: PartyOption[];
+  parties?: PartyResponse[];
   /**
    * Detail-page mode: the add row creates a guest in this one party, and the
    * party-context columns are hidden (the party is implicit). Mutually exclusive
@@ -163,8 +165,11 @@ function isDraftPristine(draft: GuestDraft): boolean {
  * choose an existing party and its Side/Relation show read-only, or type a new
  * name to create the party with this guest as its primary (Side and Relation
  * become required; invitation defaults to physical). The detail page adds
- * straight into its own party. Dietary restrictions and table/seat numbers stay
- * behind the edit dialog (onEditGuest).
+ * straight into its own party. Every editable guest field is a column (dietary
+ * restrictions, table/seat numbers, and the email-subscription flag included);
+ * the edit dialog (onEditGuest) survives as a focused form over the same fields.
+ * The flat list also surfaces the whole owning party read-only alongside the
+ * editable Party picker, so the guest list reads as a single pane of glass.
  */
 export function GuestsGrid<TGuest extends Guest>({
   guests,
@@ -183,13 +188,16 @@ export function GuestsGrid<TGuest extends Guest>({
     [parties],
   );
   const partyById = useMemo(() => {
-    const map = new Map<string, PartyOption>();
+    const map = new Map<string, PartyResponse>();
     for (const party of parties ?? []) map.set(party.id, party);
     return map;
   }, [parties]);
-  // Base columns: Name, Email, Phone, Tags, Flags, Placeholder, Primary,
-  // Actions. The flat list adds Party, Side, Relation.
-  const columnCount = 9 + (showPartyColumn ? 3 : 0);
+  // Guest columns (always): Name, Email, Phone, Tags, Flags, Placeholder,
+  // Primary, Dietary, Table, Seat, Subscribed, Actions (12). The flat list adds
+  // the editable Party picker plus the read-only party-attribute columns: Side,
+  // Relation, Circle, Invitation, Address 1, Address 2, City, State, Postal,
+  // Country, RSVP code, Info status (13).
+  const columnCount = 12 + (showPartyColumn ? 13 : 0);
 
   // Existing tags across the loaded guests, to suggest in every tag cell.
   const tagSuggestions = useMemo(() => {
@@ -240,6 +248,18 @@ export function GuestsGrid<TGuest extends Guest>({
   return (
     <Table>
       <TableHeader>
+        {/* Group banner over the two column families, so the wide flat list reads
+            as "guest data | party data" at a glance. Only the flat list has the
+            party family; the detail page is all guest columns, so it is skipped. */}
+        {showPartyColumn ? (
+          <TableRow>
+            <TableHead colSpan={11}>Guest</TableHead>
+            <TableHead className="border-l border-ink/10" colSpan={13}>
+              Party
+            </TableHead>
+            <TableHead />
+          </TableRow>
+        ) : null}
         <TableRow>
           <TableHead className="min-w-40">Name</TableHead>
           <TableHead className="min-w-48">Email</TableHead>
@@ -252,14 +272,31 @@ export function GuestsGrid<TGuest extends Guest>({
           <TableHead className="w-24 text-center">
             <HeaderWithHint hint={FLAG_HINTS.primary} label="Primary" />
           </TableHead>
+          <TableHead className="min-w-40">Dietary</TableHead>
+          <TableHead className="w-20">Table</TableHead>
+          <TableHead className="w-20">Seat</TableHead>
+          <TableHead className="w-28 text-center">
+            <HeaderWithHint hint={SUBSCRIBED_HINT} label="Subscribed" />
+          </TableHead>
           {showPartyColumn ? (
             <>
-              <TableHead className="min-w-44">Party</TableHead>
+              <TableHead className="min-w-44 border-l border-ink/10">
+                Party
+              </TableHead>
               <TableHead className="w-28">Side</TableHead>
               <TableHead className="w-28">Relation</TableHead>
+              <TableHead className="min-w-40">Circle</TableHead>
+              <TableHead className="w-28">Invitation</TableHead>
+              <TableHead className="min-w-44">Address line 1</TableHead>
+              <TableHead className="min-w-36">Address line 2</TableHead>
+              <TableHead className="min-w-32">City</TableHead>
+              <TableHead className="min-w-28">State / province</TableHead>
+              <TableHead className="min-w-28">Postal code</TableHead>
+              <TableHead className="min-w-28">Country</TableHead>
+              <TableHead className="w-28">RSVP code</TableHead>
+              <TableHead className="w-40">Info status</TableHead>
             </>
           ) : null}
-          <TableHead className="w-28">Updates</TableHead>
           <TableHead className="w-20 text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
@@ -341,34 +378,61 @@ export function GuestsGrid<TGuest extends Guest>({
                 tooltip={guest.is_primary ? PRIMARY_LOCK_HINT : undefined}
                 value={guest.is_primary}
               />
+              <GridTextCell
+                ariaLabel="Dietary restrictions"
+                onCommit={(value) =>
+                  patchField(guest.id, partyId, {
+                    dietary_restrictions: value,
+                  })
+                }
+                placeholder="None"
+                value={guest.dietary_restrictions ?? ""}
+              />
+              <GridTextCell
+                ariaLabel="Table number"
+                onCommit={(value) =>
+                  patchField(guest.id, partyId, { table_number: value })
+                }
+                placeholder="None"
+                type="number"
+                value={guest.table_number?.toString() ?? ""}
+              />
+              <GridTextCell
+                ariaLabel="Seat number"
+                onCommit={(value) =>
+                  patchField(guest.id, partyId, { seat_number: value })
+                }
+                placeholder="None"
+                type="number"
+                value={guest.seat_number?.toString() ?? ""}
+              />
+              <GridBoolCell
+                ariaLabel="Subscribed"
+                onCommit={(value) =>
+                  patchField(guest.id, partyId, { subscribed: value })
+                }
+                value={guest.subscribed}
+              />
               {showPartyColumn ? (
                 <>
                   <GridComboboxCell
                     ariaLabel="Party"
+                    className="border-l border-ink/10"
                     onCommit={(value) =>
                       patchField(guest.id, partyId, { party_id: value })
                     }
                     options={partyOptions}
                     value={guest.party_id}
                   />
-                  <ReadOnlyAttr
-                    value={party ? labelFor(SIDE_OPTIONS, party.side) : ""}
-                  />
+                  <ReadOnlySideChip party={party} />
                   <ReadOnlyAttr
                     value={
                       party ? labelFor(RELATION_OPTIONS, party.relation) : ""
                     }
                   />
+                  <PartyExtraCells party={party} />
                 </>
               ) : null}
-              {/* A light, read-only indicator of email subscription: blank for
-                  the subscribed norm, a muted marker for the rare opt-out (ADR
-                  0009). The toggle itself lives in the guest edit dialog. */}
-              <GridReadOnlyCell className="p-0">
-                <div className="flex h-8 items-center px-3 text-xs text-muted-foreground">
-                  {guest.subscribed ? null : "Unsubscribed"}
-                </div>
-              </GridReadOnlyCell>
               <GridReadOnlyCell className="p-0">
                 <div className="flex h-8 items-center justify-end gap-1 px-3">
                   <TooltipIconButton
@@ -406,10 +470,10 @@ export function GuestsGrid<TGuest extends Guest>({
 }
 
 interface AddGuestRowProps {
-  parties?: PartyOption[];
+  parties?: PartyResponse[];
   addPartyId?: string;
   showPartyColumn: boolean;
-  partyById: Map<string, PartyOption>;
+  partyById: Map<string, PartyResponse>;
   tagSuggestions: string[];
   /** Span of the collapsed "Add guest" affordance, matching GuestsGrid's columns. */
   columnCount: number;
@@ -643,9 +707,26 @@ function AddGuestRow({
         tooltip={isNewParty ? NEW_PARTY_PRIMARY_HINT : undefined}
         value={isNewParty ? true : draft.isPrimary}
       />
+      {/* Dietary restrictions and the seating numbers are not part of the
+          quick-add (they are filled in inline on the row once the guest exists),
+          so they sit empty here, keeping the add row aligned with the columns. */}
+      <EmptyCell />
+      <EmptyCell />
+      <EmptyCell />
+      {/* A new guest is always created subscribed (ADR 0009); the box shows that
+          intent, locked, and the flag becomes editable on the saved row. */}
+      <GridBoolCell
+        ariaLabel="New guest subscribed"
+        disabled
+        onCommit={() => {}}
+        showStatus={false}
+        tooltip="New guests receive email updates by default; change it after adding."
+        value={true}
+      />
       {showPartyColumn ? (
         <>
           <GridCreatablePartyCell
+            className="border-l border-ink/10"
             newPartyName={draft.newPartyName}
             onCreateNew={(name) =>
               setDraft((prev) => ({
@@ -673,6 +754,9 @@ function AddGuestRow({
                 onCommit={(value) => setDraftField("side", value as Side)}
                 options={SIDE_OPTIONS}
                 placeholder="Side..."
+                renderOption={(o) => (
+                  <Chip colorKey={o.value} label={o.label} />
+                )}
                 showStatus={false}
                 value={draft.side}
               />
@@ -689,13 +773,7 @@ function AddGuestRow({
             </>
           ) : (
             <>
-              <ReadOnlyAttr
-                value={
-                  draftExistingParty
-                    ? labelFor(SIDE_OPTIONS, draftExistingParty.side)
-                    : ""
-                }
-              />
+              <ReadOnlySideChip party={draftExistingParty} />
               <ReadOnlyAttr
                 value={
                   draftExistingParty
@@ -705,13 +783,14 @@ function AddGuestRow({
               />
             </>
           )}
+          {/* The rest of the party attributes are read-only: they show the
+              selected party's values, or blank while a new party is being typed
+              (it has none yet). */}
+          <PartyExtraCells
+            party={isNewParty ? undefined : draftExistingParty}
+          />
         </>
       ) : null}
-      {/* A new guest defaults to subscribed, so the Updates indicator is blank
-          in the add row. */}
-      <GridReadOnlyCell className="p-0">
-        <div className="flex h-8 items-center px-3" />
-      </GridReadOnlyCell>
       <GridReadOnlyCell className="p-0">
         <div className="flex h-8 items-center justify-end gap-1 px-3">
           <TooltipIconButton label="Cancel" onClick={cancelAdd}>
@@ -731,14 +810,118 @@ function AddGuestRow({
   );
 }
 
-/** A read-only party-attribute cell (Side/Relation in the flat list). */
+/**
+ * A read-only party-attribute cell (Side/Relation and the rest of the party
+ * columns in the flat list). A present value reads muted (the read-only signal);
+ * an empty one falls back to a lighter "None" that matches the editable cells'
+ * placeholder muting (text-ink/40), so a blank read-only cell reads as empty
+ * rather than as a real value.
+ */
 function ReadOnlyAttr({ value }: { value: string }) {
   return (
     <GridReadOnlyCell className="p-0">
-      <div className="flex h-8 items-center px-3 text-sm text-muted-foreground">
-        {value || "None"}
+      <div className="flex h-8 items-center px-3 text-sm">
+        {value ? (
+          <span className="text-muted-foreground">{value}</span>
+        ) : (
+          <span className="text-ink/40">None</span>
+        )}
       </div>
     </GridReadOnlyCell>
+  );
+}
+
+/**
+ * A read-only multi-value cell rendering its values as the same colored chips the
+ * editable chips cell uses on the parties grid (Circle), so the two lists read
+ * alike. Chips clip on overflow to keep the row height uniform; an empty set
+ * falls back to the lighter "None" placeholder, like ReadOnlyAttr.
+ */
+function ReadOnlyChips({ values }: { values: string[] }) {
+  return (
+    <GridReadOnlyCell className="p-0">
+      <div className="flex h-8 items-center overflow-hidden px-3">
+        {values.length === 0 ? (
+          <span className="text-sm text-ink/40">None</span>
+        ) : (
+          <span className="flex items-center gap-1">
+            {values.map((item) => (
+              <Chip key={item} label={item} />
+            ))}
+          </span>
+        )}
+      </div>
+    </GridReadOnlyCell>
+  );
+}
+
+/**
+ * The read-only Side cell on the guest list: the owning party's side as a colored
+ * chip (blue for Robin, pink for Madeline), matching the editable Side chip on
+ * the parties grid so the value reads the same whether or not it is editable
+ * here. Only the Party picker changes it. Empty falls back to "None".
+ */
+function ReadOnlySideChip({ party }: { party?: PartyResponse }) {
+  return (
+    <GridReadOnlyCell className="p-0">
+      <div className="flex h-8 items-center px-3">
+        {party ? (
+          <Chip
+            colorKey={party.side}
+            label={labelFor(SIDE_OPTIONS, party.side)}
+          />
+        ) : (
+          <span className="text-sm text-ink/40">None</span>
+        )}
+      </div>
+    </GridReadOnlyCell>
+  );
+}
+
+/** An empty add-row cell, a placeholder under a column the quick-add skips. */
+function EmptyCell() {
+  return (
+    <GridReadOnlyCell className="p-0">
+      <div className="h-8" />
+    </GridReadOnlyCell>
+  );
+}
+
+/**
+ * The read-only tail of the party-attribute columns in the flat list (everything
+ * past Side/Relation): circle, invitation, the mailing address, the RSVP code,
+ * and the derived info-collection status. They are never editable here, only the
+ * Party picker is; changing it re-resolves every one of these from the new party.
+ * A missing party (the add row's new-party case) renders them blank.
+ */
+function PartyExtraCells({ party }: { party?: PartyResponse }) {
+  return (
+    <>
+      <ReadOnlyChips values={party?.circle ?? []} />
+      <ReadOnlyAttr
+        value={
+          party ? labelFor(INVITATION_TYPE_OPTIONS, party.invitation_type) : ""
+        }
+      />
+      <ReadOnlyAttr value={party?.address_line_1 ?? ""} />
+      <ReadOnlyAttr value={party?.address_line_2 ?? ""} />
+      <ReadOnlyAttr value={party?.city ?? ""} />
+      <ReadOnlyAttr value={party?.state_or_province ?? ""} />
+      <ReadOnlyAttr value={party?.postal_code ?? ""} />
+      <ReadOnlyAttr value={party?.country ?? ""} />
+      <ReadOnlyAttr value={party?.rsvp_code ?? ""} />
+      <GridReadOnlyCell className="p-0">
+        <div className="flex h-8 items-center px-3">
+          {party ? (
+            <InfoStatusBadge
+              missingRequiredFields={party.missing_required_fields}
+              requested={party.info_collection_requested}
+              status={party.info_collection_status}
+            />
+          ) : null}
+        </div>
+      </GridReadOnlyCell>
+    </>
   );
 }
 
