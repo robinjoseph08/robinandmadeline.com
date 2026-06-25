@@ -1,5 +1,5 @@
 import { Check, ChevronsUpDown, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import {
   Command,
@@ -34,6 +34,13 @@ interface ComboboxProps {
   triggerClassName?: string;
   contentClassName?: string;
   align?: "start" | "center" | "end";
+  /**
+   * Custom render for an option's content, used in both the trigger (the selected
+   * option) and the dropdown list. Falls back to the plain label. Lets a caller
+   * render options as colored chips (the grid's Side cells) without coupling this
+   * generic combobox to the chip system.
+   */
+  renderOption?: (option: ComboboxOption) => ReactNode;
 }
 
 /**
@@ -59,11 +66,14 @@ export function Combobox({
   triggerClassName,
   contentClassName,
   align = "start",
+  renderOption,
 }: ComboboxProps) {
   const [open, setOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const selected = options.find((option) => option.value === value);
   const showClear = clearable && selected !== undefined;
+  const renderContent = (option: ComboboxOption) =>
+    renderOption ? renderOption(option) : option.label;
 
   const trigger = (
     <PopoverTrigger asChild>
@@ -84,7 +94,7 @@ export function Combobox({
         type="button"
       >
         <span className="truncate">
-          {selected ? selected.label : placeholder}
+          {selected ? renderContent(selected) : placeholder}
         </span>
         {showClear ? (
           // Reserve the icon slot the overlaid clear button occupies, so the
@@ -154,7 +164,7 @@ export function Combobox({
                       value === option.value ? "opacity-100" : "opacity-0",
                     )}
                   />
-                  {option.label}
+                  {renderContent(option)}
                 </CommandItem>
               ))}
             </CommandGroup>

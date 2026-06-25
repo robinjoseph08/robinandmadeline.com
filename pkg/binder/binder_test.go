@@ -224,8 +224,8 @@ func TestBind_DiveRequiredForSliceModTraversal(t *testing.T) {
 	})
 }
 
-// TestValidators covers the date, time, datetimeblank, url, httpurl, and
-// emailblank custom validators directly.
+// TestValidators covers the date, time, datetimeblank, url, httpurl, emailblank,
+// and posintblank custom validators directly.
 func TestValidators(t *testing.T) {
 	t.Parallel()
 	b, err := New()
@@ -238,6 +238,7 @@ func TestValidators(t *testing.T) {
 		Site     string `json:"site" validate:"omitempty,url"`
 		Map      string `json:"map" validate:"omitempty,httpurl"`
 		Mail     string `json:"mail" validate:"omitempty,emailblank"`
+		Seat     string `json:"seat" validate:"omitempty,posintblank"`
 	}
 
 	cases := []struct {
@@ -278,6 +279,14 @@ func TestValidators(t *testing.T) {
 		{"empty email allowed", `{"mail":""}`, true},
 		{"bad email", `{"mail":"not-an-email"}`, false},
 		{"email with display name rejected", `{"mail":"Pat <pat@example.com>"}`, false},
+		{"valid seat number", `{"seat":"12"}`, true},
+		{"empty seat allowed", `{"seat":""}`, true},
+		{"zero seat rejected", `{"seat":"0"}`, false},
+		{"negative seat rejected", `{"seat":"-3"}`, false},
+		{"non-numeric seat rejected", `{"seat":"abc"}`, false},
+		{"fractional seat rejected", `{"seat":"1.5"}`, false},
+		{"int32 max allowed", `{"seat":"2147483647"}`, true},
+		{"above int32 max rejected", `{"seat":"2147483648"}`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -354,6 +363,7 @@ func TestValidationMessages(t *testing.T) {
 		Email    string   `json:"email" validate:"omitempty,email"`
 		Phone    string   `json:"phone" validate:"omitempty,phone"`
 		Deadline string   `json:"deadline" validate:"omitempty,datetimeblank"`
+		Seat     string   `json:"seat" validate:"omitempty,posintblank"`
 		Circle   []string `json:"circle" validate:"omitempty,max=2"`
 	}
 
@@ -367,6 +377,7 @@ func TestValidationMessages(t *testing.T) {
 		{"email reads as a sentence", `{"full_name":"A","email":"nope"}`, "Email must be a valid email address."},
 		{"phone reads as a sentence", `{"full_name":"A","phone":"asds"}`, "Phone must be a valid phone number."},
 		{"datetimeblank reads as a sentence", `{"full_name":"A","deadline":"nope"}`, "Deadline must be an RFC3339 timestamp."},
+		{"posintblank reads as a sentence", `{"full_name":"A","seat":"nope"}`, "Seat must be a positive whole number."},
 		{"max on a string counts characters", `{"full_name":"` + strings.Repeat("x", 201) + `"}`, "Full name must be at most 200 characters."},
 		{"max on a slice counts elements", `{"full_name":"A","circle":["a","b","c"]}`, "Circle must have at most 2 elements."},
 	}

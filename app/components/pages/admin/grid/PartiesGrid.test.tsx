@@ -141,3 +141,35 @@ describe("PartiesGrid racing commits", () => {
     expect(cell.closest("td")).not.toHaveClass("bg-destructive/10");
   });
 });
+
+describe("PartiesGrid side chip", () => {
+  it("renders the Side value as a value-colored chip in the cell", () => {
+    renderGrid([makeParty({ id: "p1", name: "Fam", side: "madeline" })]);
+
+    // The Side combobox renders its selected option through renderOption as a
+    // chip colored by the wire value (madeline -> pink), not plain text. This
+    // guards the renderOption plumbing from trigger to chip.
+    const side = screen.getByText("Madeline");
+    expect(side).toHaveClass("bg-pink-200");
+  });
+});
+
+describe("PartiesGrid address columns", () => {
+  it("patches an address cell under its own key", async () => {
+    const user = userEvent.setup();
+    renderGrid([makeParty({ id: "p1", name: "Fam" })]);
+
+    // The six mailing-address cells are near-identical; this guards City against
+    // being wired to another field's key (e.g. state_or_province).
+    const city = screen.getByRole("textbox", { name: "City" });
+    await user.type(city, "Springfield");
+    await user.tab();
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/parties/p1", {
+        method: "PATCH",
+        body: { city: "Springfield" },
+      });
+    });
+  });
+});

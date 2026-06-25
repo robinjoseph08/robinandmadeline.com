@@ -2,10 +2,12 @@ package binder
 
 import (
 	"context"
+	"math"
 	"net/mail"
 	"net/url"
 	"reflect"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/go-playground/mold/v4"
@@ -116,6 +118,32 @@ func emailBlankValidator(fl validator.FieldLevel) bool {
 	}
 	addr, err := mail.ParseAddress(value)
 	return err == nil && addr.Name == "" && addr.Address == value
+}
+
+// posintblankValidator accepts a positive integer that fits a 32-bit Postgres
+// INTEGER column (1 through math.MaxInt32), or the empty string. Like
+// emailblank/datetimeblank/phone it permits blank so a partial update (PATCH) can
+// clear a nullable integer column (a guest's table or seat number): a
+// present-but-blank field is the grid's "clear this cell" gesture, stored as SQL
+// NULL, while a present value must be a real, positive seating number. Pair with
+// `omitempty` so an absent (nil pointer) field is skipped.
+//
+// The upper bound matches the INTEGER column it guards: without it a value above
+// math.MaxInt32 would pass (Go's int is 64-bit) and then overflow the column on
+// write, turning an absurd input into a 500 instead of a clean 422.
+//
+// The field it guards is a string, not an int, on purpose: a non-nil pointer to
+// "" is distinguishable from a nil pointer, so blank (clear) and absent
+// (unchanged) stay distinct, which a `*int` cannot express (JSON null and an
+// omitted key both decode to nil). This mirrors how every other nullable PATCH
+// field clears via a blank string.
+func posintblankValidator(fl validator.FieldLevel) bool {
+	value := fl.Field().String()
+	if value == "" {
+		return true
+	}
+	n, err := strconv.Atoi(value)
+	return err == nil && n >= 1 && n <= math.MaxInt32
 }
 
 // defaultPhoneRegion is the region a phone number is parsed against when it does

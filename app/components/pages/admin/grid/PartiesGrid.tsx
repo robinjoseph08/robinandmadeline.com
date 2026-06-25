@@ -40,6 +40,7 @@ import {
   GridReadOnlyCell,
   GridTextCell,
 } from "./cells";
+import { Chip } from "./Chip";
 import { TooltipIconButton } from "./grid-buttons";
 
 const CIRCLE_VALUES = CIRCLE_OPTIONS.map((option) => option.value);
@@ -103,6 +104,12 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
           <TableHead className="w-32">Invitation</TableHead>
           <TableHead className="min-w-40">Circle</TableHead>
           <TableHead className="min-w-32">RSVP code</TableHead>
+          <TableHead className="min-w-44">Address line 1</TableHead>
+          <TableHead className="min-w-36">Address line 2</TableHead>
+          <TableHead className="min-w-32">City</TableHead>
+          <TableHead className="min-w-28">State / province</TableHead>
+          <TableHead className="min-w-28">Postal code</TableHead>
+          <TableHead className="min-w-28">Country</TableHead>
           <TableHead className="w-20">Guests</TableHead>
           <TableHead className="w-40">Info status</TableHead>
           <TableHead className="w-32 text-right">Actions</TableHead>
@@ -122,6 +129,7 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
                 patchField(party.id, { side: value as Side })
               }
               options={SIDE_OPTIONS}
+              renderOption={(o) => <Chip colorKey={o.value} label={o.label} />}
               value={party.side}
             />
             <GridComboboxCell
@@ -156,6 +164,48 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
               placeholder="None"
               transform={(value) => value.toUpperCase()}
               value={party.rsvp_code ?? ""}
+            />
+            <GridTextCell
+              ariaLabel="Address line 1"
+              onCommit={(value) =>
+                patchField(party.id, { address_line_1: value })
+              }
+              placeholder="None"
+              value={party.address_line_1 ?? ""}
+            />
+            <GridTextCell
+              ariaLabel="Address line 2"
+              onCommit={(value) =>
+                patchField(party.id, { address_line_2: value })
+              }
+              placeholder="None"
+              value={party.address_line_2 ?? ""}
+            />
+            <GridTextCell
+              ariaLabel="City"
+              onCommit={(value) => patchField(party.id, { city: value })}
+              placeholder="None"
+              value={party.city ?? ""}
+            />
+            <GridTextCell
+              ariaLabel="State or province"
+              onCommit={(value) =>
+                patchField(party.id, { state_or_province: value })
+              }
+              placeholder="None"
+              value={party.state_or_province ?? ""}
+            />
+            <GridTextCell
+              ariaLabel="Postal code"
+              onCommit={(value) => patchField(party.id, { postal_code: value })}
+              placeholder="None"
+              value={party.postal_code ?? ""}
+            />
+            <GridTextCell
+              ariaLabel="Country"
+              onCommit={(value) => patchField(party.id, { country: value })}
+              placeholder="None"
+              value={party.country ?? ""}
             />
             <GridReadOnlyCell className="p-0">
               <Link

@@ -664,6 +664,55 @@ func TestPatchGuestHandler_InvalidEmailIs422(t *testing.T) {
 	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 }
 
+func TestPatchGuestHandler_TableNumberSetClearAndReject(t *testing.T) {
+	e := newAPI(t)
+	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
+		"name": "Fam", "side": "robin", "relation": "family", "invitation_type": "digital",
+	}))
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &party))
+	add := do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests", map[string]any{"full_name": "Pat"})
+	var guest struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(add.Body.Bytes(), &guest))
+
+	// The grid sends seating numbers as strings (the clearable PATCH convention),
+	// so posintblank rejects a non-positive, non-numeric, or out-of-range value as
+	// a 422 through the real payload binding, before it can reach the column.
+	for _, bad := range []string{"0", "-1", "abc", "2147483648"} {
+		bad := bad
+		badRec := do(t, e, http.MethodPatch, "/api/admin/guests/"+guest.ID, map[string]any{"table_number": bad})
+		assert.Equal(t, http.StatusUnprocessableEntity, badRec.Code, "table_number=%q", bad)
+		assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, badRec), "table_number=%q", bad)
+	}
+
+	// A valid string sets the integer column.
+	setRec := do(t, e, http.MethodPatch, "/api/admin/guests/"+guest.ID,
+		map[string]any{"table_number": "4", "seat_number": "11"})
+	require.Equal(t, http.StatusOK, setRec.Code)
+	var afterSet struct {
+		TableNumber *int `json:"table_number"`
+		SeatNumber  *int `json:"seat_number"`
+	}
+	require.NoError(t, json.Unmarshal(setRec.Body.Bytes(), &afterSet))
+	require.NotNil(t, afterSet.TableNumber)
+	assert.Equal(t, 4, *afterSet.TableNumber)
+	require.NotNil(t, afterSet.SeatNumber)
+	assert.Equal(t, 11, *afterSet.SeatNumber)
+
+	// A blank string clears the column to null (un-assigns the seat).
+	clearRec := do(t, e, http.MethodPatch, "/api/admin/guests/"+guest.ID, map[string]any{"table_number": ""})
+	require.Equal(t, http.StatusOK, clearRec.Code)
+	var afterClear struct {
+		TableNumber *int `json:"table_number"`
+	}
+	require.NoError(t, json.Unmarshal(clearRec.Body.Bytes(), &afterClear))
+	assert.Nil(t, afterClear.TableNumber, "a blank table_number patch clears to null")
+}
+
 func TestUpdateGuestHandler_PutReplacesFullState(t *testing.T) {
 	e := newAPI(t)
 	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{

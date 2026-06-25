@@ -7,6 +7,8 @@ import {
   CircleImmediate,
   CircleOther,
   CircleWork,
+  SideMadeline,
+  SideRobin,
 } from "@/types/generated/models";
 
 import { chipColorClass } from "./chips";
@@ -23,6 +25,16 @@ describe("chipColorClass", () => {
     [CircleChildhood, "bg-emerald-200 text-emerald-900"],
     [CircleOther, "bg-stone-200 text-stone-900"],
   ])("gives circle %s its explicit color", (value, expected) => {
+    expect(chipColorClass(value)).toBe(expected);
+  });
+
+  // A party's side reads in the couple's colors: blue for Robin, pink for
+  // Madeline. Keyed by the wire value, since the chip shows the "Robin" /
+  // "Madeline" label but colors by value.
+  it.each([
+    [SideRobin, "bg-blue-200 text-blue-900"],
+    [SideMadeline, "bg-pink-200 text-pink-900"],
+  ])("gives side %s its explicit color", (value, expected) => {
     expect(chipColorClass(value)).toBe(expected);
   });
 
