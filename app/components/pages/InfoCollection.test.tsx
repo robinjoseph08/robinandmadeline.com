@@ -30,7 +30,10 @@ function makeData(
     city: undefined,
     state_or_province: undefined,
     postal_code: undefined,
-    country: undefined,
+    // A US party by default: the country field stays hidden for these (the
+    // common case). Tests that exercise the international/unknown path override
+    // this.
+    country: "United States",
     // Placeholder guests never appear: the API excludes them server-side, so
     // the page only ever receives the party's known people.
     guests: [
@@ -345,7 +348,8 @@ describe("InfoCollection", () => {
     expect(address.getByLabelText(/City/)).toBeRequired();
     expect(address.getByLabelText(/State/)).toBeRequired();
     expect(address.getByLabelText(/ZIP code/)).toBeRequired();
-    // Country is no longer asked: it's hidden and defaults to the US on submit.
+    // This party is already set to the US, so the country field stays hidden
+    // (it defaults to the US on submit).
     expect(address.queryByLabelText(/Country/)).not.toBeInTheDocument();
   });
 
@@ -382,7 +386,7 @@ describe("InfoCollection", () => {
     await user.type(alice.getByLabelText(/^Name/), "Alicia Smith");
     await user.type(alice.getByLabelText(/^Phone/), "+14155552671");
 
-    // Fill the required mailing address. Country isn't asked on the form.
+    // Fill the required mailing address. A US party isn't asked for a country.
     const address = within(screen.getByRole("region", { name: /address/i }));
     await user.type(address.getByLabelText(/Address line 1/), "123 Main St");
     await user.type(address.getByLabelText(/City/), "Springfield");
@@ -426,24 +430,84 @@ describe("InfoCollection", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps an admin-entered country instead of defaulting to the US", async () => {
+  it("shows the country field pre-filled for a party set to a non-US country", async () => {
     const user = userEvent.setup();
     apiRequest.mockResolvedValue(makeData({ country: "Canada" }));
     renderPage();
     await screen.findByRole("heading", { name: /^Hi / });
 
-    // The country field is hidden, but a non-US country an admin already set is
-    // preserved rather than overwritten with the US default.
+    // A non-US country isn't hidden: the field shows, pre-filled and required,
+    // so the guest can confirm or correct where they live.
     const address = within(screen.getByRole("region", { name: /address/i }));
+    expect(address.getByLabelText(/Country/)).toHaveValue("Canada");
+    expect(address.getByLabelText(/Country/)).toBeRequired();
+    // Postal code isn't required abroad (many countries have none), though this
+    // guest happens to have one.
+    expect(address.getByLabelText(/Postal code/)).not.toBeRequired();
+
     await user.type(address.getByLabelText(/Address line 1/), "123 King St");
     await user.type(address.getByLabelText(/City/), "Toronto");
-    await user.type(address.getByLabelText(/State/), "ON");
-    await user.type(address.getByLabelText(/ZIP code/), "M5H 2N2");
+    // The US-format labels broaden for a non-US address.
+    await user.type(address.getByLabelText(/State \/ Province/), "ON");
+    await user.type(address.getByLabelText(/Postal code/), "M5H 2N2");
 
     await user.click(screen.getByRole("button", { name: "Save your info" }));
     await screen.findByRole("heading", { name: "Thank you!" });
 
+    // The pre-filled country rides along untouched.
     expect(submittedPayload().country).toBe("Canada");
+  });
+
+  it("asks for the country and broadens the labels when the party isn't set to the US", async () => {
+    const user = userEvent.setup();
+    // No country on the party yet: we can't assume a US address, so the country
+    // field appears (empty and required) and the US-format labels broaden.
+    apiRequest.mockResolvedValue(makeData({ country: undefined }));
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    const address = within(screen.getByRole("region", { name: /address/i }));
+    const countryField = address.getByLabelText(/Country/);
+    expect(countryField).toHaveValue("");
+    expect(countryField).toBeRequired();
+
+    // "State" → "State / Province" and "ZIP code" → "Postal code".
+    expect(address.getByLabelText(/State \/ Province/)).toBeInTheDocument();
+    expect(address.getByLabelText(/Postal code/)).toBeInTheDocument();
+    expect(address.queryByLabelText(/ZIP code/)).not.toBeInTheDocument();
+    // And the postal code is optional, since we don't know the country has one.
+    expect(address.getByLabelText(/Postal code/)).not.toBeRequired();
+
+    await user.type(address.getByLabelText(/Address line 1/), "10 Downing St");
+    await user.type(address.getByLabelText(/City/), "London");
+    await user.type(
+      address.getByLabelText(/State \/ Province/),
+      "Greater London",
+    );
+    await user.type(address.getByLabelText(/Postal code/), "SW1A 2AA");
+    await user.type(countryField, "United Kingdom");
+
+    await user.click(screen.getByRole("button", { name: "Save your info" }));
+    await screen.findByRole("heading", { name: "Thank you!" });
+
+    // The typed country is sent instead of the US default.
+    expect(submittedPayload().country).toBe("United Kingdom");
+  });
+
+  it("requires the postal code again if the guest enters the US as their country", async () => {
+    const user = userEvent.setup();
+    // The country starts unknown, so the postal code starts optional.
+    apiRequest.mockResolvedValue(makeData({ country: undefined }));
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    const address = within(screen.getByRole("region", { name: /address/i }));
+    expect(address.getByLabelText(/Postal code/)).not.toBeRequired();
+
+    // Typing the US as the country makes the postal code required, matching the
+    // backend gate, so the requirement can't slip through as a confusing 422.
+    await user.type(address.getByLabelText(/Country/), "United States");
+    expect(address.getByLabelText(/Postal code/)).toBeRequired();
   });
 
   it("removes a non-primary guest after an inline confirmation", async () => {

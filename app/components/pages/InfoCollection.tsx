@@ -123,10 +123,14 @@ function submittedName(input: string): string | undefined {
 }
 
 /**
- * The party-level address fields shown on the form, in display order. Country
- * is deliberately absent: every invitation is mailed within the US, so the
- * field is hidden and the value defaults to the US on submit (see
- * handleSubmit).
+ * The party-level address fields always shown on the form, in display order.
+ * Country is handled on its own (see showCountryField): it stays hidden for a
+ * party already set to the US and appears for an international or not-yet-known
+ * one, so it isn't part of this always-rendered list. The two US-format labels
+ * carry an intlLabel used in their place (and the US placeholder dropped) when
+ * that country field is showing; the data keys already cover both. Postal code
+ * is flagged optionalAbroad: required for a US address but optional once the
+ * country is anything else, since not every country has one.
  */
 const addressFields = [
   {
@@ -145,22 +149,27 @@ const addressFields = [
   {
     key: "state_or_province",
     label: "State",
+    intlLabel: "State / Province",
     placeholder: "TX",
     required: true,
   },
   {
     key: "postal_code",
     label: "ZIP code",
+    intlLabel: "Postal code",
     placeholder: "75201",
     required: true,
+    optionalAbroad: true,
   },
 ] as const;
 
 type AddressKey = (typeof addressFields)[number]["key"];
 
 /**
- * The country every invitation is mailed to. The form no longer asks for it,
- * so this fills in for any party without an admin-entered country.
+ * The country a US party's address defaults to. The form hides the country
+ * field for a party already set to the US (see showCountryField) and fills this
+ * in on submit; an international or not-yet-known party gets an editable field
+ * instead.
  */
 const DEFAULT_COUNTRY = "United States";
 
@@ -175,6 +184,14 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const isPhysical = data.invitation_type === "physical";
+
+  // Whether to ask for the mailing country. It stays hidden for a party already
+  // set to the US (the common case, defaulted to the US on submit); an
+  // international or not-yet-known (empty) country shows the field so the guest
+  // can fill in where they live.
+  const showCountryField =
+    isPhysical &&
+    (data.country ?? "").trim().toLowerCase() !== DEFAULT_COUNTRY.toLowerCase();
 
   // Form state, seeded from the fetched data once at mount (the component
   // only renders with data in hand). Names/emails/phones are keyed by guest;
@@ -203,6 +220,17 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
     }
     return initial;
   });
+  // The mailing country, kept out of `address` because it's only sometimes
+  // shown (see showCountryField). Seeded from any country already on the party
+  // so an international value rides along pre-filled.
+  const [country, setCountry] = useState(() => data.country ?? "");
+  // Postal code is required only for a US address (many countries have none),
+  // so it follows the country the form currently holds: the live input when the
+  // country field shows, otherwise the party's stored US value. This mirrors
+  // the backend completion gate, so the form and the API never disagree.
+  const mailedToUS =
+    (showCountryField ? country : (data.country ?? "")).trim().toLowerCase() ===
+    DEFAULT_COUNTRY.toLowerCase();
   // Removal is applied on save: a marked guest's card collapses to a note
   // with an undo, and the submit sends a remove entry for each marked id.
   // confirming holds the guest whose inline "are you sure?" is open.
@@ -253,9 +281,12 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
       for (const field of addressFields) {
         payload[field.key] = address[field.key].trim();
       }
-      // Country isn't asked on the form; default it to the US, but keep any
-      // country an admin already entered for the party.
-      payload.country = (data.country ?? "").trim() || DEFAULT_COUNTRY;
+      // The country field shows only for an international or not-yet-known
+      // party; send what they enter there. A US party never sees it, so keep
+      // its stored value, defaulting to the US.
+      payload.country = showCountryField
+        ? country.trim()
+        : (data.country ?? "").trim() || DEFAULT_COUNTRY;
     }
 
     try {
@@ -440,27 +471,63 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
               complete.
             </p>
             <div className="mt-3 flex flex-col gap-3">
-              {addressFields.map((field) => (
-                <div className="flex flex-col gap-1.5" key={field.key}>
-                  <Label htmlFor={`address-${field.key}`}>
-                    {field.label}
-                    {field.required ? <RequiredMark /> : null}
+              {addressFields.map((field) => {
+                // A US-format label like "State" or "ZIP code" doesn't fit
+                // every country, so an international (or not-yet-known) address
+                // uses the field's broader label and drops the US-specific
+                // placeholder example. Fields without a broader label (city,
+                // etc.) are unchanged.
+                const broadLabel =
+                  "intlLabel" in field ? field.intlLabel : null;
+                const useBroad = showCountryField && broadLabel !== null;
+                // A field flagged optionalAbroad (postal code) is required only
+                // for a US address; the rest keep their static requirement.
+                const optionalAbroad =
+                  "optionalAbroad" in field && field.optionalAbroad;
+                const required =
+                  field.required && (mailedToUS || !optionalAbroad);
+                return (
+                  <div className="flex flex-col gap-1.5" key={field.key}>
+                    <Label htmlFor={`address-${field.key}`}>
+                      {useBroad ? broadLabel : field.label}
+                      {required ? <RequiredMark /> : null}
+                    </Label>
+                    <Input
+                      id={`address-${field.key}`}
+                      onChange={(e) =>
+                        setAddress((prev) => ({
+                          ...prev,
+                          [field.key]: e.target.value,
+                        }))
+                      }
+                      placeholder={useBroad ? undefined : field.placeholder}
+                      required={required}
+                      type="text"
+                      value={address[field.key]}
+                    />
+                  </div>
+                );
+              })}
+              {/* Country comes last, the conventional spot, and only for an
+                  international or not-yet-known party (a US one keeps it
+                  hidden). It's required when shown: an international invitation
+                  can't be mailed without it. */}
+              {showCountryField ? (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="address-country">
+                    Country
+                    <RequiredMark />
                   </Label>
                   <Input
-                    id={`address-${field.key}`}
-                    onChange={(e) =>
-                      setAddress((prev) => ({
-                        ...prev,
-                        [field.key]: e.target.value,
-                      }))
-                    }
-                    placeholder={field.placeholder}
-                    required={field.required}
+                    id="address-country"
+                    onChange={(e) => setCountry(e.target.value)}
+                    placeholder="United States"
+                    required
                     type="text"
-                    value={address[field.key]}
+                    value={country}
                   />
                 </div>
-              ))}
+              ) : null}
             </div>
           </section>
         ) : null}

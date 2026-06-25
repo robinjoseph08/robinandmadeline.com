@@ -47,6 +47,12 @@ const (
 	StatusIncomplete = "incomplete"
 )
 
+// countryUS is the canonical mailing country whose addresses are gated on a
+// postal code; the info form fills it in for any party not given another
+// country. Other countries (and a not-yet-known one) skip that gate, since many
+// have no postal code at all.
+const countryUS = "United States"
+
 // Party is a group that receives a single invitation and shares one mailing
 // address and one RSVP code.
 //
@@ -155,10 +161,10 @@ func (p *Party) RequiredFieldsPresent() bool {
 
 // MissingRequiredFields lists, as human-readable labels, the required fields
 // the party still lacks: the primary guest's email always, plus each absent
-// mailing-address field for physical parties (address line 2 is optional).
-// The itemized counterpart of RequiredFieldsPresent. The result is never nil,
-// so it serializes as [] rather than null. Requires the Guests relation to be
-// loaded.
+// mailing-address field for physical parties (address line 2 is optional, and
+// the postal code is required only for a US address). The itemized counterpart
+// of RequiredFieldsPresent. The result is never nil, so it serializes as []
+// rather than null. Requires the Guests relation to be loaded.
 func (p *Party) MissingRequiredFields() []string {
 	missing := []string{}
 	if !p.primaryEmailPresent() {
@@ -167,21 +173,38 @@ func (p *Party) MissingRequiredFields() []string {
 	if p.InvitationType != InvitationPhysical {
 		return missing
 	}
+	mailedToUS := p.mailedToUS()
 	for _, field := range []struct {
-		value *string
-		label string
+		value          *string
+		label          string
+		optionalAbroad bool
 	}{
-		{p.AddressLine1, "address line 1"},
-		{p.City, "city"},
-		{p.StateOrProvince, "state or province"},
-		{p.PostalCode, "postal code"},
-		{p.Country, "country"},
+		{p.AddressLine1, "address line 1", false},
+		{p.City, "city", false},
+		{p.StateOrProvince, "state or province", false},
+		{p.PostalCode, "postal code", true},
+		{p.Country, "country", false},
 	} {
+		// A postal code is required only for a US address: many countries (Hong
+		// Kong, the UAE, Qatar, ...) have none, so a non-US (or not-yet-known)
+		// party isn't gated on it.
+		if field.optionalAbroad && !mailedToUS {
+			continue
+		}
 		if !nonBlank(field.value) {
 			missing = append(missing, field.label)
 		}
 	}
 	return missing
+}
+
+// mailedToUS reports whether the party's mailing country is the United States,
+// the only country whose addresses require a postal code. A blank or
+// not-yet-known country counts as not-US: until the guest tells us where they
+// are, we don't force a postal code they may not have. Compared
+// case-insensitively so a lowercased "united states" still matches.
+func (p *Party) mailedToUS() bool {
+	return p.Country != nil && strings.EqualFold(strings.TrimSpace(*p.Country), countryUS)
 }
 
 // primaryEmailPresent reports whether the loaded primary guest has a non-blank
