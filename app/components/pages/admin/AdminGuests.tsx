@@ -209,9 +209,9 @@ export default function AdminGuests() {
 
   // Every tag in use across all parties, for the tag filter's options and the
   // grid's per-cell tag combobox (so editing a guest can apply any existing tag,
-  // not just the ones on the currently filtered rows). Backed by the same
-  // parties query already loaded above (useAllGuestTags shares its cache), so it
-  // needs no extra fetch.
+  // not just the ones on the currently filtered rows). Backed by its own small
+  // GET /admin/guests/tags endpoint (see useAllGuestTags), so it stays the full
+  // vocabulary regardless of which rows the current filters narrow to.
   const allTags = useAllGuestTags();
 
   const openEdit = (guest: GuestListItem) => {

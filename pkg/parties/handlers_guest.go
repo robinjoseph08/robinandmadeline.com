@@ -30,8 +30,9 @@ func (h *handler) listGuests(c echo.Context) error {
 
 // listTags handles GET /api/admin/guests/tags, the distinct set of guest tags in
 // use across every party, for the admin tag comboboxes. It takes no parameters
-// and returns the uniform {items, total} envelope. Registered before /:id so the
-// static path wins over the guest-by-id route.
+// and returns the uniform {items, total} envelope. Echo routes the static /tags
+// ahead of the /:id param route (static beats param regardless of registration
+// order), so this never resolves as getGuest with id="tags".
 func (h *handler) listTags(c echo.Context) error {
 	tags, err := h.service.ListTags(c.Request().Context())
 	if err != nil {

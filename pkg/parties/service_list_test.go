@@ -629,26 +629,30 @@ func TestListTags_DistinctSortedCaseInsensitiveAcrossParties(t *testing.T) {
 	svc, _ := newService(t)
 
 	// Two parties whose guests' tags overlap: "Cousin" appears in both parties,
-	// and "VIP"/"vip" differ only in case. Both must collapse to a single entry.
+	// and "VIP"/"vip" differ only in case (both must collapse to a single entry).
+	// p2 also carries "Plus One", which no guest in p1 has, so the result can only
+	// be right if the vocabulary aggregates across every party rather than scoping
+	// to one.
 	p1 := createPartyT(t, svc, digitalPartyInput())
 	jones := digitalPartyInput()
 	jones.Name = "The Joneses"
 	p2 := createPartyT(t, svc, jones)
 	addGuestT(t, svc, p1.ID, parties.CreateGuestPayload{FullName: "Alice", Tags: []string{"Cousin", "VIP"}})
 	addGuestT(t, svc, p1.ID, parties.CreateGuestPayload{FullName: "Bob", Tags: []string{"Bridal Party"}})
-	addGuestT(t, svc, p2.ID, parties.CreateGuestPayload{FullName: "Carol", Tags: []string{"cousin", "vip"}})
+	addGuestT(t, svc, p2.ID, parties.CreateGuestPayload{FullName: "Carol", Tags: []string{"cousin", "vip", "Plus One"}})
 
 	tags, err := svc.ListTags(ctx())
 	require.NoError(t, err)
 
-	// Distinct case-insensitively (three tags, not five) and sorted. Compare on
-	// lower case so the assertion does not depend on which casing the database's
-	// collation keeps as the survivor of a "VIP"/"vip" collision.
+	// Distinct case-insensitively (four tags, not six) and sorted, with p2's
+	// exclusive "plus one" present. Compare on lower case so the assertion does
+	// not depend on which casing the database's collation keeps as the survivor
+	// of a "VIP"/"vip" collision.
 	lowered := make([]string, len(tags))
 	for i, tag := range tags {
 		lowered[i] = strings.ToLower(tag)
 	}
-	assert.Equal(t, []string{"bridal party", "cousin", "vip"}, lowered)
+	assert.Equal(t, []string{"bridal party", "cousin", "plus one", "vip"}, lowered)
 }
 
 func TestListTags_EmptyWhenNoGuestHasTags(t *testing.T) {
