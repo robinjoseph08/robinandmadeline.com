@@ -146,26 +146,29 @@ func TestListParties_LoadsGuests(t *testing.T) {
 	svc, _ := newService(t)
 
 	p := createPartyT(t, svc, digitalPartyInput())
-	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "G1", IsPrimary: true})
-	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "G2"})
-	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "G3"})
+	// Created out of display order so the assertions prove the load applies the
+	// canonical within-party order rather than echoing insert order: a child
+	// first, then two adults, then the primary last.
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Kid", IsChild: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Adult1"})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Adult2"})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Primary", IsPrimary: true})
+
+	// Primary first, then the other adults in creation order, then the child
+	// last, never heap order, so the admin grid does not reshuffle between loads.
+	want := []string{"Primary", "Adult1", "Adult2", "Kid"}
 
 	got, _, err := svc.ListParties(ctx(), parties.ListPartiesQuery{})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	require.Len(t, got[0].Guests, 3, "list should eager-load guests")
+	require.Len(t, got[0].Guests, 4, "list should eager-load guests")
+	assert.Equal(t, want, guestNames(got[0].Guests))
 
-	// Guests come back in creation order (created_at, id tiebreak), never heap
-	// order, so the admin grid does not reshuffle between loads.
-	listNames := []string{got[0].Guests[0].FullName, got[0].Guests[1].FullName, got[0].Guests[2].FullName}
-	assert.Equal(t, []string{"G1", "G2", "G3"}, listNames)
-
-	// The single-party load orders the same way.
+	// The single-party load (the admin party detail page) orders the same way.
 	reloaded, err := svc.GetParty(ctx(), p.ID)
 	require.NoError(t, err)
-	require.Len(t, reloaded.Guests, 3)
-	getNames := []string{reloaded.Guests[0].FullName, reloaded.Guests[1].FullName, reloaded.Guests[2].FullName}
-	assert.Equal(t, []string{"G1", "G2", "G3"}, getNames)
+	require.Len(t, reloaded.Guests, 4)
+	assert.Equal(t, want, guestNames(reloaded.Guests))
 }
 
 func TestListGuests_FlatFilters(t *testing.T) {

@@ -41,8 +41,9 @@ func NewService(db *bun.DB) *Service {
 }
 
 // PartyInfo assembles the GET /api/info/:token view: the token's party (its
-// invitation type and mailing address) and its known guests in creation order
-// with their contact details. Placeholder guests are excluded server-side. An
+// invitation type and mailing address) and its known guests in the canonical
+// within-party order (primary, then the other adults, then the children) with
+// their contact details. Placeholder guests are excluded server-side. An
 // unknown token is a 404.
 func (s *Service) PartyInfo(ctx context.Context, token string) (*PartyInfoResponse, error) {
 	return partyInfo(ctx, s.db, token)
@@ -102,20 +103,20 @@ func partyByToken(ctx context.Context, db bun.IDB, token string, forUpdate bool)
 	return party, nil
 }
 
-// partyGuests lists a party's known guests in creation order (the stable
-// order the form and the admin views share). Placeholder guests (a non-null
-// placeholder_text) are excluded at the query, which makes them invisible to
-// the whole flow: they never appear in a response, and because the submit
-// path resolves guest ids against this list, an update or removal addressing
-// one is rejected exactly like a guest from another party.
+// partyGuests lists a party's known guests in the canonical within-party order
+// (models.OrderGuestsWithinParty: the primary, then the other adults, then the
+// children), the one stable order the form and the admin views share.
+// Placeholder guests (a non-null placeholder_text) are excluded at the query,
+// which makes them invisible to the whole flow: they never appear in a
+// response, and because the submit path resolves guest ids against this list,
+// an update or removal addressing one is rejected exactly like a guest from
+// another party.
 func partyGuests(ctx context.Context, db bun.IDB, partyID string) ([]*models.Guest, error) {
 	var guests []*models.Guest
-	err := db.NewSelect().Model(&guests).
+	q := models.OrderGuestsWithinParty(db.NewSelect().Model(&guests).
 		Where("g.party_id = ?", partyID).
-		Where("g.placeholder_text IS NULL").
-		Order("g.created_at ASC", "g.id ASC").
-		Scan(ctx)
-	if err != nil {
+		Where("g.placeholder_text IS NULL"))
+	if err := q.Scan(ctx); err != nil {
 		return nil, errors.Wrap(err, "list party guests")
 	}
 	return guests, nil

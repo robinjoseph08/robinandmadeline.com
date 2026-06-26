@@ -63,6 +63,15 @@ func addGuestT(t *testing.T, svc *parties.Service, partyID, name string) *models
 	return g
 }
 
+// addGuestWithT adds a guest fixture with explicit flags (is_primary / is_child),
+// for tests that exercise the within-party guest order.
+func addGuestWithT(t *testing.T, svc *parties.Service, partyID string, in parties.CreateGuestPayload) *models.Guest {
+	t.Helper()
+	g, err := svc.CreateGuest(ctx(), partyID, in)
+	require.NoError(t, err)
+	return g
+}
+
 // addPlaceholderT adds a placeholder guest fixture (an unnamed plus-one slot
 // the party names during RSVP). Like the CSV import, full_name and
 // placeholder_text both start as the descriptor.
@@ -140,6 +149,25 @@ func statusUpdate(guestID, eventID, status string) rsvps.UpdatePartyRSVPsPayload
 	}}}
 }
 
+func TestPartyRSVPs_OrdersGuestsWithinParty(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	smiths := createPartyT(t, partySvc, "The Smiths")
+	// Created out of display order: a child first, then an adult, then the
+	// primary last, so the assertion proves the form reorders to primary, the
+	// other adults, then the children rather than echoing creation order.
+	addGuestWithT(t, partySvc, smiths.ID, parties.CreateGuestPayload{FullName: "Kid", IsChild: true})
+	addGuestWithT(t, partySvc, smiths.ID, parties.CreateGuestPayload{FullName: "Adult"})
+	addGuestWithT(t, partySvc, smiths.ID, parties.CreateGuestPayload{FullName: "Primary", IsPrimary: true})
+
+	resp, err := svc.PartyRSVPs(ctx(), smiths.ID)
+	require.NoError(t, err)
+
+	require.Len(t, resp.Guests, 3)
+	got := []string{resp.Guests[0].FullName, resp.Guests[1].FullName, resp.Guests[2].FullName}
+	assert.Equal(t, []string{"Primary", "Adult", "Kid"}, got)
+}
+
 func TestPartyRSVPs_GroupsThePartysRSVPsByEvent(t *testing.T) {
 	svc, partySvc, eventSvc, _ := newServices(t)
 
@@ -158,7 +186,7 @@ func TestPartyRSVPs_GroupsThePartysRSVPsByEvent(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, resp.Guests, 2, "only the authenticated party's guests appear")
-	assert.Equal(t, alice.ID, resp.Guests[0].ID, "guests come back in creation order")
+	assert.Equal(t, alice.ID, resp.Guests[0].ID, "neither guest is primary or a child, so they fall back to creation order")
 	assert.Equal(t, bob.ID, resp.Guests[1].ID)
 
 	require.Len(t, resp.Events, 2)

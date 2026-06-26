@@ -161,6 +161,25 @@ func TestPartyInfo_ReturnsPartyAndGuestDetails(t *testing.T) {
 	assert.Nil(t, resp.Guests[1].Email)
 }
 
+func TestPartyInfo_OrdersGuestsWithinParty(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationPhysical)
+	// Created out of display order: a child first, then an adult, then the
+	// primary last, so the assertion proves the form reorders to primary, the
+	// other adults, then the children rather than echoing creation order.
+	addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Kid", IsChild: true})
+	addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Adult"})
+	addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Primary", IsPrimary: true})
+
+	resp, err := svc.PartyInfo(ctx(), p.InfoToken)
+	require.NoError(t, err)
+
+	require.Len(t, resp.Guests, 3)
+	got := []string{resp.Guests[0].FullName, resp.Guests[1].FullName, resp.Guests[2].FullName}
+	assert.Equal(t, []string{"Primary", "Adult", "Kid"}, got)
+}
+
 func TestPartyInfo_UnknownTokenIs404(t *testing.T) {
 	svc := newInfoService(t)
 
