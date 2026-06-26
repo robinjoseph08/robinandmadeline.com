@@ -55,6 +55,32 @@ import { focusCellBelow } from "./grid-nav";
 const GRID_CONTROL_CLASS =
   "h-8 w-auto min-w-full rounded-none border-0 bg-transparent px-3 shadow-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
+// Freezes a grid's first column (the Name cell) so the row stays identifiable
+// while the wide grid scrolls horizontally, pinning the matching <th> and every
+// body cell together. z-10 lifts the column over the static cells it overlaps.
+// The seam is an ::after pseudo-element, not a border or a box-shadow on the
+// cell: border-collapse (Tailwind's table default) drops BOTH off a table cell
+// once it goes sticky, but a pseudo-element is not a table cell, so its 1px line
+// and soft depth shadow paint and travel with the frozen column, reading as
+// floating above the scrolling area.
+const FROZEN_BASE =
+  "sticky left-0 z-10 after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-[rgb(42_38_34_/_0.15)] after:shadow-[6px_0_8px_-3px_rgb(42_38_34_/_0.3)] after:content-['']";
+// Data rows inherit the row's (opaque) background, so the frozen cell tracks the
+// row in lockstep, including its hover highlight. The grids paint their data
+// rows opaque via FROZEN_ROW for exactly this; an opaque cell also masks the
+// columns sliding behind it.
+export const FROZEN_FIRST_COL = `${FROZEN_BASE} bg-inherit`;
+// Header, group banner, and the add row have no row-hover to track, so they
+// paint an explicit opaque page background to mask the columns behind. Header
+// cells append their own min-width.
+export const FROZEN_FIRST_COL_STATIC = `${FROZEN_BASE} bg-page`;
+// Applied to each grid's data <TableRow>. bg-page makes the row opaque (so the
+// frozen cell's bg-inherit has an opaque colour to copy); the hover colour is
+// the translucent hover:bg-primary/40 (#f3e1e1 at 40%) composited over the page
+// (#f5f5f5) as a solid, so the frozen cell can match it opaquely instead of
+// going translucent and letting scrolled columns bleed through.
+export const FROZEN_ROW = "bg-page hover:bg-[#f4eded]";
+
 // The save lifecycle of a single cell edit, surfaced as a brief background tint
 // so you can see a change land: amber while the write is in flight, green on
 // success, red on a failed write that rolled back.
@@ -189,6 +215,12 @@ interface GridTextCellProps {
   onEscape?: () => void;
   autoFocus?: boolean;
   className?: string;
+  /**
+   * Extra classes for the cell's <td> (not the inner input). The Name column
+   * passes FROZEN_FIRST_COL here to freeze itself; it is placed before the
+   * save-status tint so an in-flight tint still wins the background.
+   */
+  cellClassName?: string;
   /** Normalize each typed value (e.g. force upper-case for RSVP codes). */
   transform?: (value: string) => string;
   /**
@@ -213,6 +245,7 @@ export function GridTextCell({
   onEscape,
   autoFocus,
   className,
+  cellClassName,
   transform,
   phoneFormat = false,
   showStatus = true,
@@ -246,6 +279,7 @@ export function GridTextCell({
     <TableCell
       className={cn(
         "p-0 transition-colors",
+        cellClassName,
         statusBgClass(cell.status, showStatus),
       )}
     >

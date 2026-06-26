@@ -235,6 +235,23 @@ describe("GuestsGrid guest columns", () => {
   });
 });
 
+describe("GuestsGrid frozen name column", () => {
+  it("pins the name cell as a sticky first column that tracks the row background", () => {
+    renderFlatGrid(
+      [makeGuest({ id: "g1", full_name: "Alice", party_id: "p7" })],
+      [makeParty({ id: "p7" })],
+    );
+
+    // The name cell is the frozen first column: sticky so it stays put as the
+    // wide flat list scrolls horizontally, and bg-inherit so it copies the row
+    // background (and its hover tint) rather than letting scrolled columns bleed
+    // through. Asserting the structural classes guards the cellClassName plumbing
+    // from GridTextCell to the <td> without coupling to the seam's tuning values.
+    const cell = screen.getByRole("textbox", { name: "Name" }).closest("td");
+    expect(cell).toHaveClass("sticky", "left-0", "bg-inherit");
+  });
+});
+
 describe("GuestsGrid flat list party columns", () => {
   it("renders the owning party's side as a colored chip and surfaces its attributes read-only", () => {
     renderFlatGrid(
