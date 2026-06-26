@@ -121,30 +121,139 @@ func TestShellMeta_HomeRouteUsesAppNameAlone(t *testing.T) {
 	assert.NotContains(t, body, "Robin and Madeline's wedding website")
 }
 
-func TestShellMeta_PrivateRoutesAreNoindexed(t *testing.T) {
+const noindexTag = `<meta name="robots" content="noindex" />`
+
+func TestShellMeta_AdminRoutesAreNoindexedWithDefaultTitle(t *testing.T) {
 	srv := newMetaServer(t)
-	// The mixed-case entries confirm matching is case-insensitive: React Router
-	// would serve the admin/token page for these, so the server must noindex
-	// them too rather than ship an indexable shell.
-	for _, path := range []string{"/admin", "/admin/guests", "/Admin/Parties", "/i/some-token", "/I/Some-Token", "/u/some-guest-id"} {
+	// Admin routes are login-gated and never shared, so they get noindex with the
+	// default title untouched. The mixed-case entry confirms matching is
+	// case-insensitive: React Router would serve the admin page for these, so the
+	// server must noindex them too rather than ship an indexable shell.
+	for _, path := range []string{"/admin", "/admin/guests", "/Admin/Parties"} {
 		rec := getCanonical(srv, path)
 		require.Equal(t, http.StatusOK, rec.Code, path)
 		body := rec.Body.String()
-		const noindex = `<meta name="robots" content="noindex" />`
-		assert.Contains(t, body, noindex, path)
+		assert.Contains(t, body, noindexTag, path)
 		// The tag must sit inside <head>; a crawler ignores robots meta in <body>.
-		assert.Less(t, strings.Index(body, noindex), strings.Index(body, "</head>"), path)
-		// Private routes keep the default title; they are never shared.
+		assert.Less(t, strings.Index(body, noindexTag), strings.Index(body, "</head>"), path)
+		// No label for admin: the title stays the bare app name.
 		assert.Contains(t, body, "<title>Robin &amp; Madeline</title>", path)
 	}
 }
 
-func TestShellMeta_UnknownRouteIsUnchanged(t *testing.T) {
-	// A client route with no metadata entry and no private prefix (a puzzle
-	// slug, an RSVP flow step) is served verbatim: no override, no noindex.
-	rec := getCanonical(newMetaServer(t), "/games/mini")
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, metaShell, rec.Body.String())
+func TestShellMeta_NoindexTitledRoutesGetGenericTitle(t *testing.T) {
+	srv := newMetaServer(t)
+	// Routes that must not be indexed but still deserve a sensible shared-link
+	// preview: the per-guest token/UUID links (no login, reachable by anyone
+	// holding the link) and the RSVP flow steps. Each gets a generic,
+	// guest-data-free title while staying noindex. Mixed case confirms the match
+	// is case-insensitive.
+	for _, tc := range []struct{ path, title string }{
+		{"/i/some-token", "Your Details · Robin &amp; Madeline"},
+		{"/I/Some-Token", "Your Details · Robin &amp; Madeline"},
+		{"/u/some-guest-id", "Unsubscribe · Robin &amp; Madeline"},
+		{"/rsvp/form", "RSVP · Robin &amp; Madeline"},
+		{"/rsvp/confirmation", "RSVP Confirmed · Robin &amp; Madeline"},
+	} {
+		rec := getCanonical(srv, tc.path)
+		require.Equal(t, http.StatusOK, rec.Code, tc.path)
+		body := rec.Body.String()
+
+		// Still noindex, inside <head>.
+		assert.Contains(t, body, noindexTag, tc.path)
+		assert.Less(t, strings.Index(body, noindexTag), strings.Index(body, "</head>"), tc.path)
+
+		// The title and both preview titles carry the generic label, replaced in
+		// place so there is exactly one <title>.
+		assert.Contains(t, body, "<title>"+tc.title+"</title>", tc.path)
+		assert.Equal(t, 1, strings.Count(body, "<title>"), tc.path)
+		assert.Contains(t, body, `<meta property="og:title" content="`+tc.title+`" />`, tc.path)
+		assert.Contains(t, body, `<meta name="twitter:title" content="`+tc.title+`" />`, tc.path)
+
+		// We add only the title: the description stays the site default, and og:url
+		// is not rewritten (never echoing a token into a tag).
+		assert.Contains(t, body, "Robin and Madeline's wedding website", tc.path)
+		assert.Contains(t, body, `<meta property="og:url" content="https://www.robinandmadeline.com/" />`, tc.path)
+	}
+}
+
+func TestShellMeta_PuzzleRoutesGetTitleButStayNoindexWhileGated(t *testing.T) {
+	srv := newMetaServer(t)
+	// Each /games/:slug puzzle gets its own title (mirroring the puzzle registry).
+	// The pages are gated client-side by RequireGamesAccess, so for now they are
+	// also noindex; when that gate is removed they should become indexable. Mixed
+	// case confirms the slug match is case-insensitive.
+	for _, tc := range []struct{ path, title string }{
+		{"/games/mini", "The Wedding Mini · Robin &amp; Madeline"},
+		{"/games/crossword", "The Wedding Crossword · Robin &amp; Madeline"},
+		{"/Games/Mini", "The Wedding Mini · Robin &amp; Madeline"},
+	} {
+		rec := getCanonical(srv, tc.path)
+		require.Equal(t, http.StatusOK, rec.Code, tc.path)
+		body := rec.Body.String()
+
+		assert.Contains(t, body, "<title>"+tc.title+"</title>", tc.path)
+		assert.Equal(t, 1, strings.Count(body, "<title>"), tc.path)
+		assert.Contains(t, body, `<meta property="og:title" content="`+tc.title+`" />`, tc.path)
+		assert.Contains(t, body, `<meta name="twitter:title" content="`+tc.title+`" />`, tc.path)
+		// Gated content stays out of the index, inside <head>.
+		assert.Contains(t, body, noindexTag, tc.path)
+		assert.Less(t, strings.Index(body, noindexTag), strings.Index(body, "</head>"), tc.path)
+	}
+}
+
+func TestShellMeta_UnknownRoutesAreUnchanged(t *testing.T) {
+	srv := newMetaServer(t)
+	// A client route with no metadata entry, no known puzzle slug, and no noindex
+	// classification is served verbatim: no override, no noindex. This covers both
+	// an unrouted path and an unknown puzzle slug (which the page renders as its
+	// friendly not-found).
+	for _, path := range []string{"/something-unrouted", "/games/does-not-exist"} {
+		rec := getCanonical(srv, path)
+		require.Equal(t, http.StatusOK, rec.Code, path)
+		assert.Equal(t, metaShell, rec.Body.String(), path)
+	}
+}
+
+func TestShellMeta_PublicRoutesAreIndexableAndCaseInsensitive(t *testing.T) {
+	srv := newMetaServer(t)
+	// Public landing pages must stay indexable: an accidental noindex (e.g. from
+	// hoisting addNoindex above the dispatch) would silently drop the homepage and
+	// every public page from search, so assert its absence. The mixed-case entry
+	// also pins the case-insensitive lookup that the admin/token/puzzle buckets
+	// test but the public bucket did not.
+	for _, tc := range []struct{ path, title string }{
+		{"/", "Robin &amp; Madeline"},
+		{"/schedule", "Schedule · Robin &amp; Madeline"},
+		{"/games", "Games · Robin &amp; Madeline"},
+		{"/rsvp", "RSVP · Robin &amp; Madeline"},
+		{"/Schedule", "Schedule · Robin &amp; Madeline"},
+	} {
+		rec := getCanonical(srv, tc.path)
+		require.Equal(t, http.StatusOK, rec.Code, tc.path)
+		body := rec.Body.String()
+		assert.Contains(t, body, "<title>"+tc.title+"</title>", tc.path)
+		assert.NotContains(t, body, noindexTag, tc.path)
+	}
+}
+
+func TestShellMeta_TrailingSlashIsNormalized(t *testing.T) {
+	srv := newMetaServer(t)
+	// The static handler filepath.Clean's the request path before injectMeta sees
+	// it, so a trailing slash is stripped and a route is classified the same with
+	// or without one, matching React Router, which ignores trailing slashes. A
+	// gated puzzle and an RSVP step therefore keep their noindex + title at the
+	// slashed URL rather than falling through to an untreated shell.
+	for _, tc := range []struct{ path, title string }{
+		{"/games/mini/", "The Wedding Mini · Robin &amp; Madeline"},
+		{"/rsvp/form/", "RSVP · Robin &amp; Madeline"},
+	} {
+		rec := getCanonical(srv, tc.path)
+		require.Equal(t, http.StatusOK, rec.Code, tc.path)
+		body := rec.Body.String()
+		assert.Contains(t, body, "<title>"+tc.title+"</title>", tc.path)
+		assert.Contains(t, body, noindexTag, tc.path)
+	}
 }
 
 func TestShellMeta_FallbackHostWhenNoCanonicalHost(t *testing.T) {
