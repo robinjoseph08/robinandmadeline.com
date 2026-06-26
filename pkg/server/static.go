@@ -205,11 +205,13 @@ var (
 
 // injectMeta overrides the shell's head per route. Indexed landing pages
 // (publicPageMeta) get their title, description, and canonical URL; puzzle pages
-// get their own title but are noindex while gated; the token/UUID links and RSVP
-// flow steps are noindex with a generic title so a shared link previews correctly
-// without exposing guest data; the login-gated admin routes get noindex alone.
-// Unknown routes pass through untouched. Every replacement is a no-op when its
-// target tag is absent, so a shell without the tags is returned unchanged.
+// get their own title and canonical URL but are noindex while gated; the
+// token/UUID links and RSVP flow steps are noindex with a generic title and
+// canonical URL so a shared link previews correctly and its preview card links
+// back to the same page, without exposing guest data (the opaque token is the
+// very URL being shared); the login-gated admin routes get noindex alone. Unknown
+// routes pass through untouched. Every replacement is a no-op when its target tag
+// is absent, so a shell without the tags is returned unchanged.
 func injectMeta(doc, urlPath, canonicalHost string, req *http.Request) string {
 	// Match case-insensitively: React Router resolves routes without regard to
 	// case, so /Admin or /I/<token> render the same client page as their
@@ -222,9 +224,7 @@ func injectMeta(doc, urlPath, canonicalHost string, req *http.Request) string {
 		doc = setHeadTitle(doc, meta.title())
 		doc = setMetaContent(doc, descRe, meta.description)
 		doc = setMetaContent(doc, ogDescRe, meta.description)
-		if u := absoluteURL(canonicalHost, req, key); u != "" {
-			doc = setMetaContent(doc, ogURLRe, u)
-		}
+		doc = setCanonicalURL(doc, canonicalHost, req, key)
 		doc = setMetaContent(doc, twDescRe, meta.description)
 		return doc
 	}
@@ -235,16 +235,20 @@ func injectMeta(doc, urlPath, canonicalHost string, req *http.Request) string {
 	// drop the addNoindex here so the puzzles are indexed like the /games landing.
 	if label, ok := puzzleTitle(key); ok {
 		doc = addNoindex(doc)
-		return setHeadTitle(doc, label+titleSep+appName)
+		doc = setHeadTitle(doc, label+titleSep+appName)
+		return setCanonicalURL(doc, canonicalHost, req, key)
 	}
 
 	// Noindex routes. The token/UUID links and RSVP flow steps additionally get a
-	// generic, guest-data-free title so a shared link previews sensibly; the
-	// login-gated admin back office gets noindex with the default title.
+	// generic, guest-data-free title and a self-referential canonical URL so a
+	// shared link previews sensibly and its preview card links back to the same
+	// page, not the home default; the login-gated admin back office, never shared,
+	// gets noindex with the default title and og:url.
 	if isNoindexPath(key) {
 		doc = addNoindex(doc)
 		if label, found := noindexTitle(key); found {
 			doc = setHeadTitle(doc, label+titleSep+appName)
+			doc = setCanonicalURL(doc, canonicalHost, req, key)
 		}
 		return doc
 	}
@@ -260,6 +264,18 @@ func setHeadTitle(doc, title string) string {
 	doc = setTitle(doc, title)
 	doc = setMetaContent(doc, ogTitleRe, title)
 	doc = setMetaContent(doc, twTitleRe, title)
+	return doc
+}
+
+// setCanonicalURL rewrites og:url to the route's own absolute URL so a shared
+// link's preview card points back to the same page rather than the shell's
+// home-page default (which Facebook and the like treat as the card's click
+// target). It is a no-op when no host resolves (a hostless request), leaving the
+// shell's default og:url in place.
+func setCanonicalURL(doc, canonicalHost string, req *http.Request, urlPath string) string {
+	if u := absoluteURL(canonicalHost, req, urlPath); u != "" {
+		return setMetaContent(doc, ogURLRe, u)
+	}
 	return doc
 }
 
