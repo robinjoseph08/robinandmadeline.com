@@ -33,6 +33,9 @@ import type {
 } from "@/types/generated/parties";
 
 import {
+  FROZEN_FIRST_COL,
+  FROZEN_FIRST_COL_STATIC,
+  FROZEN_ROW,
   GridBoolCell,
   GridChipsCell,
   GridComboboxCell,
@@ -253,7 +256,10 @@ export function GuestsGrid<TGuest extends Guest>({
             party family; the detail page is all guest columns, so it is skipped. */}
         {showPartyColumn ? (
           <TableRow>
-            <TableHead colSpan={11}>Guest</TableHead>
+            {/* Split the Guest banner so its first cell freezes with the Name
+                column below it; the rest of the guest columns scroll. */}
+            <TableHead className={FROZEN_FIRST_COL_STATIC}>Guest</TableHead>
+            <TableHead colSpan={10} />
             <TableHead className="border-l border-ink/10" colSpan={13}>
               Party
             </TableHead>
@@ -261,7 +267,9 @@ export function GuestsGrid<TGuest extends Guest>({
           </TableRow>
         ) : null}
         <TableRow>
-          <TableHead className="min-w-40">Name</TableHead>
+          <TableHead className={`${FROZEN_FIRST_COL_STATIC} min-w-40`}>
+            Name
+          </TableHead>
           <TableHead className="min-w-48">Email</TableHead>
           <TableHead className="min-w-36">Phone</TableHead>
           <TableHead className="min-w-40">Tags</TableHead>
@@ -305,9 +313,10 @@ export function GuestsGrid<TGuest extends Guest>({
           const partyId = partyIdFor(guest);
           const party = partyById.get(guest.party_id);
           return (
-            <TableRow key={guest.id}>
+            <TableRow className={FROZEN_ROW} key={guest.id}>
               <GridTextCell
                 ariaLabel="Name"
+                cellClassName={FROZEN_FIRST_COL}
                 onCommit={(value) =>
                   patchField(guest.id, partyId, { full_name: value })
                 }
@@ -634,6 +643,7 @@ function AddGuestRow({
       <GridTextCell
         ariaLabel="New guest name"
         autoFocus
+        cellClassName={FROZEN_FIRST_COL_STATIC}
         commitOnChange
         onCommit={(value) => setDraftField("fullName", value)}
         onEnter={handleCreate}

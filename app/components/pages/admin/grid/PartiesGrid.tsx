@@ -35,6 +35,9 @@ import type {
 } from "@/types/generated/parties";
 
 import {
+  FROZEN_FIRST_COL,
+  FROZEN_FIRST_COL_STATIC,
+  FROZEN_ROW,
   GridChipsCell,
   GridComboboxCell,
   GridReadOnlyCell,
@@ -98,7 +101,9 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="min-w-44">Name</TableHead>
+          <TableHead className={`${FROZEN_FIRST_COL_STATIC} min-w-44`}>
+            Name
+          </TableHead>
           <TableHead className="w-32">Side</TableHead>
           <TableHead className="w-32">Relation</TableHead>
           <TableHead className="w-32">Invitation</TableHead>
@@ -117,9 +122,10 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
       </TableHeader>
       <TableBody>
         {parties.map((party) => (
-          <TableRow key={party.id}>
+          <TableRow className={FROZEN_ROW} key={party.id}>
             <GridTextCell
               ariaLabel="Name"
+              cellClassName={FROZEN_FIRST_COL}
               onCommit={(value) => patchField(party.id, { name: value })}
               value={party.name}
             />
