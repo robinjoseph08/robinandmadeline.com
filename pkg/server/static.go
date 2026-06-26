@@ -159,8 +159,8 @@ var publicPageMeta = map[string]shellMeta{
 // client-side by RequireGamesAccess today, so they are also served noindex (see
 // injectMeta); once that gate is removed and the games are public, they should be
 // indexed like the /games landing they hang off. Mirror these with the
-// PUZZLES_BY_SLUG registry and the usePageTitle(puzzle?.title) call in the
-// crossword frontend (see app/components/library/crossword/puzzles.ts); keep them
+// PUZZLES_BY_SLUG registry (app/components/library/crossword/puzzles.ts) and the
+// usePageTitle(puzzle?.title) call (app/components/pages/Crossword.tsx); keep them
 // in sync.
 var puzzlePageTitles = map[string]string{
 	"mini":      "The Wedding Mini",

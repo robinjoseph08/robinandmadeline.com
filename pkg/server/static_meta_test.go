@@ -215,6 +215,47 @@ func TestShellMeta_UnknownRoutesAreUnchanged(t *testing.T) {
 	}
 }
 
+func TestShellMeta_PublicRoutesAreIndexableAndCaseInsensitive(t *testing.T) {
+	srv := newMetaServer(t)
+	// Public landing pages must stay indexable: an accidental noindex (e.g. from
+	// hoisting addNoindex above the dispatch) would silently drop the homepage and
+	// every public page from search, so assert its absence. The mixed-case entry
+	// also pins the case-insensitive lookup that the admin/token/puzzle buckets
+	// test but the public bucket did not.
+	for _, tc := range []struct{ path, title string }{
+		{"/", "Robin &amp; Madeline"},
+		{"/schedule", "Schedule · Robin &amp; Madeline"},
+		{"/games", "Games · Robin &amp; Madeline"},
+		{"/rsvp", "RSVP · Robin &amp; Madeline"},
+		{"/Schedule", "Schedule · Robin &amp; Madeline"},
+	} {
+		rec := getCanonical(srv, tc.path)
+		require.Equal(t, http.StatusOK, rec.Code, tc.path)
+		body := rec.Body.String()
+		assert.Contains(t, body, "<title>"+tc.title+"</title>", tc.path)
+		assert.NotContains(t, body, noindexTag, tc.path)
+	}
+}
+
+func TestShellMeta_TrailingSlashIsNormalized(t *testing.T) {
+	srv := newMetaServer(t)
+	// The static handler filepath.Clean's the request path before injectMeta sees
+	// it, so a trailing slash is stripped and a route is classified the same with
+	// or without one — matching React Router, which ignores trailing slashes. A
+	// gated puzzle and an RSVP step therefore keep their noindex + title at the
+	// slashed URL rather than falling through to an untreated shell.
+	for _, tc := range []struct{ path, title string }{
+		{"/games/mini/", "The Wedding Mini · Robin &amp; Madeline"},
+		{"/rsvp/form/", "RSVP · Robin &amp; Madeline"},
+	} {
+		rec := getCanonical(srv, tc.path)
+		require.Equal(t, http.StatusOK, rec.Code, tc.path)
+		body := rec.Body.String()
+		assert.Contains(t, body, "<title>"+tc.title+"</title>", tc.path)
+		assert.Contains(t, body, noindexTag, tc.path)
+	}
+}
+
 func TestShellMeta_FallbackHostWhenNoCanonicalHost(t *testing.T) {
 	// Without a canonical host configured, og:url is built from the request host
 	// and is still absolute. The scheme is always https (a deployed site is
