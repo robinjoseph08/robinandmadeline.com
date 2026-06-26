@@ -148,12 +148,12 @@ func TestShellMeta_NoindexTitledRoutesGetGenericTitle(t *testing.T) {
 	// holding the link) and the RSVP flow steps. Each gets a generic,
 	// guest-data-free title while staying noindex. Mixed case confirms the match
 	// is case-insensitive.
-	for _, tc := range []struct{ path, title string }{
-		{"/i/some-token", "Your Details · Robin &amp; Madeline"},
-		{"/I/Some-Token", "Your Details · Robin &amp; Madeline"},
-		{"/u/some-guest-id", "Unsubscribe · Robin &amp; Madeline"},
-		{"/rsvp/form", "RSVP · Robin &amp; Madeline"},
-		{"/rsvp/confirmation", "RSVP Confirmed · Robin &amp; Madeline"},
+	for _, tc := range []struct{ path, title, ogURL string }{
+		{"/i/some-token", "Your Details · Robin &amp; Madeline", "https://www.robinandmadeline.com/i/some-token"},
+		{"/I/Some-Token", "Your Details · Robin &amp; Madeline", "https://www.robinandmadeline.com/i/some-token"},
+		{"/u/some-guest-id", "Unsubscribe · Robin &amp; Madeline", "https://www.robinandmadeline.com/u/some-guest-id"},
+		{"/rsvp/form", "RSVP · Robin &amp; Madeline", "https://www.robinandmadeline.com/rsvp/form"},
+		{"/rsvp/confirmation", "RSVP Confirmed · Robin &amp; Madeline", "https://www.robinandmadeline.com/rsvp/confirmation"},
 	} {
 		rec := getCanonical(srv, tc.path)
 		require.Equal(t, http.StatusOK, rec.Code, tc.path)
@@ -170,10 +170,12 @@ func TestShellMeta_NoindexTitledRoutesGetGenericTitle(t *testing.T) {
 		assert.Contains(t, body, `<meta property="og:title" content="`+tc.title+`" />`, tc.path)
 		assert.Contains(t, body, `<meta name="twitter:title" content="`+tc.title+`" />`, tc.path)
 
-		// We add only the title: the description stays the site default, and og:url
-		// is not rewritten (never echoing a token into a tag).
+		// The description stays the site default (no per-page description here), but
+		// og:url is rewritten to the page's own absolute URL so the preview card
+		// links back to the same page, not the home default. A mixed-case request is
+		// normalized to the canonical lowercase URL.
 		assert.Contains(t, body, "Robin and Madeline's wedding website", tc.path)
-		assert.Contains(t, body, `<meta property="og:url" content="https://www.robinandmadeline.com/" />`, tc.path)
+		assert.Contains(t, body, `<meta property="og:url" content="`+tc.ogURL+`" />`, tc.path)
 	}
 }
 
@@ -183,10 +185,10 @@ func TestShellMeta_PuzzleRoutesGetTitleButStayNoindexWhileGated(t *testing.T) {
 	// The pages are gated client-side by RequireGamesAccess, so for now they are
 	// also noindex; when that gate is removed they should become indexable. Mixed
 	// case confirms the slug match is case-insensitive.
-	for _, tc := range []struct{ path, title string }{
-		{"/games/mini", "The Wedding Mini · Robin &amp; Madeline"},
-		{"/games/crossword", "The Wedding Crossword · Robin &amp; Madeline"},
-		{"/Games/Mini", "The Wedding Mini · Robin &amp; Madeline"},
+	for _, tc := range []struct{ path, title, ogURL string }{
+		{"/games/mini", "The Wedding Mini · Robin &amp; Madeline", "https://www.robinandmadeline.com/games/mini"},
+		{"/games/crossword", "The Wedding Crossword · Robin &amp; Madeline", "https://www.robinandmadeline.com/games/crossword"},
+		{"/Games/Mini", "The Wedding Mini · Robin &amp; Madeline", "https://www.robinandmadeline.com/games/mini"},
 	} {
 		rec := getCanonical(srv, tc.path)
 		require.Equal(t, http.StatusOK, rec.Code, tc.path)
@@ -199,6 +201,10 @@ func TestShellMeta_PuzzleRoutesGetTitleButStayNoindexWhileGated(t *testing.T) {
 		// Gated content stays out of the index, inside <head>.
 		assert.Contains(t, body, noindexTag, tc.path)
 		assert.Less(t, strings.Index(body, noindexTag), strings.Index(body, "</head>"), tc.path)
+
+		// The preview card links back to the puzzle page itself, not the home
+		// default; a mixed-case request normalizes to the canonical lowercase URL.
+		assert.Contains(t, body, `<meta property="og:url" content="`+tc.ogURL+`" />`, tc.path)
 	}
 }
 
