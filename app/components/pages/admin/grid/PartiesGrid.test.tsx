@@ -154,6 +154,20 @@ describe("PartiesGrid side chip", () => {
   });
 });
 
+describe("PartiesGrid frozen name column", () => {
+  it("pins the name cell as a sticky first column that tracks the row background", () => {
+    renderGrid([makeParty({ id: "p1", name: "Fam" })]);
+
+    // The name cell is the frozen first column: sticky so it stays put as the
+    // wide grid scrolls horizontally, and bg-inherit so it copies the row
+    // background (and its hover tint) rather than letting scrolled columns bleed
+    // through. Asserting the structural classes guards the cellClassName plumbing
+    // from GridTextCell to the <td> without coupling to the seam's tuning values.
+    const cell = screen.getByRole("textbox", { name: "Name" }).closest("td");
+    expect(cell).toHaveClass("sticky", "left-0", "bg-inherit");
+  });
+});
+
 describe("PartiesGrid address columns", () => {
   it("patches an address cell under its own key", async () => {
     const user = userEvent.setup();

@@ -216,9 +216,9 @@ interface GridTextCellProps {
   autoFocus?: boolean;
   className?: string;
   /**
-   * Extra classes for the cell's <td> (not the inner input) — the Name column
-   * passes FROZEN_FIRST_COL here to freeze itself. Placed before the save-status
-   * tint so an in-flight tint still wins the background.
+   * Extra classes for the cell's <td> (not the inner input). The Name column
+   * passes FROZEN_FIRST_COL here to freeze itself; it is placed before the
+   * save-status tint so an in-flight tint still wins the background.
    */
   cellClassName?: string;
   /** Normalize each typed value (e.g. force upper-case for RSVP codes). */
