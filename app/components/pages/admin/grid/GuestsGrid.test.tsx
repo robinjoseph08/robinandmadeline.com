@@ -258,8 +258,10 @@ describe("GuestsGrid tag suggestions", () => {
       await screen.findByRole("option", { name: /Groomsman/ }),
     ).toBeInTheDocument();
 
-    // The guest's own tag is still offered, and the case-insensitive merge does
-    // not list it twice (tagOptions and the guest both carry "VIP").
+    // The guest's own tag is merged into the suggestions and listed once, not
+    // duplicated, when the global set and the guest both carry it. (The cell
+    // re-dedupes too, so this pins the rendered result, not the grid merge's
+    // dedup in isolation.)
     const vip = screen.getAllByRole("option", { name: /VIP/ });
     expect(vip).toHaveLength(1);
   });
