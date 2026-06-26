@@ -99,6 +99,15 @@ interface GuestsGridProps<TGuest extends Guest> {
    * with parties.
    */
   addPartyId?: string;
+  /**
+   * The known tags to offer in every tag cell's combobox, typically every tag in
+   * use across all parties (see useAllGuestTags). Merged with the tags on the
+   * loaded guests, so a tag that exists elsewhere can be applied here even when
+   * no loaded guest currently carries it. Omitting it falls back to just the
+   * loaded guests' tags; the party detail page passes the global set so its one
+   * party is not limited to the tags it already uses.
+   */
+  tagOptions?: string[];
 }
 
 interface GuestDraft {
@@ -180,6 +189,7 @@ export function GuestsGrid<TGuest extends Guest>({
   onEditGuest,
   parties,
   addPartyId,
+  tagOptions,
 }: GuestsGridProps<TGuest>) {
   const patchGuest = usePatchGuest();
   const deleteGuest = useDeleteGuest();
@@ -202,21 +212,26 @@ export function GuestsGrid<TGuest extends Guest>({
   // Country, RSVP code, Info status (13).
   const columnCount = 12 + (showPartyColumn ? 13 : 0);
 
-  // Existing tags across the loaded guests, to suggest in every tag cell.
+  // Tags to suggest in every tag cell: the known set (tagOptions, typically
+  // every tag across all parties) merged with the tags already on the loaded
+  // guests, de-duplicated case-insensitively and sorted. Listing the known set
+  // first lets its casing win a collision; merging the loaded guests keeps a tag
+  // just typed on one of them selectable in the brief window before the global
+  // set refetches, and keeps the cell working when no tagOptions are supplied.
   const tagSuggestions = useMemo(() => {
     const seen = new Set<string>();
     const all: string[] = [];
-    for (const guest of guests) {
-      for (const tag of guest.tags) {
-        const key = tag.toLowerCase();
-        if (!seen.has(key)) {
-          seen.add(key);
-          all.push(tag);
-        }
+    const addTag = (tag: string) => {
+      const key = tag.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        all.push(tag);
       }
-    }
+    };
+    for (const tag of tagOptions ?? []) addTag(tag);
+    for (const guest of guests) for (const tag of guest.tags) addTag(tag);
     return all.sort((a, b) => a.localeCompare(b));
-  }, [guests]);
+  }, [guests, tagOptions]);
 
   // Save one field. Resolves to void on success; toasts and re-throws on failure
   // so the cell rolls back to the value the server still holds.

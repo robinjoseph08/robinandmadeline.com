@@ -5,6 +5,7 @@ import {
   type UseQueryOptions,
 } from "@tanstack/react-query";
 
+import { QueryKey as TagsQueryKey } from "@/hooks/queries/tags";
 import { adminRequest, ApiError } from "@/libraries/admin-api";
 import type {
   CreatePartyWithGuestPayload,
@@ -78,6 +79,8 @@ export const useCreatePartyWithGuest = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QueryKey.ListParties] });
       queryClient.invalidateQueries({ queryKey: [QueryKey.ListGuests] });
+      // The first guest may carry tags, so the vocabulary can gain a new one.
+      queryClient.invalidateQueries({ queryKey: [TagsQueryKey.ListTags] });
     },
   });
 };
@@ -171,6 +174,9 @@ export const useDeleteParty = () => {
         queryKey: [QueryKey.RetrieveParty, variables.partyId],
       });
       queryClient.invalidateQueries({ queryKey: [QueryKey.ListGuests] });
+      // Deleting a party cascades to its guests, which can remove the last use
+      // of a tag, so the vocabulary may shrink.
+      queryClient.invalidateQueries({ queryKey: [TagsQueryKey.ListTags] });
     },
   });
 };

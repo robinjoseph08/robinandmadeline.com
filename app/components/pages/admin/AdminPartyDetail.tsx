@@ -23,6 +23,7 @@ import {
   useRequestInfo,
   useUpdateParty,
 } from "@/hooks/queries/parties";
+import { useAllGuestTags } from "@/hooks/queries/tags";
 import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { infoLinkForToken } from "@/libraries/clipboard";
 import {
@@ -53,6 +54,10 @@ export default function AdminPartyDetail() {
   const requestInfo = useRequestInfo();
   const markInfo = useMarkInfo();
   const updateGuest = useUpdateGuest();
+  // Every tag in use across all parties, so the guest grid's tag combobox can
+  // offer existing tags this party does not happen to use yet (not just the
+  // tags already on its own guests).
+  const tagOptions = useAllGuestTags();
 
   const [editPartyOpen, setEditPartyOpen] = useState(false);
   const [editGuest, setEditGuest] = useState<Guest | undefined>(undefined);
@@ -247,6 +252,7 @@ export default function AdminPartyDetail() {
             guests={guests}
             onEditGuest={openEditGuest}
             partyIdFor={() => id ?? ""}
+            tagOptions={tagOptions}
           />
         </div>
       </section>

@@ -18,6 +18,7 @@ import {
   useRequestInfo,
   useUpdateParty,
 } from "./parties";
+import { QueryKey as TagsQueryKey } from "./tags";
 
 // The hooks call adminRequest; stub it so the tests exercise invalidation, not
 // the network. Each test overrides the resolved value where the shape matters.
@@ -41,10 +42,11 @@ function newClient() {
 }
 
 describe("useCreatePartyWithGuest", () => {
-  it("invalidates the parties and guest lists on success", async () => {
+  it("invalidates the parties list, guest list, and tag vocabulary on success", async () => {
     const client = newClient();
     client.setQueryData([QueryKey.ListParties, {}], { items: [], total: 0 });
     client.setQueryData([QueryKey.ListGuests, {}], { items: [], total: 0 });
+    client.setQueryData([TagsQueryKey.ListTags], { items: [], total: 0 });
 
     const { result } = renderHook(() => useCreatePartyWithGuest(), {
       wrapper: makeWrapper(client),
@@ -72,6 +74,10 @@ describe("useCreatePartyWithGuest", () => {
       ).toBe(true);
     });
     expect(client.getQueryState([QueryKey.ListGuests, {}])?.isInvalidated).toBe(
+      true,
+    );
+    // The first guest may carry tags, so the vocabulary is refreshed too.
+    expect(client.getQueryState([TagsQueryKey.ListTags])?.isInvalidated).toBe(
       true,
     );
   });
@@ -202,10 +208,11 @@ describe("usePatchParty", () => {
 });
 
 describe("useDeleteParty", () => {
-  it("invalidates the parties list and removes the detail query", async () => {
+  it("invalidates the parties list and tag vocabulary, and removes the detail query", async () => {
     const client = newClient();
     client.setQueryData([QueryKey.ListParties, {}], { items: [], total: 0 });
     client.setQueryData([QueryKey.RetrieveParty, "p1"], { id: "p1" });
+    client.setQueryData([TagsQueryKey.ListTags], { items: [], total: 0 });
 
     const { result } = renderHook(() => useDeleteParty(), {
       wrapper: makeWrapper(client),
@@ -224,6 +231,11 @@ describe("useDeleteParty", () => {
     expect(
       client.getQueryState([QueryKey.RetrieveParty, "p1"]),
     ).toBeUndefined();
+    // The cascade deletes the party's guests, which can drop a tag from the
+    // vocabulary, so it is refreshed too.
+    expect(client.getQueryState([TagsQueryKey.ListTags])?.isInvalidated).toBe(
+      true,
+    );
   });
 });
 

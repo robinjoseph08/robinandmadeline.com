@@ -21,6 +21,7 @@ import "github.com/labstack/echo/v4"
 //
 //	Guests (flat collection once they exist; addressed by their own id):
 //	  GET    /guests                        flat list (filterable)
+//	  GET    /guests/tags                   distinct tag vocabulary (all parties)
 //	  GET    /guests/:id                    get one
 //	  PUT    /guests/:id                    full update of editable fields
 //	  PATCH  /guests/:id                    partial update (single-cell save)
@@ -47,6 +48,11 @@ func RegisterRoutes(admin *echo.Group, service *Service) {
 
 	guests := admin.Group("/guests")
 	guests.GET("", h.listGuests)
+	// Echo's router prefers a static segment over a :param at the same position
+	// regardless of registration order, so /guests/tags resolves to listTags, not
+	// getGuest with id="tags" (and a guest id is a UUID, so the two could never
+	// collide anyway). Listed before /:id only to make that intent explicit.
+	guests.GET("/tags", h.listTags)
 	guests.GET("/:id", h.getGuest)
 	guests.PUT("/:id", h.updateGuest)
 	guests.PATCH("/:id", h.patchGuest)

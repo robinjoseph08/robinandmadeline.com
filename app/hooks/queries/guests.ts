@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 
 import { QueryKey as PartiesQueryKey } from "@/hooks/queries/parties";
+import { QueryKey as TagsQueryKey } from "@/hooks/queries/tags";
 import { adminRequest, ApiError } from "@/libraries/admin-api";
 import type {
   CreateGuestPayload,
@@ -45,8 +46,9 @@ export const useGuests = (
 };
 
 // Invalidates everything a guest write can affect: the flat guest list, the
-// parent party detail (guests + derived status + single-primary), and the
-// parties list (status column).
+// parent party detail (guests + derived status + single-primary), the parties
+// list (status column), and the tag vocabulary (a write can add or drop a tag,
+// which the comboboxes and the tag filter offer).
 function invalidateForGuestWrite(
   queryClient: ReturnType<typeof useQueryClient>,
   partyId: string,
@@ -56,6 +58,7 @@ function invalidateForGuestWrite(
     queryKey: [PartiesQueryKey.RetrieveParty, partyId],
   });
   queryClient.invalidateQueries({ queryKey: [PartiesQueryKey.ListParties] });
+  queryClient.invalidateQueries({ queryKey: [TagsQueryKey.ListTags] });
 }
 
 export const useCreateGuest = () => {

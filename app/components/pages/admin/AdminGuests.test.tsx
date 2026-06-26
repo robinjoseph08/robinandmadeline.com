@@ -66,18 +66,44 @@ function listOf(items: GuestListItem[]): ListGuestsResponse {
   return { items, total: items.length };
 }
 
-// Stubs both list endpoints the page reads (guests + parties for the Party
-// combobox) and resolves writes; onWrite lets a test shape the write response.
+// Stubs the list endpoints the page reads (guests + parties for the Party
+// combobox + the tag vocabulary) and resolves writes; onWrite lets a test shape
+// the write response.
 function setMock(opts: {
   guests?: GuestListItem[];
+  // Overrides the GET /admin/guests/tags vocabulary; defaults to the distinct
+  // tags on the provided guests. Pass a superset to model tags that exist on
+  // other parties but on no currently loaded row.
+  tags?: string[];
   onWrite?: (path: string, options?: { method?: string }) => unknown;
 }) {
   const guests = opts.guests ?? [];
+  // Mirror GET /admin/guests/tags: the distinct guest tags, case-insensitively
+  // de-duplicated and sorted, the vocabulary the page's tag comboboxes consume.
+  let tags = opts.tags;
+  if (tags === undefined) {
+    const seen = new Set<string>();
+    const derived: string[] = [];
+    for (const guest of guests) {
+      for (const tag of guest.tags) {
+        const key = tag.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          derived.push(tag);
+        }
+      }
+    }
+    derived.sort((a, b) => a.localeCompare(b));
+    tags = derived;
+  }
   adminRequest.mockImplementation(
     (path: string, options?: { method?: string }) => {
       const method = options?.method ?? "GET";
       if (path === "/admin/guests" && method === "GET") {
         return Promise.resolve(listOf(guests));
+      }
+      if (path === "/admin/guests/tags" && method === "GET") {
+        return Promise.resolve({ items: tags, total: tags.length });
       }
       if (path === "/admin/parties" && method === "GET") {
         return Promise.resolve({ items: PARTIES, total: PARTIES.length });
@@ -351,6 +377,29 @@ describe("AdminGuests flat list", () => {
         body: { tags: [] },
       });
     });
+  });
+
+  it("offers the full tag vocabulary in the tag filter, not just loaded rows' tags", async () => {
+    // The one loaded guest carries no tags, but the vocabulary endpoint reports
+    // "Groomsman" (used on some other party). The tag filter must offer it so
+    // the list can be narrowed by a tag no currently loaded row has.
+    setMock({
+      guests: [makeGuestItem({ id: "alice", full_name: "Alice", tags: [] })],
+      tags: ["Groomsman"],
+    });
+
+    const user = userEvent.setup();
+    renderGuests();
+    await screen.findByDisplayValue("Alice");
+
+    // Open the Filters sheet, then the Tags filter (a role=combobox, distinct
+    // from the grid rows' Tags cell buttons), and confirm the vocabulary tag is
+    // offered even though no loaded guest carries it.
+    await user.click(screen.getByRole("button", { name: /Filters/ }));
+    await user.click(await screen.findByRole("combobox", { name: "Tags" }));
+    expect(
+      await screen.findByRole("option", { name: /Groomsman/ }),
+    ).toBeInTheDocument();
   });
 
   it("adds a guest from the flat list once a name and party are chosen", async () => {

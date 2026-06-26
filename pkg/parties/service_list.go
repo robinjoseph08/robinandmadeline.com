@@ -178,6 +178,31 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 	return guests, total, nil
 }
 
+// ListTags returns the distinct guest tags in use across every party, the open
+// vocabulary the admin tag comboboxes offer. Tags are stored per guest as a
+// text[], so this unnests every guest's array and collapses the result
+// case-insensitively (so "VIP" and "vip" count once, the lower-sorting casing
+// winning), returning them alphabetically. The vocabulary is small (tens of
+// tags at wedding scale), so the whole-table scan is cheap and the payload stays
+// tiny, unlike re-deriving the set from the entire guest list on the client.
+func (s *Service) ListTags(ctx context.Context) ([]string, error) {
+	var tags []string
+	err := s.db.NewSelect().
+		ColumnExpr("DISTINCT ON (lower(tag)) tag").
+		TableExpr("guests, unnest(tags) AS tag").
+		OrderExpr("lower(tag), tag").
+		Scan(ctx, &tags)
+	if err != nil {
+		return nil, errors.Wrap(err, "list tags")
+	}
+	// Normalize the no-tags-anywhere case to a non-nil slice so the envelope
+	// serializes items as [], never null (the uniform list-response contract).
+	if tags == nil {
+		tags = []string{}
+	}
+	return tags, nil
+}
+
 // partyScopeSubquery builds the correlated subquery ListGuests uses to filter on
 // the guest's party attributes: select 1 from parties where the party is the
 // guest's party and matches the supplied party-level predicates.

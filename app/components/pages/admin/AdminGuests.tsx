@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { useEvents } from "@/hooks/queries/events";
 import { useGuests, useUpdateGuest } from "@/hooks/queries/guests";
 import { useParties } from "@/hooks/queries/parties";
+import { useAllGuestTags } from "@/hooks/queries/tags";
 import { useFilterParams } from "@/hooks/useFilterParams";
 import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { useSortDefault } from "@/hooks/useSortDefault";
@@ -206,27 +207,12 @@ export default function AdminGuests() {
     [eventsQuery.data],
   );
 
-  // Distinct tags across all guests, offered as the tag filter's options. The
-  // parties query already loads each party's guests, so this needs no extra
-  // fetch; tags are open-ended, so the option set is whatever is currently used.
-  const tagOptions = useMemo<Option<string>[]>(() => {
-    const seen = new Set<string>();
-    const opts: Option<string>[] = [];
-    for (const party of partiesQuery.data?.items ?? []) {
-      for (const guest of party.guests ?? []) {
-        for (const tag of guest.tags) {
-          const key = tag.toLowerCase();
-          if (!seen.has(key)) {
-            seen.add(key);
-            opts.push({ value: tag, label: tag });
-          }
-        }
-      }
-    }
-    return opts.sort((a, b) => a.label.localeCompare(b.label));
-  }, [partiesQuery.data]);
-  // The same distinct tags as bare strings, for the multi-select chips filter.
-  const tagValues = useMemo(() => tagOptions.map((o) => o.value), [tagOptions]);
+  // Every tag in use across all parties, for the tag filter's options and the
+  // grid's per-cell tag combobox (so editing a guest can apply any existing tag,
+  // not just the ones on the currently filtered rows). Backed by its own small
+  // GET /admin/guests/tags endpoint (see useAllGuestTags), so it stays the full
+  // vocabulary regardless of which rows the current filters narrow to.
+  const allTags = useAllGuestTags();
 
   const openEdit = (guest: GuestListItem) => {
     setEditGuest(guest);
@@ -327,7 +313,7 @@ export default function AdminGuests() {
             <ChipsCombobox
               ariaLabel="Tags"
               onChange={(v) => setFilter("tags", v.length > 0 ? v : undefined)}
-              options={tagValues}
+              options={allTags}
               value={filters.tags ?? []}
             />
           </div>
@@ -373,6 +359,7 @@ export default function AdminGuests() {
               onEditGuest={openEdit}
               parties={parties}
               partyIdFor={(guest) => guest.party_id}
+              tagOptions={allTags}
             />
           </div>
         </div>
