@@ -14,6 +14,7 @@ import {
   GALLERY_PHOTOS,
   type GalleryPhoto,
 } from "@/components/pages/photos-content";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 /** Gap between tiles, in px; matches the `gap-3` utility on the rows. */
 const GAP = 12;
@@ -91,6 +92,7 @@ function buildRows(
  * click-outside / Escape to close.
  */
 export default function Photos() {
+  usePageTitle("Photos");
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [open, setOpen] = useState(false);

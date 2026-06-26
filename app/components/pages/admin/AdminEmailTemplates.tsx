@@ -23,6 +23,7 @@ import {
   useEmailTemplates,
   useUpdateEmailTemplate,
 } from "@/hooks/queries/emails";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import type { TemplateResponse } from "@/types/generated/emails";
 
 /**
@@ -32,6 +33,7 @@ import type { TemplateResponse } from "@/types/generated/emails";
  * their copy).
  */
 export default function AdminEmailTemplates() {
+  useAdminPageTitle("Email Templates");
   const templatesQuery = useEmailTemplates();
   const createTemplate = useCreateEmailTemplate();
   const updateTemplate = useUpdateEmailTemplate();

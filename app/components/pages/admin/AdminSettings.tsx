@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSettings, useUpdateSettings } from "@/hooks/queries/settings";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 
 /**
  * Admin settings: the site-wide app settings. The RSVP deadline (a date picker;
@@ -19,6 +20,7 @@ import { useSettings, useUpdateSettings } from "@/hooks/queries/settings";
  * sync-to-state effect).
  */
 export default function AdminSettings() {
+  useAdminPageTitle("Settings");
   const settingsQuery = useSettings();
 
   return (

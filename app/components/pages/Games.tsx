@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { useAuth } from "@/libraries/auth-context";
 
 interface GameInfo {
@@ -25,6 +26,7 @@ const GAMES: GameInfo[] = [
 ];
 
 export default function Games() {
+  usePageTitle("Games");
   const { isAuthenticated } = useAuth();
 
   // The games aren't ready for guests yet, so anyone without an admin session

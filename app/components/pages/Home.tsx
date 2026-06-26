@@ -1,6 +1,7 @@
 import Countdown from "@/components/library/Countdown";
 import Names from "@/components/library/Names";
 import { HERO_IMAGE, WEDDING } from "@/components/pages/home-content";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 /** The hero engagement photo as a responsive picture; cropping is up to the caller. */
 function HeroPhoto({
@@ -31,6 +32,7 @@ function HeroPhoto({
  * on the image, followed by a live countdown to the wedding.
  */
 export default function Home() {
+  usePageTitle();
   return (
     <div className="pb-4">
       <div className="full-bleed relative">

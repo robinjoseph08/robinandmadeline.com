@@ -37,6 +37,7 @@ import {
   useUpdateEventRSVP,
 } from "@/hooks/queries/events";
 import { useParties } from "@/hooks/queries/parties";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import type { EventRSVPListItem } from "@/types/generated/events";
 import type { EventRSVPStatus } from "@/types/generated/models";
 
@@ -51,6 +52,7 @@ import type { EventRSVPStatus } from "@/types/generated/models";
 export default function AdminEventDetail() {
   const { id } = useParams<{ id: string }>();
   const eventQuery = useEvent(id);
+  useAdminPageTitle(eventQuery.data?.name);
   const rsvpsQuery = useEventRSVPs(id);
 
   const updateEvent = useUpdateEvent();

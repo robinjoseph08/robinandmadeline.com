@@ -58,6 +58,7 @@ import {
 } from "@/components/ui/popover";
 import { QueryKey, useLeaderboard } from "@/hooks/queries/games";
 import { usePartyRSVPs } from "@/hooks/queries/rsvp";
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { formatDuration } from "@/libraries/format";
 import { readGuestToken } from "@/libraries/guest-api";
 import { cn } from "@/libraries/utils";
@@ -73,6 +74,7 @@ import { cn } from "@/libraries/utils";
 export default function Crossword() {
   const { puzzleSlug = "" } = useParams();
   const puzzle = getPuzzleBySlug(puzzleSlug);
+  usePageTitle(puzzle?.title);
 
   if (!puzzle) {
     return (

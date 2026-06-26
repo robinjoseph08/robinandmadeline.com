@@ -27,6 +27,7 @@ import {
   useEvents,
   useUpdateEvent,
 } from "@/hooks/queries/events";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import type { EventResponse } from "@/types/generated/events";
 
 /**
@@ -37,6 +38,7 @@ import type { EventResponse } from "@/types/generated/events";
  * detail where parties are invited and individual RSVPs overridden.
  */
 export default function AdminEvents() {
+  useAdminPageTitle("Events");
   const eventsQuery = useEvents();
   const createEvent = useCreateEvent();
   const updateEvent = useUpdateEvent();

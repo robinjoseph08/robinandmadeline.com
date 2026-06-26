@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useEmailSends } from "@/hooks/queries/emails";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 
 // The send-history view filter: every send, only real sends, or only test
 // sends. Applied on the frontend over the already-fetched list, so switching is
@@ -36,6 +37,7 @@ const FILTER_OPTIONS: { value: SendFilter; label: string }[] = [
  * distinguishable). Composing and template management live on sibling pages.
  */
 export default function AdminEmails() {
+  useAdminPageTitle("Emails");
   // Poll so queued -> sent -> delivered progress appears without a manual
   // refresh; 5s matches the worker's poll cadence. Stops once no send has
   // in-flight (queued or sending) recipients left.

@@ -17,6 +17,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useEmailSend } from "@/hooks/queries/emails";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 
 /**
  * One send's detail: the copy as sent, its delivery stats, and the
@@ -41,6 +42,7 @@ export default function AdminEmailSendDetail() {
   });
 
   const send = sendQuery.data;
+  useAdminPageTitle(send?.subject);
 
   return (
     <div className="space-y-6">

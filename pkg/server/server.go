@@ -78,7 +78,7 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	// scale-to-zero machine serves everything). Dev leaves StaticDir empty and
 	// runs the Vite dev server instead.
 	if cfg.StaticDir != "" {
-		e.Use(staticMiddleware(cfg.StaticDir))
+		e.Use(staticMiddleware(cfg.StaticDir, cfg.CanonicalHost))
 	}
 
 	authService := auth.NewService(cfg.JWTSecret, cfg.AdminSessionDuration, cfg.GuestSessionDuration, cfg.AdminUsername, cfg.AdminPassword)

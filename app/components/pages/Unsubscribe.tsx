@@ -5,6 +5,7 @@ import {
   useSetSubscription,
   useSubscription,
 } from "@/hooks/queries/subscriptions";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 /**
  * The email unsubscribe landing page behind the per-guest /u/:guestId link in
@@ -16,6 +17,7 @@ import {
  * share the inbox.
  */
 export default function Unsubscribe() {
+  usePageTitle("Unsubscribe");
   const { guestId = "" } = useParams();
   const { data, error, isPending } = useSubscription(guestId);
   const setSubscription = useSetSubscription(guestId);

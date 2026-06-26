@@ -8,6 +8,7 @@ import {
 import { useId, type ReactNode } from "react";
 
 import PageHeader from "@/components/library/PageHeader";
+import { usePageTitle } from "@/hooks/usePageTitle";
 
 /**
  * A single titled travel section: an icon chip, an h2 title, and free-form
@@ -48,6 +49,7 @@ function Section({
  * section's content is free-form JSX, so rich text is fine).
  */
 export default function Travel() {
+  usePageTitle("Travel");
   return (
     <div className="mx-auto max-w-2xl py-12">
       <PageHeader

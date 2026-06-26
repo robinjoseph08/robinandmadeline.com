@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { usePartyPhotoGroups } from "@/hooks/queries/photo-groups";
 import { useScheduleEvents } from "@/hooks/queries/schedule";
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { downloadICS, googleCalendarUrl } from "@/libraries/calendar";
 import {
   formatEventDate,
@@ -26,6 +27,7 @@ import type { ScheduleEvent } from "@/types/generated/events";
  * unlocks their full schedule.
  */
 export default function Schedule() {
+  usePageTitle("Schedule");
   const { data, error, isPending } = useScheduleEvents();
 
   // Only a failure with nothing to show becomes the error page: when a
