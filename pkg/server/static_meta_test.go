@@ -138,6 +138,12 @@ func TestShellMeta_AdminRoutesAreNoindexedWithDefaultTitle(t *testing.T) {
 		assert.Less(t, strings.Index(body, noindexTag), strings.Index(body, "</head>"), path)
 		// No label for admin: the title stays the bare app name.
 		assert.Contains(t, body, "<title>Robin &amp; Madeline</title>", path)
+		// Admin is never shared, so og:url stays the shell's home default rather
+		// than a self-link: the self og:url is set inside the title block, which
+		// the title-less admin routes skip. This pins that a hoist of
+		// setCanonicalURL out of that block would not silently start emitting a
+		// self-referential admin og:url.
+		assert.Contains(t, body, `<meta property="og:url" content="https://www.robinandmadeline.com/" />`, path)
 	}
 }
 
@@ -226,20 +232,24 @@ func TestShellMeta_PublicRoutesAreIndexableAndCaseInsensitive(t *testing.T) {
 	// Public landing pages must stay indexable: an accidental noindex (e.g. from
 	// hoisting addNoindex above the dispatch) would silently drop the homepage and
 	// every public page from search, so assert its absence. The mixed-case entry
-	// also pins the case-insensitive lookup that the admin/token/puzzle buckets
-	// test but the public bucket did not.
-	for _, tc := range []struct{ path, title string }{
-		{"/", "Robin &amp; Madeline"},
-		{"/schedule", "Schedule · Robin &amp; Madeline"},
-		{"/games", "Games · Robin &amp; Madeline"},
-		{"/rsvp", "RSVP · Robin &amp; Madeline"},
-		{"/Schedule", "Schedule · Robin &amp; Madeline"},
+	// pins the case-insensitive title lookup and that the public branch normalizes
+	// og:url to the canonical lowercase form, matching the admin/token/puzzle
+	// buckets.
+	for _, tc := range []struct{ path, title, ogURL string }{
+		{"/", "Robin &amp; Madeline", "https://www.robinandmadeline.com/"},
+		{"/schedule", "Schedule · Robin &amp; Madeline", "https://www.robinandmadeline.com/schedule"},
+		{"/games", "Games · Robin &amp; Madeline", "https://www.robinandmadeline.com/games"},
+		{"/rsvp", "RSVP · Robin &amp; Madeline", "https://www.robinandmadeline.com/rsvp"},
+		{"/Schedule", "Schedule · Robin &amp; Madeline", "https://www.robinandmadeline.com/schedule"},
 	} {
 		rec := getCanonical(srv, tc.path)
 		require.Equal(t, http.StatusOK, rec.Code, tc.path)
 		body := rec.Body.String()
 		assert.Contains(t, body, "<title>"+tc.title+"</title>", tc.path)
 		assert.NotContains(t, body, noindexTag, tc.path)
+		// og:url is the page's own absolute URL; the mixed-case /Schedule row pins
+		// that the public branch normalizes it to the canonical lowercase form.
+		assert.Contains(t, body, `<meta property="og:url" content="`+tc.ogURL+`" />`, tc.path)
 	}
 }
 
