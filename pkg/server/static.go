@@ -116,8 +116,9 @@ func assetCacheControl(rel string) string {
 // route. Crawlers (iMessage, Slack, Facebook) and search engines do not run the
 // client JS that usePageTitle relies on, so the shell that leaves the server is
 // the only place a shared link gets a route-specific title and description.
-// publicPageMeta below is the server-side mirror of those usePageTitle(...)
-// calls; keep the two in sync (see app/CLAUDE.md).
+// The tables below (publicPageMeta, puzzlePageTitles, and the noindex title
+// tables) are the server-side mirror of those usePageTitle(...) calls; keep them
+// in sync (see app/CLAUDE.md).
 const (
 	appName  = "Robin & Madeline"
 	titleSep = " · "
@@ -139,8 +140,9 @@ func (m shellMeta) title() string {
 
 // publicPageMeta maps a client route to the title and description a link
 // preview and search result should show. The labels mirror the usePageTitle(...)
-// calls in app/components/pages. Only public, shareable routes belong here;
-// private routes are handled by isPrivatePath/noindex.
+// calls in app/components/pages. Only public, shareable landing pages belong
+// here; puzzle pages are titled via puzzlePageTitles and noindex routes via
+// isNoindexPath/noindexTitle.
 var publicPageMeta = map[string]shellMeta{
 	"/":         {description: "Robin and Madeline are getting married on April 10, 2027 at Arrowwood in Palmer, TX."},
 	"/story":    {label: "Our Story", description: "How Robin and Madeline met, and the road to April 10, 2027."},
@@ -151,6 +153,40 @@ var publicPageMeta = map[string]shellMeta{
 	"/games":    {label: "Games", description: "Games and puzzles for Robin and Madeline's wedding."},
 	"/rsvp":     {label: "RSVP", description: "RSVP to Robin and Madeline's wedding on April 10, 2027."},
 }
+
+// puzzlePageTitles maps a /games/:slug puzzle slug to the title its page shows.
+// Each puzzle is a distinct page, so it gets its own title. The pages are gated
+// client-side by RequireGamesAccess today, so they are also served noindex (see
+// injectMeta); once that gate is removed and the games are public, they should be
+// indexed like the /games landing they hang off. Mirror these with the
+// PUZZLES_BY_SLUG registry and the usePageTitle(puzzle?.title) call in the
+// crossword frontend (see app/components/library/crossword/puzzles.ts); keep them
+// in sync.
+var puzzlePageTitles = map[string]string{
+	"mini":      "The Wedding Mini",
+	"crossword": "The Wedding Crossword",
+}
+
+// The noindex routes that still get a generic, guest-data-free title so a shared
+// link previews sensibly. The per-guest token/UUID links match by path prefix
+// (their tail is an opaque token); the RSVP flow steps match by exact path. The
+// admin back office is intentionally absent from both: it is served noindex with
+// the default title, since it is login-gated and never shared. Keep these labels
+// in sync with the usePageTitle(...) calls on the matching pages (InfoCollection,
+// Unsubscribe, RSVPForm, RSVPConfirmation), the same as publicPageMeta.
+var (
+	noindexTitlePrefixes = []struct {
+		prefix string
+		label  string
+	}{
+		{"/i/", "Your Details"},
+		{"/u/", "Unsubscribe"},
+	}
+	noindexTitleExact = map[string]string{
+		"/rsvp/form":         "RSVP",
+		"/rsvp/confirmation": "RSVP Confirmed",
+	}
+)
 
 // Each regex captures a head tag's value between two groups so only the value is
 // swapped. \s+ spans the whitespace (including any newlines prettier wraps a
@@ -167,12 +203,13 @@ var (
 	twDescRe  = regexp.MustCompile(`(<meta\s+name="twitter:description"\s+content=")[^"]*(")`)
 )
 
-// injectMeta overrides the shell's head for known routes: public routes get
-// their title, description, and canonical URL; private routes (admin and the
-// per-guest token links) get noindex so guest-specific URLs never surface in a
-// preview or search index. Unknown routes pass through untouched. Every
-// replacement is a no-op when its target tag is absent, so a shell without the
-// tags is returned unchanged.
+// injectMeta overrides the shell's head per route. Indexed landing pages
+// (publicPageMeta) get their title, description, and canonical URL; puzzle pages
+// get their own title but are noindex while gated; the token/UUID links and RSVP
+// flow steps are noindex with a generic title so a shared link previews correctly
+// without exposing guest data; the login-gated admin routes get noindex alone.
+// Unknown routes pass through untouched. Every replacement is a no-op when its
+// target tag is absent, so a shell without the tags is returned unchanged.
 func injectMeta(doc, urlPath, canonicalHost string, req *http.Request) string {
 	// Match case-insensitively: React Router resolves routes without regard to
 	// case, so /Admin or /I/<token> render the same client page as their
@@ -180,24 +217,49 @@ func injectMeta(doc, urlPath, canonicalHost string, req *http.Request) string {
 	// indexable generic shell). All real routes are lowercase ASCII.
 	key := strings.ToLower(urlPath)
 
-	meta, ok := publicPageMeta[key]
-	if !ok {
-		if isPrivatePath(key) {
-			return addNoindex(doc)
+	// Indexed landing pages: title, description, and canonical URL.
+	if meta, ok := publicPageMeta[key]; ok {
+		doc = setHeadTitle(doc, meta.title())
+		doc = setMetaContent(doc, descRe, meta.description)
+		doc = setMetaContent(doc, ogDescRe, meta.description)
+		if u := absoluteURL(canonicalHost, req, key); u != "" {
+			doc = setMetaContent(doc, ogURLRe, u)
+		}
+		doc = setMetaContent(doc, twDescRe, meta.description)
+		return doc
+	}
+
+	// Puzzle pages (/games/:slug): each is a distinct page with its own title, no
+	// description. They are gated client-side by RequireGamesAccess, so they are
+	// served noindex for now; when that gate is removed and the games are public,
+	// drop the addNoindex here so the puzzles are indexed like the /games landing.
+	if label, ok := puzzleTitle(key); ok {
+		doc = addNoindex(doc)
+		return setHeadTitle(doc, label+titleSep+appName)
+	}
+
+	// Noindex routes. The token/UUID links and RSVP flow steps additionally get a
+	// generic, guest-data-free title so a shared link previews sensibly; the
+	// login-gated admin back office gets noindex with the default title.
+	if isNoindexPath(key) {
+		doc = addNoindex(doc)
+		if label, found := noindexTitle(key); found {
+			doc = setHeadTitle(doc, label+titleSep+appName)
 		}
 		return doc
 	}
 
-	title := meta.title()
+	// Unknown route: served verbatim.
+	return doc
+}
+
+// setHeadTitle overwrites the shell's <title> and its og:title/twitter:title
+// preview tags with the same value (each HTML-escaped). It is the title half of
+// a public override and the whole of a private one, which adds no description.
+func setHeadTitle(doc, title string) string {
 	doc = setTitle(doc, title)
-	doc = setMetaContent(doc, descRe, meta.description)
 	doc = setMetaContent(doc, ogTitleRe, title)
-	doc = setMetaContent(doc, ogDescRe, meta.description)
-	if u := absoluteURL(canonicalHost, req, key); u != "" {
-		doc = setMetaContent(doc, ogURLRe, u)
-	}
 	doc = setMetaContent(doc, twTitleRe, title)
-	doc = setMetaContent(doc, twDescRe, meta.description)
 	return doc
 }
 
@@ -230,11 +292,51 @@ func addNoindex(doc string) string {
 	return doc
 }
 
-// isPrivatePath reports whether a route must not be indexed or previewed: the
-// admin back office and the per-guest token links (/i/:token, /u/:guestId).
-func isPrivatePath(p string) bool {
-	return p == "/admin" || strings.HasPrefix(p, "/admin/") ||
-		strings.HasPrefix(p, "/i/") || strings.HasPrefix(p, "/u/")
+// isNoindexPath reports whether a route must be served noindex: the admin back
+// office, the per-guest token/UUID links (/i/:token, /u/:guestId), and the RSVP
+// flow steps. The admin pages and per-guest links must never be indexed; the RSVP
+// steps are mid-flow pages no one should land on from search.
+func isNoindexPath(p string) bool {
+	if p == "/admin" || strings.HasPrefix(p, "/admin/") {
+		return true
+	}
+	if _, ok := noindexTitleExact[p]; ok {
+		return true
+	}
+	for _, e := range noindexTitlePrefixes {
+		if strings.HasPrefix(p, e.prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// noindexTitle returns the generic title label for a noindex route and whether
+// one exists. The token/UUID links and RSVP steps have one; the admin routes do
+// not (they keep the default title).
+func noindexTitle(p string) (string, bool) {
+	if label, ok := noindexTitleExact[p]; ok {
+		return label, true
+	}
+	for _, e := range noindexTitlePrefixes {
+		if strings.HasPrefix(p, e.prefix) {
+			return e.label, true
+		}
+	}
+	return "", false
+}
+
+// puzzleTitle returns the title for a /games/:slug puzzle page and whether the
+// slug is a known puzzle. Only a single path segment after /games/ matches; an
+// unknown slug (or /games itself, handled as a public route) returns false so the
+// route falls through unchanged.
+func puzzleTitle(p string) (string, bool) {
+	slug, ok := strings.CutPrefix(p, "/games/")
+	if !ok || slug == "" || strings.Contains(slug, "/") {
+		return "", false
+	}
+	label, ok := puzzlePageTitles[slug]
+	return label, ok
 }
 
 // absoluteURL builds the canonical absolute https URL for a route's og:url. It
