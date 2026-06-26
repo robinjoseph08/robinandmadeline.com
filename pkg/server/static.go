@@ -144,11 +144,11 @@ func (m shellMeta) title() string {
 var publicPageMeta = map[string]shellMeta{
 	"/":         {description: "Robin and Madeline are getting married on April 10, 2027 at Arrowwood in Palmer, TX."},
 	"/story":    {label: "Our Story", description: "How Robin and Madeline met, and the road to April 10, 2027."},
-	"/schedule": {label: "Schedule", description: "Times and places for Robin and Madeline's wedding weekend at Arrowwood in Palmer, TX."},
-	"/travel":   {label: "Travel", description: "Travel, lodging, and directions for Robin and Madeline's wedding at Arrowwood in Palmer, TX."},
+	"/schedule": {label: "Schedule", description: "Times and places for Robin and Madeline's wedding at Arrowwood in Palmer, TX."},
+	"/travel":   {label: "Travel", description: "Flights, hotels, rental cars, and parking for Robin and Madeline's wedding at Arrowwood in Palmer, TX."},
 	"/photos":   {label: "Photos", description: "Photos of Robin and Madeline."},
 	"/faq":      {label: "FAQ", description: "Answers to common questions about Robin and Madeline's wedding."},
-	"/games":    {label: "Games", description: "Play along with Robin and Madeline's wedding crosswords and games."},
+	"/games":    {label: "Games", description: "Games and puzzles for Robin and Madeline's wedding."},
 	"/rsvp":     {label: "RSVP", description: "RSVP to Robin and Madeline's wedding on April 10, 2027."},
 }
 
@@ -174,9 +174,15 @@ var (
 // replacement is a no-op when its target tag is absent, so a shell without the
 // tags is returned unchanged.
 func injectMeta(doc, urlPath, canonicalHost string, req *http.Request) string {
-	meta, ok := publicPageMeta[urlPath]
+	// Match case-insensitively: React Router resolves routes without regard to
+	// case, so /Admin or /I/<token> render the same client page as their
+	// lowercase form and must get the same server treatment (a noindex, not an
+	// indexable generic shell). All real routes are lowercase ASCII.
+	key := strings.ToLower(urlPath)
+
+	meta, ok := publicPageMeta[key]
 	if !ok {
-		if isPrivatePath(urlPath) {
+		if isPrivatePath(key) {
 			return addNoindex(doc)
 		}
 		return doc
@@ -187,7 +193,9 @@ func injectMeta(doc, urlPath, canonicalHost string, req *http.Request) string {
 	doc = setMetaContent(doc, descRe, meta.description)
 	doc = setMetaContent(doc, ogTitleRe, title)
 	doc = setMetaContent(doc, ogDescRe, meta.description)
-	doc = setMetaContent(doc, ogURLRe, absoluteURL(canonicalHost, req, urlPath))
+	if u := absoluteURL(canonicalHost, req, key); u != "" {
+		doc = setMetaContent(doc, ogURLRe, u)
+	}
 	doc = setMetaContent(doc, twTitleRe, title)
 	doc = setMetaContent(doc, twDescRe, meta.description)
 	return doc
@@ -229,19 +237,20 @@ func isPrivatePath(p string) bool {
 		strings.HasPrefix(p, "/i/") || strings.HasPrefix(p, "/u/")
 }
 
-// absoluteURL builds the canonical absolute URL for a route's og:url. It
-// prefers the configured canonical host (production), falling back to the
-// request's scheme and host so a non-canonical deployment still emits an
-// absolute URL.
+// absoluteURL builds the canonical absolute https URL for a route's og:url. It
+// prefers the configured canonical host (production) and falls back to the
+// request host so a non-canonical deployment still emits an absolute URL. A
+// public wedding site is only ever served over https, so the scheme is fixed
+// rather than read from a client-supplied X-Forwarded-Proto. It returns "" when
+// no host can be resolved (a hostless request), signaling the caller to leave
+// the shell's default og:url in place.
 func absoluteURL(canonicalHost string, req *http.Request, urlPath string) string {
-	if canonicalHost != "" {
-		return "https://" + canonicalHost + urlPath
+	host := canonicalHost
+	if host == "" {
+		host = req.Host
 	}
-	scheme := "https"
-	if proto := req.Header.Get("X-Forwarded-Proto"); proto != "" {
-		scheme = proto
-	} else if req.TLS == nil {
-		scheme = "http"
+	if host == "" {
+		return ""
 	}
-	return scheme + "://" + req.Host + urlPath
+	return "https://" + host + urlPath
 }

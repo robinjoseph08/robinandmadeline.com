@@ -39,7 +39,7 @@ import type { PhotoGroupResponse } from "@/types/generated/photogroups";
  * their positions, so the order here is what guests see.
  */
 export default function AdminPhotoGroups() {
-  useAdminPageTitle("Photo Groups");
+  useAdminPageTitle("Group Photos");
   const groupsQuery = usePhotoGroups();
   // The flat, unfiltered guest list feeds every group's add-guest picker.
   const guestsQuery = useGuests();

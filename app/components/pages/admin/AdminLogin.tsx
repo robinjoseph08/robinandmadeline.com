@@ -13,7 +13,7 @@ import { useAuth } from "@/libraries/auth-context";
  * sent straight to the admin home.
  */
 export default function AdminLogin() {
-  useAdminPageTitle("Login");
+  useAdminPageTitle("Sign In");
   const { isAuthenticated, login } = useAuth();
   const navigate = useNavigate();
 
