@@ -331,6 +331,18 @@ type ListGuestsResponse struct {
 	Total int             `json:"total"`
 }
 
+// ListTagsResponse is the uniform list envelope for the distinct guest tags in
+// use across every party: the open vocabulary the admin tag comboboxes offer so
+// a tag can be applied to a guest even when no guest in the current view carries
+// it yet. Items is de-duplicated case-insensitively and sorted; Total is its
+// length. It is its own tiny endpoint (rather than re-derived from the full
+// guest list on the client) precisely so a single party's detail page need not
+// load every party just to populate a tag dropdown.
+type ListTagsResponse struct {
+	Items []string `json:"items"`
+	Total int      `json:"total"`
+}
+
 // newPartyResponse wraps a loaded party (with guests) for the API, computing
 // its status and the itemized missing required fields. Guests must be loaded
 // for both to be accurate. The derived values are computed before the model is

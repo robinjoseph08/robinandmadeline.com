@@ -56,8 +56,13 @@ function makeParty(overrides: Partial<PartyResponse>): PartyResponse {
 }
 
 // Detail-page mode: the add row creates into addPartyId, so no party picker is
-// involved and the row is driven entirely by its own draft.
-function renderGrid(guests: Guest[], partyIdFor: (guest: Guest) => string) {
+// involved and the row is driven entirely by its own draft. tagOptions is the
+// global tag set the detail page feeds in (the universe beyond this party).
+function renderGrid(
+  guests: Guest[],
+  partyIdFor: (guest: Guest) => string,
+  tagOptions?: string[],
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -70,6 +75,7 @@ function renderGrid(guests: Guest[], partyIdFor: (guest: Guest) => string) {
             guests={guests}
             onEditGuest={() => {}}
             partyIdFor={partyIdFor}
+            tagOptions={tagOptions}
           />
         </MemoryRouter>
       </QueryClientProvider>
@@ -232,6 +238,30 @@ describe("GuestsGrid guest columns", () => {
         body: { seat_number: "7" },
       }),
     );
+  });
+});
+
+describe("GuestsGrid tag suggestions", () => {
+  it("offers tagOptions that no loaded guest carries, merged with the guest's own", async () => {
+    const user = userEvent.setup();
+    renderGrid(
+      [makeGuest({ id: "g1", full_name: "Alice", tags: ["VIP"] })],
+      (g) => g.party_id,
+      ["Groomsman", "VIP"],
+    );
+
+    // Open Alice's tag cell. The combobox must list the global "Groomsman"
+    // option even though no loaded guest has it, so an existing tag can be
+    // applied here rather than being limited to what this view already uses.
+    await user.click(screen.getByRole("button", { name: "Tags" }));
+    expect(
+      await screen.findByRole("option", { name: /Groomsman/ }),
+    ).toBeInTheDocument();
+
+    // The guest's own tag is still offered, and the case-insensitive merge does
+    // not list it twice (tagOptions and the guest both carry "VIP").
+    const vip = screen.getAllByRole("option", { name: /VIP/ });
+    expect(vip).toHaveLength(1);
   });
 });
 

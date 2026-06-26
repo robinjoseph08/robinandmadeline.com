@@ -17,6 +17,7 @@ import {
   useUpdateGuest,
 } from "./guests";
 import { QueryKey as PartiesQueryKey } from "./parties";
+import { QueryKey as TagsQueryKey } from "./tags";
 
 vi.mock("@/libraries/admin-api", async () => {
   const actual = await vi.importActual<object>("@/libraries/admin-api");
@@ -37,8 +38,10 @@ function newClient() {
   });
 }
 
-// Seeds the three caches a guest write should invalidate and asserts all three
-// end up invalidated after the mutation resolves.
+// Seeds the four caches a guest write should invalidate and asserts all four
+// end up invalidated after the mutation resolves: the guest list, the parent
+// party detail, the parties list, and the tag vocabulary (a write can add or
+// drop a tag).
 async function expectGuestWriteInvalidations(
   client: QueryClient,
   mutate: () => Promise<unknown>,
@@ -49,6 +52,7 @@ async function expectGuestWriteInvalidations(
     items: [],
     total: 0,
   });
+  client.setQueryData([TagsQueryKey.ListTags], { items: [], total: 0 });
 
   await act(async () => {
     await mutate();
@@ -65,6 +69,9 @@ async function expectGuestWriteInvalidations(
   expect(
     client.getQueryState([PartiesQueryKey.ListParties, {}])?.isInvalidated,
   ).toBe(true);
+  expect(client.getQueryState([TagsQueryKey.ListTags])?.isInvalidated).toBe(
+    true,
+  );
 }
 
 describe("useCreateGuest", () => {

@@ -66,18 +66,36 @@ function listOf(items: GuestListItem[]): ListGuestsResponse {
   return { items, total: items.length };
 }
 
-// Stubs both list endpoints the page reads (guests + parties for the Party
-// combobox) and resolves writes; onWrite lets a test shape the write response.
+// Stubs the list endpoints the page reads (guests + parties for the Party
+// combobox + the tag vocabulary) and resolves writes; onWrite lets a test shape
+// the write response.
 function setMock(opts: {
   guests?: GuestListItem[];
   onWrite?: (path: string, options?: { method?: string }) => unknown;
 }) {
   const guests = opts.guests ?? [];
+  // Mirror GET /admin/guests/tags: the distinct guest tags, case-insensitively
+  // de-duplicated and sorted, the vocabulary the page's tag comboboxes consume.
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const guest of guests) {
+    for (const tag of guest.tags) {
+      const key = tag.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        tags.push(tag);
+      }
+    }
+  }
+  tags.sort((a, b) => a.localeCompare(b));
   adminRequest.mockImplementation(
     (path: string, options?: { method?: string }) => {
       const method = options?.method ?? "GET";
       if (path === "/admin/guests" && method === "GET") {
         return Promise.resolve(listOf(guests));
+      }
+      if (path === "/admin/guests/tags" && method === "GET") {
+        return Promise.resolve({ items: tags, total: tags.length });
       }
       if (path === "/admin/parties" && method === "GET") {
         return Promise.resolve({ items: PARTIES, total: PARTIES.length });

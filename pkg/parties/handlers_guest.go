@@ -28,6 +28,18 @@ func (h *handler) listGuests(c echo.Context) error {
 	return c.JSON(http.StatusOK, ListGuestsResponse{Items: items, Total: total})
 }
 
+// listTags handles GET /api/admin/guests/tags, the distinct set of guest tags in
+// use across every party, for the admin tag comboboxes. It takes no parameters
+// and returns the uniform {items, total} envelope. Registered before /:id so the
+// static path wins over the guest-by-id route.
+func (h *handler) listTags(c echo.Context) error {
+	tags, err := h.service.ListTags(c.Request().Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, ListTagsResponse{Items: tags, Total: len(tags)})
+}
+
 // createGuest handles POST /api/admin/parties/:id/guests, returning 201 with the
 // created guest. Requesting is_primary demotes the party's previous primary.
 func (h *handler) createGuest(c echo.Context) error {

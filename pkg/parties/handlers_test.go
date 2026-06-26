@@ -755,3 +755,36 @@ func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	return body.Error.Code
 }
+
+func TestListTagsHandler_ReturnsDistinctVocabulary(t *testing.T) {
+	e := newAPI(t)
+	// A party with two guests carrying different tags, added through the nested
+	// guest endpoint so the tags persist on real rows.
+	createRec := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
+		"name": "P", "side": "robin", "relation": "friend", "invitation_type": "digital",
+	}))
+	require.Equal(t, http.StatusCreated, createRec.Code)
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &party))
+
+	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
+		map[string]any{"full_name": "Alice", "tags": []string{"Cousin", "VIP"}}).Code)
+	require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties/"+party.ID+"/guests",
+		map[string]any{"full_name": "Bob", "tags": []string{"Bridal Party"}}).Code)
+
+	// The static /guests/tags route resolves to the tag vocabulary, not the
+	// guest-by-id route (which would 404 on the non-UUID "tags"). The vocabulary
+	// is the distinct tags, sorted; each tag here has a single casing, so the
+	// result is collation-independent.
+	rec := do(t, e, http.MethodGet, "/api/admin/guests/tags", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Items []string `json:"items"`
+		Total int      `json:"total"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, []string{"Bridal Party", "Cousin", "VIP"}, resp.Items)
+	assert.Equal(t, 3, resp.Total)
+}

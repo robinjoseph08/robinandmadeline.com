@@ -397,3 +397,40 @@ describe("AdminPartyDetail add guest", () => {
     });
   });
 });
+
+describe("AdminPartyDetail tag suggestions", () => {
+  it("offers the global tag vocabulary, not just this party's own", async () => {
+    // This party's only guest carries no tags, but the tag vocabulary endpoint
+    // reports "Groomsman" (used elsewhere). Editing a guest here must offer it,
+    // so an existing tag can be applied even though no guest in this party uses
+    // it.
+    const alice = makeGuest({ id: "alice", full_name: "Alice", tags: [] });
+
+    adminRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        const method = options?.method ?? "GET";
+        if (path === "/admin/parties/p1" && method === "GET") {
+          return Promise.resolve(makeParty([alice]));
+        }
+        // The detail page reads the tag vocabulary from its own endpoint, not
+        // from the party's guests.
+        if (path === "/admin/guests/tags" && method === "GET") {
+          return Promise.resolve({ items: ["Groomsman"], total: 1 });
+        }
+        return Promise.resolve(undefined);
+      },
+    );
+
+    const user = userEvent.setup();
+    renderDetail();
+
+    // Open Alice's tag cell once her row has loaded.
+    const aliceRow = (await screen.findByDisplayValue("Alice")).closest("tr")!;
+    await user.click(within(aliceRow).getByRole("button", { name: "Tags" }));
+
+    // The cross-party tag is offered even though no guest in this party has it.
+    expect(
+      await screen.findByRole("option", { name: /Groomsman/ }),
+    ).toBeInTheDocument();
+  });
+});
