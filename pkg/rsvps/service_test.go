@@ -186,7 +186,7 @@ func TestPartyRSVPs_GroupsThePartysRSVPsByEvent(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, resp.Guests, 2, "only the authenticated party's guests appear")
-	assert.Equal(t, alice.ID, resp.Guests[0].ID, "guests come back in creation order")
+	assert.Equal(t, alice.ID, resp.Guests[0].ID, "neither guest is primary or a child, so they fall back to creation order")
 	assert.Equal(t, bob.ID, resp.Guests[1].ID)
 
 	require.Len(t, resp.Events, 2)

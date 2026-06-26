@@ -41,8 +41,9 @@ func NewService(db *bun.DB) *Service {
 }
 
 // PartyInfo assembles the GET /api/info/:token view: the token's party (its
-// invitation type and mailing address) and its known guests in creation order
-// with their contact details. Placeholder guests are excluded server-side. An
+// invitation type and mailing address) and its known guests in the canonical
+// within-party order (primary, then the other adults, then the children) with
+// their contact details. Placeholder guests are excluded server-side. An
 // unknown token is a 404.
 func (s *Service) PartyInfo(ctx context.Context, token string) (*PartyInfoResponse, error) {
 	return partyInfo(ctx, s.db, token)

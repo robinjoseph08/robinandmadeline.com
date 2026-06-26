@@ -55,6 +55,27 @@ func TestMarkComplete_SetsRequestedAndConfirmed(t *testing.T) {
 	assert.Equal(t, models.StatusComplete, marked.InfoCollectionStatus())
 }
 
+func TestMarkComplete_OrdersGuestsWithinParty(t *testing.T) {
+	svc, _ := newService(t)
+
+	// confirmComplete loads the guests with its own query rather than the shared
+	// Relation("Guests", ...) hook the other party loads use, so it needs its own
+	// ordering coverage. Build a markable physical party (primary has an email,
+	// full address set) whose guests are created out of display order, then prove
+	// the mark-complete response carries the canonical within-party order.
+	p := createPartyT(t, svc, physicalPartyInput())
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Kid", IsChild: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Adult"})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Primary", Email: pointerutil.String("primary@example.com"), IsPrimary: true})
+	line1, city, state, postal, country := fullAddress()
+	updatePartyAddress(t, svc, p.ID, line1, city, state, postal, country)
+
+	marked, err := svc.MarkComplete(ctx(), p.ID)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"Primary", "Adult", "Kid"}, guestNames(marked.Guests))
+}
+
 func TestRequestInfo_SetsRequestedAndResetsConfirmed(t *testing.T) {
 	svc, _ := newService(t)
 

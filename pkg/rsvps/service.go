@@ -80,9 +80,10 @@ func loadSettings(ctx context.Context, db bun.IDB) (settings, error) {
 }
 
 // PartyRSVPs assembles the GET /api/guest/rsvp view for one party: its guests
-// in creation order, its Event RSVPs grouped by event in schedule order, and
-// the deadline state. A missing party (deleted while a guest token for it was
-// still live) is a 404.
+// in the canonical within-party order (primary, then the other adults, then the
+// children), its Event RSVPs grouped by event in schedule order, and the
+// deadline state. A missing party (deleted while a guest token for it was still
+// live) is a 404.
 func (s *Service) PartyRSVPs(ctx context.Context, partyID string) (*PartyRSVPsResponse, error) {
 	return partyRSVPs(ctx, s.db, partyID)
 }
