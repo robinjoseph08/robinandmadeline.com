@@ -63,6 +63,15 @@ func addGuestT(t *testing.T, svc *parties.Service, partyID, name string) *models
 	return g
 }
 
+// addGuestWithT adds a guest fixture with explicit flags (is_primary / is_child),
+// for tests that exercise the within-party guest order.
+func addGuestWithT(t *testing.T, svc *parties.Service, partyID string, in parties.CreateGuestPayload) *models.Guest {
+	t.Helper()
+	g, err := svc.CreateGuest(ctx(), partyID, in)
+	require.NoError(t, err)
+	return g
+}
+
 // addPlaceholderT adds a placeholder guest fixture (an unnamed plus-one slot
 // the party names during RSVP). Like the CSV import, full_name and
 // placeholder_text both start as the descriptor.
@@ -138,6 +147,25 @@ func statusUpdate(guestID, eventID, status string) rsvps.UpdatePartyRSVPsPayload
 		GuestID: guestID,
 		RSVPs:   []rsvps.EventRSVPUpdate{{EventID: eventID, Status: status}},
 	}}}
+}
+
+func TestPartyRSVPs_OrdersGuestsWithinParty(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	smiths := createPartyT(t, partySvc, "The Smiths")
+	// Created out of display order: a child first, then an adult, then the
+	// primary last, so the assertion proves the form reorders to primary, the
+	// other adults, then the children rather than echoing creation order.
+	addGuestWithT(t, partySvc, smiths.ID, parties.CreateGuestPayload{FullName: "Kid", IsChild: true})
+	addGuestWithT(t, partySvc, smiths.ID, parties.CreateGuestPayload{FullName: "Adult"})
+	addGuestWithT(t, partySvc, smiths.ID, parties.CreateGuestPayload{FullName: "Primary", IsPrimary: true})
+
+	resp, err := svc.PartyRSVPs(ctx(), smiths.ID)
+	require.NoError(t, err)
+
+	require.Len(t, resp.Guests, 3)
+	got := []string{resp.Guests[0].FullName, resp.Guests[1].FullName, resp.Guests[2].FullName}
+	assert.Equal(t, []string{"Primary", "Adult", "Kid"}, got)
 }
 
 func TestPartyRSVPs_GroupsThePartysRSVPsByEvent(t *testing.T) {

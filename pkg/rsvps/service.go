@@ -156,15 +156,14 @@ func partyRSVPs(ctx context.Context, db bun.IDB, partyID string) (*PartyRSVPsRes
 	return resp, nil
 }
 
-// partyGuests lists a party's guests in creation order (the stable order the
-// form and the admin views share).
+// partyGuests lists a party's guests in the canonical within-party order
+// (models.OrderGuestsWithinParty: the primary, then the other adults, then the
+// children), the one stable order the form and the admin views share.
 func partyGuests(ctx context.Context, db bun.IDB, partyID string) ([]*models.Guest, error) {
 	var guests []*models.Guest
-	err := db.NewSelect().Model(&guests).
-		Where("g.party_id = ?", partyID).
-		Order("g.created_at ASC", "g.id ASC").
-		Scan(ctx)
-	if err != nil {
+	q := models.OrderGuestsWithinParty(db.NewSelect().Model(&guests).
+		Where("g.party_id = ?", partyID))
+	if err := q.Scan(ctx); err != nil {
 		return nil, errors.Wrap(err, "list party guests")
 	}
 	return guests, nil

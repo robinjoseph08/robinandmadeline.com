@@ -77,3 +77,20 @@ func (g *Guest) BeforeAppendModel(_ context.Context, query bun.Query) error {
 	}
 	return nil
 }
+
+// OrderGuestsWithinParty applies the canonical order for listing a party's
+// guests to a Guests query, whether a relation eager-load hook
+// (Relation("Guests", OrderGuestsWithinParty)) or a plain select. The primary
+// comes first, then the rest of the adults, then the children, each group in
+// creation order with the id as a stable tiebreak: is_primary DESC sorts the
+// lone primary ahead of everyone, is_child ASC drops the children to the end.
+// The RSVP form, the info-collection form, and every admin view that lists a
+// party's guests share this one order, so a guest never lands in a different
+// position between them. It lives here, beside the guests-table alias it
+// references, because the three feature packages that need it (rsvps, info,
+// parties) all import models but must not import each other. promoteOldestGuest
+// is deliberately not built on it: it wants the single oldest guest, which is a
+// different question than display order.
+func OrderGuestsWithinParty(q *bun.SelectQuery) *bun.SelectQuery {
+	return q.Order("g.is_primary DESC", "g.is_child ASC", "g.created_at ASC", "g.id ASC")
+}

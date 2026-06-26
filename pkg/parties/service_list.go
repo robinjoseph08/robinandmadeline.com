@@ -45,7 +45,7 @@ func escapeLike(term string) string {
 // and filtering one predicate in Go is comfortably fine.
 func (s *Service) ListParties(ctx context.Context, f ListPartiesQuery) ([]*models.Party, int, error) {
 	var parties []*models.Party
-	q := s.db.NewSelect().Model(&parties).Relation("Guests", orderGuestsByCreation)
+	q := s.db.NewSelect().Model(&parties).Relation("Guests", models.OrderGuestsWithinParty)
 	q = orderPartiesBySort(q, sortspec.ResolveParties(f.Sort))
 
 	if f.Side != nil {
