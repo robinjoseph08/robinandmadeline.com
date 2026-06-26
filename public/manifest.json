@@ -1,0 +1,13 @@
+{
+  "name": "Robin & Madeline",
+  "short_name": "R & M",
+  "description": "Robin and Madeline's wedding website",
+  "icons": [
+    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512" }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#d6787b",
+  "background_color": "#f5f5f5"
+}
