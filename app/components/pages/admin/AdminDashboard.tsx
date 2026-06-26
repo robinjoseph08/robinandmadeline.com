@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 
 import { RSVPBreakdownSummary } from "@/components/pages/admin/events/RSVPBreakdownSummary";
 import { useDashboard } from "@/hooks/queries/dashboard";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { formatEventDate } from "@/libraries/format";
 import type {
   EventRSVPStats,
@@ -17,6 +18,7 @@ import type {
  * reflect the current data.
  */
 export default function AdminDashboard() {
+  useAdminPageTitle("Dashboard");
   const dashboardQuery = useDashboard();
 
   return (

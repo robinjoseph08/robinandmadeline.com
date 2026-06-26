@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { resetGuestQueries } from "@/hooks/queries/guest-cache";
+import { usePageTitle } from "@/hooks/usePageTitle";
 import {
   ApiError,
   clearGuestToken,
@@ -33,6 +34,7 @@ function rsvpDestination(data: PartyRSVPsResponse): string {
  * invalid/expired token is cleared so the code field shows instead.
  */
 export default function RSVP() {
+  usePageTitle("RSVP");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 

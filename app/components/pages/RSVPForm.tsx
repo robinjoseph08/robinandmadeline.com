@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { usePartyRSVPs, useUpdatePartyRSVPs } from "@/hooks/queries/rsvp";
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { formatEventWhen, formatLongDate } from "@/libraries/format";
 import {
   ApiError,
@@ -30,6 +31,7 @@ import type {
  * summary and the "contact us" message.
  */
 export default function RSVPForm() {
+  usePageTitle("RSVP");
   const hasToken = readGuestToken() !== null;
   const { data, error, isPending } = usePartyRSVPs({ enabled: hasToken });
 

@@ -24,6 +24,7 @@ import weddingAvif1080 from "@/assets/story/wedding-1080.avif";
 import weddingJpg from "@/assets/story/wedding-1080.jpg";
 import PageHeader from "@/components/library/PageHeader";
 import { useInView } from "@/hooks/useInView";
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { cn } from "@/libraries/utils";
 
 /**
@@ -286,6 +287,7 @@ function Milestone({
  * content is free-form JSX, so rich text is fine).
  */
 export default function Story() {
+  usePageTitle("Our Story");
   return (
     <div className="mx-auto max-w-2xl py-12">
       <PageHeader

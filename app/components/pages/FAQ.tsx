@@ -3,6 +3,7 @@ import { useId, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import PageHeader from "@/components/library/PageHeader";
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { cn } from "@/libraries/utils";
 
 /**
@@ -88,6 +89,7 @@ function FAQEntry({
  * rich text is fine).
  */
 export default function FAQ() {
+  usePageTitle("FAQ");
   return (
     <div className="mx-auto max-w-2xl py-12">
       <PageHeader

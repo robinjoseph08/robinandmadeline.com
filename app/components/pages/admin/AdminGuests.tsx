@@ -29,6 +29,7 @@ import { useEvents } from "@/hooks/queries/events";
 import { useGuests, useUpdateGuest } from "@/hooks/queries/guests";
 import { useParties } from "@/hooks/queries/parties";
 import { useFilterParams } from "@/hooks/useFilterParams";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { useSortDefault } from "@/hooks/useSortDefault";
 import {
   parseSortSpec,
@@ -93,6 +94,7 @@ const QUERY_KEYS = [...FILTER_KEYS, "search", "sort"] as const;
  * dialog survives for dietary restrictions and table/seat.
  */
 export default function AdminGuests() {
+  useAdminPageTitle("Guests");
   const [filters, setFilter, clearAll] = useFilterParams<ListGuestsQuery>(
     QUERY_KEYS,
     BOOL_FILTERS,

@@ -3,6 +3,7 @@ import { Navigate, useNavigate } from "react-router-dom";
 
 import Monogram from "@/components/library/Monogram";
 import { Button } from "@/components/ui/button";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { ApiError } from "@/libraries/api";
 import { useAuth } from "@/libraries/auth-context";
 
@@ -12,6 +13,7 @@ import { useAuth } from "@/libraries/auth-context";
  * sent straight to the admin home.
  */
 export default function AdminLogin() {
+  useAdminPageTitle("Login");
   const { isAuthenticated, login } = useAuth();
   const navigate = useNavigate();
 

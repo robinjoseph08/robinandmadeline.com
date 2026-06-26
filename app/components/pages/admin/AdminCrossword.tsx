@@ -17,6 +17,7 @@ import {
   useAdminGameSessions,
   useDeleteGameSession,
 } from "@/hooks/queries/games";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { formatDateTime, formatDuration } from "@/libraries/format";
 import type { AdminGameSessionResponse } from "@/types/generated/games";
 
@@ -30,6 +31,7 @@ import type { AdminGameSessionResponse } from "@/types/generated/games";
  * a plain table with row delete and no paging, search, or sort.
  */
 export default function AdminCrossword() {
+  useAdminPageTitle("Crossword");
   const sessionsQuery = useAdminGameSessions();
   const deleteSession = useDeleteGameSession();
 

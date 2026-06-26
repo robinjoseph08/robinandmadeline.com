@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePartyInfo, useUpdatePartyInfo } from "@/hooks/queries/info";
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { ApiError } from "@/libraries/api";
 import { formatPhone } from "@/libraries/phone";
 import type {
@@ -28,6 +29,7 @@ import type {
  * values.
  */
 export default function InfoCollection() {
+  usePageTitle("Your Details");
   const { token = "" } = useParams();
   const { data, error, isPending } = usePartyInfo(token);
   const [saved, setSaved] = useState(false);

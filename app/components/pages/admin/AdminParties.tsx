@@ -23,6 +23,7 @@ import { PartyFormDialog } from "@/components/pages/admin/parties/PartyFormDialo
 import { SortSheet } from "@/components/pages/admin/parties/SortSheet";
 import { useParties, useUpdateParty } from "@/hooks/queries/parties";
 import { useFilterParams } from "@/hooks/useFilterParams";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { useSortDefault } from "@/hooks/useSortDefault";
 import {
   parseSortSpec,
@@ -71,6 +72,7 @@ const QUERY_KEYS = [...FILTER_KEYS, "sort"] as const;
  * unchanged. The full edit dialog survives for the mailing address.
  */
 export default function AdminParties() {
+  useAdminPageTitle("Parties");
   const [filters, setFilter, clearAll] = useFilterParams<ListPartiesQuery>(
     QUERY_KEYS,
     BOOL_FILTERS,

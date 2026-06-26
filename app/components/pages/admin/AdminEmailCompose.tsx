@@ -44,6 +44,7 @@ import {
 } from "@/hooks/queries/emails";
 import { useEvents } from "@/hooks/queries/events";
 import { useParties } from "@/hooks/queries/parties";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import type { PreviewEmailResponse } from "@/types/generated/emails";
 import type {
   Circle,
@@ -114,6 +115,7 @@ function toRecipientFilter(filter: FilterState): RecipientFilter {
  * navigates to the send's detail to watch it progress.
  */
 export default function AdminEmailCompose() {
+  useAdminPageTitle("Compose Email");
   const navigate = useNavigate();
   const templatesQuery = useEmailTemplates();
   const eventsQuery = useEvents();

@@ -23,6 +23,7 @@ import {
   useRequestInfo,
   useUpdateParty,
 } from "@/hooks/queries/parties";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { infoLinkForToken } from "@/libraries/clipboard";
 import {
   StatusComplete,
@@ -46,6 +47,7 @@ import type {
 export default function AdminPartyDetail() {
   const { id } = useParams<{ id: string }>();
   const partyQuery = useParty(id);
+  useAdminPageTitle(partyQuery.data?.name);
 
   const updateParty = useUpdateParty();
   const requestInfo = useRequestInfo();

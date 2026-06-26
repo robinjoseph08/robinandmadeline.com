@@ -4,6 +4,7 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { resetGuestQueries } from "@/hooks/queries/guest-cache";
 import { usePartyRSVPs } from "@/hooks/queries/rsvp";
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { formatLongDate } from "@/libraries/format";
 import { clearGuestToken, readGuestToken } from "@/libraries/guest-api";
 import { isNamedPlaceholder } from "@/libraries/placeholders";
@@ -51,6 +52,7 @@ function guestEntries(
  * landed them on someone else's party.
  */
 export default function RSVPConfirmation() {
+  usePageTitle("RSVP Confirmed");
   const hasToken = readGuestToken() !== null;
   const navigate = useNavigate();
   const queryClient = useQueryClient();

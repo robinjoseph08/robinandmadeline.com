@@ -24,6 +24,7 @@ import {
   useReorderPhotoGroups,
   useUpdatePhotoGroup,
 } from "@/hooks/queries/photo-groups";
+import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { ApiError } from "@/libraries/admin-api";
 import type { GuestListItem } from "@/types/generated/parties";
 import type { PhotoGroupResponse } from "@/types/generated/photogroups";
@@ -38,6 +39,7 @@ import type { PhotoGroupResponse } from "@/types/generated/photogroups";
  * their positions, so the order here is what guests see.
  */
 export default function AdminPhotoGroups() {
+  useAdminPageTitle("Photo Groups");
   const groupsQuery = usePhotoGroups();
   // The flat, unfiltered guest list feeds every group's add-guest picker.
   const guestsQuery = useGuests();
