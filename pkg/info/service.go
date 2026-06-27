@@ -8,11 +8,13 @@
 // party-level address), gated on the invitation type's required fields, and a
 // successful submit confirms the party's info collection (ADR 0005).
 //
-// Placeholder guests (unnamed plus-one slots) are invisible to this flow on
-// both read and write: info collection is about the people the couple already
-// knows, and the slots first surface in the RSVP flow (pkg/rsvps), where they
-// are named. The admin-facing status transitions live in pkg/parties; the
-// persistent models live in pkg/models.
+// Placeholder guests (unnamed plus-one slots) stay invisible as editable
+// guests on both read and write: info collection is about the people the couple
+// already knows, and the slots first surface in the RSVP flow (pkg/rsvps),
+// where they are named. The read does report how many a party has, though, so a
+// party that looks solo here is told how many more guests it will name then.
+// The admin-facing status transitions live in pkg/parties; the persistent
+// models live in pkg/models.
 package info
 
 import (
@@ -61,21 +63,26 @@ func partyInfo(ctx context.Context, db bun.IDB, token string) (*PartyInfoRespons
 	if err != nil {
 		return nil, err
 	}
-	return newPartyInfoResponse(party, guests), nil
+	placeholderCount, err := partyPlaceholderCount(ctx, db, party.ID)
+	if err != nil {
+		return nil, err
+	}
+	return newPartyInfoResponse(party, guests, placeholderCount), nil
 }
 
-// newPartyInfoResponse projects a loaded party and its guests onto the
-// response shape.
-func newPartyInfoResponse(party *models.Party, guests []*models.Guest) *PartyInfoResponse {
+// newPartyInfoResponse projects a loaded party, its known guests, and its
+// placeholder-slot count onto the response shape.
+func newPartyInfoResponse(party *models.Party, guests []*models.Guest, placeholderCount int) *PartyInfoResponse {
 	resp := &PartyInfoResponse{
-		InvitationType:  party.InvitationType,
-		AddressLine1:    party.AddressLine1,
-		AddressLine2:    party.AddressLine2,
-		City:            party.City,
-		StateOrProvince: party.StateOrProvince,
-		PostalCode:      party.PostalCode,
-		Country:         party.Country,
-		Guests:          make([]Guest, 0, len(guests)),
+		InvitationType:   party.InvitationType,
+		AddressLine1:     party.AddressLine1,
+		AddressLine2:     party.AddressLine2,
+		City:             party.City,
+		StateOrProvince:  party.StateOrProvince,
+		PostalCode:       party.PostalCode,
+		Country:          party.Country,
+		PlaceholderCount: placeholderCount,
+		Guests:           make([]Guest, 0, len(guests)),
 	}
 	for _, g := range guests {
 		resp.Guests = append(resp.Guests, newGuestView(g))
@@ -107,10 +114,10 @@ func partyByToken(ctx context.Context, db bun.IDB, token string, forUpdate bool)
 // (models.OrderGuestsWithinParty: the primary, then the other adults, then the
 // children), the one stable order the form and the admin views share.
 // Placeholder guests (a non-null placeholder_text) are excluded at the query,
-// which makes them invisible to the whole flow: they never appear in a
-// response, and because the submit path resolves guest ids against this list,
-// an update or removal addressing one is rejected exactly like a guest from
-// another party.
+// so they never appear as an editable guest and the submit path can't address
+// one: because it resolves guest ids against this list, an update or removal
+// naming a slot is rejected exactly like a guest from another party. Only their
+// count surfaces, computed separately by partyPlaceholderCount.
 func partyGuests(ctx context.Context, db bun.IDB, partyID string) ([]*models.Guest, error) {
 	var guests []*models.Guest
 	q := models.OrderGuestsWithinParty(db.NewSelect().Model(&guests).
@@ -120,6 +127,23 @@ func partyGuests(ctx context.Context, db bun.IDB, partyID string) ([]*models.Gue
 		return nil, errors.Wrap(err, "list party guests")
 	}
 	return guests, nil
+}
+
+// partyPlaceholderCount counts the party's placeholder slots (unnamed plus-one
+// guests, a non-null placeholder_text), the exact complement of partyGuests'
+// known set, so the two together cover the whole party. The form hides the
+// slots themselves but surfaces this count, so a party that looks solo here
+// (its one named guest, the rest still-unnamed slots) learns how many more
+// guests it will be able to name once RSVPs open.
+func partyPlaceholderCount(ctx context.Context, db bun.IDB, partyID string) (int, error) {
+	count, err := db.NewSelect().Model((*models.Guest)(nil)).
+		Where("g.party_id = ?", partyID).
+		Where("g.placeholder_text IS NOT NULL").
+		Count(ctx)
+	if err != nil {
+		return 0, errors.Wrap(err, "count party placeholders")
+	}
+	return count, nil
 }
 
 // UpdatePartyInfo applies one whole info-form submission for the token's

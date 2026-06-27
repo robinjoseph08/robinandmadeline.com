@@ -22,11 +22,12 @@ import type {
  * URL: every known guest in the party with editable name and contact fields,
  * a remove action for non-primary guests, and the party's mailing address
  * (required for physical parties; omitted entirely for digital ones, without
- * calling attention to the difference). Plus-one placeholder slots never
- * appear here (the API excludes them); they first surface in the RSVP flow.
- * The whole form submits at once; a success confirmation follows, and
- * revisiting the same link re-opens the form pre-filled with the saved
- * values.
+ * calling attention to the difference). Plus-one placeholder slots never appear
+ * here as editable cards (the API excludes them; they first surface in the RSVP
+ * flow), but the page notes how many a party has, so a party that looks solo
+ * learns it has more guests to name later. The whole form submits at once; a
+ * success confirmation follows, and revisiting the same link re-opens the form
+ * pre-filled with the saved values.
  */
 export default function InfoCollection() {
   usePageTitle("Your Details");
@@ -458,9 +459,27 @@ function InfoForm({ token, data, onSaved }: InfoFormProps) {
           We only send the occasional update.
         </p>
 
+        {/* One note about who else is in the party. When the party has unnamed
+            plus-one slots (not shown as cards, since they're named later during
+            RSVP), lead with their count so a party of one named guest plus slots
+            doesn't look solo; either way, invite them to flag anyone we missed
+            entirely. */}
         <p className="text-center text-sm italic text-muted-foreground">
-          If there are additional people in your party that we missed, message
-          us so we can add them!
+          {data.placeholder_count > 0 ? (
+            <>
+              Your party also includes{" "}
+              {data.placeholder_count === 1
+                ? "1 additional guest"
+                : `${data.placeholder_count} additional guests`}{" "}
+              you'll be able to name when RSVPs open. If we've missed anyone
+              else, message us so we can add them!
+            </>
+          ) : (
+            <>
+              If there are additional people in your party that we missed,
+              message us so we can add them!
+            </>
+          )}
         </p>
 
         {isPhysical ? (

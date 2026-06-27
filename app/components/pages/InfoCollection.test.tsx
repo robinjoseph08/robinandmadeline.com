@@ -34,6 +34,10 @@ function makeData(
     // common case). Tests that exercise the international/unknown path override
     // this.
     country: "United States",
+    // No unnamed plus-one slots by default; the placeholder-count note tests
+    // override this. The slots themselves never appear (the API excludes them),
+    // only this count.
+    placeholder_count: 0,
     // Placeholder guests never appear: the API excludes them server-side, so
     // the page only ever receives the party's known people.
     guests: [
@@ -124,6 +128,61 @@ describe("InfoCollection", () => {
     expect(
       screen.getByText(/additional people in your party/i),
     ).toBeInTheDocument();
+  });
+
+  it("tells a solo-looking party how many more guests they'll name at RSVP", async () => {
+    // One named guest plus a single unnamed plus-one slot: without the note the
+    // page would look like a solo invitation. The slot itself stays hidden; only
+    // the count surfaces, in the singular.
+    apiRequest.mockResolvedValue(
+      makeData({
+        placeholder_count: 1,
+        guests: [
+          {
+            id: "g1",
+            full_name: "Alice Smith",
+            is_primary: true,
+            is_child: false,
+            email: "alice@example.com",
+            phone: undefined,
+            subscribed: true,
+          },
+        ],
+      }),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    expect(
+      screen.getByText(
+        /your party also includes 1 additional guest you'll be able to name when rsvps open/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("counts multiple unnamed slots in the plural and folds in the flag-anyone-missed invite", async () => {
+    apiRequest.mockResolvedValue(makeData({ placeholder_count: 3 }));
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    // The count and the "flag anyone we missed" invitation share one combined
+    // note, so a single element carries both.
+    expect(
+      screen.getByText(
+        /your party also includes 3 additional guests you'll be able to name when rsvps open\. if we've missed anyone else, message us so we can add them/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no additional-guest note when the party has no unnamed slots", async () => {
+    // makeData defaults to placeholder_count: 0.
+    apiRequest.mockResolvedValue(makeData());
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    expect(
+      screen.queryByText(/additional guests? you'll be able to name/i),
+    ).not.toBeInTheDocument();
   });
 
   it("offers an email opt-in per emailed guest and drops the old opt-out note", async () => {
