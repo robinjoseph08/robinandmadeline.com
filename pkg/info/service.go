@@ -94,12 +94,14 @@ func newPartyInfoResponse(party *models.Party, guests []*models.Guest, placehold
 // used to personalize the info-collection page's shell title on /i/:token (the
 // server injects the first name as "<first name>'s Info" so a shared link
 // previews with the guest's name; see pkg/server/static.go). It loads only that
-// one name, not the whole form view. An unknown token or a party with no primary
-// returns ("", nil), not an error, so the caller falls back to the generic title;
-// only a genuine query
-// failure returns an error (for the caller to log). A nil DB (the shell-only
-// server tests) also returns ("", nil), matching how the rest of the server
-// tolerates an absent database.
+// one name, not the whole form view, and excludes a placeholder primary
+// (placeholder_text IS NULL) just as partyGuests does, so the title can never
+// surface a slot's descriptor and stays consistent with the form's guest list.
+// An unknown token, a party with no primary, or a primary that is still an
+// unnamed placeholder slot returns ("", nil), not an error, so the caller falls
+// back to the generic title; only a genuine query failure returns an error (for
+// the caller to log). A nil DB (the shell-only server tests) also returns
+// ("", nil), matching how the rest of the server tolerates an absent database.
 func (s *Service) PrimaryGuestName(ctx context.Context, token string) (string, error) {
 	if s.db == nil {
 		return "", nil
@@ -110,6 +112,7 @@ func (s *Service) PrimaryGuestName(ctx context.Context, token string) (string, e
 		Join("JOIN parties AS p ON p.id = g.party_id").
 		Where("p.info_token = ?", token).
 		Where("g.is_primary").
+		Where("g.placeholder_text IS NULL").
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

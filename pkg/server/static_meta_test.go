@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/robinjoseph08/robinandmadeline.com/internal/databasetest"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -323,4 +326,46 @@ func TestShellMeta_RealIndexHTMLIsRewritten(t *testing.T) {
 	assert.NotContains(t, body, "Robin and Madeline's wedding website")
 	// ...and the image we never touch survives.
 	assert.Contains(t, body, "https://www.robinandmadeline.com/og-image.jpg")
+}
+
+// TestShellMeta_InfoRouteTitleUsesPrimaryGuestNameEndToEnd is the one end-to-end
+// check that the real info service is wired into the shell renderer in server.New
+// (not just the injection logic in isolation): a seeded party's /i/:token link,
+// served through the full handler with a live DB, previews with the primary
+// guest's first name. The nil-DB meta tests above cannot catch a wiring
+// regression to a nil titler (info.NewService(nil) and a nil titler behave
+// identically), so this is the test that does.
+func TestShellMeta_InfoRouteTitleUsesPrimaryGuestNameEndToEnd(t *testing.T) {
+	db := databasetest.NewIsolated(t, "robinandmadeline_server_test")
+	databasetest.Truncate(t, db, "parties", "events")
+
+	partySvc := parties.NewService(db)
+	party, err := partySvc.CreateParty(context.Background(), parties.CreatePartyPayload{
+		Name:           "The Lovelaces",
+		Side:           models.SideRobin,
+		Relation:       models.RelationFriend,
+		InvitationType: models.InvitationDigital,
+	})
+	require.NoError(t, err)
+	_, err = partySvc.CreateGuest(context.Background(), party.ID, parties.CreateGuestPayload{
+		FullName:  "Ada Lovelace",
+		IsPrimary: true,
+	})
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte(metaShell), 0o600))
+	cfg := newTestConfig(t)
+	cfg.StaticDir = dir
+	cfg.CanonicalHost = metaHost
+	srv := server.New(cfg, db).Handler
+
+	rec := getCanonical(srv, "/i/"+party.InfoToken)
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	// First name, made possessive, in both the tab title and the link-preview card.
+	assert.Contains(t, body, "<title>Ada&#39;s Info · Robin &amp; Madeline</title>")
+	assert.Contains(t, body, `<meta property="og:title" content="Ada&#39;s Info · Robin &amp; Madeline" />`)
+	// Still noindex, like the nil-DB fallback case.
+	assert.Contains(t, body, noindexTag)
 }

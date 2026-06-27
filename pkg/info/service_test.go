@@ -251,6 +251,24 @@ func TestPrimaryGuestName_NoPrimaryIsEmpty(t *testing.T) {
 	assert.Empty(t, name)
 }
 
+func TestPrimaryGuestName_PlaceholderPrimaryIsEmpty(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	// A primary that is still an unnamed placeholder slot is excluded just as the
+	// form's guest list excludes placeholders, so the title falls back to the
+	// generic label rather than surfacing the slot's descriptor ("Guest of ...").
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{
+		FullName:        "Guest of Alice",
+		PlaceholderText: pointerutil.String("Guest of Alice"),
+		IsPrimary:       true,
+	})
+
+	name, err := svc.PrimaryGuestName(ctx(), p.InfoToken)
+	require.NoError(t, err)
+	assert.Empty(t, name)
+}
+
 func TestPrimaryGuestName_NilDBIsEmpty(t *testing.T) {
 	// The shell-only server tests wire a nil-DB info service; the lookup must not
 	// panic there, returning an empty name so the title falls back to the generic

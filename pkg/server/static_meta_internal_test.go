@@ -1,10 +1,10 @@
 // This file is white-box (package server) so it can call the unexported
-// injectMeta directly with a stub infoTitler. The /i/:token title is the one
-// piece of per-route metadata that depends on data (the party's primary guest
-// name), and wiring a real database through server.New into the shell handler is
-// far heavier than the behavior under test; the DB query itself is covered black-
-// box in pkg/info (TestPrimaryGuestName_*). The rest of the shell metadata is
-// tested through the handler in static_meta_test.go.
+// injectMeta directly with a stub infoTitler, which is how the per-route title
+// logic (first-name extraction, the fallbacks, token-case, and "/i/-only") is
+// tested without a database. The DB query itself is covered black-box in pkg/info
+// (TestPrimaryGuestName_*), and the wiring of the real info service through
+// server.New into the shell renderer is covered end-to-end in static_meta_test.go
+// (TestShellMeta_InfoRouteTitleUsesPrimaryGuestNameEndToEnd).
 package server
 
 import (
@@ -124,5 +124,35 @@ func TestInjectMeta_TitlerConsultedOnlyForInfoRoute(t *testing.T) {
 		body := injectInfo(t, tc.path, titler)
 		assert.Equal(t, 0, titler.calls, tc.path)
 		assert.Contains(t, body, "<title>"+tc.title+" · Robin &amp; Madeline</title>", tc.path)
+	}
+}
+
+func TestInjectMeta_InfoPageUsesOnlyTheFirstName(t *testing.T) {
+	// The title is the first whitespace-delimited token of the primary's full name,
+	// so a one-word, three-word, or irregularly-spaced name all reduce to the first
+	// name (this is what distinguishes first-name from full-name or last-name
+	// extraction), and a blank or whitespace-only name falls back to the generic
+	// label (the strings.Fields empty branch, which strings.Split would miss).
+	for _, tc := range []struct{ name, wantTitle string }{
+		{"Cher", "Cher&#39;s Info"},
+		{"Mary Jane Watson", "Mary&#39;s Info"},
+		{"  Ada   Lovelace  ", "Ada&#39;s Info"},
+		{"   ", "Your Details"},
+		{"", "Your Details"},
+	} {
+		body := injectInfo(t, "/i/sometoken123", &stubInfoTitler{name: tc.name})
+		assert.Contains(t, body, "<title>"+tc.wantTitle+" · Robin &amp; Madeline</title>", tc.name)
+	}
+}
+
+func TestInjectMeta_InfoPageGuardsMalformedToken(t *testing.T) {
+	// A bare /i/ (no token) or a multi-segment tail is still a noindex info path,
+	// but it has no single token to resolve, so the resolver is never consulted and
+	// the title stays the generic fallback.
+	for _, path := range []string{"/i/", "/i/a/b"} {
+		titler := &stubInfoTitler{name: "Ada Lovelace"}
+		body := injectInfo(t, path, titler)
+		assert.Equal(t, 0, titler.calls, path)
+		assert.Contains(t, body, "<title>Your Details · Robin &amp; Madeline</title>", path)
 	}
 }

@@ -179,11 +179,10 @@ var puzzlePageTitles = map[string]string{
 // fallback: injectMeta upgrades it to the primary guest's first name
 // ("<first name>'s Info") when the token resolves, so the couple can tell which
 // guest's link they're sharing from its preview (see infoPageName). The admin
-// back office
-// is intentionally absent from both: it is served noindex with the default title,
-// since it is login-gated and never shared. Keep these labels in sync with the
-// usePageTitle(...) calls on the matching pages (InfoCollection, Unsubscribe,
-// RSVPForm, RSVPConfirmation), the same as publicPageMeta.
+// back office is intentionally absent from both: it is served noindex with the
+// default title, since it is login-gated and never shared. Keep these labels in
+// sync with the usePageTitle(...) calls on the matching pages (InfoCollection,
+// Unsubscribe, RSVPForm, RSVPConfirmation), the same as publicPageMeta.
 var (
 	noindexTitlePrefixes = []struct {
 		prefix string
@@ -218,10 +217,10 @@ var (
 // "<first name>'s Info" so a shared info link previews (and its tab reads) with
 // the guest's name rather than the generic label, letting the couple tell which
 // guest's link they are about to send apart in its unfurled card. It is an
-// interface so the server
-// can wire pkg/info's Service while the meta tests substitute a stub (or pass
-// nil to exercise the generic fallback). It returns "" for an unknown token or a
-// party with no named primary, handled the same as a nil titler.
+// interface so the server can wire pkg/info's Service while the meta tests
+// substitute a stub (or pass nil to exercise the generic fallback). It returns ""
+// for an unknown token or a party with no named primary, handled the same as a
+// nil titler.
 type infoTitler interface {
 	PrimaryGuestName(ctx context.Context, token string) (string, error)
 }
