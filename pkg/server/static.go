@@ -383,10 +383,12 @@ const infoPagePrefix = "/i/"
 // info-collection page's title (matching the page's own "Hi Amanda!" greeting),
 // or "" to keep the generic fallback. It returns "" for any route other than
 // /i/:token, when no titler is wired, and (after logging) on a lookup error, so a
-// preview title never fails the shell render. The token is taken from the
-// original-case path because the lookup is case-sensitive, while the route match
-// uses the already-lowercased key (the "/i/" prefix is ASCII, so the key and path
-// share a length there and the slice is the token in its original case).
+// preview title never fails the shell render. The token is sliced from the
+// original-case urlPath (not the lowercased route key) so it matches the
+// case-sensitive info_token lookup the page itself does through the API; a real
+// token is lowercase alphanumerics, so the "/i/" prefix is three ASCII bytes and
+// the slice is exactly the token. A non-ASCII path that case-folds to "/i/..."
+// can't spell a valid token and is rejected by the empty/slash guard below.
 func infoPageName(req *http.Request, key, urlPath string, titler infoTitler) string {
 	if titler == nil || !strings.HasPrefix(key, infoPagePrefix) {
 		return ""
