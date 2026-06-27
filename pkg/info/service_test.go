@@ -138,9 +138,12 @@ func TestPartyInfo_ReturnsPartyAndGuestDetails(t *testing.T) {
 	// RSVP-flow concern, and info collection only covers known people.
 	addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
 
-	// An unrelated party never leaks into the token's view.
+	// An unrelated party never leaks into the token's view: not its guests, and
+	// not its placeholder slots, so the count below must stay scoped to the
+	// token's party.
 	other := createPartyT(t, partySvc, "The Joneses", models.InvitationDigital)
 	addPrimaryT(t, partySvc, other.ID, "Carol Jones")
+	addPlaceholderT(t, partySvc, other.ID, "Guest of Carol")
 
 	resp, err := svc.PartyInfo(ctx(), p.InfoToken)
 	require.NoError(t, err)

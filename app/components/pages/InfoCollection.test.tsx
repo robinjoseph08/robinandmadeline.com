@@ -153,15 +153,18 @@ describe("InfoCollection", () => {
     renderPage();
     await screen.findByRole("heading", { name: /^Hi / });
 
+    // The folded-in "flag anyone we missed" invite shares the same note, so the
+    // singular branch carries it too (mirrors the plural assertion below).
     expect(
       screen.getByText(
-        /your party also includes 1 additional guest you'll be able to name when rsvps open/i,
+        /your party also includes 1 additional guest you'll be able to name when rsvps open\. if we've missed anyone else, message us so we can add them/i,
       ),
     ).toBeInTheDocument();
   });
 
   it("counts multiple unnamed slots in the plural and folds in the flag-anyone-missed invite", async () => {
-    apiRequest.mockResolvedValue(makeData({ placeholder_count: 3 }));
+    // Two is the smallest plural, so it also pins the singular/plural boundary.
+    apiRequest.mockResolvedValue(makeData({ placeholder_count: 2 }));
     renderPage();
     await screen.findByRole("heading", { name: /^Hi / });
 
@@ -169,7 +172,7 @@ describe("InfoCollection", () => {
     // note, so a single element carries both.
     expect(
       screen.getByText(
-        /your party also includes 3 additional guests you'll be able to name when rsvps open\. if we've missed anyone else, message us so we can add them/i,
+        /your party also includes 2 additional guests you'll be able to name when rsvps open\. if we've missed anyone else, message us so we can add them/i,
       ),
     ).toBeInTheDocument();
   });
