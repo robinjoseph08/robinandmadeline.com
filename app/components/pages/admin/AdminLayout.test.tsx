@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import AdminLayout from "@/components/pages/admin/AdminLayout";
 import { AuthProvider } from "@/libraries/auth";
@@ -22,6 +22,12 @@ function renderLayout() {
 }
 
 describe("AdminLayout", () => {
+  beforeEach(() => {
+    // The collapsed-rail choice persists in localStorage; clear it so each test
+    // starts from the default (expanded) state.
+    localStorage.clear();
+  });
+
   it("links back to the public site", () => {
     renderLayout();
 
@@ -77,5 +83,40 @@ describe("AdminLayout", () => {
     // the route-change reset), and the routed section renders.
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByText("Guests content")).toBeInTheDocument();
+  });
+
+  it("collapses the sidebar and remembers the choice", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+
+    // The control flips to offer expansion and the choice is written to
+    // localStorage so it survives a reload.
+    expect(
+      screen.getByRole("button", { name: "Expand sidebar" }),
+    ).toBeInTheDocument();
+    expect(localStorage.getItem("admin:sidebar:collapsed")).toBe("true");
+    // Labels are hidden, but each section link keeps its name via its aria-label
+    // (and a hover tooltip), so the nav stays reachable.
+    expect(screen.getByRole("link", { name: "Guests" })).toHaveAttribute(
+      "href",
+      "/admin/guests",
+    );
+  });
+
+  it("restores the collapsed state from localStorage", () => {
+    localStorage.setItem("admin:sidebar:collapsed", "true");
+    renderLayout();
+
+    // Mounts collapsed: the control offers to expand, and the icon-only links
+    // are still reachable by their accessible name.
+    expect(
+      screen.getByRole("button", { name: "Expand sidebar" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Guests" })).toHaveAttribute(
+      "href",
+      "/admin/guests",
+    );
   });
 });

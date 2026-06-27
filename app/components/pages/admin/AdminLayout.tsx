@@ -1,5 +1,11 @@
-import { ArrowLeft, Menu } from "lucide-react";
-import { useState } from "react";
+import {
+  ArrowLeft,
+  LogOut,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
+import { useState, type ReactNode } from "react";
 import {
   Link,
   NavLink,
@@ -17,16 +23,58 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { useCollapsibleSidebar } from "@/hooks/useCollapsibleSidebar";
 import { useAuth } from "@/libraries/auth-context";
 import { cn } from "@/libraries/utils";
 
-function linkClasses({ isActive }: { isActive: boolean }) {
+// Active styling keys off NavLink's aria-current="page" (a string className, not
+// the {isActive} render-prop) so the link is safe to drop into a Radix
+// TooltipTrigger asChild when collapsed, which stringifies a function className.
+function navLinkClasses(collapsed: boolean) {
   return cn(
-    "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-    isActive
-      ? "bg-rose-soft text-rose"
-      : "text-ink-muted hover:bg-rose-soft hover:text-rose",
+    "flex items-center whitespace-nowrap rounded-md text-sm font-medium transition-colors",
+    "text-ink-muted hover:bg-rose-soft hover:text-rose",
+    "aria-[current=page]:bg-rose-soft aria-[current=page]:text-rose",
+    collapsed ? "justify-center px-2 py-2" : "gap-2.5 px-3 py-2",
+  );
+}
+
+// The exit links/button and the collapse toggle share this row styling; the
+// padding/centering flips with the collapsed rail.
+function railRowClasses(collapsed: boolean) {
+  return cn(
+    "flex items-center whitespace-nowrap rounded-md text-sm font-medium text-ink-muted transition-colors hover:bg-rose-soft hover:text-rose",
+    collapsed ? "justify-center px-2 py-2" : "gap-2.5 px-3 py-2",
+  );
+}
+
+/**
+ * Names a sidebar control with a hover tooltip when the rail is collapsed (its
+ * visible label is hidden, so the tooltip and the control's aria-label carry the
+ * name). Passes the control straight through when expanded, where the label
+ * already shows. The tooltip sits to the right, clear of the rail.
+ */
+function CollapsibleTooltip({
+  collapsed,
+  label,
+  children,
+}: {
+  collapsed: boolean;
+  label: string;
+  children: ReactNode;
+}) {
+  if (!collapsed) return <>{children}</>;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -36,31 +84,50 @@ function linkClasses({ isActive }: { isActive: boolean }) {
  * drawer so the two never drift. The nav flexes to fill the height between the
  * brand and the exit links in both, so the exit group always pins to the bottom.
  * onNavigate, when given, closes the mobile drawer the moment a link is tapped.
+ *
+ * When collapsed (the desktop rail only), labels give way to icon-only rows,
+ * each named by a hover tooltip; onToggleCollapse, when given, renders the
+ * collapse/expand control at the bottom (the drawer omits it, having no rail to
+ * shrink).
  */
 function AdminNav({
+  collapsed = false,
   onLogout,
   onNavigate,
+  onToggleCollapse,
 }: {
+  collapsed?: boolean;
   onLogout: () => void;
   onNavigate?: () => void;
+  onToggleCollapse?: () => void;
 }) {
   return (
     <>
       <NavLink
-        className="flex flex-col items-center gap-1 px-3 py-2"
+        aria-label={collapsed ? "Admin" : undefined}
+        className={cn(
+          "flex flex-col items-center gap-1 py-2",
+          collapsed ? "px-2" : "px-3",
+        )}
         end
         onClick={onNavigate}
         to="/admin"
       >
-        {/* Decorative: the visible "Admin" label names the link, so the mark is
-            hidden from assistive tech to keep the link name from reading
-            "Robin and Madeline floral monogram Admin". */}
+        {/* Decorative: the visible "Admin" label (or the aria-label when
+            collapsed) names the link, so the mark is hidden from assistive tech
+            to keep the link name from reading "Robin and Madeline floral
+            monogram Admin". */}
         <span aria-hidden className="contents">
-          <Monogram className="h-16 w-auto" sizes="64px" />
+          <Monogram
+            className={collapsed ? "h-8 w-auto" : "h-16 w-auto"}
+            sizes={collapsed ? "32px" : "64px"}
+          />
         </span>
-        <span className="text-[0.65rem] font-semibold uppercase tracking-[0.15em] text-ink-muted">
-          Admin
-        </span>
+        {!collapsed && (
+          <span className="text-[0.65rem] font-semibold uppercase tracking-[0.15em] text-ink-muted">
+            Admin
+          </span>
+        )}
       </NavLink>
 
       <nav
@@ -70,34 +137,71 @@ function AdminNav({
         {ADMIN_NAV_LINKS.map((link) => {
           const Icon = link.icon;
           return (
-            <NavLink
-              className={linkClasses}
-              end={link.end}
+            <CollapsibleTooltip
+              collapsed={collapsed}
               key={link.to}
-              onClick={onNavigate}
-              to={link.to}
+              label={link.label}
             >
-              <Icon aria-hidden className="size-4 shrink-0" />
-              {link.label}
-            </NavLink>
+              <NavLink
+                aria-label={collapsed ? link.label : undefined}
+                className={navLinkClasses(collapsed)}
+                end={link.end}
+                onClick={onNavigate}
+                to={link.to}
+              >
+                <Icon aria-hidden className="size-4 shrink-0" />
+                {!collapsed && link.label}
+              </NavLink>
+            </CollapsibleTooltip>
           );
         })}
       </nav>
 
       {/* Exit links grouped at the bottom: back to the public site, or out. */}
       <div className="mt-4 flex flex-col gap-2 border-t border-ink/10 pt-4">
-        <Link
-          className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-ink-muted transition-colors hover:bg-rose-soft hover:text-rose"
-          onClick={onNavigate}
-          to="/"
-        >
-          <ArrowLeft aria-hidden className="size-4 shrink-0" />
-          Back to Site
-        </Link>
-        <Button onClick={onLogout} type="button" variant="outline">
-          Sign Out
-        </Button>
+        <CollapsibleTooltip collapsed={collapsed} label="Back to Site">
+          <Link
+            aria-label={collapsed ? "Back to Site" : undefined}
+            className={railRowClasses(collapsed)}
+            onClick={onNavigate}
+            to="/"
+          >
+            <ArrowLeft aria-hidden className="size-4 shrink-0" />
+            {!collapsed && "Back to Site"}
+          </Link>
+        </CollapsibleTooltip>
+        <CollapsibleTooltip collapsed={collapsed} label="Sign Out">
+          <Button
+            aria-label={collapsed ? "Sign Out" : undefined}
+            className={cn(collapsed && "px-2")}
+            onClick={onLogout}
+            type="button"
+            variant="outline"
+          >
+            {collapsed ? <LogOut aria-hidden /> : "Sign Out"}
+          </Button>
+        </CollapsibleTooltip>
       </div>
+
+      {onToggleCollapse && (
+        <CollapsibleTooltip collapsed={collapsed} label="Expand sidebar">
+          <button
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className={cn("mt-2 cursor-pointer", railRowClasses(collapsed))}
+            onClick={onToggleCollapse}
+            type="button"
+          >
+            {collapsed ? (
+              <PanelLeftOpen aria-hidden className="size-4 shrink-0" />
+            ) : (
+              <>
+                <PanelLeftClose aria-hidden className="size-4 shrink-0" />
+                Collapse
+              </>
+            )}
+          </button>
+        </CollapsibleTooltip>
+      )}
     </>
   );
 }
@@ -115,6 +219,7 @@ export default function AdminLayout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [navOpen, setNavOpen] = useState(false);
+  const [collapsed, toggleCollapsed] = useCollapsibleSidebar();
 
   // Close the drawer on any route change (a nav link or the browser
   // back/forward button), mirroring the public SiteHeader. Reset during render
@@ -137,8 +242,17 @@ export default function AdminLayout() {
     // hoverable-content path gets confused moving between adjacent triggers).
     <TooltipProvider delayDuration={100} disableHoverableContent>
       <div className="flex min-h-screen bg-background text-foreground">
-        <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-ink/10 bg-page px-3 py-4 md:flex">
-          <AdminNav onLogout={handleLogout} />
+        <aside
+          className={cn(
+            "sticky top-0 hidden h-screen shrink-0 flex-col overflow-hidden border-r border-ink/10 bg-page px-3 py-4 transition-[width] duration-200 md:flex",
+            collapsed ? "w-16" : "w-56",
+          )}
+        >
+          <AdminNav
+            collapsed={collapsed}
+            onLogout={handleLogout}
+            onToggleCollapse={toggleCollapsed}
+          />
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
