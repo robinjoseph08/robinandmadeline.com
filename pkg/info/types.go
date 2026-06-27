@@ -41,7 +41,9 @@ type Guest struct {
 // PUT, which returns the refreshed state): the party's invitation type (which
 // decides whether the address section is required or hidden), its mailing
 // address, and every known (non-placeholder) guest with their current contact
-// details.
+// details. PlaceholderCount carries how many unnamed plus-one slots the party
+// has beyond those guests, so a party that looks solo here can be told how many
+// more it will name once RSVPs open.
 type PartyInfoResponse struct {
 	InvitationType  string  `json:"invitation_type" tstype:"models.InvitationType"`
 	AddressLine1    *string `json:"address_line_1"`
@@ -51,6 +53,12 @@ type PartyInfoResponse struct {
 	PostalCode      *string `json:"postal_code"`
 	Country         *string `json:"country"`
 	Guests          []Guest `json:"guests"`
+	// PlaceholderCount is the party's unnamed plus-one slots (a non-null
+	// placeholder_text): the guests not shown as editable cards above. The form
+	// hides the slots themselves (they are named later, in the RSVP flow) but
+	// surfaces their count, so a single-named-guest party isn't left thinking it
+	// is coming solo.
+	PlaceholderCount int `json:"placeholder_count"`
 }
 
 // UpdatePartyInfoPayload is the body of PUT /api/info/:token: the whole form

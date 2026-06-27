@@ -138,15 +138,19 @@ func TestPartyInfo_ReturnsPartyAndGuestDetails(t *testing.T) {
 	// RSVP-flow concern, and info collection only covers known people.
 	addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
 
-	// An unrelated party never leaks into the token's view.
+	// An unrelated party never leaks into the token's view: not its guests, and
+	// not its placeholder slots, so the count below must stay scoped to the
+	// token's party.
 	other := createPartyT(t, partySvc, "The Joneses", models.InvitationDigital)
 	addPrimaryT(t, partySvc, other.ID, "Carol Jones")
+	addPlaceholderT(t, partySvc, other.ID, "Guest of Carol")
 
 	resp, err := svc.PartyInfo(ctx(), p.InfoToken)
 	require.NoError(t, err)
 
 	assert.Equal(t, models.InvitationPhysical, resp.InvitationType)
 	require.Len(t, resp.Guests, 2, "only the token's party's known guests; the placeholder is excluded")
+	assert.Equal(t, 1, resp.PlaceholderCount, "the excluded +1 slot is still counted, so the party knows it isn't solo")
 
 	assert.Equal(t, alice.ID, resp.Guests[0].ID)
 	assert.Equal(t, "Alice Smith", resp.Guests[0].FullName)
@@ -178,6 +182,26 @@ func TestPartyInfo_OrdersGuestsWithinParty(t *testing.T) {
 	require.Len(t, resp.Guests, 3)
 	got := []string{resp.Guests[0].FullName, resp.Guests[1].FullName, resp.Guests[2].FullName}
 	assert.Equal(t, []string{"Primary", "Adult", "Kid"}, got)
+	assert.Zero(t, resp.PlaceholderCount, "a party with no plus-one slots reports none")
+}
+
+func TestPartyInfo_CountsPlaceholderSlots(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	// One named guest plus two unnamed plus-one slots: the form shows only the
+	// named guest, but the count tells the party two more are coming, named when
+	// RSVPs open. The count and the shown guests are complements, so together
+	// they cover the whole party.
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+	addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
+	addPlaceholderT(t, partySvc, p.ID, "Second guest of Alice")
+
+	resp, err := svc.PartyInfo(ctx(), p.InfoToken)
+	require.NoError(t, err)
+
+	require.Len(t, resp.Guests, 1, "the slots are not shown as guests")
+	assert.Equal(t, 2, resp.PlaceholderCount, "both slots are counted")
 }
 
 func TestPartyInfo_UnknownTokenIs404(t *testing.T) {
@@ -401,6 +425,25 @@ func TestUpdatePartyInfo_PlaceholderGuestIs422(t *testing.T) {
 	exists, err := db.NewSelect().Model((*models.Guest)(nil)).Where("id = ?", plusOne.ID).Exists(ctx())
 	require.NoError(t, err)
 	assert.True(t, exists, "the slot survives; giving up a +1 is not an info-flow action")
+}
+
+func TestUpdatePartyInfo_RefreshedResponseCountsPlaceholders(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	// The refreshed view a successful submit returns carries the placeholder
+	// count too, so the "Make changes" return trip still shows the party it
+	// isn't solo.
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+	addPlaceholderT(t, partySvc, p.ID, "Guest of Alice")
+
+	resp, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		Guests: []info.GuestInfoUpdate{{GuestID: alice.ID, Email: pointerutil.String("alice@example.com")}},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, resp.Guests, 1, "the slot is still not shown as a guest")
+	assert.Equal(t, 1, resp.PlaceholderCount, "the refreshed view still reports the slot")
 }
 
 func TestUpdatePartyInfo_RemovesGuestAndTheirEventRSVPs(t *testing.T) {

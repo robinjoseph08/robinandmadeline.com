@@ -150,11 +150,18 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   const aliceCard = guestSection(page, bestGuessName);
   await expect(aliceCard.getByLabel(/^Name/)).toHaveValue(bestGuessName);
 
-  // The party's +1 slot exists in the database but never surfaces here:
-  // placeholders are an RSVP concern, and info collection only covers the
-  // people the couple already knows.
+  // The party's +1 slot exists in the database but never surfaces here as an
+  // editable card: placeholders are an RSVP concern, and info collection only
+  // covers the people the couple already knows. Its count is surfaced, though,
+  // so a party of named guests plus slots doesn't read as solo (only the count,
+  // never the slot's internal descriptor).
   await expect(guestSection(page, bobName)).toBeVisible();
   await expect(page.getByText(placeholder)).not.toBeVisible();
+  await expect(
+    page.getByText(
+      /1 additional guest you'll be able to name when RSVPs open/i,
+    ),
+  ).toBeVisible();
 
   // A physical party's address section is present with required fields; the
   // primary's email and every real guest's name are required too.
@@ -217,8 +224,14 @@ test("guest completes info collection end to end: prefill, correct, remove, subm
   );
 
   // The +1 slot still belongs to the party (it was never removable here), but
-  // stays invisible on the revisit too.
+  // stays invisible on the revisit too, save for its count (Bob's removal left
+  // the named guest plus the one slot).
   await expect(page.getByText(placeholder)).not.toBeVisible();
+  await expect(
+    page.getByText(
+      /1 additional guest you'll be able to name when RSVPs open/i,
+    ),
+  ).toBeVisible();
 
   const revisitedAddress = guestSection(page, "Mailing address");
   await expect(revisitedAddress.getByLabel(/Address line 1/)).toHaveValue(
@@ -242,6 +255,10 @@ test("a digital party's page hides the address section entirely", async ({
   await expect(
     guestSection(page, carolName).getByLabel(/Email/),
   ).toHaveJSProperty("required", true);
+
+  // A genuinely solo party (one guest, no plus-one slots) gets no
+  // additional-guest note: the count note only appears when slots exist.
+  await expect(page.getByText(/additional guest/i)).not.toBeVisible();
 });
 
 test("an unknown info token shows the invalid-link message", async ({
