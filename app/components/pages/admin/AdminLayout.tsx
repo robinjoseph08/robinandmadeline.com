@@ -45,8 +45,9 @@ function navLinkClasses(collapsed: boolean) {
   );
 }
 
-// The exit links/button and the collapse toggle share this row styling; the
-// padding/centering flips with the collapsed rail.
+// The "Back to Site" link and the collapse toggle share this row styling; the
+// padding/centering flips with the collapsed rail. (Sign Out is the Button
+// component, styled separately.)
 function railRowClasses(collapsed: boolean) {
   return cn(
     "flex items-center whitespace-nowrap rounded-md text-sm font-medium text-ink-muted transition-colors hover:bg-rose-soft hover:text-rose",
@@ -57,8 +58,11 @@ function railRowClasses(collapsed: boolean) {
 /**
  * Names a sidebar control with a hover tooltip when the rail is collapsed (its
  * visible label is hidden, so the tooltip and the control's aria-label carry the
- * name). Passes the control straight through when expanded, where the label
- * already shows. The tooltip sits to the right, clear of the rail.
+ * name). When expanded the visible label already names the control, so only the
+ * tooltip content drops away, never the wrapper: keeping the element tree stable
+ * means toggling the rail updates each control in place instead of remounting it,
+ * which would otherwise drop keyboard focus from the collapse toggle as it is
+ * activated. The tooltip sits to the right, clear of the rail.
  */
 function CollapsibleTooltip({
   collapsed,
@@ -69,11 +73,10 @@ function CollapsibleTooltip({
   label: string;
   children: ReactNode;
 }) {
-  if (!collapsed) return <>{children}</>;
   return (
     <Tooltip>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side="right">{label}</TooltipContent>
+      {collapsed && <TooltipContent side="right">{label}</TooltipContent>}
     </Tooltip>
   );
 }
@@ -85,10 +88,10 @@ function CollapsibleTooltip({
  * brand and the exit links in both, so the exit group always pins to the bottom.
  * onNavigate, when given, closes the mobile drawer the moment a link is tapped.
  *
- * When collapsed (the desktop rail only), labels give way to icon-only rows,
- * each named by a hover tooltip; onToggleCollapse, when given, renders the
- * collapse/expand control at the bottom (the drawer omits it, having no rail to
- * shrink).
+ * When collapsed (the desktop rail only), labels give way to icon-only rows
+ * named by a hover tooltip (the brand keeps just its aria-label);
+ * onToggleCollapse, when given, renders the collapse/expand control at the
+ * bottom (the drawer omits it, having no rail to shrink).
  */
 function AdminNav({
   collapsed = false,
@@ -244,7 +247,7 @@ export default function AdminLayout() {
       <div className="flex min-h-screen bg-background text-foreground">
         <aside
           className={cn(
-            "sticky top-0 hidden h-screen shrink-0 flex-col overflow-hidden border-r border-ink/10 bg-page px-3 py-4 transition-[width] duration-200 md:flex",
+            "sticky top-0 hidden h-screen shrink-0 flex-col overflow-hidden border-r border-ink/10 bg-page px-3 py-4 transition-[width] duration-200 motion-reduce:transition-none md:flex",
             collapsed ? "w-16" : "w-56",
           )}
         >
