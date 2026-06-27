@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"html"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/robinjoseph08/golib/logger"
 )
 
 // Cache-Control values for the two kinds of files in the Vite bundle.
@@ -31,8 +33,12 @@ const (
 // request would otherwise receive HTML).
 //
 // canonicalHost is used to build the absolute og:url injected into the shell
-// per route (see serveShell); it may be empty outside production.
-func staticMiddleware(root, canonicalHost string) echo.MiddlewareFunc {
+// per route (see serveShell); it may be empty outside production. titler
+// resolves the info-collection page's primary guest name for that route's
+// personalized title (see injectMeta); it is the info service in production and
+// may be nil-backed in tests, in which case the title falls back to its generic
+// label.
+func staticMiddleware(root, canonicalHost string, titler infoTitler) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			req := c.Request()
@@ -59,7 +65,7 @@ func staticMiddleware(root, canonicalHost string) echo.MiddlewareFunc {
 			if strings.HasPrefix(rel, "/assets/") {
 				return next(c)
 			}
-			return serveShell(c, root, rel, canonicalHost)
+			return serveShell(c, root, rel, canonicalHost, titler)
 		}
 	}
 }
@@ -81,13 +87,13 @@ func serveFile(c echo.Context, name, cacheControl string) error {
 // link-preview metadata injected. A missing or unreadable shell falls back to
 // the plain file path so a misconfigured STATIC_DIR still surfaces as a 404
 // (with no stale Cache-Control), matching the rest of the static handler.
-func serveShell(c echo.Context, root, urlPath, canonicalHost string) error {
+func serveShell(c echo.Context, root, urlPath, canonicalHost string, titler infoTitler) error {
 	indexPath := filepath.Join(root, "index.html")
 	content, err := os.ReadFile(indexPath)
 	if err != nil {
 		return serveFile(c, indexPath, cacheControlNoCache)
 	}
-	doc := injectMeta(string(content), urlPath, canonicalHost, c.Request())
+	doc := injectMeta(string(content), urlPath, canonicalHost, c.Request(), titler)
 	c.Response().Header().Set("Cache-Control", cacheControlNoCache)
 	// ServeContent (the primitive echo's c.File uses) sets the text/html type
 	// and handles HEAD with an empty body. A zero modtime skips Last-Modified,
@@ -167,12 +173,15 @@ var puzzlePageTitles = map[string]string{
 	"crossword": "The Wedding Crossword",
 }
 
-// The noindex routes that still get a generic, guest-data-free title so a shared
-// link previews sensibly. The per-guest token/UUID links match by path prefix
-// (their tail is an opaque token); the RSVP flow steps match by exact path. The
-// admin back office is intentionally absent from both: it is served noindex with
-// the default title, since it is login-gated and never shared. Keep these labels
-// in sync with the usePageTitle(...) calls on the matching pages (InfoCollection,
+// The noindex routes that still get a title so a shared link previews sensibly.
+// The per-guest token/UUID links match by path prefix (their tail is an opaque
+// token); the RSVP flow steps match by exact path. The /i/ label is only a
+// fallback: injectMeta upgrades it to the primary guest's first name
+// ("<first name>'s Info") when the token resolves, so the couple can tell which
+// guest's link they're sharing from its preview (see infoPageName). The admin
+// back office is intentionally absent from both: it is served noindex with the
+// default title, since it is login-gated and never shared. Keep these labels in
+// sync with the usePageTitle(...) calls on the matching pages (InfoCollection,
 // Unsubscribe, RSVPForm, RSVPConfirmation), the same as publicPageMeta.
 var (
 	noindexTitlePrefixes = []struct {
@@ -203,16 +212,32 @@ var (
 	twDescRe  = regexp.MustCompile(`(<meta\s+name="twitter:description"\s+content=")[^"]*(")`)
 )
 
+// infoTitler resolves the info-collection page's title input: the full name of
+// the /i/:token party's primary guest, whose first name injectMeta turns into
+// "<first name>'s Info" so a shared info link previews (and its tab reads) with
+// the guest's name rather than the generic label, letting the couple tell which
+// guest's link they are about to send apart in its unfurled card. It is an
+// interface so the server can wire pkg/info's Service while the meta tests
+// substitute a stub (or pass nil to exercise the generic fallback). It returns ""
+// for an unknown token or a party with no named primary, handled the same as a
+// nil titler.
+type infoTitler interface {
+	PrimaryGuestName(ctx context.Context, token string) (string, error)
+}
+
 // injectMeta overrides the shell's head per route. Indexed landing pages
 // (publicPageMeta) get their title, description, and canonical URL; puzzle pages
 // get their own title and canonical URL but are noindex while gated; the
-// token/UUID links and RSVP flow steps are noindex with a generic title and
-// canonical URL so a shared link previews correctly and its preview card links
-// back to the same page, without exposing guest data (the opaque token is the
-// very URL being shared); the login-gated admin routes get noindex alone. Unknown
+// token/UUID links and RSVP flow steps are noindex with a title and canonical
+// URL so a shared link previews correctly and its preview card links back to the
+// same page; the login-gated admin routes get noindex alone. The info-collection
+// link's title carries the primary guest's first name (see infoPageName): a
+// deliberate exception to the otherwise guest-data-free previews, since the
+// opaque token in the very URL being shared already gates the whole party's data
+// and the page stays noindex, so the name never enters a search index. Unknown
 // routes pass through untouched. Every replacement is a no-op when its target tag
 // is absent, so a shell without the tags is returned unchanged.
-func injectMeta(doc, urlPath, canonicalHost string, req *http.Request) string {
+func injectMeta(doc, urlPath, canonicalHost string, req *http.Request, titler infoTitler) string {
 	// Match case-insensitively: React Router resolves routes without regard to
 	// case, so /Admin or /I/<token> render the same client page as their
 	// lowercase form and must get the same server treatment (a noindex, not an
@@ -240,13 +265,21 @@ func injectMeta(doc, urlPath, canonicalHost string, req *http.Request) string {
 	}
 
 	// Noindex routes. The token/UUID links and RSVP flow steps additionally get a
-	// generic, guest-data-free title and a self-referential canonical URL so a
-	// shared link previews sensibly and its preview card links back to the same
-	// page, not the home default; the login-gated admin back office, never shared,
-	// gets noindex with the default title and og:url.
+	// title and a self-referential canonical URL so a shared link previews sensibly
+	// and its preview card links back to the same page, not the home default; the
+	// info-collection link's title is personalized with the primary guest name (the
+	// rest stay generic). The login-gated admin back office, never shared, gets
+	// noindex with the default title and og:url.
 	if isNoindexPath(key) {
 		doc = addNoindex(doc)
 		if label, found := noindexTitle(key); found {
+			// Personalize the info-collection link's title with the primary guest's
+			// first name ("<first name>'s Info"); the generic label stays the fallback
+			// when the name can't be resolved (unknown token, no named primary, no
+			// titler, or a lookup error).
+			if name := infoPageName(req, key, urlPath, titler); name != "" {
+				label = name + "'s Info"
+			}
 			doc = setHeadTitle(doc, label+titleSep+appName)
 			doc = setCanonicalURL(doc, canonicalHost, req, key)
 		}
@@ -340,6 +373,41 @@ func noindexTitle(p string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// infoPagePrefix is the info-collection route (/i/:token) whose generic title is
+// upgraded to the party's primary guest name.
+const infoPagePrefix = "/i/"
+
+// infoPageName returns the primary guest's first name to personalize the
+// info-collection page's title (matching the page's own "Hi Amanda!" greeting),
+// or "" to keep the generic fallback. It returns "" for any route other than
+// /i/:token, when no titler is wired, and (after logging) on a lookup error, so a
+// preview title never fails the shell render. The token is sliced from the
+// original-case urlPath (not the lowercased route key) so it matches the
+// case-sensitive info_token lookup the page itself does through the API; a real
+// token is lowercase alphanumerics, so the "/i/" prefix is three ASCII bytes and
+// the slice is exactly the token. A non-ASCII path that case-folds to "/i/..."
+// can't spell a valid token and is rejected by the empty/slash guard below.
+func infoPageName(req *http.Request, key, urlPath string, titler infoTitler) string {
+	if titler == nil || !strings.HasPrefix(key, infoPagePrefix) {
+		return ""
+	}
+	token := urlPath[len(infoPagePrefix):]
+	if token == "" || strings.Contains(token, "/") {
+		return ""
+	}
+	name, err := titler.PrimaryGuestName(req.Context(), token)
+	if err != nil {
+		logger.FromContext(req.Context()).Err(err).Warn("resolve info page title")
+		return ""
+	}
+	// Just the first name. strings.Fields also trims and collapses whitespace, so
+	// a blank or whitespace-only name falls through to the generic title.
+	if fields := strings.Fields(name); len(fields) > 0 {
+		return fields[0]
+	}
+	return ""
 }
 
 // puzzleTitle returns the title for a /games/:slug puzzle page and whether the

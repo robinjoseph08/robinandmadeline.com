@@ -120,6 +120,42 @@ describe("InfoCollection", () => {
     );
   });
 
+  it("titles the tab with the primary guest's first name, mirroring the link preview", async () => {
+    apiRequest.mockResolvedValue(makeData());
+    renderPage();
+    await screen.findByRole("heading", { name: "Hi Alice!" });
+
+    // First name made possessive (not the full name, and not the generic
+    // fallback): the same format the server injects into the link-preview card.
+    await waitFor(() =>
+      expect(document.title).toBe("Alice's Info · Robin & Madeline"),
+    );
+  });
+
+  it("falls back to the generic tab title when no primary guest is flagged", async () => {
+    apiRequest.mockResolvedValue(
+      makeData({
+        guests: [
+          {
+            id: "g1",
+            full_name: "Bob Smith",
+            is_primary: false,
+            is_child: false,
+            email: undefined,
+            phone: undefined,
+            subscribed: true,
+          },
+        ],
+      }),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: /^Hi / });
+
+    await waitFor(() =>
+      expect(document.title).toBe("Your Details · Robin & Madeline"),
+    );
+  });
+
   it("invites the party to flag anyone we missed", async () => {
     apiRequest.mockResolvedValue(makeData());
     renderPage();

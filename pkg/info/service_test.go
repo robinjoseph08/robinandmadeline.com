@@ -211,6 +211,75 @@ func TestPartyInfo_UnknownTokenIs404(t *testing.T) {
 	assertErrCode(t, err, errcodes.CodeNotFound)
 }
 
+func TestPrimaryGuestName_ReturnsPrimaryFullName(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationPhysical)
+	// A non-primary adult and a child flank the primary, so the result proves the
+	// query selects the primary specifically, not just any of the party's guests.
+	addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Bob Smith"})
+	addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Kid Smith", IsChild: true})
+	addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+
+	name, err := svc.PrimaryGuestName(ctx(), p.InfoToken)
+	require.NoError(t, err)
+	assert.Equal(t, "Alice Smith", name)
+}
+
+func TestPrimaryGuestName_UnknownTokenIsEmpty(t *testing.T) {
+	svc := newInfoService(t)
+
+	// An unknown token is the same not-found path as the GET 404, but here it
+	// surfaces as an empty name with no error, so the shell title quietly falls back
+	// rather than failing the page render.
+	name, err := svc.PrimaryGuestName(ctx(), "no-such-token")
+	require.NoError(t, err)
+	assert.Empty(t, name)
+}
+
+func TestPrimaryGuestName_NoPrimaryIsEmpty(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	// A party with only non-primary guests (CreateGuest never auto-promotes) has no
+	// primary to name, so the lookup returns empty and the title falls back rather
+	// than naming a non-primary guest.
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{FullName: "Bob Smith"})
+
+	name, err := svc.PrimaryGuestName(ctx(), p.InfoToken)
+	require.NoError(t, err)
+	assert.Empty(t, name)
+}
+
+func TestPrimaryGuestName_PlaceholderPrimaryIsEmpty(t *testing.T) {
+	svc, partySvc, _, _ := newServices(t)
+
+	// A primary that is still an unnamed placeholder slot is excluded just as the
+	// form's guest list excludes placeholders, so the title falls back to the
+	// generic label rather than surfacing the slot's descriptor ("Guest of ...").
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
+	addGuestT(t, partySvc, p.ID, parties.CreateGuestPayload{
+		FullName:        "Guest of Alice",
+		PlaceholderText: pointerutil.String("Guest of Alice"),
+		IsPrimary:       true,
+	})
+
+	name, err := svc.PrimaryGuestName(ctx(), p.InfoToken)
+	require.NoError(t, err)
+	assert.Empty(t, name)
+}
+
+func TestPrimaryGuestName_NilDBIsEmpty(t *testing.T) {
+	// The shell-only server tests wire a nil-DB info service; the lookup must not
+	// panic there, returning an empty name so the title falls back to the generic
+	// label.
+	svc := info.NewService(nil)
+
+	name, err := svc.PrimaryGuestName(ctx(), "any-token")
+	require.NoError(t, err)
+	assert.Empty(t, name)
+}
+
 func TestUpdatePartyInfo_SavesAddressContactsAndConfirms(t *testing.T) {
 	svc, partySvc, _, db := newServices(t)
 
