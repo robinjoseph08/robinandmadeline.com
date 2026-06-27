@@ -151,9 +151,12 @@ func TestShellMeta_NoindexTitledRoutesGetGenericTitle(t *testing.T) {
 	srv := newMetaServer(t)
 	// Routes that must not be indexed but still deserve a sensible shared-link
 	// preview: the per-guest token/UUID links (no login, reachable by anyone
-	// holding the link) and the RSVP flow steps. Each gets a generic,
-	// guest-data-free title while staying noindex. Mixed case confirms the match
-	// is case-insensitive.
+	// holding the link) and the RSVP flow steps. Each gets a title while staying
+	// noindex. Mixed case confirms the match is case-insensitive. The /i/ link
+	// shows its generic "Your Details" fallback here because this meta server is
+	// wired with a nil DB, so its primary-guest-name lookup yields nothing; the
+	// personalized "<name>'s Info" title is covered in static_meta_internal_test.go
+	// (injection) and pkg/info (the query).
 	for _, tc := range []struct{ path, title, ogURL string }{
 		{"/i/some-token", "Your Details · Robin &amp; Madeline", "https://www.robinandmadeline.com/i/some-token"},
 		{"/I/Some-Token", "Your Details · Robin &amp; Madeline", "https://www.robinandmadeline.com/i/some-token"},

@@ -74,11 +74,16 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 
 	e.Use(middleware.CORS())
 
+	// The info-collection service backs both the open /i/:token API and the
+	// personalized title injected into that page's shell for its link preview, so
+	// build it once and share it.
+	infoService := info.NewService(db)
+
 	// In production the binary serves the built SPA itself (ADR 0001: one
 	// scale-to-zero machine serves everything). Dev leaves StaticDir empty and
 	// runs the Vite dev server instead.
 	if cfg.StaticDir != "" {
-		e.Use(staticMiddleware(cfg.StaticDir, cfg.CanonicalHost))
+		e.Use(staticMiddleware(cfg.StaticDir, cfg.CanonicalHost, infoService))
 	}
 
 	authService := auth.NewService(cfg.JWTSecret, cfg.AdminSessionDuration, cfg.GuestSessionDuration, cfg.AdminUsername, cfg.AdminPassword)
@@ -102,7 +107,7 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 	// The info-collection flow mounts on the open group: there is no JWT, the
 	// opaque high-entropy per-party info token in the URL is the authentication
 	// (ADR 0003), so unlike the guessable RSVP codes it needs no rate limiter.
-	info.RegisterRoutes(api, info.NewService(db))
+	info.RegisterRoutes(api, infoService)
 	// The guest-facing email subscription flow mounts on the open group too:
 	// like the info flow there is no JWT, the guest's own UUID in the URL is the
 	// authentication (ADR 0009).

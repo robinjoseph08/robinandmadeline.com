@@ -30,9 +30,11 @@ import type {
  * pre-filled with the saved values.
  */
 export default function InfoCollection() {
-  usePageTitle("Your Details");
   const { token = "" } = useParams();
   const { data, error, isPending } = usePartyInfo(token);
+  // Title the tab with the primary guest's name once the party loads, mirroring
+  // the title the server injects into the shell for this page's link preview.
+  usePageTitle(infoPageTitle(data));
   const [saved, setSaved] = useState(false);
 
   if (error?.status === 404) {
@@ -81,6 +83,19 @@ export default function InfoCollection() {
   // re-seeds the fields from the refreshed cache (the PUT response replaced
   // it) rather than stale local state.
   return <InfoForm data={data} onSaved={() => setSaved(true)} token={token} />;
+}
+
+/**
+ * The page/tab title: the primary guest's first name made possessive ("Amanda's
+ * Info") once the party loads, the generic "Your Details" until then (and as a
+ * fallback if no primary is flagged). Mirrors the title the server injects into
+ * the shell for this page's link preview (the /i/ branch of injectMeta in
+ * pkg/server/static.go); keep the two in sync.
+ */
+function infoPageTitle(data: PartyInfoResponse | undefined): string {
+  const primary = data?.guests.find((g) => g.is_primary);
+  const firstName = primary?.full_name.trim().split(/\s+/)[0];
+  return firstName ? `${firstName}'s Info` : "Your Details";
 }
 
 /**
