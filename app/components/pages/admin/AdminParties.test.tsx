@@ -20,6 +20,18 @@ vi.mock("@/libraries/admin-api", async () => {
   };
 });
 
+// The CSV building/download is exercised as a unit in partiesCsv.test.ts; here
+// we only assert the button wires the in-view parties into it and reports the
+// count, so stub the download module and capture the success toast.
+const { downloadPartiesCsv, toastSuccess } = vi.hoisted(() => ({
+  downloadPartiesCsv: vi.fn(),
+  toastSuccess: vi.fn(),
+}));
+vi.mock("@/libraries/partiesCsv", () => ({ downloadPartiesCsv }));
+vi.mock("sonner", () => ({
+  toast: { success: toastSuccess, error: vi.fn() },
+}));
+
 function makeParty(overrides: Partial<PartyResponse>): PartyResponse {
   return {
     id: "p1",
@@ -64,6 +76,8 @@ const MADELINE_PARTY = makeParty({
 
 beforeEach(() => {
   adminRequest.mockReset();
+  downloadPartiesCsv.mockReset();
+  toastSuccess.mockReset();
   localStorage.clear();
 });
 
@@ -193,6 +207,50 @@ describe("AdminParties inline editing", () => {
     expect(
       screen.queryByRole("button", { name: "Add party" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("AdminParties export CSV", () => {
+  it("exports the in-view parties and reports the count", async () => {
+    adminRequest.mockResolvedValue({
+      items: [ROBIN_PARTY, MADELINE_PARTY],
+      total: 2,
+    });
+    const user = userEvent.setup();
+    renderParties();
+
+    await screen.findByDisplayValue("Robin's Party");
+    await user.click(screen.getByRole("button", { name: "Export CSV" }));
+
+    // The button hands the download exactly the rows currently in view (the
+    // filtered/sorted list) and reports their count.
+    expect(downloadPartiesCsv).toHaveBeenCalledTimes(1);
+    const [exported, date] = downloadPartiesCsv.mock.calls[0];
+    expect((exported as PartyResponse[]).map((p) => p.id)).toEqual([
+      "p-robin",
+      "p-madeline",
+    ]);
+    expect(date).toBeInstanceOf(Date);
+    expect(toastSuccess).toHaveBeenCalledWith("Exported 2 parties to CSV");
+  });
+
+  it("uses the singular noun when exporting a single party", async () => {
+    adminRequest.mockResolvedValue({ items: [ROBIN_PARTY], total: 1 });
+    const user = userEvent.setup();
+    renderParties();
+
+    await screen.findByDisplayValue("Robin's Party");
+    await user.click(screen.getByRole("button", { name: "Export CSV" }));
+
+    expect(toastSuccess).toHaveBeenCalledWith("Exported 1 party to CSV");
+  });
+
+  it("disables the export button when no parties are in view", async () => {
+    adminRequest.mockResolvedValue({ items: [], total: 0 });
+    renderParties();
+
+    await screen.findByText(/No parties match these filters/i);
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
   });
 });
 

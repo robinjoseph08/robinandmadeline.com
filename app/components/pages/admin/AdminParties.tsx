@@ -1,4 +1,5 @@
 import { keepPreviousData } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -21,10 +22,12 @@ import {
 } from "@/components/pages/admin/parties/options";
 import { PartyFormDialog } from "@/components/pages/admin/parties/PartyFormDialog";
 import { SortSheet } from "@/components/pages/admin/parties/SortSheet";
+import { Button } from "@/components/ui/button";
 import { useParties, useUpdateParty } from "@/hooks/queries/parties";
 import { useFilterParams } from "@/hooks/useFilterParams";
 import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { useSortDefault } from "@/hooks/useSortDefault";
+import { downloadPartiesCsv } from "@/libraries/partiesCsv";
 import {
   parseSortSpec,
   serializeSortSpec,
@@ -150,6 +153,16 @@ export default function AdminParties() {
     }
   };
 
+  // Export the parties currently in view (the active filters and sort already
+  // shaped this list) as a CSV for the print shop. To mail only physical
+  // invitations, filter Invitation to Physical first.
+  const handleExportCsv = () => {
+    downloadPartiesCsv(parties, new Date());
+    toast.success(
+      `Exported ${parties.length} part${parties.length === 1 ? "y" : "ies"} to CSV`,
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -210,6 +223,15 @@ export default function AdminParties() {
           onResetDefault={resetSort}
           onSaveDefault={saveSortAsDefault}
         />
+        <Button
+          className="ml-auto"
+          disabled={parties.length === 0}
+          onClick={handleExportCsv}
+          variant="outline"
+        >
+          <Download />
+          Export CSV
+        </Button>
       </div>
 
       {partiesQuery.isLoading ? (
