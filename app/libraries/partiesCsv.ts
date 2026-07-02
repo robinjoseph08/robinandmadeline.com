@@ -7,12 +7,22 @@
  * This mirrors the calendar-file download in calendar.ts (downloadICS).
  */
 
+import type { InvitationType } from "@/types/generated/models";
 import type { PartyResponse } from "@/types/generated/parties";
 
 interface PartyCsvColumn {
   label: string;
   value: (party: PartyResponse) => string;
 }
+
+// The invitation type rendered as the title-case label the rest of the admin UI
+// shows (the stored enum is lowercase). Keyed by the generated InvitationType
+// union so a new backend value is a compile error here, not a silent lowercase
+// cell that disagrees with the title-case column header.
+const INVITATION_TYPE_LABELS: Record<InvitationType, string> = {
+  physical: "Physical",
+  digital: "Digital",
+};
 
 // The domestic mailing country. Matched case-insensitively (trimmed), mirroring
 // models.Party.mailedToUS in Go.
@@ -32,9 +42,9 @@ function formatCountry(country: string | undefined): string {
 
 // The export columns, in order: the addressee name and mailing address a printer
 // needs for the envelopes, then the invitation type so a digital party (which
-// has no address) is easy to spot and drop if the list was exported without
-// filtering to physical first. The nullable address fields render as an empty
-// cell when absent.
+// typically has no mailing address) is easy to spot and drop if the list was
+// exported without filtering to physical first. The nullable address fields
+// render as an empty cell when absent.
 export const PARTY_CSV_COLUMNS: PartyCsvColumn[] = [
   { label: "Name", value: (p) => p.name },
   { label: "Address Line 1", value: (p) => p.address_line_1 ?? "" },
@@ -43,7 +53,10 @@ export const PARTY_CSV_COLUMNS: PartyCsvColumn[] = [
   { label: "State/Province", value: (p) => p.state_or_province ?? "" },
   { label: "Postal Code", value: (p) => p.postal_code ?? "" },
   { label: "Country", value: (p) => formatCountry(p.country) },
-  { label: "Invitation Type", value: (p) => p.invitation_type },
+  {
+    label: "Invitation Type",
+    value: (p) => INVITATION_TYPE_LABELS[p.invitation_type],
+  },
 ];
 
 // RFC 4180: a field only needs quoting when it contains a double quote, a comma,

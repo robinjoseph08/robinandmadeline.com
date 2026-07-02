@@ -8,7 +8,7 @@ import {
   partiesCsvFilename,
 } from "./partiesCsv";
 
-// A fully-populated party; individual tests override the fields they exercise.
+// A fully-populated US party; individual tests override the fields they exercise.
 function makeParty(overrides: Partial<PartyResponse> = {}): PartyResponse {
   return {
     id: "0190b8e0-0000-7000-8000-00000000000a",
@@ -38,23 +38,34 @@ function makeParty(overrides: Partial<PartyResponse> = {}): PartyResponse {
 const HEADER =
   "Name,Address Line 1,Address Line 2,City,State/Province,Postal Code,Country,Invitation Type";
 
+// The row a default (US, physical) makeParty() serializes to: US country omitted,
+// invitation type title-cased.
+const DEFAULT_ROW =
+  "Mr. and Mrs. Smith,123 Main St,,Springfield,IL,62704,,Physical";
+
+// Returns the single data row of a one-party CSV. Splitting on the CRLF row
+// separator is safe here because a lone CR or LF embedded in a quoted field is
+// not a "\r\n" sequence.
+function rowFor(party: PartyResponse): string {
+  const [, row] = partiesCsvContent([party]).split("\r\n");
+  return row;
+}
+
 describe("partiesCsvContent", () => {
   it("emits just the header row in column order for an empty list", () => {
     expect(partiesCsvContent([])).toBe(HEADER);
   });
 
-  it("writes one CRLF-terminated row per party with the mailing columns", () => {
+  it("writes one CRLF-separated row per party with the mailing columns", () => {
     // The default party is in the US, so its country cell is intentionally
     // blank: the printer does not need a country line for domestic mail.
-    const csv = partiesCsvContent([makeParty()]);
-    expect(csv).toBe(
-      `${HEADER}\r\n` +
-        "Mr. and Mrs. Smith,123 Main St,,Springfield,IL,62704,,physical",
+    expect(partiesCsvContent([makeParty()])).toBe(
+      `${HEADER}\r\n${DEFAULT_ROW}`,
     );
   });
 
-  it("renders absent (null) address fields as empty cells", () => {
-    const csv = partiesCsvContent([
+  it("renders absent address fields as empty cells", () => {
+    const row = rowFor(
       makeParty({
         address_line_1: undefined,
         address_line_2: undefined,
@@ -63,21 +74,34 @@ describe("partiesCsvContent", () => {
         postal_code: undefined,
         country: undefined,
       }),
-    ]);
-    const [, row] = csv.split("\r\n");
-    expect(row).toBe("Mr. and Mrs. Smith,,,,,,,physical");
+    );
+    expect(row).toBe("Mr. and Mrs. Smith,,,,,,,Physical");
   });
 
-  it("quotes and escapes fields containing commas, quotes, or newlines", () => {
-    const csv = partiesCsvContent([
-      makeParty({
-        name: 'Smith, Jr. "the third"',
-        address_line_2: "Apt 4\nRear",
-      }),
-    ]);
-    const [, row] = csv.split("\r\n");
-    expect(row).toBe(
-      '"Smith, Jr. ""the third""",123 Main St,"Apt 4\nRear",Springfield,IL,62704,,physical',
+  // Each special character is tested in isolation: a field carrying two triggers
+  // at once (e.g. a comma and a quote) would hide a regression that dropped one
+  // trigger from the escape predicate, since the other still forces quoting.
+  it("quotes a field that contains only a comma", () => {
+    expect(rowFor(makeParty({ name: "Smith, Jr." }))).toBe(
+      '"Smith, Jr.",123 Main St,,Springfield,IL,62704,,Physical',
+    );
+  });
+
+  it("quotes and doubles a field that contains only a double quote", () => {
+    expect(rowFor(makeParty({ name: '"Skip" Jones' }))).toBe(
+      '"""Skip"" Jones",123 Main St,,Springfield,IL,62704,,Physical',
+    );
+  });
+
+  it("quotes a field that contains a carriage return", () => {
+    expect(rowFor(makeParty({ address_line_2: "Apt 4\rRear" }))).toBe(
+      'Mr. and Mrs. Smith,123 Main St,"Apt 4\rRear",Springfield,IL,62704,,Physical',
+    );
+  });
+
+  it("quotes a field that contains a newline", () => {
+    expect(rowFor(makeParty({ address_line_2: "Apt 4\nRear" }))).toBe(
+      'Mr. and Mrs. Smith,123 Main St,"Apt 4\nRear",Springfield,IL,62704,,Physical',
     );
   });
 
@@ -90,22 +114,34 @@ describe("partiesCsvContent", () => {
     expect(rows.map((row) => row.split(",")[0])).toEqual(["First", "Second"]);
   });
 
-  it("upper-cases a non-US country and keeps its country line", () => {
-    const [, row] = partiesCsvContent([makeParty({ country: "Canada" })]).split(
-      "\r\n",
-    );
-    expect(row).toBe(
-      "Mr. and Mrs. Smith,123 Main St,,Springfield,IL,62704,CANADA,physical",
+  it("title-cases a digital party's invitation type", () => {
+    expect(rowFor(makeParty({ invitation_type: "digital" }))).toBe(
+      "Mr. and Mrs. Smith,123 Main St,,Springfield,IL,62704,,Digital",
     );
   });
 
-  it("omits the country line for a US address, case-insensitively", () => {
-    const [, row] = partiesCsvContent([
-      makeParty({ country: "united states" }),
-    ]).split("\r\n");
-    expect(row).toBe(
-      "Mr. and Mrs. Smith,123 Main St,,Springfield,IL,62704,,physical",
-    );
+  describe("country", () => {
+    it("upper-cases a non-US country and keeps its country line", () => {
+      expect(rowFor(makeParty({ country: "Canada" }))).toBe(
+        "Mr. and Mrs. Smith,123 Main St,,Springfield,IL,62704,CANADA,Physical",
+      );
+    });
+
+    it("omits the country line for a US address, case-insensitively", () => {
+      expect(rowFor(makeParty({ country: "united states" }))).toBe(DEFAULT_ROW);
+    });
+
+    it("trims surrounding whitespace before matching the US country", () => {
+      expect(rowFor(makeParty({ country: "  United States  " }))).toBe(
+        DEFAULT_ROW,
+      );
+    });
+
+    it("trims a non-US country before upper-casing it", () => {
+      expect(rowFor(makeParty({ country: "  canada  " }))).toBe(
+        "Mr. and Mrs. Smith,123 Main St,,Springfield,IL,62704,CANADA,Physical",
+      );
+    });
   });
 });
 
@@ -132,7 +168,7 @@ describe("downloadPartiesCsv", () => {
     delete (URL as Partial<typeof URL>).revokeObjectURL;
   });
 
-  it("triggers a browser download of the BOM-prefixed CSV", async () => {
+  it("triggers a browser download of the BOM-prefixed CSV under a dated name", async () => {
     vi.useFakeTimers();
     // jsdom implements neither createObjectURL nor revokeObjectURL.
     const createObjectURL = vi.fn().mockReturnValue("blob:fake-url");
@@ -141,6 +177,9 @@ describe("downloadPartiesCsv", () => {
     const click = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => {});
+    // Capture the anchor before the synchronous remove() so its download name
+    // can be asserted (the anchor is removed from the DOM right after the click).
+    const appendChild = vi.spyOn(document.body, "appendChild");
 
     downloadPartiesCsv(
       [makeParty({ name: "Ada Lovelace" })],
@@ -160,6 +199,11 @@ describe("downloadPartiesCsv", () => {
     expect(body).toContain(HEADER);
     expect(body).toContain("Ada Lovelace");
     expect(click).toHaveBeenCalledTimes(1);
+
+    // The download is offered under the dated filename, wiring the date argument
+    // through to partiesCsvFilename.
+    const anchor = appendChild.mock.calls[0][0] as HTMLAnchorElement;
+    expect(anchor.download).toBe("parties-2026-07-01.csv");
 
     // The blob URL outlives the click (revoking in the same task cancels the
     // download in Safari); it is still revoked eventually.
