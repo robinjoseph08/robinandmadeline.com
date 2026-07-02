@@ -28,7 +28,8 @@ func (h *handler) getPartyInfo(c echo.Context) error {
 
 // updatePartyInfo handles PUT /api/info/:token: the whole form submitted at
 // once (name corrections, contact details, removals, the address). A submit
-// missing the party's required fields is a 422 and persists nothing. On
+// missing the party's required fields, or clearing the primary guest's email the
+// form requires, is a 422 and persists nothing. On
 // success it returns the refreshed view, so the page re-renders from the same
 // response shape as the GET.
 func (h *handler) updatePartyInfo(c echo.Context) error {

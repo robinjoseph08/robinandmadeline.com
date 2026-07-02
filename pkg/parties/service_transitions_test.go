@@ -11,8 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// completePhysicalParty builds a physical party that satisfies all required
-// fields (primary email + full address), the precondition for marking complete.
+// completePhysicalParty builds a physical party that satisfies the completion
+// gate (a full mailing address); it also gives the primary an email, which the
+// info form needs but MarkComplete does not.
 func completePhysicalParty(t *testing.T, svc *parties.Service) *models.Party {
 	t.Helper()
 	p := createPartyT(t, svc, physicalPartyInput())
@@ -32,15 +33,36 @@ func TestMarkComplete_Rejected422WhenRequiredFieldsMissing(t *testing.T) {
 	assertErrCode(t, err, errcodes.CodeValidationError)
 }
 
-func TestMarkComplete_RejectedWhenPrimaryEmailMissing(t *testing.T) {
+func TestMarkComplete_SucceedsWhenPrimaryEmailMissing(t *testing.T) {
 	svc, _ := newService(t)
 
-	// Digital party (no address needed) but the primary has no email.
+	// A digital party whose primary has no email can still be marked complete:
+	// email is optional for completion, so the couple can finish an older guest
+	// they collect from offline (the guest-facing info form still asks for it).
 	p := createPartyT(t, svc, digitalPartyInput())
 	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "No Email", IsPrimary: true})
 
-	_, err := svc.MarkComplete(ctx(), p.ID)
-	assertErrCode(t, err, errcodes.CodeValidationError)
+	marked, err := svc.MarkComplete(ctx(), p.ID)
+	require.NoError(t, err)
+	assert.True(t, marked.InfoCollectionConfirmed)
+	assert.Equal(t, models.StatusComplete, marked.InfoCollectionStatus())
+}
+
+func TestMarkComplete_PhysicalSucceedsWithoutPrimaryEmail(t *testing.T) {
+	svc, _ := newService(t)
+
+	// A physical party with a full address but no primary email can still be
+	// marked complete: the address is the only completion requirement, and email
+	// is not among them (the info form asks for it; this admin action does not).
+	p := createPartyT(t, svc, physicalPartyInput())
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "No Email", IsPrimary: true})
+	line1, city, state, postal, country := fullAddress()
+	updatePartyAddress(t, svc, p.ID, line1, city, state, postal, country)
+
+	marked, err := svc.MarkComplete(ctx(), p.ID)
+	require.NoError(t, err)
+	assert.True(t, marked.InfoCollectionConfirmed)
+	assert.Equal(t, models.StatusComplete, marked.InfoCollectionStatus())
 }
 
 func TestMarkComplete_SetsRequestedAndConfirmed(t *testing.T) {
@@ -60,9 +82,9 @@ func TestMarkComplete_OrdersGuestsWithinParty(t *testing.T) {
 
 	// confirmComplete loads the guests with its own query rather than the shared
 	// Relation("Guests", ...) hook the other party loads use, so it needs its own
-	// ordering coverage. Build a markable physical party (primary has an email,
-	// full address set) whose guests are created out of display order, then prove
-	// the mark-complete response carries the canonical within-party order.
+	// ordering coverage. Build a markable physical party (a full address makes it
+	// markable) whose guests are created out of display order, then prove the
+	// mark-complete response carries the canonical within-party order.
 	p := createPartyT(t, svc, physicalPartyInput())
 	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Kid", IsChild: true})
 	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Adult"})
@@ -110,10 +132,10 @@ func TestMarkIncomplete_ReopensParty(t *testing.T) {
 func TestStatus_DerivedBeforeRequested(t *testing.T) {
 	svc, _ := newService(t)
 
-	// A never-requested digital party with a primary email reads complete by
-	// derivation alone, without any mark action.
+	// A never-requested digital party reads complete by derivation alone (it has
+	// no required fields), without any mark action.
 	p := createPartyT(t, svc, digitalPartyInput())
-	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Has Email", Email: pointerutil.String("has@example.com"), IsPrimary: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Primary", Email: pointerutil.String("has@example.com"), IsPrimary: true})
 
 	reloaded, err := svc.GetParty(ctx(), p.ID)
 	require.NoError(t, err)

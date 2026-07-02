@@ -89,9 +89,10 @@ type UpdatePartyInfoPayload struct {
 // rejection as a guest from another party).
 //
 // email and phone are full-state for an included guest: they are stored as
-// sent, with blank (or absent) clearing to SQL NULL. The completion gate is
-// what keeps the primary's email from being cleared away (the submit would be
-// a 422).
+// sent, with blank (or absent) clearing to SQL NULL. The form's own email
+// requirement is what keeps the primary's email from being cleared away (the
+// submit would be a 422); the completion gate no longer covers email, since a
+// party can be marked complete without one.
 //
 // remove drops the guest from the party entirely (an ex significant other, or
 // a child who definitely won't come): the guest and their Event RSVPs are

@@ -43,18 +43,18 @@ func TestPrimaryGuest(t *testing.T) {
 func TestRequiredFieldsPresent_Digital(t *testing.T) {
 	t.Parallel()
 
-	// A digital party needs only the primary guest's email; address is
-	// irrelevant, so it does not affect the outcome.
+	// A digital party has no required fields now that the primary email is
+	// optional for completion, so it is always present-complete: email (present,
+	// blank, or absent) and the irrelevant address never change the outcome.
 	tests := []struct {
 		name        string
 		email       *string
 		withAddress bool
-		want        bool
 	}{
-		{"no primary", nil, false, false},
-		{"email present", pointerutil.String("a@b.com"), false, true},
-		{"email present, address ignored", pointerutil.String("a@b.com"), true, true},
-		{"blank email", pointerutil.String("   "), true, false},
+		{"no primary", nil, false},
+		{"email present", pointerutil.String("a@b.com"), false},
+		{"blank email", pointerutil.String("   "), false},
+		{"address ignored", pointerutil.String("a@b.com"), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -66,7 +66,7 @@ func TestRequiredFieldsPresent_Digital(t *testing.T) {
 			if tt.withAddress {
 				fullAddress(p)
 			}
-			assert.Equal(t, tt.want, p.RequiredFieldsPresent())
+			assert.True(t, p.RequiredFieldsPresent())
 		})
 	}
 }
@@ -74,7 +74,9 @@ func TestRequiredFieldsPresent_Digital(t *testing.T) {
 func TestRequiredFieldsPresent_Physical(t *testing.T) {
 	t.Parallel()
 
-	// A physical party needs both the primary email AND a full mailing address.
+	// A physical party needs a full mailing address; the primary email is no
+	// longer required for completion (the info form still asks for it), so the
+	// address alone decides the outcome.
 	tests := []struct {
 		name        string
 		email       *string
@@ -82,8 +84,8 @@ func TestRequiredFieldsPresent_Physical(t *testing.T) {
 		want        bool
 	}{
 		{"neither", nil, false, false},
-		{"email only", pointerutil.String("a@b.com"), false, false},
-		{"address only", nil, true, false},
+		{"email but no address", pointerutil.String("a@b.com"), false, false},
+		{"address but no email", nil, true, true},
 		{"both", pointerutil.String("a@b.com"), true, true},
 	}
 	for _, tt := range tests {
@@ -104,14 +106,15 @@ func TestRequiredFieldsPresent_Physical(t *testing.T) {
 func TestMissingRequiredFields_ItemizesWhatTheGateChecks(t *testing.T) {
 	t.Parallel()
 
-	// A digital party misses only the primary email; the address never appears.
+	// A digital party has no required fields, so nothing is ever missing (the
+	// primary email is not among them now that it is optional for completion).
 	digital := &models.Party{InvitationType: models.InvitationDigital}
-	assert.Equal(t, []string{"primary guest's email"}, digital.MissingRequiredFields())
+	assert.Empty(t, digital.MissingRequiredFields())
 
-	// A US physical party itemizes each absent address field too, the postal
-	// code included (line 2 is optional and never listed).
+	// A US physical party itemizes each absent address field, the postal code
+	// included (line 2 is optional and never listed; the primary email is not a
+	// required field at all, so it never appears either).
 	physical := &models.Party{InvitationType: models.InvitationPhysical}
-	physical.Guests = withPrimaryEmail(pointerutil.String("a@b.com"))
 	physical.AddressLine1 = pointerutil.String("123 Main St")
 	physical.Country = pointerutil.String("United States")
 	physical.PostalCode = pointerutil.String("   ") // blank counts as absent
@@ -164,7 +167,9 @@ func TestInfoCollectionStatus_NotRequested_DerivedFromFields(t *testing.T) {
 	t.Parallel()
 
 	// requested=false: status is derived purely from field presence, regardless
-	// of the confirmed flag (a stale confirmed must not leak through).
+	// of the confirmed flag (a stale confirmed must not leak through). For a
+	// physical party the address is what's derived on; the primary email no
+	// longer affects it.
 	tests := []struct {
 		name      string
 		confirmed bool
@@ -172,8 +177,8 @@ func TestInfoCollectionStatus_NotRequested_DerivedFromFields(t *testing.T) {
 		address   bool
 		want      string
 	}{
-		{"complete when all required present", false, pointerutil.String("a@b.com"), true, models.StatusComplete},
-		{"incomplete when email missing", false, nil, true, models.StatusIncomplete},
+		{"complete when address present", false, pointerutil.String("a@b.com"), true, models.StatusComplete},
+		{"complete even when email missing", false, nil, true, models.StatusComplete},
 		{"incomplete when address missing", false, pointerutil.String("a@b.com"), false, models.StatusIncomplete},
 		{"confirmed flag ignored when not requested", true, nil, false, models.StatusIncomplete},
 	}
@@ -190,6 +195,27 @@ func TestInfoCollectionStatus_NotRequested_DerivedFromFields(t *testing.T) {
 			assert.Equal(t, tt.want, p.InfoCollectionStatus())
 		})
 	}
+}
+
+func TestInfoCollectionStatus_Digital_CompleteUntilRequested(t *testing.T) {
+	t.Parallel()
+
+	// A digital party has no required fields (email is optional for completion,
+	// and there is no address), so before the info link is sent it derives
+	// complete outright, even with no primary guest at all.
+	empty := &models.Party{InvitationType: models.InvitationDigital}
+	assert.Equal(t, models.StatusComplete, empty.InfoCollectionStatus())
+
+	noEmail := &models.Party{
+		InvitationType: models.InvitationDigital,
+		Guests:         []*models.Guest{{IsPrimary: true}},
+	}
+	assert.Equal(t, models.StatusComplete, noEmail.InfoCollectionStatus())
+
+	// Sending the link (requested) still resets it to waiting until confirmed,
+	// exactly as for a physical party.
+	requested := &models.Party{InvitationType: models.InvitationDigital, InfoCollectionRequested: true}
+	assert.Equal(t, models.StatusIncomplete, requested.InfoCollectionStatus())
 }
 
 func TestInfoCollectionStatus_Requested_FollowsConfirmedFlag(t *testing.T) {

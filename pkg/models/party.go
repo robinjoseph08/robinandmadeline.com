@@ -132,8 +132,9 @@ func (p *Party) PrimaryGuest() *Guest {
 //     affirmed party necessarily has its required fields too.
 //
 // In both branches a party is complete only when its required fields are
-// present. Requires the Guests relation to be loaded; a party with no loaded or
-// assigned primary reads incomplete.
+// present. Those fields are all party-level now (invitation type and, for
+// physical parties, the mailing address), so unlike before this no longer needs
+// the Guests relation loaded.
 func (p *Party) InfoCollectionStatus() string {
 	if p.InfoCollectionRequested {
 		if p.InfoCollectionConfirmed {
@@ -148,27 +149,28 @@ func (p *Party) InfoCollectionStatus() string {
 }
 
 // RequiredFieldsPresent reports whether the party has every field required to be
-// markable complete: the primary guest's email always, plus a full mailing
-// address for physical parties (the address is irrelevant for digital). This is
-// the single completion gate; confirmed may be set true only when it holds. It
-// is defined as MissingRequiredFields being empty, so the gate and the admin
-// UI's "what's missing" hint can never disagree. Requires the Guests relation
-// to be loaded.
+// markable complete: a full mailing address for physical parties (a digital
+// party has no required fields at all). The primary guest's email is
+// deliberately NOT part of this gate, so a party can be marked complete without
+// one (an older guest the couple collects from offline); the info form still
+// asks for it (see PrimaryEmailPresent and pkg/info). This is the single
+// completion gate; confirmed may be set true only when it holds. It is defined
+// as MissingRequiredFields being empty, so the gate and the admin UI's "what's
+// missing" hint can never disagree.
 func (p *Party) RequiredFieldsPresent() bool {
 	return len(p.MissingRequiredFields()) == 0
 }
 
 // MissingRequiredFields lists, as human-readable labels, the required fields
-// the party still lacks: the primary guest's email always, plus each absent
-// mailing-address field for physical parties (address line 2 is optional, and
-// the postal code is required only for a US address). The itemized counterpart
-// of RequiredFieldsPresent. The result is never nil, so it serializes as []
-// rather than null. Requires the Guests relation to be loaded.
+// the party still lacks: each absent mailing-address field for physical parties
+// (address line 2 is optional, and the postal code is required only for a US
+// address). A digital party has no required fields, so its list is always empty.
+// The primary guest's email is not among them: the info form asks for it, but
+// completion does not gate on it (see PrimaryEmailPresent). The itemized
+// counterpart of RequiredFieldsPresent. The result is never nil, so it
+// serializes as [] rather than null.
 func (p *Party) MissingRequiredFields() []string {
 	missing := []string{}
-	if !p.primaryEmailPresent() {
-		missing = append(missing, "primary guest's email")
-	}
 	if p.InvitationType != InvitationPhysical {
 		return missing
 	}
@@ -206,9 +208,13 @@ func (p *Party) mailedToUS() bool {
 	return p.Country != nil && strings.EqualFold(strings.TrimSpace(*p.Country), countryUS)
 }
 
-// primaryEmailPresent reports whether the loaded primary guest has a non-blank
-// email. A party with no primary reports false.
-func (p *Party) primaryEmailPresent() bool {
+// PrimaryEmailPresent reports whether the loaded primary guest has a non-blank
+// email. A party with no primary reports false. This is not part of the
+// completion gate (RequiredFieldsPresent); email is optional for status, but
+// the info form still requires it, so pkg/info calls this to reject a submit
+// that would leave the primary without an email (ADR 0005). Requires the Guests
+// relation to be loaded.
+func (p *Party) PrimaryEmailPresent() bool {
 	primary := p.PrimaryGuest()
 	return primary != nil && primary.Email != nil && strings.TrimSpace(*primary.Email) != ""
 }

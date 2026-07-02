@@ -150,12 +150,12 @@ func TestResolveRecipients_FiltersByEventAndRSVPStatus(t *testing.T) {
 
 func TestResolveRecipients_FiltersByInfoCollectionStatus(t *testing.T) {
 	f := newFixtures(t)
-	// A digital party is complete once its primary guest has an email
-	// (ADR 0005, derived branch: collection never requested).
+	// A digital party has no required fields, so it derives complete (ADR 0005,
+	// derived branch: collection never requested).
 	complete := createPartyT(t, f, "Complete party", partyOpts{})
 	createGuestT(t, f, complete.ID, "Alice", guestOpts{email: emailOf("alice@example.com"), primary: true})
-	// A physical party with no address stays incomplete even though its
-	// primary has an email.
+	// A physical party with no address stays incomplete: the mailing address is
+	// what gates it, not the primary email.
 	incomplete := createPartyT(t, f, "Incomplete party", partyOpts{invitationType: models.InvitationPhysical})
 	createGuestT(t, f, incomplete.ID, "Bob", guestOpts{email: emailOf("bob@example.com"), primary: true})
 
@@ -170,19 +170,20 @@ func TestResolveRecipients_FiltersByInfoCollectionStatus(t *testing.T) {
 	assert.Equal(t, []string{"Bob"}, guestNames(recipients))
 }
 
-func TestResolveRecipients_InfoStatusUsesWholePartyNotJustTheRecipient(t *testing.T) {
+func TestResolveRecipients_InfoStatusIsThePartysNotEachRecipients(t *testing.T) {
 	f := newFixtures(t)
-	// The completion gate reads the PRIMARY guest's email. Make the primary
-	// email-less so the party is incomplete, while a non-primary guest has an
-	// email and is the would-be recipient.
-	p := createPartyT(t, f, "Mixed party", partyOpts{})
-	createGuestT(t, f, p.ID, "Primary No-Email", guestOpts{primary: true})
+	// Info status is a party-level property, so the filter gates every guest of
+	// the party the same way, not each candidate recipient individually. A
+	// physical party with no address is incomplete; both its guests (either could
+	// be the recipient) inherit that, and neither reads complete.
+	p := createPartyT(t, f, "Mixed party", partyOpts{invitationType: models.InvitationPhysical})
+	createGuestT(t, f, p.ID, "Primary", guestOpts{primary: true, email: emailOf("primary@example.com")})
 	createGuestT(t, f, p.ID, "Secondary", guestOpts{email: emailOf("secondary@example.com")})
 
 	recipients, _ := mustResolve(t, f.emails, models.RecipientFilter{
 		InfoCollectionStatus: pointerutil.String(models.StatusIncomplete),
 	})
-	assert.Equal(t, []string{"Secondary"}, guestNames(recipients))
+	assert.ElementsMatch(t, []string{"Primary", "Secondary"}, guestNames(recipients))
 
 	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
 		InfoCollectionStatus: pointerutil.String(models.StatusComplete),

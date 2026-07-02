@@ -21,10 +21,10 @@ import type {
 /**
  * React Query hooks for the guests admin API. Guests are created nested under a
  * party (the party is part of their identity) but read/updated/deleted by their
- * own id. A guest write can change its party's derived info_collection_status
- * (the primary guest's email is a required field) and the single-primary set, so
- * every mutation invalidates the parent party detail and the parties list in
- * addition to the flat guest list.
+ * own id. A guest write can change its party's embedded guest list and the
+ * single-primary set (both shown on the party detail), so every mutation
+ * invalidates the parent party detail and the parties list in addition to the
+ * flat guest list.
  */
 
 export enum QueryKey {
@@ -46,9 +46,9 @@ export const useGuests = (
 };
 
 // Invalidates everything a guest write can affect: the flat guest list, the
-// parent party detail (guests + derived status + single-primary), the parties
-// list (status column), and the tag vocabulary (a write can add or drop a tag,
-// which the comboboxes and the tag filter offer).
+// parent party detail (its embedded guest list and single-primary set), the
+// parties list (its per-party guest count), and the tag vocabulary (a write can
+// add or drop a tag, which the comboboxes and the tag filter offer).
 function invalidateForGuestWrite(
   queryClient: ReturnType<typeof useQueryClient>,
   partyId: string,
@@ -108,7 +108,7 @@ export const useUpdateGuest = () => {
 // is written through to the cached guest rows before the invalidations, so
 // anything that snapshots a row in the gap before the refetch (the edit dialog
 // seeding its form) sees the patched values; the invalidations still run to
-// reconcile derived fields (party status, party_name on a move).
+// reconcile derived fields (party_name and the party guest count on a move).
 export const usePatchGuest = () => {
   const queryClient = useQueryClient();
 

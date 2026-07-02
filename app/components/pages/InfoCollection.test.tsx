@@ -394,9 +394,9 @@ describe("InfoCollection", () => {
   it("keeps the contact fields for a child flagged as the primary guest", async () => {
     // A child should never be the party's primary contact, but the two flags
     // are independent and nothing forbids the combination. The primary's email
-    // is always required (the backend completion gate), so the contact fields
-    // must stay visible even when the primary is flagged a child, or the form
-    // can't be submitted.
+    // is always required by the info form (the backend rejects a submit that
+    // clears it), so the contact fields must stay visible even when the primary
+    // is flagged a child, or the form can't be submitted.
     apiRequest.mockResolvedValue(
       makeData({
         invitation_type: "digital",

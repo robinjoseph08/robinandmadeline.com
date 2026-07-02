@@ -38,11 +38,11 @@ func escapeLike(term string) string {
 // count.
 //
 // Every filter except InfoCollectionStatus is applied in SQL. Status cannot be
-// expressed cleanly in SQL because it depends on the derived rules over the
-// primary guest's email plus invitation_type and the two flags, so it is
-// computed in Go via the model and filtered here; the total then reflects the
-// filtered set. At wedding scale (hundreds of parties) loading the candidate set
-// and filtering one predicate in Go is comfortably fine.
+// expressed cleanly in SQL because it depends on the derived rules over
+// invitation_type, the mailing address, and the two flags, so it is computed in
+// Go via the model and filtered here; the total then reflects the filtered set.
+// At wedding scale (hundreds of parties) loading the candidate set and filtering
+// one predicate in Go is comfortably fine.
 func (s *Service) ListParties(ctx context.Context, f ListPartiesQuery) ([]*models.Party, int, error) {
 	var parties []*models.Party
 	q := s.db.NewSelect().Model(&parties).Relation("Guests", models.OrderGuestsWithinParty)

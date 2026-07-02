@@ -113,11 +113,11 @@ func recipientPartySubquery(db *bun.DB, f models.RecipientFilter) *bun.SelectQue
 }
 
 // filterByInfoCollectionStatus keeps the guests whose party's derived
-// info-collection status matches. The status needs each party's full guest
-// list (the primary guest's email is part of the completion gate), so the
-// distinct parties are reloaded with their Guests relation and evaluated via
-// the same model method the parties API uses, keeping the filter and the
-// displayed status in agreement.
+// info-collection status matches. Status is a party-level property now (the
+// invitation type, the mailing address, and the two collection flags, with no
+// guest field at all since email became optional for completion), so the
+// distinct parties are reloaded and evaluated via the same model method the
+// parties API uses, keeping the filter and the displayed status in agreement.
 func (s *Service) filterByInfoCollectionStatus(ctx context.Context, guests []*models.Guest, status string) ([]*models.Guest, error) {
 	if len(guests) == 0 {
 		return guests, nil
@@ -134,7 +134,7 @@ func (s *Service) filterByInfoCollectionStatus(ctx context.Context, guests []*mo
 	}
 
 	var parties []*models.Party
-	err := s.db.NewSelect().Model(&parties).Relation("Guests").
+	err := s.db.NewSelect().Model(&parties).
 		Where("p.id IN (?)", bun.List(partyIDs)).Scan(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "load parties for info status filter")

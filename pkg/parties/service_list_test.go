@@ -119,12 +119,15 @@ func TestListParties_FilterByRequested(t *testing.T) {
 func TestListParties_FilterByStatus_ComputedInGo(t *testing.T) {
 	svc, _ := newService(t)
 
-	// complete: digital party with a primary email (derived complete).
+	// complete: digital party (no required fields at all, so derived complete
+	// even without a primary email).
 	complete := createPartyT(t, svc, digitalPartyInput())
-	addGuestT(t, svc, complete.ID, parties.CreateGuestPayload{FullName: "C", Email: pointerutil.String("c@example.com"), IsPrimary: true})
+	addGuestT(t, svc, complete.ID, parties.CreateGuestPayload{FullName: "C", IsPrimary: true})
 
-	// incomplete: digital party whose primary has no email.
-	incomplete := createPartyT(t, svc, digitalPartyInput())
+	// incomplete: physical party with no address (the address is what a
+	// not-yet-requested party is now gated on; the primary email is not
+	// required, so it is not what makes this one incomplete).
+	incomplete := createPartyT(t, svc, physicalPartyInput())
 	addGuestT(t, svc, incomplete.ID, parties.CreateGuestPayload{FullName: "I", IsPrimary: true})
 
 	t.Run("complete", func(t *testing.T) {

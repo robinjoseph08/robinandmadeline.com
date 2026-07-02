@@ -96,9 +96,10 @@ func createPartyT(t *testing.T, f fixtures, name string, opts partyOpts) *models
 	return p
 }
 
-// guestOpts tweaks a guest fixture before creation. primary matters to the
-// info-collection status tests: the completion gate reads the PRIMARY guest's
-// email (ADR 0005), and CreateGuest does not auto-promote.
+// guestOpts tweaks a guest fixture before creation. primary marks the guest as
+// the party's primary contact; it no longer affects info-collection status,
+// which is a party-level property now (ADR 0005). CreateGuest does not
+// auto-promote.
 type guestOpts struct {
 	email   *string
 	tags    []string

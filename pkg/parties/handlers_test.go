@@ -97,8 +97,9 @@ func TestCreatePartyHandler_ReturnsStatusAndToken(t *testing.T) {
 	// No code in the request, so the response carries a generated one.
 	require.NotNil(t, resp.RSVPCode, "response should include the generated rsvp_code")
 	assert.Regexp(t, rsvpCodePattern, *resp.RSVPCode)
-	// No primary email yet, so a fresh digital party derives incomplete.
-	assert.Equal(t, models.StatusIncomplete, resp.InfoCollectionStatus)
+	// A fresh digital party has no required fields (the primary email is optional
+	// and there is no address), so it derives complete right away.
+	assert.Equal(t, models.StatusComplete, resp.InfoCollectionStatus)
 }
 
 func TestCreatePartyHandler_InvalidEnumIs422(t *testing.T) {
@@ -421,7 +422,7 @@ func TestPatchGuestHandler_MalformedIDIs404(t *testing.T) {
 func TestMarkInfoHandler_CompleteWithMissingFieldsIs422(t *testing.T) {
 	e := newAPI(t)
 
-	// Physical party, no address, no primary email: not markable complete.
+	// Physical party with no address: not markable complete.
 	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "Y", "side": "madeline", "relation": "family", "invitation_type": "physical",
 	}))
@@ -499,8 +500,8 @@ func TestListPartiesHandler_EnvelopeCarriesItemsAndTotal(t *testing.T) {
 	require.Equal(t, 1, resp.Total)
 	require.Len(t, resp.Items, 1)
 	assert.Equal(t, party.ID, resp.Items[0].ID)
-	// Digital party with a primary email derives complete, and the list item
-	// carries info_collection_status.
+	// A digital party has no required fields, so it derives complete, and the
+	// list item carries info_collection_status.
 	assert.Equal(t, models.StatusComplete, resp.Items[0].InfoCollectionStatus)
 }
 

@@ -47,7 +47,9 @@ type CreatePartyPayload struct {
 // sensible default for whose side a party is on), but invitation_type defaults
 // to "physical" since the overwhelming majority are, and a digital party can be
 // switched afterward. Address fields are omitted (filled in later via the party
-// edit), so a freshly created party reads incomplete until its details arrive.
+// edit), so a freshly created physical party (the default) reads incomplete
+// until its address arrives; a digital party, having no required fields, derives
+// complete right away.
 type CreatePartyWithGuestPayload struct {
 	Name           string            `json:"name" mod:"trim" validate:"required,max=200"`
 	Side           string            `json:"side" validate:"required,oneof=robin madeline" tstype:"models.Side"`
@@ -344,8 +346,9 @@ type ListTagsResponse struct {
 }
 
 // newPartyResponse wraps a loaded party (with guests) for the API, computing
-// its status and the itemized missing required fields. Guests must be loaded
-// for both to be accurate. The derived values are computed before the model is
+// its status and the itemized missing required fields (both party-level, no
+// longer read from the guests). Guests are still loaded so the response carries
+// the party's guest list. The derived values are computed before the model is
 // copied into the response by value.
 func newPartyResponse(p *models.Party) PartyResponse {
 	return PartyResponse{

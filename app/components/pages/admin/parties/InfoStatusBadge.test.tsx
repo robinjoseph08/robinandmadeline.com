@@ -25,7 +25,7 @@ describe("InfoStatusBadge", () => {
     const user = userEvent.setup();
     renderBadge(
       <InfoStatusBadge
-        missingRequiredFields={["primary guest's email"]}
+        missingRequiredFields={["city"]}
         requested
         status="incomplete"
       />,
@@ -35,7 +35,7 @@ describe("InfoStatusBadge", () => {
 
     await user.hover(badge);
     const tooltip = await screen.findByRole("tooltip");
-    expect(tooltip).toHaveTextContent("Missing: primary guest's email");
+    expect(tooltip).toHaveTextContent("Missing: city");
   });
 
   it("says No missing fields on a Requested party whose data is all present", async () => {
@@ -59,7 +59,7 @@ describe("InfoStatusBadge", () => {
     const user = userEvent.setup();
     renderBadge(
       <InfoStatusBadge
-        missingRequiredFields={["primary guest's email", "city", "country"]}
+        missingRequiredFields={["address line 1", "city", "country"]}
         requested={false}
         status="incomplete"
       />,
@@ -74,8 +74,6 @@ describe("InfoStatusBadge", () => {
 
     await user.hover(badge);
     const tooltip = await screen.findByRole("tooltip");
-    expect(tooltip).toHaveTextContent(
-      "Missing: primary guest's email, city, country",
-    );
+    expect(tooltip).toHaveTextContent("Missing: address line 1, city, country");
   });
 });

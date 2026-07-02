@@ -104,8 +104,9 @@ func GenerateRSVPCode() (string, error) {
 
 // loadPartyWithGuests fetches a party and its guests within a query context (the
 // receiver may be the DB or a transaction). Returns a 404 when the party does
-// not exist. Guests are needed to derive status and enforce the single-primary
-// invariant; they come back in the canonical within-party order
+// not exist. Guests are needed to enforce the single-primary invariant and to
+// populate the response's guest list (info-collection status is party-level and
+// no longer reads them); they come back in the canonical within-party order
 // (models.OrderGuestsWithinParty: primary, then the other adults, then the
 // children) so responses never reshuffle.
 func loadPartyWithGuests(ctx context.Context, db bun.IDB, id string) (*models.Party, error) {
