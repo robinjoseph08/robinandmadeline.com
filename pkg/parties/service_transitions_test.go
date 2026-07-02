@@ -82,9 +82,9 @@ func TestMarkComplete_OrdersGuestsWithinParty(t *testing.T) {
 
 	// confirmComplete loads the guests with its own query rather than the shared
 	// Relation("Guests", ...) hook the other party loads use, so it needs its own
-	// ordering coverage. Build a markable physical party (primary has an email,
-	// full address set) whose guests are created out of display order, then prove
-	// the mark-complete response carries the canonical within-party order.
+	// ordering coverage. Build a markable physical party (a full address makes it
+	// markable) whose guests are created out of display order, then prove the
+	// mark-complete response carries the canonical within-party order.
 	p := createPartyT(t, svc, physicalPartyInput())
 	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Kid", IsChild: true})
 	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Adult"})
@@ -132,10 +132,10 @@ func TestMarkIncomplete_ReopensParty(t *testing.T) {
 func TestStatus_DerivedBeforeRequested(t *testing.T) {
 	svc, _ := newService(t)
 
-	// A never-requested digital party with a primary email reads complete by
-	// derivation alone, without any mark action.
+	// A never-requested digital party reads complete by derivation alone (it has
+	// no required fields), without any mark action.
 	p := createPartyT(t, svc, digitalPartyInput())
-	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Has Email", Email: pointerutil.String("has@example.com"), IsPrimary: true})
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Primary", Email: pointerutil.String("has@example.com"), IsPrimary: true})
 
 	reloaded, err := svc.GetParty(ctx(), p.ID)
 	require.NoError(t, err)

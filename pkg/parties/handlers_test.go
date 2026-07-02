@@ -500,8 +500,8 @@ func TestListPartiesHandler_EnvelopeCarriesItemsAndTotal(t *testing.T) {
 	require.Equal(t, 1, resp.Total)
 	require.Len(t, resp.Items, 1)
 	assert.Equal(t, party.ID, resp.Items[0].ID)
-	// Digital party with a primary email derives complete, and the list item
-	// carries info_collection_status.
+	// A digital party has no required fields, so it derives complete, and the
+	// list item carries info_collection_status.
 	assert.Equal(t, models.StatusComplete, resp.Items[0].InfoCollectionStatus)
 }
 
