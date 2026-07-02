@@ -46,9 +46,9 @@ export const useGuests = (
 };
 
 // Invalidates everything a guest write can affect: the flat guest list, the
-// parent party detail (guests + derived status + single-primary), the parties
-// list (status column), and the tag vocabulary (a write can add or drop a tag,
-// which the comboboxes and the tag filter offer).
+// parent party detail (its embedded guest list and single-primary set), the
+// parties list (its per-party guest count), and the tag vocabulary (a write can
+// add or drop a tag, which the comboboxes and the tag filter offer).
 function invalidateForGuestWrite(
   queryClient: ReturnType<typeof useQueryClient>,
   partyId: string,
@@ -108,7 +108,7 @@ export const useUpdateGuest = () => {
 // is written through to the cached guest rows before the invalidations, so
 // anything that snapshots a row in the gap before the refetch (the edit dialog
 // seeding its form) sees the patched values; the invalidations still run to
-// reconcile derived fields (party status, party_name on a move).
+// reconcile derived fields (party_name and the party guest count on a move).
 export const usePatchGuest = () => {
   const queryClient = useQueryClient();
 

@@ -11,8 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// completePhysicalParty builds a physical party that satisfies all required
-// fields (primary email + full address), the precondition for marking complete.
+// completePhysicalParty builds a physical party that satisfies the completion
+// gate (a full mailing address); it also gives the primary an email, which the
+// info form needs but MarkComplete does not.
 func completePhysicalParty(t *testing.T, svc *parties.Service) *models.Party {
 	t.Helper()
 	p := createPartyT(t, svc, physicalPartyInput())

@@ -422,7 +422,7 @@ func TestPatchGuestHandler_MalformedIDIs404(t *testing.T) {
 func TestMarkInfoHandler_CompleteWithMissingFieldsIs422(t *testing.T) {
 	e := newAPI(t)
 
-	// Physical party, no address, no primary email: not markable complete.
+	// Physical party with no address: not markable complete.
 	create := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
 		"name": "Y", "side": "madeline", "relation": "family", "invitation_type": "physical",
 	}))
