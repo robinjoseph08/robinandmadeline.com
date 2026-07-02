@@ -55,8 +55,8 @@ func (s *Service) CreateParty(ctx context.Context, in CreatePartyPayload) (*mode
 // "physical" by the binder when omitted. A taken RSVP code yields a 409, and an
 // omitted one is auto-generated, so the party is born ready to RSVP; if the
 // insert fails the whole thing rolls back, so a failed guest insert never leaves
-// an empty party behind. The returned party carries its guest so the response
-// status derives correctly.
+// an empty party behind. The returned party carries its guest so the response's
+// guest list is complete.
 func (s *Service) CreatePartyWithGuest(ctx context.Context, in CreatePartyWithGuestPayload) (*models.Party, error) {
 	now := time.Now()
 	party := &models.Party{

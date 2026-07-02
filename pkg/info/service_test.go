@@ -421,6 +421,34 @@ func TestUpdatePartyInfo_MissingPrimaryEmailIs422(t *testing.T) {
 	assertErrCode(t, err, errcodes.CodeValidationError)
 }
 
+func TestUpdatePartyInfo_PhysicalMissingPrimaryEmailIs422(t *testing.T) {
+	svc, partySvc, _, db := newServices(t)
+
+	// A physical party's address gate is satisfied by the submit, yet the info
+	// form still requires the primary's email: the dedicated email check (not the
+	// address gate) rejects the blank email, and the 422 rolls back the address
+	// the submit would otherwise have written.
+	p := createPartyT(t, partySvc, "The Smiths", models.InvitationPhysical)
+	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
+
+	_, err := svc.UpdatePartyInfo(ctx(), p.InfoToken, info.UpdatePartyInfoPayload{
+		AddressLine1:    pointerutil.String("123 Main St"),
+		City:            pointerutil.String("Dallas"),
+		StateOrProvince: pointerutil.String("TX"),
+		PostalCode:      pointerutil.String("75201"),
+		Country:         pointerutil.String("United States"),
+		Guests:          []info.GuestInfoUpdate{{GuestID: alice.ID, Email: pointerutil.String("")}},
+	})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+	// The address is complete, so only the email check can fire: assert its
+	// message to prove it is the email requirement doing the rejecting.
+	assert.ErrorContains(t, err, "primary guest's email")
+
+	saved := partyRow(t, db, p.ID)
+	assert.False(t, saved.InfoCollectionConfirmed, "a rejected submit does not confirm")
+	assert.Nil(t, saved.AddressLine1, "the rejected submit rolls the address back too")
+}
+
 func TestUpdatePartyInfo_DigitalPartyNeedsNoAddress(t *testing.T) {
 	svc, partySvc, _, db := newServices(t)
 

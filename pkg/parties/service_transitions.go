@@ -48,7 +48,7 @@ func (s *Service) MarkIncomplete(ctx context.Context, id string) (*models.Party,
 // cannot slip between the gate and the flag write and confirm a party whose
 // required fields are missing (ADR 0005). FOR UPDATE cannot ride on the guests
 // join, so the party row is locked by a slim select first and the guests the
-// gate needs are loaded separately inside the transaction. The guest-facing
+// response carries are loaded separately inside the transaction. The guest-facing
 // counterpart (the info form submit, #8) lives in pkg/info, which inlines this
 // same gated transition inside its form-write transaction so a rejected submit
 // rolls the form's writes back too.

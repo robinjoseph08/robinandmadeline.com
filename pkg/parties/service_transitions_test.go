@@ -47,6 +47,23 @@ func TestMarkComplete_SucceedsWhenPrimaryEmailMissing(t *testing.T) {
 	assert.Equal(t, models.StatusComplete, marked.InfoCollectionStatus())
 }
 
+func TestMarkComplete_PhysicalSucceedsWithoutPrimaryEmail(t *testing.T) {
+	svc, _ := newService(t)
+
+	// A physical party with a full address but no primary email can still be
+	// marked complete: the address is the only completion requirement, and email
+	// is not among them (the info form asks for it; this admin action does not).
+	p := createPartyT(t, svc, physicalPartyInput())
+	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "No Email", IsPrimary: true})
+	line1, city, state, postal, country := fullAddress()
+	updatePartyAddress(t, svc, p.ID, line1, city, state, postal, country)
+
+	marked, err := svc.MarkComplete(ctx(), p.ID)
+	require.NoError(t, err)
+	assert.True(t, marked.InfoCollectionConfirmed)
+	assert.Equal(t, models.StatusComplete, marked.InfoCollectionStatus())
+}
+
 func TestMarkComplete_SetsRequestedAndConfirmed(t *testing.T) {
 	svc, _ := newService(t)
 
