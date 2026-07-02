@@ -97,8 +97,9 @@ func TestCreatePartyHandler_ReturnsStatusAndToken(t *testing.T) {
 	// No code in the request, so the response carries a generated one.
 	require.NotNil(t, resp.RSVPCode, "response should include the generated rsvp_code")
 	assert.Regexp(t, rsvpCodePattern, *resp.RSVPCode)
-	// No primary email yet, so a fresh digital party derives incomplete.
-	assert.Equal(t, models.StatusIncomplete, resp.InfoCollectionStatus)
+	// A fresh digital party has no required fields (the primary email is optional
+	// and there is no address), so it derives complete right away.
+	assert.Equal(t, models.StatusComplete, resp.InfoCollectionStatus)
 }
 
 func TestCreatePartyHandler_InvalidEnumIs422(t *testing.T) {

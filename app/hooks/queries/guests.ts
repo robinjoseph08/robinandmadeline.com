@@ -21,10 +21,10 @@ import type {
 /**
  * React Query hooks for the guests admin API. Guests are created nested under a
  * party (the party is part of their identity) but read/updated/deleted by their
- * own id. A guest write can change its party's derived info_collection_status
- * (the primary guest's email is a required field) and the single-primary set, so
- * every mutation invalidates the parent party detail and the parties list in
- * addition to the flat guest list.
+ * own id. A guest write can change its party's embedded guest list and the
+ * single-primary set (both shown on the party detail), so every mutation
+ * invalidates the parent party detail and the parties list in addition to the
+ * flat guest list.
  */
 
 export enum QueryKey {

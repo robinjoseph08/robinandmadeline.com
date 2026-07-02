@@ -182,11 +182,14 @@ func partyPlaceholderCount(ctx context.Context, db bun.IDB, partyID string) (int
 // UpdatePartyInfo applies one whole info-form submission for the token's
 // party: per-guest name corrections and contact details, per-guest removals,
 // and the party-level address, all in one transaction so a rejected submit
-// persists nothing. After the writes it enforces the completion gate
-// (models.Party.RequiredFieldsPresent, ADR 0005): a submit leaving the party's
-// required fields missing is a 422 and rolls everything back, while a
-// successful one confirms the party (requested=true, confirmed=true), the
-// guest-submission counterpart of the admin MarkComplete. The party row is
+// persists nothing. After the writes it enforces the form's requirements: the
+// primary guest's email (models.Party.PrimaryEmailPresent) plus the completion
+// gate (models.Party.RequiredFieldsPresent, ADR 0005). A submit that leaves the
+// primary without an email, or the party's required fields missing, is a 422 and
+// rolls everything back, while a successful one confirms the party
+// (requested=true, confirmed=true), the guest-submission counterpart of the
+// admin MarkComplete, stricter only in that the form insists on the email the
+// admin action does not. The party row is
 // locked for the duration so a concurrent edit cannot slip between the gate
 // and the confirmation. On success it returns the refreshed view, read inside
 // the same transaction.
@@ -232,10 +235,8 @@ func (s *Service) UpdatePartyInfo(ctx context.Context, token string, in UpdatePa
 			return err
 		}
 
-		// The completion gate (ADR 0005): the form must collect exactly the
-		// invitation type's required fields, so an under-filled submit is
-		// rejected and the transaction rolls back. The gate reads the
-		// still-uncommitted writes, i.e. the party as the submit would leave it.
+		// The submit gate reads the still-uncommitted writes, i.e. the party as the
+		// submit would leave it.
 		gated, err := partyByToken(ctx, tx, token, false)
 		if err != nil {
 			return err
@@ -243,6 +244,17 @@ func (s *Service) UpdatePartyInfo(ctx context.Context, token string, in UpdatePa
 		if gated.Guests, err = partyGuests(ctx, tx, party.ID); err != nil {
 			return err
 		}
+		// The info form asks for the primary guest's email even though a party can
+		// be marked complete without one (RequiredFieldsPresent, ADR 0005): a guest
+		// filling in the form can be expected to have an email, and the couple
+		// collects the email-less older guests offline instead. Enforced here,
+		// server-side, so the API upholds what the form's required marker promises.
+		if !gated.PrimaryEmailPresent() {
+			return errcodes.ValidationError("The primary guest's email is required.")
+		}
+		// The completion gate proper (ADR 0005): the invitation type's remaining
+		// required fields (a physical party's mailing address) must be present, or
+		// the under-filled submit is rejected and the transaction rolls back.
 		if !gated.RequiredFieldsPresent() {
 			return errcodes.ValidationError("Required contact details are missing; please fill in every required field.")
 		}

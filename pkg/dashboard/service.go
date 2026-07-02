@@ -179,13 +179,12 @@ func (s *Service) eventRSVPStats(ctx context.Context) ([]EventRSVPStats, RSVPSum
 
 // infoProgress tallies parties by their effective info-collection status (ADR
 // 0005). Status is derived in Go via the model method (it depends on the
-// primary guest's email, the invitation type, and the two flags), exactly as
-// pkg/parties does, so the dashboard count and the parties list can never
-// disagree. The parties are loaded with their guests because the status method
-// reads the primary guest.
+// invitation type, the mailing address, and the two flags, with no guest field
+// now that the primary email is optional for completion), exactly as pkg/parties
+// does, so the dashboard count and the parties list can never disagree.
 func (s *Service) infoProgress(ctx context.Context) (InfoCollectionProgress, error) {
 	var parties []*models.Party
-	err := s.db.NewSelect().Model(&parties).Relation("Guests").Scan(ctx)
+	err := s.db.NewSelect().Model(&parties).Scan(ctx)
 	if err != nil {
 		return InfoCollectionProgress{}, errors.Wrap(err, "list parties for info progress")
 	}

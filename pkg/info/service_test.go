@@ -408,8 +408,10 @@ func TestUpdatePartyInfo_InternationalAddressNeedsNoPostalCode(t *testing.T) {
 func TestUpdatePartyInfo_MissingPrimaryEmailIs422(t *testing.T) {
 	svc, partySvc, _, _ := newServices(t)
 
-	// Even a digital party (no address needed) requires the primary's email; a
-	// blank submit clears it, so the gate rejects the form.
+	// The info form requires the primary's email even for a digital party (which
+	// needs no address): a blank submit clears it, so the form rejects it, even
+	// though the completion gate no longer does, so the couple could still mark
+	// this very party complete by hand.
 	p := createPartyT(t, partySvc, "The Smiths", models.InvitationDigital)
 	alice := addPrimaryT(t, partySvc, p.ID, "Alice Smith")
 

@@ -52,7 +52,7 @@ import { InfoHint, TooltipIconButton } from "./grid-buttons";
 // other two are surfaced on the chips inside the Flags cell.
 const FLAG_HINTS = {
   primary:
-    "The party's main contact (one per party). Their email is required to mark the party's info complete.",
+    "The party's main contact (one per party). The info form asks for their email, but a party can be marked complete without one.",
   child: "Guest is a child, for meal and seating planning.",
   drinking: "Guest drinks alcohol, for bar and beverage counts.",
 };

@@ -229,19 +229,19 @@ func TestDashboard_InfoCollectionProgressUsesEffectiveStatus(t *testing.T) {
 	// model, not a reimplementation: a not-requested party derives complete iff
 	// its required fields are present, while a requested party is complete only
 	// when confirmed (its data alone is ignored). The fixtures exercise both:
-	//   - derivedComplete:  not-requested, primary email present  -> complete
-	//   - derivedIncomplete: not-requested, no primary email      -> incomplete
-	//   - affirmedComplete: requested+confirmed (has email)        -> complete
-	//   - affirmedPending:  requested, not confirmed (has email)   -> incomplete
-	// The affirmedPending party has its email yet still reads incomplete, so the
-	// count can never be a bare required-fields check, and the Relation("Guests")
-	// load stays load-bearing (drop it and every party would read incomplete).
+	//   - derivedComplete:   not-requested digital (no required fields) -> complete
+	//   - derivedIncomplete: not-requested physical, no address         -> incomplete
+	//   - affirmedComplete:  requested+confirmed                        -> complete
+	//   - affirmedPending:   requested, not confirmed (fields present)  -> incomplete
+	// The affirmedPending party has every field yet still reads incomplete, so the
+	// count can never be a bare required-fields check.
 	f := newAPI(t)
 	derivedComplete := createParty(t, f, "DerivedComplete", partyOpts{invitationType: models.InvitationDigital})
 	createGuest(t, f, derivedComplete.ID, "Primary", true, emailOf("primary@example.com"))
 
-	derivedIncomplete := createParty(t, f, "DerivedIncomplete", partyOpts{invitationType: models.InvitationDigital})
-	createGuest(t, f, derivedIncomplete.ID, "NoEmail", true, nil)
+	// Incomplete by its missing mailing address, not its email (which it has).
+	derivedIncomplete := createParty(t, f, "DerivedIncomplete", partyOpts{invitationType: models.InvitationPhysical})
+	createGuest(t, f, derivedIncomplete.ID, "Primary", true, emailOf("noaddr@example.com"))
 
 	affirmedComplete := createParty(t, f, "AffirmedComplete", partyOpts{invitationType: models.InvitationDigital})
 	createGuest(t, f, affirmedComplete.ID, "Primary", true, emailOf("affirmed@example.com"))

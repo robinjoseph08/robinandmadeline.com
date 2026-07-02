@@ -32,15 +32,19 @@ func TestMarkComplete_Rejected422WhenRequiredFieldsMissing(t *testing.T) {
 	assertErrCode(t, err, errcodes.CodeValidationError)
 }
 
-func TestMarkComplete_RejectedWhenPrimaryEmailMissing(t *testing.T) {
+func TestMarkComplete_SucceedsWhenPrimaryEmailMissing(t *testing.T) {
 	svc, _ := newService(t)
 
-	// Digital party (no address needed) but the primary has no email.
+	// A digital party whose primary has no email can still be marked complete:
+	// email is optional for completion, so the couple can finish an older guest
+	// they collect from offline (the guest-facing info form still asks for it).
 	p := createPartyT(t, svc, digitalPartyInput())
 	addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "No Email", IsPrimary: true})
 
-	_, err := svc.MarkComplete(ctx(), p.ID)
-	assertErrCode(t, err, errcodes.CodeValidationError)
+	marked, err := svc.MarkComplete(ctx(), p.ID)
+	require.NoError(t, err)
+	assert.True(t, marked.InfoCollectionConfirmed)
+	assert.Equal(t, models.StatusComplete, marked.InfoCollectionStatus())
 }
 
 func TestMarkComplete_SetsRequestedAndConfirmed(t *testing.T) {
