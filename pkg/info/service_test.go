@@ -440,9 +440,9 @@ func TestUpdatePartyInfo_PhysicalMissingPrimaryEmailIs422(t *testing.T) {
 		Guests:          []info.GuestInfoUpdate{{GuestID: alice.ID, Email: pointerutil.String("")}},
 	})
 	assertErrCode(t, err, errcodes.CodeValidationError)
-	// The address is complete, so only the email check can fire: assert its
+	// The address is complete, so only the email check can fire: check its
 	// message to prove it is the email requirement doing the rejecting.
-	assert.ErrorContains(t, err, "primary guest's email")
+	require.ErrorContains(t, err, "primary guest's email")
 
 	saved := partyRow(t, db, p.ID)
 	assert.False(t, saved.InfoCollectionConfirmed, "a rejected submit does not confirm")
