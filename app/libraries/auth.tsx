@@ -1,6 +1,12 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
-import { TOKEN_STORAGE_KEY } from "@/libraries/admin-api";
+import { onAdminUnauthorized, TOKEN_STORAGE_KEY } from "@/libraries/admin-api";
 import { apiRequest } from "@/libraries/api";
 import { AuthContext, type AuthContextValue } from "@/libraries/auth-context";
 import type { LoginResponse } from "@/types/generated/auth";
@@ -12,7 +18,11 @@ import type { LoginResponse } from "@/types/generated/auth";
  * refresh keeps the session, and exposed via context so any component can read
  * the token, check auth state, log in, or log out. This is intentionally a thin
  * layer: there is no client state library, and token freshness is enforced by
- * the server rejecting expired tokens on each request.
+ * the server rejecting expired tokens on each request. When an admin request
+ * hits that rejection, admin-api clears the stored token and notifies us (via
+ * onAdminUnauthorized) so we drop the in-memory token too and the route guard
+ * redirects to the login page, instead of the admin being stuck on a page that
+ * only renders "Invalid or expired token."
  *
  * The context and useAuth hook live in auth-context.ts so this module exports
  * only a component (a React Fast Refresh requirement). The localStorage key is
@@ -59,6 +69,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
     setToken(null);
   }, []);
+
+  // When an admin request is rejected for a stale token, admin-api has already
+  // cleared it from storage; mirror that into React state so RequireAdmin sees
+  // isAuthenticated flip to false and redirects to the login page.
+  useEffect(() => onAdminUnauthorized(() => setToken(null)), []);
 
   const value = useMemo<AuthContextValue>(
     () => ({ token, isAuthenticated: token !== null, login, logout }),
