@@ -118,6 +118,46 @@ describe("adminRequest on a 401", () => {
     unsubscribe();
   });
 
+  it("does not clear or notify a 401 when no token was attached", async () => {
+    // No token in storage: the request goes out anonymously, so a 401 is not a
+    // stale-token signal and must not tear down a (non-existent) session.
+    vi.spyOn(api, "apiRequest").mockRejectedValue(
+      new ApiError(401, "Invalid or expired token."),
+    );
+    const listener = vi.fn();
+    const unsubscribe = onAdminUnauthorized(listener);
+
+    await expect(adminRequest("/admin/parties")).rejects.toBeInstanceOf(
+      ApiError,
+    );
+
+    expect(listener).not.toHaveBeenCalled();
+
+    unsubscribe();
+  });
+
+  it("does not clear a token that changed since the request started", async () => {
+    // Models a slow request carrying an old token that 401s only after the
+    // admin has re-logged-in: the newer token must survive and no redirect
+    // should fire.
+    localStorage.setItem(TOKEN_STORAGE_KEY, "old.jwt.token");
+    vi.spyOn(api, "apiRequest").mockImplementation(async () => {
+      localStorage.setItem(TOKEN_STORAGE_KEY, "new.jwt.token");
+      throw new ApiError(401, "Invalid or expired token.");
+    });
+    const listener = vi.fn();
+    const unsubscribe = onAdminUnauthorized(listener);
+
+    await expect(adminRequest("/admin/parties")).rejects.toBeInstanceOf(
+      ApiError,
+    );
+
+    expect(localStorage.getItem(TOKEN_STORAGE_KEY)).toBe("new.jwt.token");
+    expect(listener).not.toHaveBeenCalled();
+
+    unsubscribe();
+  });
+
   it("stops notifying after unsubscribe", async () => {
     localStorage.setItem(TOKEN_STORAGE_KEY, "stale.jwt.token");
     vi.spyOn(api, "apiRequest").mockRejectedValue(

@@ -5,12 +5,12 @@
  * persisted admin token and threads it into `apiRequest` as a Bearer token. It
  * also serializes an optional query object so list filters become a query
  * string. The react-query hooks call this rather than `apiRequest` directly, so
- * the token handling lives in exactly one place. On a 401 (the token is
- * missing, expired, or tampered) it drops the stored token and notifies the
- * auth provider so the route guard redirects to the login page, rather than
- * leaving the admin stuck on a page that only renders "Invalid or expired
- * token." Any other error is left to propagate so callers can surface
- * `ApiError.message` from the error envelope.
+ * the token handling lives in exactly one place. When a request that carried a
+ * token is rejected with a 401 (the attached token is expired or tampered) it
+ * drops the stored token and notifies the auth provider so the route guard
+ * redirects to the login page, rather than leaving the admin stuck on a page
+ * that only renders "Invalid or expired token." Any other error is left to
+ * propagate so callers can surface `ApiError.message` from the error envelope.
  */
 
 import QueryString from "qs";
@@ -85,9 +85,10 @@ interface AdminRequestOptions {
  * query object as a query string, and returns the parsed JSON body (or
  * undefined for 204). Throws the same `ApiError` as `apiRequest`.
  *
- * A 401 while a token was attached means that token went stale, so it is
- * cleared and listeners are notified (see `onAdminUnauthorized`) before the
- * error is re-thrown; the auth provider then redirects to the login page.
+ * A 401 on a request whose attached token is still the stored one means that
+ * token went stale, so it is cleared and listeners are notified (see
+ * `onAdminUnauthorized`) before the error is re-thrown; the auth provider then
+ * redirects to the login page.
  */
 export async function adminRequest<T>(
   path: string,
@@ -111,7 +112,17 @@ export async function adminRequest<T>(
   try {
     return await apiRequest<T>(fullPath, { method, body, token });
   } catch (err) {
-    if (token && err instanceof ApiError && err.status === 401) {
+    // Only tear down the session when the token this request carried is still
+    // the stored one. A 401 from a request that predates a re-login (readToken
+    // has since changed) must not clear the newer token or bounce the freshly
+    // authenticated admin; this also dedups concurrent 401s, since the first
+    // clear makes the rest no-ops.
+    if (
+      token &&
+      readToken() === token &&
+      err instanceof ApiError &&
+      err.status === 401
+    ) {
       clearToken();
       unauthorizedListeners.forEach((listener) => listener());
     }
