@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { adminRequest, TOKEN_STORAGE_KEY } from "./admin-api";
+import {
+  adminRequest,
+  onAdminUnauthorized,
+  TOKEN_STORAGE_KEY,
+} from "./admin-api";
 import * as api from "./api";
+import { ApiError } from "./api";
 
 // adminRequest is the seam every admin query hook goes through, so its two jobs
 // are worth pinning: attach the stored token, and serialize the query object.
@@ -61,5 +66,70 @@ describe("adminRequest", () => {
       "/admin/parties",
       expect.objectContaining({ method: "POST", body: { name: "Test" } }),
     );
+  });
+});
+
+// A stale admin token surfaces as a 401 on every request; the helper clears it
+// and notifies subscribers so the auth provider can redirect to login rather
+// than leaving the admin stuck on an "Invalid or expired token." page.
+describe("adminRequest on a 401", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it("clears the stored token and notifies listeners", async () => {
+    localStorage.setItem(TOKEN_STORAGE_KEY, "stale.jwt.token");
+    vi.spyOn(api, "apiRequest").mockRejectedValue(
+      new ApiError(401, "Invalid or expired token."),
+    );
+    const listener = vi.fn();
+    const unsubscribe = onAdminUnauthorized(listener);
+
+    await expect(adminRequest("/admin/parties")).rejects.toBeInstanceOf(
+      ApiError,
+    );
+
+    expect(localStorage.getItem(TOKEN_STORAGE_KEY)).toBeNull();
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
+  });
+
+  it("leaves the token and listeners alone for non-401 errors", async () => {
+    localStorage.setItem(TOKEN_STORAGE_KEY, "good.jwt.token");
+    vi.spyOn(api, "apiRequest").mockRejectedValue(
+      new ApiError(500, "Something broke."),
+    );
+    const listener = vi.fn();
+    const unsubscribe = onAdminUnauthorized(listener);
+
+    await expect(adminRequest("/admin/parties")).rejects.toBeInstanceOf(
+      ApiError,
+    );
+
+    expect(localStorage.getItem(TOKEN_STORAGE_KEY)).toBe("good.jwt.token");
+    expect(listener).not.toHaveBeenCalled();
+
+    unsubscribe();
+  });
+
+  it("stops notifying after unsubscribe", async () => {
+    localStorage.setItem(TOKEN_STORAGE_KEY, "stale.jwt.token");
+    vi.spyOn(api, "apiRequest").mockRejectedValue(
+      new ApiError(401, "Invalid or expired token."),
+    );
+    const listener = vi.fn();
+    onAdminUnauthorized(listener)();
+
+    await expect(adminRequest("/admin/parties")).rejects.toBeInstanceOf(
+      ApiError,
+    );
+
+    expect(listener).not.toHaveBeenCalled();
   });
 });
