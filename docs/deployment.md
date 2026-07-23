@@ -96,9 +96,10 @@ fly secrets set \
   JWT_SECRET="$(openssl rand -hex 32)"
 ```
 
-Not yet: `MAILGUN_API_KEY` and `MAILGUN_DOMAIN`. The email queue (ADR 0004)
-is not implemented yet and `pkg/config` does not read them; set them when
-that work lands.
+The email system was added after the initial setup. `MAILGUN_API_KEY` and
+`MAILGUN_DOMAIN` are now configured as Fly secrets in production; the optional
+`MAILGUN_WEBHOOK_SIGNING_KEY` verifies delivery webhooks when configured. The
+worker lifecycle follows ADR 0004 and ADR 0010.
 
 ### 4. First deploy
 
@@ -147,15 +148,21 @@ AAAA  2a09:8280:1::129:ec8:0
 ```
 
 That is one A and one AAAA for each of the eight hostnames, sixteen records in
-all. No `_acme-challenge` record is needed: once a hostname resolves to Fly,
-Fly completes certificate validation itself. Keep every record DNS only (grey
-cloud), never proxied. Fly terminates TLS and needs to see the hostname
-directly; proxying through Cloudflare on top of Fly's certs causes cert
-validation and redirect-loop headaches.
+all. No `_acme-challenge` record is needed in the DNS-only setup: once a
+hostname resolves to Fly, Fly completes certificate validation itself.
 
-No Cloudflare redirect or page rules are needed: every hostname points at the
-same Fly app and the Go server permanently redirects everything that is not
-www.robinandmadeline.com itself, including the bare apex.
+Keep every record DNS only (grey cloud) as the deliberate current topology
+(ADR 0010). Cloudflare proxying is supported by Fly, but it is not a toggle-only
+change for this app: it requires Full (strict) TLS, `_fly-ownership` records,
+certificate-renewal verification, cache isolation for authenticated responses,
+and a revised client-IP trust chain because `Fly-Client-IP` would identify the
+Cloudflare hop. Proxying is deferred until traffic justifies that separate
+project.
+
+No Cloudflare redirect or page rules are needed in the DNS-only topology: every
+hostname points at the same Fly app and the Go server permanently redirects
+everything that is not www.robinandmadeline.com itself, including the bare
+apex.
 
 ### 7. Verify
 
