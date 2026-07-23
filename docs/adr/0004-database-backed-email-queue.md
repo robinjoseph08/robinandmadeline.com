@@ -12,3 +12,7 @@ This survives Fly.io scale-to-zero shutdowns without losing emails or sending du
 ## Consequences
 
 More logic than a goroutine: a worker loop, an intermediate `sending` state to prevent duplicate pickup, and a Mailgun reconciliation check on restart. Graceful shutdown stops new batches on SIGTERM and finishes the current one.
+
+## Accepted lifecycle change
+
+ADR 0010, which is accepted but not yet implemented, removes startup and idle polling. Enqueueing will start the worker and run it until the queue is drained; later email-admin activity will restart it and reconcile interrupted work. This avoids waking Neon for unrelated traffic, with the accepted trade-off that recovery can wait until the couple returns to email administration.

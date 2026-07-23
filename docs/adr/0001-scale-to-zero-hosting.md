@@ -11,3 +11,5 @@ The site must stay online indefinitely as a keepsake at near-zero cost, but traf
 ## Consequences
 
 Because the container scales to zero, admin and guest auth use stateless JWTs rather than server-side sessions. There is no session store to lose on shutdown, and tokens validate with just the signing secret. Cold starts are acceptable because Go boots in milliseconds.
+
+The two services scale independently: arbitrary traffic can wake Fly without needing persistent data, and any query can then keep Neon active through its idle window. ADR 0010 therefore requires demand-driven database activation rather than treating every Fly cold start as a reason to wake Neon.
