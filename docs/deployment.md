@@ -100,13 +100,17 @@ fly secrets set \
   DATABASE_URL='postgres://...?sslmode=require' \
   ADMIN_USERNAME='...' \
   ADMIN_PASSWORD='...' \
-  JWT_SECRET="$(openssl rand -hex 32)"
+  JWT_SECRET="$(openssl rand -hex 32)" \
+  MAILGUN_API_KEY='...' \
+  MAILGUN_DOMAIN='...' \
+  MAILGUN_WEBHOOK_SIGNING_KEY='...'
 ```
 
-The email system was added after the initial setup. `MAILGUN_API_KEY` and
-`MAILGUN_DOMAIN` are now configured as Fly secrets in production; the optional
-`MAILGUN_WEBHOOK_SIGNING_KEY` verifies delivery webhooks when configured. The
-currently deployed worker lifecycle follows ADR 0004; ADR 0010 records its
+The email system was added after the initial setup, and its secrets are now
+configured in production. `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` enable sending.
+`MAILGUN_WEBHOOK_SIGNING_KEY` verifies delivery webhooks; without it, the app
+fails closed and rejects every webhook, so delivery statuses will not advance.
+The currently deployed worker lifecycle follows ADR 0004; ADR 0010 records its
 accepted demand-started replacement.
 
 ### 4. First deploy
