@@ -20,6 +20,13 @@ how production was built should it ever need rebuilding.
   to `master`, with migrations applied first via the Fly `release_command`.
   Steady state is one machine.
 
+> **Pending accepted change:** ADR 0010 is accepted but not yet implemented or
+> deployed. Until it lands, the current process still pings Postgres at startup,
+> `/api/health` still reports database reachability, the email worker still
+> starts at process boot, and unknown frontend paths still receive the SPA
+> shell. Current-state verification and operations below intentionally describe
+> that behavior.
+
 ## Already done in this repo
 
 - `Dockerfile`: multi-stage build that regenerates the tygo types, builds the
@@ -99,7 +106,8 @@ fly secrets set \
 The email system was added after the initial setup. `MAILGUN_API_KEY` and
 `MAILGUN_DOMAIN` are now configured as Fly secrets in production; the optional
 `MAILGUN_WEBHOOK_SIGNING_KEY` verifies delivery webhooks when configured. The
-worker lifecycle follows ADR 0004 and ADR 0010.
+currently deployed worker lifecycle follows ADR 0004; ADR 0010 records its
+accepted demand-started replacement.
 
 ### 4. First deploy
 
@@ -173,7 +181,7 @@ apex.
   `https://www.robinandmadeline.com/anything?x=1`.
 - `https://robeline.co/rsvp` and `https://robeline.com/rsvp` 301 to
   `https://www.robinandmadeline.com/rsvp`.
-- `curl https://www.robinandmadeline.com/api/health` returns
+- Until ADR 0010 is deployed, the health endpoint returns
   `{"status":"ok","database":"up"}`.
 - Scale-to-zero: `fly machine list` shows the machine `stopped` a few minutes
   after the last request, and the next request starts it again.
@@ -202,10 +210,11 @@ secret with `gh secret delete FLY_API_TOKEN`.
   deploy in the GitHub Actions run or with `fly logs`. A migration failure
   aborts the deploy and the previous release keeps serving. To deploy by hand
   (for a rollback or when CI is unavailable), run `fly deploy` locally.
-- **Scale-to-zero behavior**: Fly's proxy stops the machine when idle and
-  boots it on the next request. The Go cold start is sub-second (static
-  binary, no startup migrations, background-only DB ping), so visitors just
-  see a normally fast first load while Neon also wakes from idle.
+- **Scale-to-zero behavior (until ADR 0010 is deployed)**: Fly's proxy stops
+  the machine when idle and boots it on the next request. The Go cold start is
+  sub-second (static binary, no startup migrations, background-only DB ping),
+  so visitors just see a normally fast first load while Neon also wakes from
+  idle.
 - **Logs**: `fly logs` (JSON via `LOG_FORMAT=json`).
 - **Rollback**: `fly releases` then `fly deploy --image <previous image ref>`.
 - **Local image check**: `mise build:docker` builds the exact production

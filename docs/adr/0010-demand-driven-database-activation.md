@@ -1,6 +1,10 @@
+---
+status: accepted
+---
+
 # Activate Neon only on demand for persistent data
 
-A Fly machine can start for arbitrary scanner traffic even when the requested response needs no persistent data. Neon compute is therefore activated only by operations whose correct response requires Postgres; process startup, liveness checks, static pages and assets, redirects, unknown routes, and authentication rejection must not connect to the database.
+This decision is accepted but not yet implemented. A Fly machine can start for arbitrary scanner traffic even when the requested response needs no persistent data. Neon compute is therefore activated only by operations whose correct response requires Postgres; process startup, liveness checks, static pages and assets, redirects, unknown routes, and authentication rejection must not connect to the database.
 
 ## Considered Options
 
@@ -11,9 +15,10 @@ A Fly machine can start for arbitrary scanner traffic even when the requested re
 ## Consequences
 
 - `/api/health` reports process liveness only and never checks Postgres. There is no separately polled database health endpoint.
-- Database-backed routes connect lazily. If Postgres cannot be reached within a bounded attempt, API routes return 503 while database-free pages continue to work.
+- Database-backed routes connect lazily. If Postgres cannot be reached within a bounded attempt, API routes return 503 while database-free pages continue to work. A failed Info Collection metadata lookup uses the generic title and does not fail the document response.
 - The production SQL pool uses conservative open, idle, and idle-lifetime limits rather than Go's unbounded defaults.
-- Unknown document paths return real server-side 404 responses. The server uses an allowlist of valid React route shapes rather than a denylist of scanner paths such as `*.php`; that allowlist must stay synchronized with the frontend router.
+- Unknown document paths return real server-side 404 responses. The server uses an allowlist of valid React route shapes rather than a denylist of scanner paths such as `*.php`; that allowlist must stay synchronized with the frontend router. Code comments at the allowlist explain this synchronization boundary.
+- Static `robots.txt` and `sitemap.xml` files guide cooperative crawlers toward public routes and away from admin, tokenized, and intermediate guest-flow routes. They are crawl hygiene, not access controls.
 - Info Collection metadata is the one intentional database-backed shell render. A normal GET for a single 30-character lowercase-alphanumeric `/i/:token` path may resolve the Primary Guest's name; malformed paths and HEAD requests use the generic title without querying.
 - The email worker starts after enqueue and runs until the queue is drained. It does not poll at process startup or while no email work is active. If shutdown interrupts a send, later email-admin activity starts reconciliation and resumes it, so recovery can be delayed until the couple returns to email administration.
 - Public and authenticated schedules remain database-backed for now. Schedule hard-coding and in-memory caching will be reconsidered only if Neon usage remains high after these changes.
