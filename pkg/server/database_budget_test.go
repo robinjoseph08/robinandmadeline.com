@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -67,14 +65,14 @@ func TestDatabaseBudgetMiddleware_DoesNotTranslateCallerDeadline(t *testing.T) {
 	assert.Empty(t, rec.Body.String())
 }
 
-func TestDatabaseBudgetMiddleware_TranslatesDriverSocketDeadline(t *testing.T) {
+func TestDatabaseBudgetMiddleware_TranslatesOwnDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := echo.New()
 		e.HTTPErrorHandler = errcodes.NewHandler().Handle
 		e.Use(databaseBudgetMiddleware)
 		e.GET("/api/test", func(c echo.Context) error {
 			<-c.Request().Context().Done()
-			return &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
+			return c.Request().Context().Err()
 		})
 
 		startedAt := time.Now()
@@ -85,6 +83,27 @@ func TestDatabaseBudgetMiddleware_TranslatesDriverSocketDeadline(t *testing.T) {
 		assert.Equal(t, database.HTTPWorkBudget, time.Since(startedAt))
 		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 		assert.JSONEq(t, `{"error":{"code":"service_unavailable","message":"Service Unavailable","status_code":503}}`, rec.Body.String())
+	})
+}
+
+func TestDatabaseBudgetMiddleware_PreservesTypedErrorAfterBudgetExpires(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := echo.New()
+		e.HTTPErrorHandler = errcodes.NewHandler().Handle
+		e.Use(databaseBudgetMiddleware)
+		e.GET("/api/test", func(c echo.Context) error {
+			<-c.Request().Context().Done()
+			return errcodes.ValidationError("invalid after deadline")
+		})
+
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/test", http.NoBody)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		var envelope errcodes.ErrorEnvelope
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+		assert.Equal(t, string(errcodes.CodeValidationError), envelope.Error.Code)
 	})
 }
 

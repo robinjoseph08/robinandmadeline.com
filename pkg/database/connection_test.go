@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun/driver/pgdriver"
 )
 
 type stubConnector struct {
@@ -43,14 +44,18 @@ func (*stubConn) Close() error              { return nil }
 func (*stubConn) Begin() (driver.Tx, error) { return nil, errors.New("stub connection cannot begin") }
 
 type recordingTx struct {
-	commits atomic.Int32
+	commits   atomic.Int32
+	rollbacks atomic.Int32
 }
 
 func (tx *recordingTx) Commit() error {
 	tx.commits.Add(1)
 	return nil
 }
-func (*recordingTx) Rollback() error { return nil }
+func (tx *recordingTx) Rollback() error {
+	tx.rollbacks.Add(1)
+	return nil
+}
 
 type recordingCommitExecer struct {
 	ctx   context.Context
@@ -63,6 +68,17 @@ func (e *recordingCommitExecer) ExecContext(ctx context.Context, query string, a
 	e.query = query
 	e.args = args
 	return driver.RowsAffected(0), nil
+}
+
+type blockingRows struct {
+	release chan struct{}
+}
+
+func (*blockingRows) Columns() []string { return []string{"value"} }
+func (*blockingRows) Close() error      { return nil }
+func (rows *blockingRows) Next([]driver.Value) error {
+	<-rows.release
+	return driver.ErrBadConn
 }
 
 type blockingConnector struct {
@@ -242,18 +258,61 @@ func TestNewWithConnector_MarksOnlyPhysicalConnectionFailures(t *testing.T) {
 	assert.False(t, IsConnectionFailure(errors.New("ordinary SQL error")))
 }
 
-func TestContextualTx_CommitUsesTransactionContext(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), HTTPWorkBudget)
-	defer cancel()
-	rawTx := &recordingTx{}
-	execer := &recordingCommitExecer{}
-	tx := &contextualTx{Tx: rawTx, ctx: ctx, execer: execer}
+func TestObservedConnector_WrapsPGDriverConnection(t *testing.T) {
+	connector := &observedConnector{connector: &stubConnector{conn: &pgdriver.Conn{}}}
 
-	require.NoError(t, tx.Commit())
-	assert.Equal(t, ctx, execer.ctx)
-	assert.Equal(t, "COMMIT", execer.query)
-	assert.Nil(t, execer.args)
-	assert.Zero(t, rawTx.commits.Load(), "the background-context driver commit must not run")
+	conn, err := connector.Connect(context.Background())
+	require.NoError(t, err)
+	assert.IsType(t, &contextualPGConn{}, conn)
+}
+
+func TestContextualTx_CommitAndRollbackUseTransactionContext(t *testing.T) {
+	for _, operation := range []string{"COMMIT", "ROLLBACK"} {
+		t.Run(operation, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), HTTPWorkBudget)
+			defer cancel()
+			rawTx := &recordingTx{}
+			execer := &recordingCommitExecer{}
+			tx := &contextualTx{Tx: rawTx, ctx: ctx, execer: execer}
+
+			var err error
+			if operation == "COMMIT" {
+				err = tx.Commit()
+			} else {
+				err = tx.Rollback()
+			}
+			require.NoError(t, err)
+			assert.Equal(t, ctx, execer.ctx)
+			assert.Equal(t, operation, execer.query)
+			assert.Nil(t, execer.args)
+			assert.Zero(t, rawTx.commits.Load(), "the background-context driver commit must not run")
+			assert.Zero(t, rawTx.rollbacks.Load(), "the background-context driver rollback must not run")
+		})
+	}
+}
+
+func TestContextualRows_StopsBlockedIterationAtBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := WithHTTPWorkBudget(context.Background())
+		defer cancel()
+		rawRows := &blockingRows{release: make(chan struct{})}
+		var closeOnce sync.Once
+		rows := newContextualRows(ctx, rawRows, func() error {
+			closeOnce.Do(func() { close(rawRows.release) })
+			return nil
+		})
+
+		startedAt := time.Now()
+		err := rows.Next(make([]driver.Value, 1))
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, HTTPWorkBudget, time.Since(startedAt))
+		require.NoError(t, rows.Close())
+	})
+}
+
+func TestNormalizeDatabaseError_MarksOnlyTransportFailures(t *testing.T) {
+	assert.True(t, IsConnectionFailure(normalizeDatabaseError(context.Background(), driver.ErrBadConn)))
+	assert.False(t, IsConnectionFailure(normalizeDatabaseError(context.Background(), errors.New("ordinary SQL error"))))
 }
 
 func TestHTTPWorkBudget_HasOneExactFiveSecondDeadline(t *testing.T) {

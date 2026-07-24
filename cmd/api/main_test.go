@@ -19,6 +19,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/labstack/echo/v4"
 	"github.com/robinjoseph08/golib/logger"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
@@ -244,7 +245,8 @@ func TestApplicationAssembly_BlockingDatabaseRequestHasFiveSecondBudgetWhileData
 		startedAt := time.Now()
 		result := make(chan *httptest.ResponseRecorder)
 		go func() {
-			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/events", http.NoBody)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/guest/login", strings.NewReader(`{"code":"ABCDE"}`))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 			rec := httptest.NewRecorder()
 			app.server.Handler.ServeHTTP(rec, req)
 			result <- rec

@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -230,20 +232,41 @@ func (c *observedConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	return conn, nil
 }
 
-// contextualPGConn keeps the context passed to BeginTx available to the
-// driver's COMMIT operation. database/sql's driver.Tx interface has no
-// CommitContext method, and pgdriver otherwise commits with a background
-// context, which would let a commit outlive its request's aggregate budget.
+// contextualPGConn carries operation contexts through pgdriver boundaries that
+// otherwise fall back to background contexts. It also marks transport failures
+// without changing PostgreSQL statement and programming errors.
 type contextualPGConn struct {
 	*pgdriver.Conn
+}
+
+func (c *contextualPGConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	stmt, err := c.Conn.PrepareContext(ctx, query)
+	return stmt, normalizeDatabaseError(ctx, err)
 }
 
 func (c *contextualPGConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	tx, err := c.Conn.BeginTx(ctx, opts)
 	if err != nil {
-		return nil, err
+		return nil, normalizeDatabaseError(ctx, err)
 	}
 	return &contextualTx{Tx: tx, ctx: ctx, execer: c.Conn}, nil
+}
+
+func (c *contextualPGConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	result, err := c.Conn.ExecContext(ctx, query, args)
+	return result, normalizeDatabaseError(ctx, err)
+}
+
+func (c *contextualPGConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	rows, err := c.Conn.QueryContext(ctx, query, args)
+	if err != nil {
+		return nil, normalizeDatabaseError(ctx, err)
+	}
+	return newContextualRows(ctx, rows, c.Close), nil
+}
+
+func (c *contextualPGConn) Ping(ctx context.Context) error {
+	return normalizeDatabaseError(ctx, c.Conn.Ping(ctx))
 }
 
 type contextualTx struct {
@@ -254,13 +277,77 @@ type contextualTx struct {
 
 func (tx *contextualTx) Commit() error {
 	_, err := tx.execer.ExecContext(tx.ctx, "COMMIT", nil)
+	return normalizeDatabaseError(tx.ctx, err)
+}
+
+func (tx *contextualTx) Rollback() error {
+	_, err := tx.execer.ExecContext(tx.ctx, "ROLLBACK", nil)
+	return normalizeDatabaseError(tx.ctx, err)
+}
+
+type contextualRows struct {
+	driver.Rows
+	ctx       context.Context
+	closeConn func() error
+	done      chan struct{}
+	doneOnce  sync.Once
+}
+
+func newContextualRows(ctx context.Context, rows driver.Rows, closeConn func() error) *contextualRows {
+	wrapped := &contextualRows{
+		Rows:      rows,
+		ctx:       ctx,
+		closeConn: closeConn,
+		done:      make(chan struct{}),
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = closeConn()
+		case <-wrapped.done:
+		}
+	}()
+	return wrapped
+}
+
+func (rows *contextualRows) Next(dest []driver.Value) error {
+	err := rows.Rows.Next(dest)
+	if err == io.EOF {
+		return err
+	}
+	return normalizeDatabaseError(rows.ctx, err)
+}
+
+func (rows *contextualRows) Close() error {
+	defer rows.doneOnce.Do(func() { close(rows.done) })
+	return normalizeDatabaseError(rows.ctx, rows.Rows.Close())
+}
+
+func normalizeDatabaseError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if isDatabaseTransportError(err) {
+		return &connectionFailure{err: err}
+	}
 	return err
 }
 
+func isDatabaseTransportError(err error) bool {
+	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
 // connectionFailure marks an error returned while opening a physical database
-// connection. SQL statement errors deliberately do not receive this marker, so
-// request error translation cannot turn ordinary SQL or programming failures
-// into service-unavailable responses.
+// connection or using its transport. PostgreSQL statement and programming
+// errors deliberately do not receive this marker, so request translation cannot
+// turn them into service-unavailable responses.
 type connectionFailure struct {
 	err error
 }
@@ -268,8 +355,9 @@ type connectionFailure struct {
 func (e *connectionFailure) Error() string { return e.err.Error() }
 func (e *connectionFailure) Unwrap() error { return e.err }
 
-// IsConnectionFailure reports whether err arose while opening a physical
-// database connection. It traverses infrastructure wrapping added by services.
+// IsConnectionFailure reports whether err arose while opening or using a
+// physical database connection. It traverses infrastructure wrapping added by
+// services.
 func IsConnectionFailure(err error) bool {
 	var failure *connectionFailure
 	return errors.As(err, &failure)

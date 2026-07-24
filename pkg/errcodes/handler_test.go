@@ -123,6 +123,19 @@ func TestHandle_ServiceUnavailableRendersNamedEnvelope(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, status)
 }
 
+func TestHandle_ServiceUnavailableCodeCannotExposeCallerMessage(t *testing.T) {
+	rec := handle(t, &errcodes.Error{
+		HTTPCode: http.StatusServiceUnavailable,
+		Code:     string(errcodes.CodeServiceUnavailable),
+		Message:  "pool exhausted: dsn=secret",
+	})
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	_, msg, _ := decodeEnvelope(t, rec)
+	assert.Equal(t, "Service Unavailable", msg)
+	assert.NotContains(t, rec.Body.String(), "secret")
+}
+
 func TestHandle_EchoHTTPError5xxMessageIsMasked(t *testing.T) {
 	// A framework-originated 5xx renders the status text, not its message.
 	rec := handle(t, echo.NewHTTPError(http.StatusServiceUnavailable, "pool exhausted: dsn=secret"))
