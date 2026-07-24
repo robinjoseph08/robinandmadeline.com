@@ -169,6 +169,28 @@ func NewWithConnector(connector driver.Connector, observer FirstConnectionObserv
 	return bun.NewDB(sqldb, pgdialect.New()), nil
 }
 
+// HTTPWorkBudget is the aggregate database-work budget for one matched API
+// request. The server installs it once before authentication and every query or
+// transaction uses the same request context, so later work receives only the
+// time left from earlier work.
+const HTTPWorkBudget = 5 * time.Second
+
+var errHTTPWorkBudgetExceeded = errors.New("HTTP database-work budget exceeded")
+
+// WithHTTPWorkBudget returns a context carrying the one aggregate database
+// deadline for an API request. The distinct cancellation cause lets the server
+// distinguish this budget from a caller disconnect or an earlier caller-owned
+// deadline.
+func WithHTTPWorkBudget(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeoutCause(ctx, HTTPWorkBudget, errHTTPWorkBudgetExceeded)
+}
+
+// HTTPWorkBudgetExceeded reports whether the request's own database-work
+// budget, rather than its parent context, canceled ctx.
+func HTTPWorkBudgetExceeded(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errHTTPWorkBudgetExceeded)
+}
+
 const (
 	maxOpenConnections = 5
 	maxIdleConnections = 1
@@ -199,7 +221,28 @@ func (c *observedConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if first && c.observer != nil {
 		c.observer(ctx, FirstConnectionAttempt{Operation: operationFromContext(ctx), Err: err})
 	}
-	return conn, err
+	if err != nil {
+		return nil, &connectionFailure{err: err}
+	}
+	return conn, nil
+}
+
+// connectionFailure marks an error returned while opening a physical database
+// connection. SQL statement errors deliberately do not receive this marker, so
+// request error translation cannot turn ordinary SQL or programming failures
+// into service-unavailable responses.
+type connectionFailure struct {
+	err error
+}
+
+func (e *connectionFailure) Error() string { return e.err.Error() }
+func (e *connectionFailure) Unwrap() error { return e.err }
+
+// IsConnectionFailure reports whether err arose while opening a physical
+// database connection. It traverses infrastructure wrapping added by services.
+func IsConnectionFailure(err error) bool {
+	var failure *connectionFailure
+	return errors.As(err, &failure)
 }
 
 func (c *observedConnector) Driver() driver.Driver {

@@ -102,7 +102,7 @@ func TestHandle_GenericErrorIs500AndDoesNotLeak(t *testing.T) {
 
 func TestHandle_InternalErrorMessageIsMasked(t *testing.T) {
 	// errcodes.Internal carries detail for the log line; the rendered envelope
-	// must mask it like any other 5xx.
+	// must mask it like any other caller-detailed 5xx.
 	rec := handle(t, errcodes.Internal("pq: secret table is missing"))
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
@@ -111,6 +111,16 @@ func TestHandle_InternalErrorMessageIsMasked(t *testing.T) {
 	assert.Equal(t, "Internal Server Error", msg)
 	assert.NotContains(t, rec.Body.String(), "secret table",
 		"a 5xx *Error must never leak its constructor text to the client")
+}
+
+func TestHandle_ServiceUnavailableRendersNamedEnvelope(t *testing.T) {
+	rec := handle(t, errcodes.ServiceUnavailable())
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	code, msg, status := decodeEnvelope(t, rec)
+	assert.Equal(t, string(errcodes.CodeServiceUnavailable), code)
+	assert.Equal(t, "Service Unavailable", msg)
+	assert.Equal(t, http.StatusServiceUnavailable, status)
 }
 
 func TestHandle_EchoHTTPError5xxMessageIsMasked(t *testing.T) {

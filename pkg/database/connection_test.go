@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -204,6 +205,47 @@ func TestNewWithConnector_RequiresConnector(t *testing.T) {
 	db, err := NewWithConnector(nil, nil)
 	assert.Nil(t, db)
 	assert.EqualError(t, err, "database connector is required")
+}
+
+func TestNewWithConnector_MarksOnlyPhysicalConnectionFailures(t *testing.T) {
+	connectErr := errors.New("dial failed")
+	db, err := NewWithConnector(&stubConnector{err: connectErr}, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	err = db.PingContext(context.Background())
+	require.ErrorIs(t, err, connectErr)
+	assert.True(t, IsConnectionFailure(err))
+	assert.False(t, IsConnectionFailure(errors.New("ordinary SQL error")))
+}
+
+func TestHTTPWorkBudget_HasOneExactFiveSecondDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		ctx, cancel := WithHTTPWorkBudget(context.Background())
+		defer cancel()
+
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok)
+		assert.Equal(t, 5*time.Second, deadline.Sub(start))
+
+		time.Sleep(HTTPWorkBudget - time.Nanosecond)
+		require.NoError(t, ctx.Err())
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+		assert.True(t, HTTPWorkBudgetExceeded(ctx))
+	})
+}
+
+func TestHTTPWorkBudget_DistinguishesParentCancellation(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	ctx, cancelBudget := WithHTTPWorkBudget(parent)
+	cancelParent()
+	defer cancelBudget()
+
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	assert.False(t, HTTPWorkBudgetExceeded(ctx))
 }
 
 func TestHTTPRouteOperation_RejectsRawOrUnboundedLabels(t *testing.T) {

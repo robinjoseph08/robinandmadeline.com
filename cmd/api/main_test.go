@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/robinjoseph08/golib/logger"
@@ -97,6 +98,20 @@ func (c *assemblyConnector) Connect(context.Context) (driver.Conn, error) {
 }
 
 func (c *assemblyConnector) Driver() driver.Driver { return assemblyDriver{} }
+
+type blockingAssemblyConnector struct {
+	attempts atomic.Int32
+	started  chan context.Context
+}
+
+func (c *blockingAssemblyConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	c.attempts.Add(1)
+	c.started <- ctx
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (c *blockingAssemblyConnector) Driver() driver.Driver { return assemblyDriver{} }
 
 type assemblyDriver struct{}
 
@@ -196,7 +211,8 @@ func TestApplicationAssembly_DatabaseBackedRequestAttemptsConnection(t *testing.
 	rec := httptest.NewRecorder()
 	app.server.Handler.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.JSONEq(t, `{"error":{"code":"service_unavailable","message":"Service Unavailable","status_code":503}}`, rec.Body.String())
 	assert.Equal(t, int32(1), connector.attempts.Load())
 	select {
 	case observed := <-attempts:
@@ -207,6 +223,65 @@ func TestApplicationAssembly_DatabaseBackedRequestAttemptsConnection(t *testing.
 	default:
 		t.Fatal("first connection attempt was not observed")
 	}
+}
+
+func TestApplicationAssembly_BlockingDatabaseRequestHasFiveSecondBudgetWhileDatabaseFreeTrafficStaysAvailable(t *testing.T) {
+	staticDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(staticDir, "index.html"), []byte("<html>shell</html>"), 0o600))
+
+	synctest.Test(t, func(t *testing.T) {
+		connector := &blockingAssemblyConnector{started: make(chan context.Context)}
+		cfg := assemblyConfig()
+		cfg.StaticDir = staticDir
+		app, err := newApplication(context.Background(), cfg, applicationDependencies{
+			connector:     connector,
+			mailgunClient: &assemblyMailgun{},
+			log:           logger.NewWithLevel("error"),
+		})
+		require.NoError(t, err)
+		defer closeApplication(t, app)
+
+		startedAt := time.Now()
+		result := make(chan *httptest.ResponseRecorder)
+		go func() {
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/events", http.NoBody)
+			rec := httptest.NewRecorder()
+			app.server.Handler.ServeHTTP(rec, req)
+			result <- rec
+		}()
+
+		connectCtx := <-connector.started
+		deadline, ok := connectCtx.Deadline()
+		require.True(t, ok)
+		assert.Equal(t, database.HTTPWorkBudget, deadline.Sub(startedAt))
+
+		// The blocked request does not serialize unrelated database-free work.
+		for path, wantStatus := range map[string]int{
+			"/api/health":  http.StatusOK,
+			"/story":       http.StatusOK,
+			"/not-a-route": http.StatusNotFound,
+		} {
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, http.NoBody)
+			rec := httptest.NewRecorder()
+			app.server.Handler.ServeHTTP(rec, req)
+			assert.Equal(t, wantStatus, rec.Code, path)
+		}
+
+		time.Sleep(database.HTTPWorkBudget - time.Nanosecond)
+		select {
+		case <-result:
+			t.Fatal("database request returned before its five-second budget expired")
+		default:
+		}
+
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		rec := <-result
+		assert.Equal(t, database.HTTPWorkBudget, time.Since(startedAt))
+		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+		assert.JSONEq(t, `{"error":{"code":"service_unavailable","message":"Service Unavailable","status_code":503}}`, rec.Body.String())
+		assert.Equal(t, int32(1), connector.attempts.Load())
+	})
 }
 
 type synchronizedBuffer struct {
@@ -314,7 +389,7 @@ func TestProductionApplicationDependencies_FirstConnectionLogStripsUntrustedRequ
 	rec := httptest.NewRecorder()
 	app.server.Handler.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	event := firstConnectionLog(t, output.String())
 	assert.Equal(t, "warn", event.Level, "the request log level must not suppress attribution")
 	assert.NotEmpty(t, event.ID)
