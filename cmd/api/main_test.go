@@ -1,14 +1,25 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"database/sql/driver"
+	"encoding/json"
+	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/robinjoseph08/golib/logger"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,6 +82,167 @@ func TestListen(t *testing.T) {
 		assert.NotEqual(t, port, portOf(t, l))
 		assert.Positive(t, portOf(t, l))
 	})
+}
+
+type assemblyConnector struct {
+	attempts atomic.Int32
+	err      error
+}
+
+func (c *assemblyConnector) Connect(context.Context) (driver.Conn, error) {
+	c.attempts.Add(1)
+	return nil, c.err
+}
+
+func (c *assemblyConnector) Driver() driver.Driver { return assemblyDriver{} }
+
+type assemblyDriver struct{}
+
+func (assemblyDriver) Open(string) (driver.Conn, error) {
+	return nil, errors.New("assembly test driver cannot open by name")
+}
+
+type assemblyMailgun struct{}
+
+func (*assemblyMailgun) Send(context.Context, emails.Message) (string, error) {
+	return "", errors.New("unexpected Mailgun send")
+}
+
+func (*assemblyMailgun) FindAcceptedMessageID(context.Context, string, string) (string, bool, error) {
+	return "", false, errors.New("unexpected Mailgun lookup")
+}
+
+func assemblyConfig() *config.Config {
+	return &config.Config{
+		ServerPort:           0,
+		AdminUsername:        "admin",
+		AdminPassword:        "password",
+		JWTSecret:            "secret",
+		AdminSessionDuration: time.Hour,
+		GuestSessionDuration: time.Hour,
+		LoginRatePerMinute:   6000,
+		LoginRateBurst:       1000,
+		MailgunAPIKey:        "configured",
+		EmailWorkerBatchSize: 10,
+	}
+}
+
+func closeApplication(t *testing.T, app *application) {
+	t.Helper()
+	app.stopWorker()
+	if app.worker != nil {
+		<-app.worker.Done()
+	}
+	require.NoError(t, app.db.Close())
+}
+
+func TestApplicationAssembly_StartupIdleWorkerAndHealthAreDatabaseFree(t *testing.T) {
+	connector := &assemblyConnector{err: errors.New("database must not be reached")}
+	var observed atomic.Int32
+	app, err := newApplication(context.Background(), assemblyConfig(), applicationDependencies{
+		connector: connector,
+		observeFirstConnection: func(database.FirstConnectionAttempt) {
+			observed.Add(1)
+		},
+		mailgunClient: &assemblyMailgun{},
+		log:           logger.NewWithLevel("error"),
+	})
+	require.NoError(t, err)
+	defer closeApplication(t, app)
+
+	// Give the supervisor an opportunity to enter its idle wait. It has no
+	// startup wake or timer, so this must not call the connector.
+	time.Sleep(20 * time.Millisecond)
+	assert.Zero(t, connector.attempts.Load())
+	assert.Zero(t, observed.Load())
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/health?from=fly", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.server.Handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"status":"ok"}`, rec.Body.String())
+	assert.Zero(t, connector.attempts.Load())
+	assert.Zero(t, observed.Load())
+}
+
+func TestApplicationAssembly_DatabaseBackedRequestAttemptsConnection(t *testing.T) {
+	connectErr := errors.New("physical connection failed")
+	connector := &assemblyConnector{err: connectErr}
+	attempts := make(chan database.FirstConnectionAttempt, 1)
+	app, err := newApplication(context.Background(), assemblyConfig(), applicationDependencies{
+		connector: connector,
+		observeFirstConnection: func(attempt database.FirstConnectionAttempt) {
+			attempts <- attempt
+		},
+		mailgunClient: &assemblyMailgun{},
+		log:           logger.NewWithLevel("error"),
+	})
+	require.NoError(t, err)
+	defer closeApplication(t, app)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/events?party_id=secret", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.server.Handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, int32(1), connector.attempts.Load())
+	select {
+	case attempt := <-attempts:
+		assert.Equal(t, "http:/api/events", attempt.Operation.String())
+		require.ErrorIs(t, attempt.Err, connectErr)
+	default:
+		t.Fatal("first connection attempt was not observed")
+	}
+}
+
+func TestProductionApplicationDependencies_FirstConnectionLogIsSafe(t *testing.T) {
+	var output bytes.Buffer
+	previous := logger.Output()
+	logger.SetOutput(&output)
+	t.Cleanup(func() { logger.SetOutput(previous) })
+
+	log := logger.NewWithLevel("info")
+	deps := productionApplicationDependencies(&config.Config{
+		DatabaseURL: "postgres://localhost/test?sslmode=disable",
+	}, log)
+	deps.observeFirstConnection(database.FirstConnectionAttempt{
+		Operation: database.HTTPRouteOperation("/api/info/:token"),
+		Err:       errors.New("postgres://user:password@example.test/private?token=secret"),
+	})
+
+	var event struct {
+		Message string         `json:"message"`
+		Data    map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(output.Bytes(), &event))
+	assert.Equal(t, "first database connection attempt", event.Message)
+	assert.Equal(t, "http:/api/info/:token", event.Data["operation"])
+	assert.Equal(t, "failed", event.Data["outcome"])
+	assert.NotContains(t, output.String(), "password")
+	assert.NotContains(t, output.String(), "token=secret")
+}
+
+func TestApplicationAssembly_RequiresConnector(t *testing.T) {
+	app, err := newApplication(context.Background(), assemblyConfig(), applicationDependencies{
+		mailgunClient: &assemblyMailgun{},
+		log:           logger.NewWithLevel("error"),
+	})
+
+	assert.Nil(t, app)
+	assert.EqualError(t, err, "open database handle: database connector is required")
+}
+
+func TestApplicationAssembly_RequiresConfiguredMailgunClient(t *testing.T) {
+	connector := &assemblyConnector{err: errors.New("unused")}
+	app, err := newApplication(context.Background(), assemblyConfig(), applicationDependencies{
+		connector: connector,
+		log:       logger.NewWithLevel("error"),
+	})
+
+	assert.Nil(t, app)
+	require.EqualError(t, err, "mailgun client is required when email delivery is configured")
+	assert.Zero(t, connector.attempts.Load())
 }
 
 func TestCachedPort(t *testing.T) {

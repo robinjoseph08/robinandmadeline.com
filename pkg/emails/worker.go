@@ -10,6 +10,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/robinjoseph08/golib/logger"
 	"github.com/robinjoseph08/golib/pointerutil"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/uptrace/bun"
 )
@@ -126,7 +127,9 @@ func (w *Worker) Done() <-chan struct{} { return w.supervisor.Done() }
 // performs one activation. After the activation drains immediately actionable
 // work or encounters a cycle-level database error, it waits again. Call Run in
 // a goroutine; it returns only after ctx is canceled.
-func (w *Worker) Run(ctx context.Context) { w.supervisor.Run(ctx) }
+func (w *Worker) Run(ctx context.Context) {
+	w.supervisor.Run(database.WithOperation(ctx, database.EmailWorkerOperation()))
+}
 
 // cycle runs one reconcile pass plus as many batches as the queue holds,
 // stopping between batches once ctx is canceled. The work itself runs on a

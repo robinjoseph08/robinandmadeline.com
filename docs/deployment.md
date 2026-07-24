@@ -21,12 +21,11 @@ how production was built should it ever need rebuilding.
   Steady state is one machine.
 
 > **Partially implemented accepted change:** ADR 0010 is accepted but not fully
-> deployed. The email worker is now demand-driven: its supervisor waits at
-> process boot without querying Postgres, and committed enqueues or authenticated
-> email-admin API activity wake delivery. The current process still performs
-> its separate startup ping, `/api/health` still reports database reachability, and unknown
-> frontend paths still receive the SPA shell. Current-state verification and
-> operations below intentionally describe that remaining behavior.
+> deployed. Application startup, the idle email supervisor, and `/api/health`
+> are database-free. The health response reports process liveness only, and the
+> first physical database connection is attributed to the triggering operation.
+> Unknown frontend paths still receive the SPA shell. Current-state verification
+> and operations below intentionally describe that remaining behavior.
 
 ## Already done in this repo
 
@@ -186,8 +185,7 @@ apex.
   `https://www.robinandmadeline.com/anything?x=1`.
 - `https://robeline.co/rsvp` and `https://robeline.com/rsvp` 301 to
   `https://www.robinandmadeline.com/rsvp`.
-- Until ADR 0010 is deployed, the health endpoint returns
-  `{"status":"ok","database":"up"}`.
+- The health endpoint returns `{"status":"ok"}` without checking Postgres.
 - Scale-to-zero: `fly machine list` shows the machine `stopped` a few minutes
   after the last request, and the next request starts it again.
 
@@ -217,9 +215,9 @@ secret with `gh secret delete FLY_API_TOKEN`.
   (for a rollback or when CI is unavailable), run `fly deploy` locally.
 - **Scale-to-zero behavior (during the ADR 0010 rollout)**: Fly's proxy stops
   the machine when idle and boots it on the next request. The Go cold start is
-  sub-second (static binary, no startup migrations, background-only DB ping),
-  so visitors just see a normally fast first load while Neon also wakes from
-  idle. The email supervisor remains database-free until explicitly woken.
+  sub-second (static binary, no startup migrations or database ping). Neon
+  stays asleep until persistent data is needed, and the email supervisor
+  remains database-free until explicitly woken.
 - **Logs**: `fly logs` (JSON via `LOG_FORMAT=json`).
 - **Rollback**: `fly releases` then `fly deploy --image <previous image ref>`.
 - **Local image check**: `mise build:docker` builds the exact production

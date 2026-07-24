@@ -15,6 +15,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/robinjoseph08/golib/logger"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 )
 
@@ -561,7 +562,11 @@ func infoPageName(req *http.Request, key, urlPath string, titler infoTitler) str
 	if token == "" || strings.Contains(token, "/") {
 		return ""
 	}
-	name, err := titler.PrimaryGuestName(req.Context(), token)
+	// Attribution uses a fixed label rather than the raw metadata URL or its
+	// Info Token. The operation context reaches the shared lazy database handle
+	// through the info service's query.
+	ctx := database.WithOperation(req.Context(), database.InfoMetadataOperation())
+	name, err := titler.PrimaryGuestName(ctx, token)
 	if err != nil {
 		logger.FromContext(req.Context()).Err(err).Warn("resolve info page title")
 		return ""

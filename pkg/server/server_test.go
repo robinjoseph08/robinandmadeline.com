@@ -371,40 +371,20 @@ func TestSendTestRoute_TestSendWiredWhenMailgunConfigured(t *testing.T) {
 	assert.NotEqual(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-func TestHealthEndpoint(t *testing.T) {
-	tests := []struct {
-		name          string
-		wantStatus    int
-		wantStatusVal string
-		wantDatabase  string
-	}{
-		{
-			name:          "returns 200 with ok status when db is nil",
-			wantStatus:    http.StatusOK,
-			wantStatusVal: "ok",
-			wantDatabase:  "unknown",
-		},
-	}
+func TestHealthEndpoint_ReturnsOnlyProcessStatus(t *testing.T) {
+	// A nil DB makes accidental database use fail loudly while proving process
+	// liveness does not depend on persistent infrastructure.
+	srv := server.New(&config.Config{ServerPort: 0}, nil)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// db is nil: the health endpoint must still be reachable and 200.
-			srv := server.New(&config.Config{ServerPort: 0}, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/health", http.NoBody)
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
 
-			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/health", http.NoBody)
-			rec := httptest.NewRecorder()
-			srv.Handler.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	assert.JSONEq(t, `{"status":"ok"}`, rec.Body.String())
 
-			assert.Equal(t, tt.wantStatus, rec.Code)
-			assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
-
-			var body struct {
-				Status   string `json:"status"`
-				Database string `json:"database"`
-			}
-			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-			assert.Equal(t, tt.wantStatusVal, body.Status)
-			assert.Equal(t, tt.wantDatabase, body.Database)
-		})
-	}
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Len(t, body, 1, "health must not grow a database status field")
 }

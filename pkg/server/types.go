@@ -6,8 +6,7 @@ package server
 
 // HealthResponse is the JSON body returned by GET /api/health.
 type HealthResponse struct {
-	Status   string `json:"status"`
-	Database string `json:"database"`
+	Status string `json:"status"`
 }
 
 // MeResponse is the JSON body returned by GET /api/admin/me, confirming the
