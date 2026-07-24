@@ -63,11 +63,11 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 
-// ErrorEnvelope is the JSON body every error response carries: a single
-// "error" key wrapping an ErrorDetail. It lives here (in tygo's include_files
-// for this package) so the frontend parses error responses with the generated
-// type instead of hand-writing the shape (ADR 0008). The handler renders it;
-// see handler.go.
+// ErrorEnvelope is the JSON body every non-HEAD error response carries: a
+// single "error" key wrapping an ErrorDetail. It lives here (in tygo's
+// include_files for this package) so the frontend parses error responses with
+// the generated type instead of hand-writing the shape (ADR 0008). The handler
+// renders it; see handler.go.
 type ErrorEnvelope struct {
 	Error ErrorDetail `json:"error"`
 }

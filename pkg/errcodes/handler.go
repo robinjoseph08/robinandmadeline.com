@@ -23,10 +23,10 @@ func NewHandler() *Handler {
 	return &Handler{}
 }
 
-// Handle resolves any error to the standard envelope and writes it. It logs only
-// 5xx responses through the request-scoped logger (which attaches a %+v stack
-// for pkg/errors errors), and silently ignores client-disconnect and
-// context-cancellation errors.
+// Handle resolves any error to the standard envelope and writes it, except that
+// HEAD writes the same status without a body. It logs only 5xx responses through
+// the request-scoped logger (which attaches a %+v stack for pkg/errors errors),
+// and silently ignores client-disconnect and context-cancellation errors.
 func (h *Handler) Handle(err error, c echo.Context) {
 	// Silently ignore client-disconnect errors (broken pipe, connection reset,
 	// EOF, network timeouts) that golib classifies as ignorable.
@@ -49,6 +49,14 @@ func (h *Handler) Handle(err error, c echo.Context) {
 		logger.FromEchoContext(c).Err(err).Error("server error")
 	}
 
+	// HEAD has the same status and headers as GET, but never a response body.
+	// Echo's JSON writer does not suppress that body itself.
+	if c.Request().Method == http.MethodHead {
+		if writeErr := c.NoContent(httpCode); writeErr != nil {
+			logger.FromEchoContext(c).Err(errors.WithStack(writeErr)).Error("error handler failed to write response")
+		}
+		return
+	}
 	if writeErr := c.JSON(httpCode, ErrorEnvelope{ErrorDetail{code, msg, httpCode}}); writeErr != nil {
 		logger.FromEchoContext(c).Err(errors.WithStack(writeErr)).Error("error handler failed to write response")
 	}

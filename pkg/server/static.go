@@ -4,14 +4,18 @@ import (
 	"context"
 	"html"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
 	"github.com/robinjoseph08/golib/logger"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 )
 
 // Cache-Control values for the two kinds of files in the Vite bundle.
@@ -25,12 +29,11 @@ const (
 	cacheControlNoCache   = "no-cache"
 )
 
-// staticMiddleware serves the built frontend out of root with an SPA
-// fallback: a GET/HEAD for a path with no file on disk gets index.html so the
-// client-side router can take over. API paths are never touched, so unknown
-// /api routes keep rendering the JSON 404 envelope, and a missing file under
-// assets/ is a real 404 rather than the shell (a module script or stylesheet
-// request would otherwise receive HTML).
+// staticMiddleware serves the built frontend out of root. Existing static
+// files win first; when no file exists, only a path matching frontendRoutes gets
+// index.html. Other document paths receive a real 404, including missing assets.
+// API paths are never touched, so unknown /api routes keep rendering the JSON
+// 404 envelope.
 //
 // canonicalHost is used to build the absolute og:url injected into the shell
 // per route (see serveShell); it may be empty outside production. titler
@@ -45,27 +48,27 @@ func staticMiddleware(root, canonicalHost string, titler infoTitler) echo.Middle
 			if req.Method != http.MethodGet && req.Method != http.MethodHead {
 				return next(c)
 			}
-			if isAPIPath(req.URL.Path) {
+			urlPath, ok := safeRequestPath(req)
+			if !ok {
+				return documentNotFound(c)
+			}
+			if isAPIPath(urlPath) {
 				return next(c)
 			}
 
 			// URL.Path is already percent-decoded by net/url; decoding again
-			// would corrupt names containing a literal "%". Rooting Clean at "/"
-			// collapses any ".." segments before the join, so the resolved path
-			// cannot escape the static root.
-			rel := filepath.Clean("/" + req.URL.Path)
-			name := filepath.Join(root, rel)
-
+			// would corrupt names containing a literal "%". safeRequestPath has
+			// rejected separators and traversal segments, so joining the path
+			// beneath root cannot escape the static directory.
+			name := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(urlPath, "/")))
 			if info, err := os.Stat(name); err == nil && !info.IsDir() {
-				return serveFile(c, name, assetCacheControl(rel))
+				return serveFile(c, name, assetCacheControl(urlPath))
 			}
 
-			// No file: hashed-asset misses 404 through the router; everything
-			// else is a client-side route and gets the SPA shell.
-			if strings.HasPrefix(rel, "/assets/") {
-				return next(c)
+			if !isFrontendRoute(urlPath) {
+				return documentNotFound(c)
 			}
-			return serveShell(c, root, rel, canonicalHost, titler)
+			return serveShell(c, root, trimTrailingSlash(urlPath), canonicalHost, titler)
 		}
 	}
 }
@@ -81,6 +84,12 @@ func serveFile(c echo.Context, name, cacheControl string) error {
 		return err
 	}
 	return nil
+}
+
+// documentNotFound returns the shared typed 404. The error handler renders the
+// normal envelope for GET and suppresses it for HEAD.
+func documentNotFound(echo.Context) error {
+	return errcodes.NotFound("document")
 }
 
 // serveShell renders the SPA shell (index.html) with per-route title and
@@ -102,8 +111,140 @@ func serveShell(c echo.Context, root, urlPath, canonicalHost string, titler info
 	return nil
 }
 
+// frontendRoutes is the server-side allowlist of route shapes in
+// app/router.tsx. This synchronization boundary is intentionally manual: when
+// a frontend route is added, removed, or reshaped, update this table and
+// TestStaticServing_ServesEveryFrontendRouteShape in the same change. Keep this
+// as an allowlist of application routes, never a denylist of scanner or exploit
+// paths. A leading colon marks one safe, opaque segment; business validation of
+// guest IDs, admin entity IDs, tokens, and puzzle slugs remains with the app.
+var frontendRoutes = []string{
+	"/",
+	"/story",
+	"/schedule",
+	"/travel",
+	"/games",
+	"/games/:segment",
+	"/photos",
+	"/faq",
+	"/rsvp",
+	"/rsvp/form",
+	"/rsvp/confirmation",
+	"/i/:segment",
+	"/u/:segment",
+	"/admin/login",
+	"/admin",
+	"/admin/parties",
+	"/admin/parties/:segment",
+	"/admin/guests",
+	"/admin/events",
+	"/admin/events/:segment",
+	"/admin/photo-groups",
+	"/admin/crossword",
+	"/admin/emails",
+	"/admin/emails/compose",
+	"/admin/emails/templates",
+	"/admin/emails/sends/:segment",
+	"/admin/settings",
+}
+
+// safeRequestPath validates the path exactly as received before either static
+// lookup or route matching. It accepts ordinary percent-encoded characters but
+// rejects malformed escapes, encoded separators, backslashes, control
+// characters, repeated separators, and dot traversal segments. Nothing is
+// cleaned or normalized into a route match.
+func safeRequestPath(req *http.Request) (string, bool) {
+	p := req.URL.Path
+	if p == "" || !strings.HasPrefix(p, "/") {
+		return "", false
+	}
+	if req.URL.RawPath != "" {
+		decoded, err := url.PathUnescape(req.URL.RawPath)
+		if err != nil || decoded != p {
+			return "", false
+		}
+	}
+
+	escaped := strings.ToLower(req.URL.EscapedPath())
+	if strings.Contains(escaped, "%2f") || strings.Contains(escaped, "%5c") || strings.Contains(p, `\`) {
+		return "", false
+	}
+	if !utf8.ValidString(p) || strings.IndexFunc(p, unicode.IsControl) >= 0 {
+		return "", false
+	}
+	if p == "/" {
+		return p, true
+	}
+
+	segments := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	for i, segment := range segments {
+		if segment == "" {
+			// React Router accepts one trailing slash, but repeated interior or
+			// trailing separators must not be collapsed into a valid route.
+			if i == len(segments)-1 && i > 0 && segments[i-1] != "" {
+				continue
+			}
+			return "", false
+		}
+		if segment == "." || segment == ".." {
+			return "", false
+		}
+	}
+	return p, true
+}
+
+// isFrontendRoute matches case-insensitively with one optional trailing slash,
+// mirroring React Router. Dynamic parameters match exactly one safe segment and
+// deliberately do not duplicate application-level identifier validation.
+func isFrontendRoute(p string) bool {
+	p = strings.ToLower(trimTrailingSlash(p))
+	actual := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	if p == "/" {
+		actual = nil
+	}
+	for _, pattern := range frontendRoutes {
+		want := strings.Split(strings.TrimPrefix(pattern, "/"), "/")
+		if pattern == "/" {
+			want = nil
+		}
+		if len(actual) != len(want) {
+			continue
+		}
+		matched := true
+		for i := range want {
+			if strings.HasPrefix(want[i], ":") {
+				if !isSafeDynamicSegment(actual[i]) {
+					matched = false
+					break
+				}
+				continue
+			}
+			if actual[i] != want[i] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func isSafeDynamicSegment(segment string) bool {
+	return segment != "" && segment != "." && segment != ".." &&
+		!strings.ContainsAny(segment, `/\`) && strings.IndexFunc(segment, unicode.IsControl) < 0
+}
+
+func trimTrailingSlash(p string) string {
+	if len(p) > 1 && strings.HasSuffix(p, "/") {
+		return strings.TrimSuffix(p, "/")
+	}
+	return p
+}
+
 // isAPIPath reports whether the request path belongs to the API surface,
-// which the static middleware and its SPA fallback must never shadow.
+// which static serving and frontend route classification must never shadow.
 func isAPIPath(p string) bool {
 	return p == "/api" || strings.HasPrefix(p, "/api/")
 }
@@ -254,14 +395,18 @@ func injectMeta(doc, urlPath, canonicalHost string, req *http.Request, titler in
 		return doc
 	}
 
-	// Puzzle pages (/games/:slug): each is a distinct page with its own title, no
-	// description. They are gated client-side by RequireGamesAccess, so they are
-	// served noindex for now; when that gate is removed and the games are public,
-	// drop the addNoindex here so the puzzles are indexed like the /games landing.
-	if label, ok := puzzleTitle(key); ok {
+	// Puzzle pages (/games/:slug) are gated client-side by RequireGamesAccess,
+	// so every safe route-shape match is noindex, including an unknown slug that
+	// receives the page's friendly not-found treatment. Known puzzles additionally
+	// get their registry title and canonical URL. When the gate is removed and the
+	// games are public, drop addNoindex here so puzzles can be indexed.
+	if isPuzzlePath(key) {
 		doc = addNoindex(doc)
-		doc = setHeadTitle(doc, label+titleSep+appName)
-		return setCanonicalURL(doc, canonicalHost, req, key)
+		if label, ok := puzzleTitle(key); ok {
+			doc = setHeadTitle(doc, label+titleSep+appName)
+			return setCanonicalURL(doc, canonicalHost, req, key)
+		}
+		return doc
 	}
 
 	// Noindex routes. The token/UUID links and RSVP flow steps additionally get a
@@ -286,7 +431,7 @@ func injectMeta(doc, urlPath, canonicalHost string, req *http.Request, titler in
 		return doc
 	}
 
-	// Unknown route: served verbatim.
+	// A known frontend route without a metadata override is served verbatim.
 	return doc
 }
 
@@ -410,13 +555,16 @@ func infoPageName(req *http.Request, key, urlPath string, titler infoTitler) str
 	return ""
 }
 
-// puzzleTitle returns the title for a /games/:slug puzzle page and whether the
-// slug is a known puzzle. Only a single path segment after /games/ matches; an
-// unknown slug (or /games itself, handled as a public route) returns false so the
-// route falls through unchanged.
+// isPuzzlePath reports whether p has the frontend /games/:puzzleSlug shape.
+func isPuzzlePath(p string) bool {
+	slug, ok := strings.CutPrefix(p, "/games/")
+	return ok && isSafeDynamicSegment(slug)
+}
+
+// puzzleTitle returns the title for a known /games/:slug puzzle page.
 func puzzleTitle(p string) (string, bool) {
 	slug, ok := strings.CutPrefix(p, "/games/")
-	if !ok || slug == "" || strings.Contains(slug, "/") {
+	if !ok || !isSafeDynamicSegment(slug) {
 		return "", false
 	}
 	label, ok := puzzlePageTitles[slug]

@@ -55,17 +55,65 @@ func TestStaticServing_ServesSPAShell(t *testing.T) {
 	assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"))
 }
 
-func TestStaticServing_FallsBackToShellForClientRoutes(t *testing.T) {
+func TestStaticServing_ServesEveryFrontendRouteShape(t *testing.T) {
 	cfg := newTestConfig(t)
 	cfg.StaticDir = newStaticDir(t)
 	srv := server.New(cfg, nil)
 
-	// A client-side route has no file on disk; the SPA shell is served so the
-	// frontend router can take over.
-	rec := get(srv.Handler, "/rsvp/some/deep/link")
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "<html>spa shell</html>", rec.Body.String())
-	assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"))
+	// This inventory mirrors app/router.tsx. Route parameters deliberately use
+	// values that are not valid business IDs: the server classifies route shapes
+	// and leaves entity, token, and puzzle validation to the client and API.
+	targets := []string{
+		"/", "/story", "/schedule", "/travel", "/games", "/games/not-a-puzzle",
+		"/photos", "/faq", "/rsvp", "/rsvp/form", "/rsvp/confirmation",
+		"/i/not-a-token", "/u/not-a-uuid", "/admin/login", "/admin",
+		"/admin/parties", "/admin/parties/not-an-id", "/admin/guests",
+		"/admin/events", "/admin/events/not-an-id", "/admin/photo-groups",
+		"/admin/crossword", "/admin/emails", "/admin/emails/compose",
+		"/admin/emails/templates", "/admin/emails/sends/not-an-id", "/admin/settings",
+	}
+	for _, target := range targets {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			req := httptest.NewRequestWithContext(context.Background(), method, target, http.NoBody)
+			rec := httptest.NewRecorder()
+			srv.Handler.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code, method+" "+target)
+			assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"), method+" "+target)
+			if method == http.MethodGet {
+				assert.Equal(t, "<html>spa shell</html>", rec.Body.String(), target)
+			} else {
+				assert.Empty(t, rec.Body.String(), target)
+			}
+		}
+	}
+}
+
+func TestStaticServing_RouteMatchingMirrorsCaseAndTrailingSlash(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.StaticDir = newStaticDir(t)
+	srv := server.New(cfg, nil)
+
+	for _, target := range []string{"/StOrY", "/STORY/", "/AdMiN/PaRtIeS/anything/"} {
+		rec := get(srv.Handler, target)
+		require.Equal(t, http.StatusOK, rec.Code, target)
+		assert.Equal(t, "<html>spa shell</html>", rec.Body.String(), target)
+	}
+}
+
+func TestStaticServing_UnknownDocumentRoutesAre404(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.StaticDir = newStaticDir(t)
+	srv := server.New(cfg, nil)
+
+	for _, target := range []string{
+		"/unknown", "/rsvp/some/deep/link", "/admin/unknown", "/story/extra",
+		"/i/token/extra", "/admin/parties/id/extra", "/story//", "/rsvp//form",
+	} {
+		rec := get(srv.Handler, target)
+		require.Equal(t, http.StatusNotFound, rec.Code, target)
+		assert.NotEqual(t, "<html>spa shell</html>", rec.Body.String(), target)
+		assert.Empty(t, rec.Header().Get("Cache-Control"), target)
+	}
 }
 
 func TestStaticServing_HashedAssetsAreImmutable(t *testing.T) {
@@ -109,7 +157,8 @@ func TestStaticServing_HEADRequestsAreServed(t *testing.T) {
 	}{
 		{target: "/", wantCacheControl: "no-cache"},
 		{target: "/assets/index-abc123.js", wantCacheControl: "public, max-age=31536000, immutable"},
-		{target: "/rsvp/some/deep/link", wantCacheControl: "no-cache"},
+		{target: "/rsvp/form", wantCacheControl: "no-cache"},
+		{target: "/admin/parties/not-an-id", wantCacheControl: "no-cache"},
 	}
 	for _, tt := range tests {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodHead, tt.target, http.NoBody)
@@ -118,6 +167,16 @@ func TestStaticServing_HEADRequestsAreServed(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code, tt.target)
 		assert.Equal(t, tt.wantCacheControl, rec.Header().Get("Cache-Control"), tt.target)
 		assert.Empty(t, rec.Body.String(), tt.target)
+	}
+
+	for _, target := range []string{"/unknown", "/i/token/extra", "/assets/index-gone.js"} {
+		getRec := get(srv.Handler, target)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodHead, target, http.NoBody)
+		headRec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(headRec, req)
+		require.Equal(t, getRec.Code, headRec.Code, target)
+		assert.Equal(t, getRec.Header().Get("Cache-Control"), headRec.Header().Get("Cache-Control"), target)
+		assert.Empty(t, headRec.Body.String(), target)
 	}
 }
 
@@ -172,11 +231,11 @@ func TestStaticServing_APIRoutesTakePrecedence(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, bare.Code)
 	assert.Contains(t, bare.Body.String(), `"error"`)
 
-	// A frontend route merely sharing the /api prefix is not API surface; it
-	// gets the shell.
+	// A document route merely sharing the /api prefix is not API surface, but
+	// it is not on the frontend allowlist either.
 	apiary := get(srv.Handler, "/apiary")
-	require.Equal(t, http.StatusOK, apiary.Code)
-	assert.Equal(t, "<html>spa shell</html>", apiary.Body.String())
+	require.Equal(t, http.StatusNotFound, apiary.Code)
+	assert.NotEqual(t, "<html>spa shell</html>", apiary.Body.String())
 }
 
 func TestStaticServing_NonGETFallsThroughToRouter(t *testing.T) {
@@ -184,7 +243,7 @@ func TestStaticServing_NonGETFallsThroughToRouter(t *testing.T) {
 	cfg.StaticDir = newStaticDir(t)
 	srv := server.New(cfg, nil)
 
-	// Writes never hit the filesystem or the SPA fallback: a POST to a
+	// Writes never hit the filesystem or frontend shell handling: a POST to a
 	// client route is a routing 404, not a 200 shell that would mask the
 	// dropped write.
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/rsvp", http.NoBody)
@@ -194,18 +253,17 @@ func TestStaticServing_NonGETFallsThroughToRouter(t *testing.T) {
 	assert.NotEqual(t, "<html>spa shell</html>", rec.Body.String())
 }
 
-func TestStaticServing_DirectoriesFallBackToShell(t *testing.T) {
+func TestStaticServing_DirectoriesAreNotFilesOrRoutes(t *testing.T) {
 	cfg := newTestConfig(t)
 	cfg.StaticDir = newStaticDir(t)
 	srv := server.New(cfg, nil)
 
-	// A directory is not a servable file; it falls back to the shell like
-	// any other client route.
+	// A directory is neither a servable static file nor a frontend route.
 	for _, target := range []string{"/assets", "/assets/"} {
 		rec := get(srv.Handler, target)
-		require.Equal(t, http.StatusOK, rec.Code, target)
-		assert.Equal(t, "<html>spa shell</html>", rec.Body.String(), target)
-		assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"), target)
+		require.Equal(t, http.StatusNotFound, rec.Code, target)
+		assert.NotEqual(t, "<html>spa shell</html>", rec.Body.String(), target)
+		assert.Empty(t, rec.Header().Get("Cache-Control"), target)
 	}
 }
 
@@ -222,11 +280,10 @@ func TestStaticServing_LiteralPercentPathsAreNotDoubleDecoded(t *testing.T) {
 	require.Equal(t, http.StatusOK, file.Code)
 	assert.Equal(t, "percent file", file.Body.String())
 
-	// A client route whose decoded path contains a stray % still gets the
-	// shell instead of leaking a router 404.
+	// A non-file document path is still subject to the route allowlist.
 	route := get(srv.Handler, "/100%25off")
-	require.Equal(t, http.StatusOK, route.Code)
-	assert.Equal(t, "<html>spa shell</html>", route.Body.String())
+	require.Equal(t, http.StatusNotFound, route.Code)
+	assert.NotEqual(t, "<html>spa shell</html>", route.Body.String())
 }
 
 func TestStaticServing_MissingShellIs404(t *testing.T) {
@@ -253,13 +310,80 @@ func TestStaticServing_PathTraversalStaysInsideRoot(t *testing.T) {
 	cfg.StaticDir = root
 	srv := server.New(cfg, nil)
 
-	// Plain and percent-encoded escape attempts resolve inside the static
-	// root, so they fall back to the SPA shell instead of reading the
-	// sentinel.
+	// Traversal paths are rejected rather than cleaned into either a static
+	// file or a valid frontend route.
 	for _, target := range []string{"/../secret.txt", "/%2e%2e/secret.txt", "/..%2Fsecret.txt"} {
 		rec := get(srv.Handler, target)
-		require.Equal(t, http.StatusOK, rec.Code, target)
-		assert.Equal(t, "<html>spa shell</html>", rec.Body.String(), target)
+		require.Equal(t, http.StatusNotFound, rec.Code, target)
+		assert.NotEqual(t, "<html>spa shell</html>", rec.Body.String(), target)
 		assert.NotContains(t, rec.Body.String(), "outside the root", target)
+	}
+}
+
+func TestStaticServing_UnsafePathsCannotBecomeFrontendRoutes(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.StaticDir = newStaticDir(t)
+	srv := server.New(cfg, nil)
+
+	targets := []string{
+		"/rsvp%2fform", "/admin%2fparties", // encoded separators
+		"/story\\", "/admin\\parties", // literal backslashes
+		"//story", "/admin//parties", // repeated interior separators
+		"/./story", "/admin/../story", // traversal and normalization
+		"/i/token/extra", "/games/slug/extra", "/admin/events/id/extra",
+	}
+	for _, target := range targets {
+		rec := get(srv.Handler, target)
+		require.Equal(t, http.StatusNotFound, rec.Code, target)
+		assert.NotEqual(t, "<html>spa shell</html>", rec.Body.String(), target)
+	}
+}
+
+func TestStaticServing_MalformedRawEscapeIsRejected(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.StaticDir = newStaticDir(t)
+	srv := server.New(cfg, nil)
+
+	// net/http rejects malformed and inconsistent escapes while parsing a real
+	// request. Build RawPath directly to pin the middleware's defensive behavior.
+	for _, rawPath := range []string{"/story%", "/schedule"} {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/story", http.NoBody)
+		req.URL.RawPath = rawPath
+		rec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusNotFound, rec.Code, rawPath)
+		assert.NotEqual(t, "<html>spa shell</html>", rec.Body.String(), rawPath)
+	}
+}
+
+func TestStaticServing_ExistingFileWinsBeforeRouteClassification(t *testing.T) {
+	cfg := newTestConfig(t)
+	dir := newStaticDir(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "story"), []byte("static story"), 0o600))
+	cfg.StaticDir = dir
+	srv := server.New(cfg, nil)
+
+	rec := get(srv.Handler, "/story")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "static story", rec.Body.String())
+	assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"))
+}
+
+func TestStaticServing_DynamicSegmentsMustBeSafeAndSingle(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.StaticDir = newStaticDir(t)
+	srv := server.New(cfg, nil)
+
+	for _, target := range []string{
+		"/i/value-with-dashes", "/u/not-a-business-valid-uuid", "/games/unknown-slug",
+		"/admin/parties/not-a-business-valid-id", "/admin/events/123", "/admin/emails/sends/x",
+	} {
+		rec := get(srv.Handler, target)
+		require.Equal(t, http.StatusOK, rec.Code, target)
+	}
+
+	for _, target := range []string{"/i/.", "/u/..", "/games/%00", "/games/%FF", "/admin/parties/id/extra"} {
+		rec := get(srv.Handler, target)
+		require.Equal(t, http.StatusNotFound, rec.Code, target)
 	}
 }
