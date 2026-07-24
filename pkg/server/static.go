@@ -400,9 +400,9 @@ func injectMeta(doc, urlPath, canonicalHost string, req *http.Request, titler in
 	// receives the page's friendly not-found treatment. Known puzzles additionally
 	// get their registry title and canonical URL. When the gate is removed and the
 	// games are public, drop addNoindex here so puzzles can be indexed.
-	if isPuzzlePath(key) {
+	if slug, ok := puzzleSlug(key); ok {
 		doc = addNoindex(doc)
-		if label, ok := puzzleTitle(key); ok {
+		if label, known := puzzlePageTitles[slug]; known {
 			doc = setHeadTitle(doc, label+titleSep+appName)
 			return setCanonicalURL(doc, canonicalHost, req, key)
 		}
@@ -555,20 +555,10 @@ func infoPageName(req *http.Request, key, urlPath string, titler infoTitler) str
 	return ""
 }
 
-// isPuzzlePath reports whether p has the frontend /games/:puzzleSlug shape.
-func isPuzzlePath(p string) bool {
+// puzzleSlug returns the slug when p has the frontend /games/:puzzleSlug shape.
+func puzzleSlug(p string) (string, bool) {
 	slug, ok := strings.CutPrefix(p, "/games/")
-	return ok && isSafeDynamicSegment(slug)
-}
-
-// puzzleTitle returns the title for a known /games/:slug puzzle page.
-func puzzleTitle(p string) (string, bool) {
-	slug, ok := strings.CutPrefix(p, "/games/")
-	if !ok || !isSafeDynamicSegment(slug) {
-		return "", false
-	}
-	label, ok := puzzlePageTitles[slug]
-	return label, ok
+	return slug, ok && isSafeDynamicSegment(slug)
 }
 
 // absoluteURL builds the canonical absolute https URL for a route's og:url. It
