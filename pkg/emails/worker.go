@@ -127,8 +127,8 @@ func (w *Worker) Wake() { w.supervisor.Wake() }
 // batch before closing the database.
 func (w *Worker) Done() <-chan struct{} { return w.supervisor.Done() }
 
-// Run activates immediately, on each explicit Wake, and on the existing poll
-// interval until ctx is canceled. Keeping polling temporarily means callers do
+// Run activates immediately, when an explicit wake is pending, and on the
+// existing poll interval until ctx is canceled. Keeping polling temporarily means callers do
 // not yet need to signal every enqueue path, so queued recipients cannot be
 // stranded before demand-started delivery is wired. Call Run in a goroutine;
 // it never returns an error (failures are logged and retried next activation,

@@ -88,6 +88,7 @@ func TestWorkerWake_CoalescesConcurrentSignalsWithoutConcurrentCycles(t *testing
 	}
 	signals.Wait()
 	assert.Equal(t, int32(1), calls.Load(), "Wake must not run a cycle in the caller")
+	assert.Len(t, worker.supervisor.wake, 1, "simultaneous wakes must collapse into one pending activation")
 
 	close(releaseFirst)
 	waitForSignal(t, secondStarted, "coalesced wake did not run another cycle")
@@ -96,6 +97,75 @@ func TestWorkerWake_CoalescesConcurrentSignalsWithoutConcurrentCycles(t *testing
 
 	assert.Equal(t, int32(2), calls.Load())
 	assert.Equal(t, int32(1), maxActive.Load())
+}
+
+func TestWorkerRun_PreservesIntervalPolling(t *testing.T) {
+	activated := make(chan struct{}, 2)
+	worker := &Worker{
+		supervisor: newWorkerSupervisor(time.Millisecond, func(context.Context) {
+			activated <- struct{}{}
+		}, logger.New()),
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	go worker.Run(runCtx)
+	waitForSignal(t, activated, "initial worker cycle did not start")
+	waitForSignal(t, activated, "poll interval did not start another cycle")
+
+	cancel()
+	waitForSignal(t, worker.Done(), "worker did not stop")
+}
+
+func TestWorkerRun_ConcurrentCallsDoNotStartConcurrentCycles(t *testing.T) {
+	var calls atomic.Int32
+	var active atomic.Int32
+	var maxActive atomic.Int32
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+
+	worker := lifecycleTestWorker(func(context.Context) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			maximum := maxActive.Load()
+			if current <= maximum || maxActive.CompareAndSwap(maximum, current) {
+				break
+			}
+		}
+		calls.Add(1)
+		started <- struct{}{}
+		<-release
+	})
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	returned := make(chan struct{}, 2)
+	go func() {
+		worker.Run(runCtx)
+		returned <- struct{}{}
+	}()
+	waitForSignal(t, started, "initial worker cycle did not start")
+
+	secondCalling := make(chan struct{})
+	go func() {
+		close(secondCalling)
+		worker.Run(runCtx)
+		returned <- struct{}{}
+	}()
+	waitForSignal(t, secondCalling, "second Run caller did not start")
+
+	select {
+	case <-started:
+		t.Fatal("concurrent Run call started another cycle")
+	case <-time.After(100 * time.Millisecond):
+	}
+	assert.Equal(t, int32(1), calls.Load())
+	assert.Equal(t, int32(1), maxActive.Load())
+
+	cancel()
+	close(release)
+	waitForSignal(t, returned, "first Run caller did not return")
+	waitForSignal(t, returned, "second Run caller did not return")
+	waitForSignal(t, worker.Done(), "worker did not stop")
 }
 
 func TestWorkerRun_ShutdownDuringInFlightCycleFinishesWithoutAnotherCycle(t *testing.T) {
