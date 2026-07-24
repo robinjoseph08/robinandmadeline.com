@@ -3,6 +3,7 @@ package emails_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,6 +30,22 @@ func (h *queryCounter) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) conte
 }
 
 func (h *queryCounter) AfterQuery(context.Context, *bun.QueryEvent) {}
+
+type queryCompletionSignal struct {
+	queryPart string
+	done      chan struct{}
+	once      sync.Once
+}
+
+func (h *queryCompletionSignal) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	return ctx
+}
+
+func (h *queryCompletionSignal) AfterQuery(_ context.Context, event *bun.QueryEvent) {
+	if strings.Contains(event.Query, h.queryPart) {
+		h.once.Do(func() { close(h.done) })
+	}
+}
 
 type cancelAfterQuery struct {
 	cancel context.CancelFunc
@@ -1403,16 +1420,26 @@ func TestRun_QuotaBlockedWorkWaitsForALaterWake(t *testing.T) {
 	client := newFakeMailgun()
 	client.accepted[rows[alice.ID].ID] = "recovered-id@test.mailgun"
 	w := newWorker(f, client, cfg)
+	budgetChecked := make(chan struct{})
+	f.db.AddQueryHook(&queryCompletionSignal{
+		queryPart: "erc.attempted_at >=",
+		done:      budgetChecked,
+	})
 
 	runCtx, cancel := context.WithCancel(ctx())
 	go w.Run(runCtx)
 	w.Wake()
 
 	// The activation still reconciles interrupted work, but Bob remains durable
-	// and no timer dispatches him while today's budget is exhausted.
-	require.Eventually(t, func() bool {
-		return recipientsForSend(t, f.db, send.ID)[alice.ID].Status == models.EmailSent
-	}, 5*time.Second, 20*time.Millisecond, "Run never reconciled the stranded row while paused")
+	// and no timer dispatches him while today's budget is exhausted. Wait for
+	// the budget query itself, not just Alice's earlier reconciliation update,
+	// so advancing the fake clock cannot race the activation's final claim check.
+	select {
+	case <-budgetChecked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run never checked the exhausted budget after reconciliation")
+	}
+	assert.Equal(t, models.EmailSent, recipientsForSend(t, f.db, send.ID)[alice.ID].Status)
 	assert.Empty(t, client.sentMessages())
 	assert.Equal(t, models.EmailQueued, recipientsForSend(t, f.db, send.ID)[bob.ID].Status)
 
