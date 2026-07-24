@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -311,7 +312,9 @@ func TestContextualRows_StopsBlockedIterationAtBudget(t *testing.T) {
 }
 
 func TestNormalizeDatabaseError_MarksOnlyTransportFailures(t *testing.T) {
-	assert.True(t, IsConnectionFailure(normalizeDatabaseError(context.Background(), driver.ErrBadConn)))
+	for _, err := range []error{driver.ErrBadConn, io.EOF, io.ErrUnexpectedEOF} {
+		assert.True(t, IsConnectionFailure(normalizeDatabaseError(context.Background(), err)))
+	}
 	assert.False(t, IsConnectionFailure(normalizeDatabaseError(context.Background(), errors.New("ordinary SQL error"))))
 }
 

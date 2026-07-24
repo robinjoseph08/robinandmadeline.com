@@ -337,7 +337,7 @@ func normalizeDatabaseError(ctx context.Context, err error) error {
 }
 
 func isDatabaseTransportError(err error) bool {
-	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, io.ErrUnexpectedEOF) {
+	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
 	var netErr net.Error
