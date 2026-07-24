@@ -20,6 +20,13 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// WorkerWaker is the narrow delivery-supervisor capability used by the email
+// service and routes. Worker implements it; tests can record wake calls without
+// starting delivery.
+type WorkerWaker interface {
+	Wake()
+}
+
 // Service is the email templates/sends data layer over a Bun DB. Construct it
 // with NewService. Methods return errcodes errors directly; handlers pass them
 // through to the shared error handler.
@@ -35,6 +42,11 @@ type Service struct {
 	// previews so the compose page can warn when a send will span multiple
 	// days. Zero or negative means unlimited.
 	dailySendLimit int
+
+	// worker is signaled after a successful enqueue commit and after
+	// authenticated email-administration API activity. It is nil when Mailgun
+	// delivery is not configured.
+	worker WorkerWaker
 
 	// The "Send test" capability (SendTest). A test send is a real send
 	// enqueued for the worker (addressed to the couple's own inboxes), so the
@@ -53,6 +65,19 @@ type Service struct {
 // capability is off until WithTestSend is called.
 func NewService(db *bun.DB, publicBaseURL, sentBy string, dailySendLimit int) *Service {
 	return &Service{db: db, publicBaseURL: publicBaseURL, sentBy: sentBy, dailySendLimit: dailySendLimit}
+}
+
+// WithWorkerWake connects successful enqueues and authenticated email-admin
+// API activity to the delivery supervisor. A nil waker leaves signaling off.
+func (s *Service) WithWorkerWake(worker WorkerWaker) *Service {
+	s.worker = worker
+	return s
+}
+
+func (s *Service) wakeWorker() {
+	if s.worker != nil {
+		s.worker.Wake()
+	}
 }
 
 // WithTestSend enables the "Send test" endpoint with the configured test

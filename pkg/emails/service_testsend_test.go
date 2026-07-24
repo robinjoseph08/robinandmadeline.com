@@ -56,6 +56,41 @@ func TestSendTest_EnqueuesAnIsTestSendAddressedToTheInboxesRenderedFromFirstGues
 	assert.ElementsMatch(t, []string{"Robin <robin@example.com>", "Madeline <madeline@example.com>"}, addrs)
 }
 
+func TestSendTest_WakesOnlyAfterRecipientRowsCommit(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	committedRows := 0
+	waker := &recordingWaker{onWake: func() {
+		var err error
+		committedRows, err = f.db.NewSelect().Model((*models.EmailRecipient)(nil)).Count(ctx())
+		require.NoError(t, err)
+	}}
+	svc := f.emails.WithWorkerWake(waker).WithTestSend([]string{"robin@example.com"})
+
+	_, err := svc.SendTest(ctx(), emails.TestEmailPayload{Subject: "Hi", Body: "Body"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, waker.calls)
+	assert.Equal(t, 1, committedRows, "wake must observe the committed recipient row")
+}
+
+func TestSendTest_RolledBackEnqueueDoesNotWake(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	rejectRecipientInserts(t, f.db)
+
+	waker := &recordingWaker{}
+	_, err := f.emails.WithWorkerWake(waker).WithTestSend([]string{"robin@example.com"}).
+		SendTest(ctx(), emails.TestEmailPayload{Subject: "Hi", Body: "Body"})
+	require.Error(t, err)
+	assert.Equal(t, 0, waker.calls)
+	_, total, listErr := f.emails.ListSends(ctx())
+	require.NoError(t, listErr)
+	assert.Equal(t, 0, total, "test send insert must roll back with the recipient insert")
+}
+
 func TestSendTest_RendersFromAGuestWithoutAnEmail(t *testing.T) {
 	f := newFixtures(t)
 	// The only matching guest has no email. A real send would skip her, but a

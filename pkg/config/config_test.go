@@ -36,7 +36,6 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, "https://api.mailgun.net", cfg.MailgunBaseURL)
 		assert.Equal(t, "Robin & Madeline <hello@robinandmadeline.com>", cfg.EmailFrom)
 		assert.Equal(t, 10, cfg.EmailWorkerBatchSize)
-		assert.Equal(t, 5*time.Second, cfg.EmailWorkerPollInterval)
 		assert.Equal(t, 5*time.Minute, cfg.EmailWorkerStuckThreshold)
 		// Mailgun's free plan caps sends at 100 per UTC day, so that is the
 		// safe out-of-the-box budget.
@@ -63,7 +62,6 @@ func TestNew(t *testing.T) {
 		t.Setenv("MAILGUN_WEBHOOK_SIGNING_KEY", "whsec-abc")
 		t.Setenv("EMAIL_FROM", "Us <us@example.com>")
 		t.Setenv("EMAIL_WORKER_BATCH_SIZE", "25")
-		t.Setenv("EMAIL_WORKER_POLL_INTERVAL", "1s")
 		t.Setenv("EMAIL_WORKER_STUCK_THRESHOLD", "10m")
 		t.Setenv("EMAIL_DAILY_SEND_LIMIT", "250")
 		t.Setenv("EMAIL_TEST_RECIPIENTS", "Robin <robin@example.com>, Madeline <madeline@example.com>")
@@ -87,7 +85,6 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, "whsec-abc", cfg.MailgunWebhookSigningKey)
 		assert.Equal(t, "Us <us@example.com>", cfg.EmailFrom)
 		assert.Equal(t, 25, cfg.EmailWorkerBatchSize)
-		assert.Equal(t, time.Second, cfg.EmailWorkerPollInterval)
 		assert.Equal(t, 10*time.Minute, cfg.EmailWorkerStuckThreshold)
 		assert.Equal(t, 250, cfg.EmailDailySendLimit)
 		// Comma-separated addresses are split and trimmed, RFC5322 display-name
@@ -134,13 +131,6 @@ func TestNew(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("errors on malformed EMAIL_WORKER_POLL_INTERVAL", func(t *testing.T) {
-		t.Setenv("EMAIL_WORKER_POLL_INTERVAL", "not-a-duration")
-
-		_, err := config.New()
-		assert.Error(t, err)
-	})
-
 	t.Run("uses the canonical database for the main checkout", func(t *testing.T) {
 		// Setting DATABASE_URL to "" makes envStr fall back to the computed
 		// default; the main checkout's .git is a directory.
@@ -171,18 +161,10 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, "postgres://robinandmadeline_admin:password@localhost:5432/robinandmadeline_wt_my_feature?sslmode=disable", cfg.DatabaseURL)
 	})
 
-	// Non-positive worker knobs fail at startup: zero or negative values would
-	// otherwise surface as a failing claim query every cycle (batch size) or a
-	// hot poll loop against the database (poll interval).
+	// A non-positive batch size fails at startup rather than surfacing as a
+	// failing claim query every activation.
 	t.Run("errors on non-positive EMAIL_WORKER_BATCH_SIZE", func(t *testing.T) {
 		t.Setenv("EMAIL_WORKER_BATCH_SIZE", "0")
-
-		_, err := config.New()
-		assert.Error(t, err)
-	})
-
-	t.Run("errors on non-positive EMAIL_WORKER_POLL_INTERVAL", func(t *testing.T) {
-		t.Setenv("EMAIL_WORKER_POLL_INTERVAL", "-1s")
 
 		_, err := config.New()
 		assert.Error(t, err)

@@ -33,6 +33,13 @@ import (
 // The db may be nil (or unreachable); the health endpoint stays reachable
 // either way so liveness checks don't hard-fail when the database is down.
 func New(cfg *config.Config, db *bun.DB) *http.Server {
+	return NewWithEmailWorker(cfg, db, nil)
+}
+
+// NewWithEmailWorker builds the HTTP server and connects authenticated email
+// administration plus successful enqueues to the configured delivery worker.
+// A nil worker keeps email signaling disabled, as in local development.
+func NewWithEmailWorker(cfg *config.Config, db *bun.DB, worker emails.WorkerWaker) *http.Server {
 	e := echo.New()
 	e.HideBanner = true
 
@@ -97,7 +104,7 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 		PerMinute: cfg.LoginRatePerMinute,
 		Burst:     cfg.LoginRateBurst,
 	})
-	registerAdmin(api, authMiddleware, db, cfg)
+	registerAdmin(api, authMiddleware, db, cfg, worker)
 	registerGuest(api, authMiddleware, db)
 	// The guest-facing schedule mounts on the open group behind optional guest
 	// auth: anonymous requests see public events, a valid guest token adds the
@@ -145,7 +152,7 @@ func New(cfg *config.Config, db *bun.DB) *http.Server {
 // parties service is still constructed, but its handlers are only reachable
 // with a valid token and will error at query time if the DB is unavailable,
 // which is the same failure mode as any other DB-backed endpoint.
-func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.Config) {
+func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.Config, worker emails.WorkerWaker) {
 	admin := g.Group("/admin")
 	admin.Use(mw.RequireAdmin)
 	admin.GET("/me", func(c echo.Context) error {
@@ -158,7 +165,8 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.C
 	events.RegisterRoutes(admin, events.NewService(db))
 	photogroups.RegisterRoutes(admin, photogroups.NewService(db))
 
-	emailService := emails.NewService(db, cfg.PublicBaseURL, cfg.AdminUsername, cfg.EmailDailySendLimit)
+	emailService := emails.NewService(db, cfg.PublicBaseURL, cfg.AdminUsername, cfg.EmailDailySendLimit).
+		WithWorkerWake(worker)
 	// The "Send test" endpoint enqueues a real send for the queue worker, so it
 	// needs no Mailgun client of its own. Enable it only when Mailgun is
 	// configured, mirroring how the worker decides it is on (so there is a

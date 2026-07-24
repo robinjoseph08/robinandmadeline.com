@@ -24,7 +24,7 @@ type Message struct {
 	Text    string
 	HTML    string
 	// RecipientID is the email_recipients row id, attached to the Mailgun
-	// message as a custom variable so a restart can reconcile a stuck
+	// message as a custom variable so a later activation can reconcile a stuck
 	// `sending` row against Mailgun's event log without sending a duplicate
 	// (ADR 0004).
 	RecipientID string
@@ -91,8 +91,8 @@ type MailgunClient interface {
 	// FindAcceptedMessageID reports whether Mailgun already accepted a message
 	// for the given email_recipients row id (matched via the recipient_id
 	// custom variable on recent events for that address), returning its
-	// message id when found. The restart reconciliation uses it to decide
-	// between marking a stuck row sent and retrying it.
+	// message id when found. Reconciliation on a later activation uses it to
+	// decide between marking a stuck row sent and retrying it.
 	FindAcceptedMessageID(ctx context.Context, recipientID, recipientEmail string) (string, bool, error)
 }
 

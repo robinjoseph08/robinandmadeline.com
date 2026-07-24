@@ -94,8 +94,9 @@ Email delivery (the admin email system) is configured separately and is off by
 default: without `MAILGUN_API_KEY` the queue worker never starts and sends
 stay queued. Set `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, and
 `MAILGUN_WEBHOOK_SIGNING_KEY` (plus optionally `MAILGUN_BASE_URL`,
-`EMAIL_FROM`, `PUBLIC_BASE_URL`, and the `EMAIL_WORKER_*` tuning knobs) to
-enable real sending and delivery webhooks. Emails go out as HTML (a Markdown
+`EMAIL_FROM`, `PUBLIC_BASE_URL`, `EMAIL_WORKER_BATCH_SIZE`,
+`EMAIL_WORKER_STUCK_THRESHOLD`, and `EMAIL_DAILY_SEND_LIMIT`) to enable real
+sending and delivery webhooks. Emails go out as HTML (a Markdown
 body rendered into an in-repo, palette-matched shell) with a plaintext
 fallback.
 

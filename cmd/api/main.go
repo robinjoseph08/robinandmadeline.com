@@ -63,16 +63,12 @@ func main() {
 		}
 	}()
 
-	// The server does NOT migrate at startup. Production runs migrations via the
-	// Fly release_command (`cmd/migrations migrate`) before the new release takes
-	// traffic; local dev applies them through the `mise start` task, which depends
-	// on `db:migrate`.
-	srv := server.New(cfg, db)
-
 	// The email queue worker (ADR 0004) drains email_recipients through
 	// Mailgun. Without an API key (local dev, e2e) it stays off and queued
 	// emails simply wait, so nothing can ever call the real Mailgun API
-	// unconfigured.
+	// unconfigured. Run starts an idle, database-free supervisor; successful
+	// enqueues and authenticated email-admin API requests wake it through the
+	// server wiring below.
 	var worker *emails.Worker
 	workerCtx, stopWorker := context.WithCancel(ctx)
 	defer stopWorker()
@@ -82,13 +78,23 @@ func main() {
 			From:           cfg.EmailFrom,
 			PublicBaseURL:  cfg.PublicBaseURL,
 			BatchSize:      cfg.EmailWorkerBatchSize,
-			PollInterval:   cfg.EmailWorkerPollInterval,
 			StuckThreshold: cfg.EmailWorkerStuckThreshold,
 			DailySendLimit: cfg.EmailDailySendLimit,
 		}, log)
 		go worker.Run(workerCtx)
 	} else {
 		log.Warn("MAILGUN_API_KEY not set; email worker disabled, sends will stay queued")
+	}
+
+	// The server does NOT migrate at startup. Production runs migrations via the
+	// Fly release_command (`cmd/migrations migrate`) before the new release takes
+	// traffic; local dev applies them through the `mise start` task, which depends
+	// on `db:migrate`.
+	var srv *http.Server
+	if worker == nil {
+		srv = server.New(cfg, db)
+	} else {
+		srv = server.NewWithEmailWorker(cfg, db, worker)
 	}
 
 	listener, err := listen(ctx, cfg)
