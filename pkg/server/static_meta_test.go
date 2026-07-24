@@ -115,6 +115,7 @@ func TestShellMeta_InfoLookupAttributesDatabaseConnectionWithoutToken(t *testing
 	const infoToken = "sensitiveinfotoken123456789012"
 	rec := getCanonical(handler, "/i/"+infoToken)
 	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "<title>Your Details · Robin &amp; Madeline</title>")
 	select {
 	case attempt := <-attempts:
 		assert.Equal(t, "info_metadata", attempt.Operation.String())
@@ -202,10 +203,9 @@ func TestShellMeta_NoindexTitledRoutesGetGenericTitle(t *testing.T) {
 	// preview: the per-guest token/UUID links (no login, reachable by anyone
 	// holding the link) and the RSVP flow steps. Each gets a title while staying
 	// noindex. Mixed case confirms the match is case-insensitive. The /i/ link
-	// shows its generic "Your Details" fallback here because this meta server is
-	// wired with a nil DB, so its primary-guest-name lookup yields nothing; the
-	// personalized "<name>'s Info" title is covered in static_meta_internal_test.go
-	// (injection) and pkg/info (the query).
+	// shows its generic "Your Details" fallback here because these sample tokens
+	// are not eligible for a metadata lookup. Personalized titles and the nil-DB
+	// fallback are covered in static_meta_internal_test.go and pkg/info.
 	for _, tc := range []struct{ path, title, ogURL string }{
 		{"/i/some-token", "Your Details · Robin &amp; Madeline", "https://www.robinandmadeline.com/i/some-token"},
 		{"/I/Some-Token", "Your Details · Robin &amp; Madeline", "https://www.robinandmadeline.com/i/some-token"},

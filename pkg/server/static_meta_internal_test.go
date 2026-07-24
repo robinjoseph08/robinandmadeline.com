@@ -1,10 +1,6 @@
-// This file is white-box (package server) so it can call the unexported
-// injectMeta directly with a stub infoTitler, which is how the per-route title
-// logic (first-name extraction, the fallbacks, token-case, and "/i/-only") is
-// tested without a database. The DB query itself is covered black-box in pkg/info
-// (TestPrimaryGuestName_*), and the wiring of the real info service through
-// server.New into the shell renderer is covered end-to-end in static_meta_test.go
-// (TestShellMeta_InfoRouteTitleUsesPrimaryGuestNameEndToEnd).
+// This file is white-box (package server) so it can exercise metadata lookup
+// eligibility with a stub infoTitler. The DB query itself is covered black-box
+// in pkg/info, and server.New's wiring is covered in static_meta_test.go.
 package server
 
 import (
@@ -12,32 +8,48 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/labstack/echo/v4"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// stubInfoTitler is a test double for the infoTitler the shell renderer consults
-// for the /i/:token title. It records the token it was asked about and how many
-// times, so a test can assert the route extracts the token (in its original
-// case) and consults the resolver only for the info route.
+const validInfoToken = "abcdefghijklmnopqrstuvwxyz1234"
+
+// stubInfoTitler records every lookup and can delegate to resolve for context
+// deadline and cancellation tests.
 type stubInfoTitler struct {
-	name     string
-	err      error
-	gotToken string
-	calls    int
+	name       string
+	err        error
+	gotToken   string
+	calls      int
+	resolve    func(context.Context, string) (string, error)
+	deadline   time.Time
+	contextErr error
 }
 
-func (s *stubInfoTitler) PrimaryGuestName(_ context.Context, token string) (string, error) {
+func (s *stubInfoTitler) PrimaryGuestName(ctx context.Context, token string) (string, error) {
 	s.calls++
 	s.gotToken = token
+	if deadline, ok := ctx.Deadline(); ok {
+		s.deadline = deadline
+	}
+	if s.resolve != nil {
+		name, err := s.resolve(ctx, token)
+		s.contextErr = ctx.Err()
+		return name, err
+	}
 	return s.name, s.err
 }
 
-// internalMetaShell is a minimal SPA head carrying just the tags injectMeta
-// rewrites, enough to assert the per-route title and og:url without the fuller
-// fixture the black-box meta tests use.
+// internalMetaShell carries the tags injectMeta rewrites, enough to assert the
+// per-route title and canonical URL without the fuller black-box fixture.
 const internalMetaShell = `<!doctype html><html><head>` +
 	`<title>Robin &amp; Madeline</title>` +
 	`<meta name="description" content="Robin and Madeline's wedding website" />` +
@@ -48,73 +60,139 @@ const internalMetaShell = `<!doctype html><html><head>` +
 
 const internalMetaHost = "www.robinandmadeline.com"
 
-// injectInfo runs injectMeta for urlPath against the minimal shell with a fixed
-// canonical host, so og:url is deterministic and the request is only the context
-// carrier the resolver and logger read.
-func injectInfo(t *testing.T, urlPath string, titler infoTitler) string {
+func newInternalMetaHandler(t *testing.T, titler infoTitler) http.Handler {
 	t.Helper()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", http.NoBody)
-	return injectMeta(internalMetaShell, urlPath, internalMetaHost, req, titler)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte(internalMetaShell), 0o600))
+
+	e := echo.New()
+	e.HTTPErrorHandler = errcodes.NewHandler().Handle
+	e.Use(staticMiddleware(dir, internalMetaHost, titler))
+	return e
+}
+
+func requestInternalMeta(ctx context.Context, t *testing.T, handler http.Handler, method, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(ctx, method, target, http.NoBody)
+	req.Host = internalMetaHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func injectInfo(t *testing.T, target string, titler infoTitler) string {
+	t.Helper()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, target, http.NoBody)
+	return injectMeta(internalMetaShell, trimTrailingSlash(req.URL.Path), internalMetaHost, req, titler)
 }
 
 func TestInjectMeta_InfoPageTitleUsesPrimaryGuestName(t *testing.T) {
+	before := time.Now()
 	titler := &stubInfoTitler{name: "Ada Lovelace"}
-	body := injectInfo(t, "/i/sometoken123", titler)
+	body := injectInfo(t, "/i/"+validInfoToken, titler)
 
-	// The title and both preview titles read "<first name>'s Info" (the apostrophe
-	// HTML-escaped), so the full "Ada Lovelace" is trimmed to "Ada", replacing the
-	// generic fallback, with exactly one <title>.
 	assert.Contains(t, body, "<title>Ada&#39;s Info · Robin &amp; Madeline</title>")
 	assert.Equal(t, 1, strings.Count(body, "<title>"))
 	assert.Contains(t, body, `<meta property="og:title" content="Ada&#39;s Info · Robin &amp; Madeline" />`)
 	assert.Contains(t, body, `<meta name="twitter:title" content="Ada&#39;s Info · Robin &amp; Madeline" />`)
-
-	// The page stays noindex and its preview card links back to itself.
 	assert.Contains(t, body, `<meta name="robots" content="noindex" />`)
-	assert.Contains(t, body, `<meta property="og:url" content="https://www.robinandmadeline.com/i/sometoken123" />`)
-
-	// The token reached the resolver exactly once, in its original case.
+	assert.Contains(t, body, `<meta property="og:url" content="https://www.robinandmadeline.com/i/`+validInfoToken+`" />`)
 	assert.Equal(t, 1, titler.calls)
-	assert.Equal(t, "sometoken123", titler.gotToken)
+	assert.Equal(t, validInfoToken, titler.gotToken)
+	assert.WithinDuration(t, before.Add(time.Second), titler.deadline, 100*time.Millisecond)
 }
 
-func TestInjectMeta_InfoPageFallsBackToGenericTitle(t *testing.T) {
-	// An unknown token or a party with no named primary returns an empty name: the
-	// title keeps the generic fallback while staying noindex with a self-
-	// referential og:url, exactly as before the title was personalized.
-	body := injectInfo(t, "/i/sometoken123", &stubInfoTitler{name: ""})
-	assert.Contains(t, body, "<title>Your Details · Robin &amp; Madeline</title>")
-	assert.Contains(t, body, `<meta name="robots" content="noindex" />`)
-	assert.Contains(t, body, `<meta property="og:url" content="https://www.robinandmadeline.com/i/sometoken123" />`)
+func TestInjectMeta_InfoLookupEligibility(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		target     string
+		wantStatus int
+		wantCalls  int
+	}{
+		{name: "normal GET", method: http.MethodGet, target: "/i/" + validInfoToken, wantStatus: http.StatusOK, wantCalls: 1},
+		{name: "uppercase route prefix", method: http.MethodGet, target: "/I/" + validInfoToken, wantStatus: http.StatusOK, wantCalls: 1},
+		{name: "mixed-case prefix with trailing slash", method: http.MethodGet, target: "/I/" + validInfoToken + "/", wantStatus: http.StatusOK, wantCalls: 1},
+		{name: "HEAD", method: http.MethodHead, target: "/i/" + validInfoToken, wantStatus: http.StatusOK},
+		{name: "short token", method: http.MethodGet, target: "/i/" + validInfoToken[:29], wantStatus: http.StatusOK},
+		{name: "long token", method: http.MethodGet, target: "/i/" + validInfoToken + "a", wantStatus: http.StatusOK},
+		{name: "uppercase token", method: http.MethodGet, target: "/i/Abcdefghijklmnopqrstuvwxyz1234", wantStatus: http.StatusOK},
+		{name: "symbol in token", method: http.MethodGet, target: "/i/abcdefghijklmnopqrstuvwxy-1234", wantStatus: http.StatusOK},
+		{name: "percent-encoded route character", method: http.MethodGet, target: "/%69/" + validInfoToken, wantStatus: http.StatusOK},
+		{name: "percent-encoded token character", method: http.MethodGet, target: "/i/abcdefghijklmnopqrstuvwxy%7A1234", wantStatus: http.StatusOK},
+		{name: "encoded slash", method: http.MethodGet, target: "/i/" + validInfoToken + "%2Fextra", wantStatus: http.StatusNotFound},
+		{name: "encoded backslash", method: http.MethodGet, target: "/i/" + validInfoToken + "%5Cextra", wantStatus: http.StatusNotFound},
+		{name: "additional segment", method: http.MethodGet, target: "/i/" + validInfoToken + "/extra", wantStatus: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			titler := &stubInfoTitler{name: "Ada Lovelace"}
+			rec := requestInternalMeta(context.Background(), t, newInternalMetaHandler(t, titler), tt.method, tt.target)
+			require.Equal(t, tt.wantStatus, rec.Code)
+			assert.Equal(t, tt.wantCalls, titler.calls)
+			if tt.wantStatus == http.StatusOK && tt.method == http.MethodGet {
+				wantTitle := "Your Details"
+				if tt.wantCalls == 1 {
+					wantTitle = "Ada&#39;s Info"
+				}
+				assert.Contains(t, rec.Body.String(), "<title>"+wantTitle+" · Robin &amp; Madeline</title>")
+			}
+		})
+	}
 }
 
-func TestInjectMeta_InfoPageFallsBackOnLookupError(t *testing.T) {
-	// A lookup failure must not fail the render: the title falls back to the
-	// generic label (the error is logged, not propagated).
-	body := injectInfo(t, "/i/sometoken123", &stubInfoTitler{err: errors.New("db down")})
-	assert.Contains(t, body, "<title>Your Details · Robin &amp; Madeline</title>")
+func TestInjectMeta_InfoPageGenericFallbacks(t *testing.T) {
+	tests := []struct {
+		name   string
+		titler infoTitler
+	}{
+		{name: "unknown token", titler: &stubInfoTitler{}},
+		{name: "database error", titler: &stubInfoTitler{err: errors.New("db down")}},
+		{name: "nil resolver", titler: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := requestInternalMeta(context.Background(), t, newInternalMetaHandler(t, tt.titler), http.MethodGet, "/i/"+validInfoToken)
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.Contains(t, rec.Body.String(), "<title>Your Details · Robin &amp; Madeline</title>")
+		})
+	}
 }
 
-func TestInjectMeta_InfoPagePreservesTokenCase(t *testing.T) {
-	// React Router matches routes case-insensitively, so a mixed-case /I/ still
-	// gets the info treatment, but the token must reach the (case-sensitive) lookup
-	// in its original case, not the lowercased route key.
-	titler := &stubInfoTitler{name: "Ada Lovelace"}
-	body := injectInfo(t, "/I/AbC123", titler)
-	assert.Equal(t, "AbC123", titler.gotToken)
-	assert.Contains(t, body, "<title>Ada&#39;s Info · Robin &amp; Madeline</title>")
+func TestInjectMeta_InfoPageFallsBackWhenRequestIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	titler := &stubInfoTitler{resolve: func(ctx context.Context, _ string) (string, error) {
+		return "", ctx.Err()
+	}}
+
+	rec := requestInternalMeta(ctx, t, newInternalMetaHandler(t, titler), http.MethodGet, "/i/"+validInfoToken)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, 1, titler.calls)
+	require.ErrorIs(t, titler.contextErr, context.Canceled)
+	assert.Contains(t, rec.Body.String(), "<title>Your Details · Robin &amp; Madeline</title>")
 }
 
-func TestInjectMeta_NilTitlerFallsBackToGenericTitle(t *testing.T) {
-	// With no titler wired (the SPA served without an info service), the info route
-	// keeps the generic title rather than panicking.
-	body := injectInfo(t, "/i/sometoken123", nil)
-	assert.Contains(t, body, "<title>Your Details · Robin &amp; Madeline</title>")
+func TestInjectMeta_InfoPageTimesOutAndCancelsLookup(t *testing.T) {
+	titler := &stubInfoTitler{resolve: func(ctx context.Context, _ string) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}}
+	started := time.Now()
+
+	rec := requestInternalMeta(context.Background(), t, newInternalMetaHandler(t, titler), http.MethodGet, "/i/"+validInfoToken)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, 1, titler.calls)
+	assert.GreaterOrEqual(t, time.Since(started), 900*time.Millisecond)
+	assert.Less(t, time.Since(started), 2*time.Second)
+	require.ErrorIs(t, titler.contextErr, context.DeadlineExceeded)
+	assert.Contains(t, rec.Body.String(), "<title>Your Details · Robin &amp; Madeline</title>")
 }
 
 func TestInjectMeta_TitlerConsultedOnlyForInfoRoute(t *testing.T) {
-	// The other noindex-titled routes keep their static labels and never hit the
-	// resolver: only /i/ is personalized.
 	for _, tc := range []struct{ path, title string }{
 		{"/u/some-guest-id", "Unsubscribe"},
 		{"/rsvp/form", "RSVP"},
@@ -128,11 +206,6 @@ func TestInjectMeta_TitlerConsultedOnlyForInfoRoute(t *testing.T) {
 }
 
 func TestInjectMeta_InfoPageUsesOnlyTheFirstName(t *testing.T) {
-	// The title is the first whitespace-delimited token of the primary's full name,
-	// so a one-word, three-word, or irregularly-spaced name all reduce to the first
-	// name (this is what distinguishes first-name from full-name or last-name
-	// extraction), and a blank or whitespace-only name falls back to the generic
-	// label (the strings.Fields empty branch, which strings.Split would miss).
 	for _, tc := range []struct{ name, wantTitle string }{
 		{"Cher", "Cher&#39;s Info"},
 		{"Mary Jane Watson", "Mary&#39;s Info"},
@@ -140,19 +213,7 @@ func TestInjectMeta_InfoPageUsesOnlyTheFirstName(t *testing.T) {
 		{"   ", "Your Details"},
 		{"", "Your Details"},
 	} {
-		body := injectInfo(t, "/i/sometoken123", &stubInfoTitler{name: tc.name})
+		body := injectInfo(t, "/i/"+validInfoToken, &stubInfoTitler{name: tc.name})
 		assert.Contains(t, body, "<title>"+tc.wantTitle+" · Robin &amp; Madeline</title>", tc.name)
-	}
-}
-
-func TestInjectMeta_InfoPageGuardsMalformedToken(t *testing.T) {
-	// A bare /i/ (no token) or a multi-segment tail is still a noindex info path,
-	// but it has no single token to resolve, so the resolver is never consulted and
-	// the title stays the generic fallback.
-	for _, path := range []string{"/i/", "/i/a/b"} {
-		titler := &stubInfoTitler{name: "Ada Lovelace"}
-		body := injectInfo(t, path, titler)
-		assert.Equal(t, 0, titler.calls, path)
-		assert.Contains(t, body, "<title>Your Details · Robin &amp; Madeline</title>", path)
 	}
 }

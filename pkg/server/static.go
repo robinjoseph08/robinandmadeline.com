@@ -14,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
+	"github.com/pkg/errors"
+	"github.com/robinjoseph08/golib/errutils"
 	"github.com/robinjoseph08/golib/logger"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
@@ -442,7 +444,7 @@ func injectMeta(doc, urlPath, canonicalHost string, req *http.Request, titler in
 			// first name ("<first name>'s Info"); the generic label stays the fallback
 			// when the name can't be resolved (unknown token, no named primary, no
 			// titler, or a lookup error).
-			if name := infoPageName(req, key, urlPath, titler); name != "" {
+			if name := infoPageName(req, key, titler); name != "" {
 				label = name + "'s Info"
 			}
 			doc = setHeadTitle(doc, label+titleSep+appName)
@@ -540,35 +542,45 @@ func noindexTitle(p string) (string, bool) {
 	return "", false
 }
 
-// infoPagePrefix is the info-collection route (/i/:token) whose generic title is
-// upgraded to the party's primary guest name.
-const infoPagePrefix = "/i/"
+const (
+	// infoPagePrefix is the info-collection route (/i/:token) whose generic
+	// title may be upgraded to the party's primary guest name.
+	infoPagePrefix = "/i/"
+	// The metadata lookup has its own short budget. It is intentionally
+	// independent of the longer API database-work budget.
+	infoMetadataLookupTimeout = time.Second
+	infoTokenLength           = 30
+)
 
-// infoPageName returns the primary guest's first name to personalize the
-// info-collection page's title (matching the page's own "Hi Amanda!" greeting),
-// or "" to keep the generic fallback. It returns "" for any route other than
-// /i/:token, when no titler is wired, and (after logging) on a lookup error, so a
-// preview title never fails the shell render. The token is sliced from the
-// original-case urlPath (not the lowercased route key) so it matches the
-// case-sensitive info_token lookup the page itself does through the API; a real
-// token is lowercase alphanumerics, so the "/i/" prefix is three ASCII bytes and
-// the slice is exactly the token. A non-ASCII path that case-folds to "/i/..."
-// can't spell a valid token and is rejected by the empty/slash guard below.
-func infoPageName(req *http.Request, key, urlPath string, titler infoTitler) string {
+// infoPageName returns the Primary Guest's first name for an eligible Info
+// Collection metadata lookup, or "" to keep the generic fallback. Eligibility
+// is deliberately narrower than frontend route matching: only GET may resolve,
+// the /i/ route prefix follows React Router's ASCII case behavior, and the one
+// literal token segment must contain exactly 30 lowercase ASCII letters or
+// digits. One normal trailing slash is accepted by the route middleware.
+// Encoded characters are inspected in EscapedPath and therefore never become a
+// token lookup. Lookup cancellation, timeout, unknown tokens, and errors all
+// preserve the generic shell response.
+func infoPageName(req *http.Request, key string, titler infoTitler) string {
 	if titler == nil || !strings.HasPrefix(key, infoPagePrefix) {
 		return ""
 	}
-	token := urlPath[len(infoPagePrefix):]
-	if token == "" || strings.Contains(token, "/") {
+	token, eligible := infoMetadataToken(req)
+	if !eligible {
 		return ""
 	}
+
 	// Attribution uses a fixed label rather than the raw metadata URL or its
 	// Info Token. The operation context reaches the shared lazy database handle
 	// through the info service's query.
-	ctx := database.WithOperation(req.Context(), database.InfoMetadataOperation())
-	name, err := titler.PrimaryGuestName(ctx, token)
+	lookupCtx, cancel := context.WithTimeout(req.Context(), infoMetadataLookupTimeout)
+	defer cancel()
+	lookupCtx = database.WithOperation(lookupCtx, database.InfoMetadataOperation())
+	name, err := titler.PrimaryGuestName(lookupCtx, token)
 	if err != nil {
-		logger.FromContext(req.Context()).Err(err).Warn("resolve info page title")
+		if !errutils.IsIgnorableErr(err) && !errors.Is(err, context.Canceled) {
+			logger.FromContext(req.Context()).Err(err).Warn("resolve info page title")
+		}
 		return ""
 	}
 	// Just the first name. strings.Fields also trims and collapses whitespace, so
@@ -577,6 +589,28 @@ func infoPageName(req *http.Request, key, urlPath string, titler infoTitler) str
 		return fields[0]
 	}
 	return ""
+}
+
+// infoMetadataToken validates the request exactly as received. EscapedPath
+// retains any percent escapes, which cannot satisfy the literal
+// lowercase-alphanumeric token shape.
+func infoMetadataToken(req *http.Request) (string, bool) {
+	if req.Method != http.MethodGet {
+		return "", false
+	}
+	path := trimTrailingSlash(req.URL.EscapedPath())
+	if len(path) != len(infoPagePrefix)+infoTokenLength ||
+		!equalASCIIFold(path[:len(infoPagePrefix)], infoPagePrefix) {
+		return "", false
+	}
+	token := path[len(infoPagePrefix):]
+	for i := range token {
+		c := token[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return "", false
+		}
+	}
+	return token, true
 }
 
 // puzzleSlug returns the slug when p has the frontend /games/:puzzleSlug shape.
