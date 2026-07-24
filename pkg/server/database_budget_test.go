@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/robinjoseph08/golib/echo/v4/middleware/recovery"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,6 +65,27 @@ func TestDatabaseBudgetMiddleware_DoesNotTranslateCallerDeadline(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code, "the existing handler ignores caller timeouts")
 	assert.Empty(t, rec.Body.String())
+}
+
+func TestDatabaseBudgetMiddleware_TranslatesDriverSocketDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := echo.New()
+		e.HTTPErrorHandler = errcodes.NewHandler().Handle
+		e.Use(databaseBudgetMiddleware)
+		e.GET("/api/test", func(c echo.Context) error {
+			<-c.Request().Context().Done()
+			return &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
+		})
+
+		startedAt := time.Now()
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/test", http.NoBody)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		assert.Equal(t, database.HTTPWorkBudget, time.Since(startedAt))
+		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+		assert.JSONEq(t, `{"error":{"code":"service_unavailable","message":"Service Unavailable","status_code":503}}`, rec.Body.String())
+	})
 }
 
 func TestDatabaseBudgetMiddleware_PreservesProgrammingErrorBehavior(t *testing.T) {

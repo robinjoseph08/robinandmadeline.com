@@ -224,7 +224,37 @@ func (c *observedConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, &connectionFailure{err: err}
 	}
+	if pgConn, ok := conn.(*pgdriver.Conn); ok {
+		return &contextualPGConn{Conn: pgConn}, nil
+	}
 	return conn, nil
+}
+
+// contextualPGConn keeps the context passed to BeginTx available to the
+// driver's COMMIT operation. database/sql's driver.Tx interface has no
+// CommitContext method, and pgdriver otherwise commits with a background
+// context, which would let a commit outlive its request's aggregate budget.
+type contextualPGConn struct {
+	*pgdriver.Conn
+}
+
+func (c *contextualPGConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	tx, err := c.Conn.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &contextualTx{Tx: tx, ctx: ctx, execer: c.Conn}, nil
+}
+
+type contextualTx struct {
+	driver.Tx
+	ctx    context.Context
+	execer driver.ExecerContext
+}
+
+func (tx *contextualTx) Commit() error {
+	_, err := tx.execer.ExecContext(tx.ctx, "COMMIT", nil)
+	return err
 }
 
 // connectionFailure marks an error returned while opening a physical database

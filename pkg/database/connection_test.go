@@ -42,6 +42,29 @@ func (*stubConn) Prepare(string) (driver.Stmt, error) {
 func (*stubConn) Close() error              { return nil }
 func (*stubConn) Begin() (driver.Tx, error) { return nil, errors.New("stub connection cannot begin") }
 
+type recordingTx struct {
+	commits atomic.Int32
+}
+
+func (tx *recordingTx) Commit() error {
+	tx.commits.Add(1)
+	return nil
+}
+func (*recordingTx) Rollback() error { return nil }
+
+type recordingCommitExecer struct {
+	ctx   context.Context
+	query string
+	args  []driver.NamedValue
+}
+
+func (e *recordingCommitExecer) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	e.ctx = ctx
+	e.query = query
+	e.args = args
+	return driver.RowsAffected(0), nil
+}
+
 type blockingConnector struct {
 	attempts atomic.Int32
 	err      error
@@ -217,6 +240,20 @@ func TestNewWithConnector_MarksOnlyPhysicalConnectionFailures(t *testing.T) {
 	require.ErrorIs(t, err, connectErr)
 	assert.True(t, IsConnectionFailure(err))
 	assert.False(t, IsConnectionFailure(errors.New("ordinary SQL error")))
+}
+
+func TestContextualTx_CommitUsesTransactionContext(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), HTTPWorkBudget)
+	defer cancel()
+	rawTx := &recordingTx{}
+	execer := &recordingCommitExecer{}
+	tx := &contextualTx{Tx: rawTx, ctx: ctx, execer: execer}
+
+	require.NoError(t, tx.Commit())
+	assert.Equal(t, ctx, execer.ctx)
+	assert.Equal(t, "COMMIT", execer.query)
+	assert.Nil(t, execer.args)
+	assert.Zero(t, rawTx.commits.Load(), "the background-context driver commit must not run")
 }
 
 func TestHTTPWorkBudget_HasOneExactFiveSecondDeadline(t *testing.T) {

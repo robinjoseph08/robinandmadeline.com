@@ -38,8 +38,7 @@ func databaseBudgetMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		if stderrors.Is(err, context.DeadlineExceeded) && !requestBudgetExpired {
 			return err
 		}
-		budgetExpired := requestBudgetExpired && stderrors.Is(err, context.DeadlineExceeded)
-		if !budgetExpired && !database.IsConnectionFailure(err) {
+		if !requestBudgetExpired && !database.IsConnectionFailure(err) {
 			return err
 		}
 
