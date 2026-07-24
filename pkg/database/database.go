@@ -290,20 +290,23 @@ func (tx *contextualTx) Rollback() error {
 
 type contextualRows struct {
 	driver.Rows
-	ctx       context.Context
-	closeConn func() error
-	done      chan struct{}
-	doneOnce  sync.Once
+	ctx         context.Context
+	closeConn   func() error
+	done        chan struct{}
+	watcherDone chan struct{}
+	doneOnce    sync.Once
 }
 
 func newContextualRows(ctx context.Context, rows driver.Rows, closeConn func() error) *contextualRows {
 	wrapped := &contextualRows{
-		Rows:      rows,
-		ctx:       ctx,
-		closeConn: closeConn,
-		done:      make(chan struct{}),
+		Rows:        rows,
+		ctx:         ctx,
+		closeConn:   closeConn,
+		done:        make(chan struct{}),
+		watcherDone: make(chan struct{}),
 	}
 	go func() {
+		defer close(wrapped.watcherDone)
 		select {
 		case <-ctx.Done():
 			_ = closeConn()
@@ -322,8 +325,10 @@ func (rows *contextualRows) Next(dest []driver.Value) error {
 }
 
 func (rows *contextualRows) Close() error {
-	defer rows.doneOnce.Do(func() { close(rows.done) })
-	return normalizeDatabaseError(rows.ctx, rows.Rows.Close())
+	err := rows.Rows.Close()
+	rows.doneOnce.Do(func() { close(rows.done) })
+	<-rows.watcherDone
+	return normalizeDatabaseError(rows.ctx, err)
 }
 
 func normalizeDatabaseError(ctx context.Context, err error) error {

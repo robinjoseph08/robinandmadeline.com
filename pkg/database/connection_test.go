@@ -353,6 +353,34 @@ func TestContextualRows_StopsBlockedIterationAtBudget(t *testing.T) {
 	})
 }
 
+func TestContextualRows_CloseWaitsForCancellationWatcher(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		closeStarted := make(chan struct{})
+		releaseClose := make(chan struct{})
+		rows := newContextualRows(ctx, &blockingRows{release: make(chan struct{})}, func() error {
+			close(closeStarted)
+			<-releaseClose
+			return nil
+		})
+
+		cancel()
+		<-closeStarted
+		result := make(chan error, 1)
+		go func() { result <- rows.Close() }()
+		synctest.Wait()
+		select {
+		case <-result:
+			t.Fatal("rows closed before the cancellation watcher finished")
+		default:
+		}
+
+		close(releaseClose)
+		synctest.Wait()
+		require.NoError(t, <-result)
+	})
+}
+
 func TestNormalizeDatabaseError_MarksOnlyTransportFailures(t *testing.T) {
 	for _, err := range []error{
 		driver.ErrBadConn,
