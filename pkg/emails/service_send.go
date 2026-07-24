@@ -166,6 +166,9 @@ func (s *Service) CreateSend(ctx context.Context, in SendEmailPayload) (*models.
 	if err != nil {
 		return nil, SendStats{}, err
 	}
+	// RunInTx has committed before it returns nil. Signal only now so a worker
+	// can never race ahead of the durable recipient rows or run for a rollback.
+	s.wakeWorker()
 	return send, SendStats{Queued: len(rows), Total: len(rows)}, nil
 }
 

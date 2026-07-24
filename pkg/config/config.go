@@ -107,13 +107,8 @@ type Config struct {
 	// claims (ADR 0004).
 	EmailWorkerBatchSize int
 
-	// EmailWorkerPollInterval is how long the worker sleeps between queue
-	// polls when idle.
-	EmailWorkerPollInterval time.Duration
-
-	// EmailWorkerStuckThreshold is how old a `sending` row must be before the
-	// worker's reconcile pass (run each cycle, including immediately on
-	// restart) checks it against Mailgun (ADR 0004).
+	// EmailWorkerStuckThreshold is how old a `sending` row must be before an
+	// activated worker's reconcile pass checks it against Mailgun (ADR 0004).
 	EmailWorkerStuckThreshold time.Duration
 
 	// EmailDailySendLimit caps how many emails the worker dispatches per UTC
@@ -168,8 +163,7 @@ const (
 	// Small batches with a short pause keep one slow Mailgun call from
 	// stalling the whole queue while still draining ~174 recipients in
 	// seconds (ADR 0004).
-	defaultEmailWorkerBatchSize    = 10
-	defaultEmailWorkerPollInterval = 5 * time.Second
+	defaultEmailWorkerBatchSize = 10
 	// Comfortably longer than a worst-case in-flight batch, so a live
 	// worker's rows are never mistaken for crash leftovers.
 	defaultEmailWorkerStuckThreshold = 5 * time.Minute
@@ -212,24 +206,14 @@ func New() (*Config, error) {
 		return nil, err
 	}
 
-	// The worker tuning knobs must be positive: a zero or negative batch size
-	// makes every claim query fail (and zero would claim nothing forever), and
-	// a non-positive poll interval turns the worker loop into a hot spin
-	// against the database. Failing at startup beats either failure mode.
+	// A zero or negative batch size makes every claim query fail (and zero
+	// would claim nothing forever). Failing at startup beats that failure mode.
 	emailWorkerBatchSize, err := envInt("EMAIL_WORKER_BATCH_SIZE", defaultEmailWorkerBatchSize)
 	if err != nil {
 		return nil, err
 	}
 	if emailWorkerBatchSize <= 0 {
 		return nil, fmt.Errorf("invalid EMAIL_WORKER_BATCH_SIZE: %d is not positive", emailWorkerBatchSize)
-	}
-
-	emailWorkerPollInterval, err := envDuration("EMAIL_WORKER_POLL_INTERVAL", defaultEmailWorkerPollInterval)
-	if err != nil {
-		return nil, err
-	}
-	if emailWorkerPollInterval <= 0 {
-		return nil, fmt.Errorf("invalid EMAIL_WORKER_POLL_INTERVAL: %s is not positive", emailWorkerPollInterval)
 	}
 
 	emailWorkerStuckThreshold, err := envDuration("EMAIL_WORKER_STUCK_THRESHOLD", defaultEmailWorkerStuckThreshold)
@@ -286,7 +270,6 @@ func New() (*Config, error) {
 		MailgunWebhookSigningKey:  os.Getenv("MAILGUN_WEBHOOK_SIGNING_KEY"),
 		EmailFrom:                 envStr("EMAIL_FROM", defaultEmailFrom),
 		EmailWorkerBatchSize:      emailWorkerBatchSize,
-		EmailWorkerPollInterval:   emailWorkerPollInterval,
 		EmailWorkerStuckThreshold: emailWorkerStuckThreshold,
 		EmailDailySendLimit:       emailDailySendLimit,
 		EmailTestRecipients:       envCSV("EMAIL_TEST_RECIPIENTS"),

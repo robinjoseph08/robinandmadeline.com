@@ -71,24 +71,21 @@ const EMPTY_FILTER: FilterState = { tags: [] };
 
 /**
  * When the recipient count exceeds what is left of today's daily send budget,
- * describes roughly how many days the queue will take to drain (the worker
- * dispatches up to the limit per UTC day and the rest simply waits).
- * Undefined when the limit is unlimited (zero) or today's remaining budget
- * covers the whole send.
+ * describes the minimum UTC-day quota windows required and explains that a
+ * later reset does not wake the worker by itself. Undefined when the limit is
+ * unlimited (zero) or today's remaining budget covers the whole send.
  */
-function multiDaySendNote(preview: PreviewEmailResponse): string | undefined {
+function quotaWindowNote(preview: PreviewEmailResponse): string | undefined {
   const limit = preview.daily_send_limit;
   if (limit <= 0) return undefined;
   const remainingToday = Math.max(limit - preview.daily_sends_used, 0);
   if (preview.total <= remainingToday) return undefined;
-  // Today only counts as a day when it still contributes sends: with the
-  // budget already spent, the queue drains entirely on later days, so adding
-  // one for today would overstate the estimate.
-  const days =
+  // Today counts as a quota window only when it can still contribute sends.
+  const windows =
     remainingToday === 0
       ? Math.ceil(preview.total / limit)
       : Math.ceil((preview.total - remainingToday) / limit) + 1;
-  return `The daily send limit is ${limit} (${preview.daily_sends_used} used today), so it will go out over approximately ${days} day${days === 1 ? "" : "s"}.`;
+  return `The daily send limit is ${limit} (${preview.daily_sends_used} used today), so this send needs at least ${windows} UTC-day quota window${windows === 1 ? "" : "s"}. After a daily reset, return to email administration or enqueue another send to resume delivery.`;
 }
 
 /** Builds the wire filter, dropping unset criteria. */
@@ -171,7 +168,7 @@ export default function AdminEmailCompose() {
   }, [partiesQuery.data]);
 
   const canCompose = subject.trim().length > 0 && body.length > 0;
-  const previewDayNote = preview ? multiDaySendNote(preview) : undefined;
+  const previewDayNote = preview ? quotaWindowNote(preview) : undefined;
   // The confirmation dialog reads its recipient count and notes from `preview`,
   // which handleSend refreshes (via the pre-send re-resolve) immediately before
   // opening the dialog, so what it shows is the live audience that will send.

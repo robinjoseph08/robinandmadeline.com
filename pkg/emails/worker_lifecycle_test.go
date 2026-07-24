@@ -13,7 +13,7 @@ import (
 
 func lifecycleTestWorker(activate func(context.Context)) *Worker {
 	return &Worker{
-		supervisor: newWorkerSupervisor(time.Hour, activate, logger.New()),
+		supervisor: newWorkerSupervisor(activate, logger.New()),
 	}
 }
 
@@ -27,7 +27,7 @@ func waitForSignal(t *testing.T, signal <-chan struct{}, message string) {
 }
 
 func TestWorkerWake_IsBoundedAndDoesNotActivateInline(t *testing.T) {
-	worker := NewWorker(nil, nil, WorkerConfig{PollInterval: time.Hour}, logger.New())
+	worker := NewWorker(nil, nil, WorkerConfig{}, logger.New())
 	returned := make(chan struct{})
 
 	go func() {
@@ -75,7 +75,8 @@ func TestWorkerWake_CoalescesConcurrentSignalsWithoutConcurrentCycles(t *testing
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	go worker.Run(runCtx)
-	waitForSignal(t, firstStarted, "initial worker cycle did not start")
+	worker.Wake()
+	waitForSignal(t, firstStarted, "woken worker cycle did not start")
 
 	const signalers = 100
 	var signals sync.WaitGroup
@@ -99,18 +100,39 @@ func TestWorkerWake_CoalescesConcurrentSignalsWithoutConcurrentCycles(t *testing
 	assert.Equal(t, int32(1), maxActive.Load())
 }
 
-func TestWorkerRun_PreservesIntervalPolling(t *testing.T) {
+func TestWorkerRun_ConfiguredWorkerStartsIdleWithoutDatabaseAccess(t *testing.T) {
+	// A nil DB would panic if the real worker attempted reconciliation or queue
+	// access at startup. Starting and stopping without a wake must only exercise
+	// the database-free supervisor.
+	worker := NewWorker(nil, nil, WorkerConfig{}, logger.New())
+	runCtx, cancel := context.WithCancel(context.Background())
+	go worker.Run(runCtx)
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	waitForSignal(t, worker.Done(), "idle worker did not stop")
+}
+
+func TestWorkerRun_WaitsForExplicitWakesWithoutStartupOrIdlePolling(t *testing.T) {
 	activated := make(chan struct{}, 2)
-	worker := &Worker{
-		supervisor: newWorkerSupervisor(time.Millisecond, func(context.Context) {
-			activated <- struct{}{}
-		}, logger.New()),
-	}
+	worker := lifecycleTestWorker(func(context.Context) {
+		activated <- struct{}{}
+	})
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	go worker.Run(runCtx)
-	waitForSignal(t, activated, "initial worker cycle did not start")
-	waitForSignal(t, activated, "poll interval did not start another cycle")
+	select {
+	case <-activated:
+		t.Fatal("worker activated at startup without a wake")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	worker.Wake()
+	waitForSignal(t, activated, "explicit wake did not activate worker")
+	select {
+	case <-activated:
+		t.Fatal("idle worker polled without another wake")
+	case <-time.After(100 * time.Millisecond):
+	}
 
 	cancel()
 	waitForSignal(t, worker.Done(), "worker did not stop")
@@ -143,7 +165,8 @@ func TestWorkerRun_ConcurrentCallsDoNotStartConcurrentCycles(t *testing.T) {
 		worker.Run(runCtx)
 		returned <- struct{}{}
 	}()
-	waitForSignal(t, started, "initial worker cycle did not start")
+	worker.Wake()
+	waitForSignal(t, started, "woken worker cycle did not start")
 
 	secondCalling := make(chan struct{})
 	go func() {
@@ -184,7 +207,8 @@ func TestWorkerRun_ShutdownDuringInFlightCycleFinishesWithoutAnotherCycle(t *tes
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	go worker.Run(runCtx)
-	waitForSignal(t, started, "initial worker cycle did not start")
+	worker.Wake()
+	waitForSignal(t, started, "woken worker cycle did not start")
 
 	worker.Wake()
 	cancel()
@@ -224,6 +248,7 @@ func TestWorkerWake_DuringIdleTransitionCausesAnotherActionableWorkCheck(t *test
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	go worker.Run(runCtx)
+	worker.Wake()
 	waitForSignal(t, lastCheckReached, "worker did not reach its idle transition")
 
 	// Actionable work appears after the activation's final check but before it

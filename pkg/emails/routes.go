@@ -33,6 +33,16 @@ func RegisterRoutes(admin *echo.Group, service *Service) {
 	h := &handler{service: service}
 
 	emails := admin.Group("/emails")
+	// The parent admin group's authentication middleware runs before this child
+	// middleware. Every accepted email-admin API request therefore requests a
+	// reconciliation cycle, while rejected auth and static /admin documents do
+	// not reach it. Wake is nonblocking and does no database work itself.
+	emails.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			service.wakeWorker()
+			return next(c)
+		}
+	})
 	emails.GET("/templates", h.listTemplates)
 	emails.POST("/templates", h.createTemplate)
 	emails.GET("/templates/:id", h.getTemplate)

@@ -135,6 +135,41 @@ func TestCreateSend_CreatesQueuedRecipientRows(t *testing.T) {
 	assert.Equal(t, models.EmailQueued, rows[bob.ID].Status)
 }
 
+func TestCreateSend_WakesOnlyAfterRecipientRowsCommit(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	committedRows := 0
+	waker := &recordingWaker{onWake: func() {
+		var err error
+		committedRows, err = f.db.NewSelect().Model((*models.EmailRecipient)(nil)).Count(ctx())
+		require.NoError(t, err)
+	}}
+	svc := f.emails.WithWorkerWake(waker)
+
+	_, _, err := svc.CreateSend(ctx(), emails.SendEmailPayload{Subject: "Hi", Body: "Body"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, waker.calls)
+	assert.Equal(t, 1, committedRows, "wake must observe the committed recipient row")
+}
+
+func TestCreateSend_RolledBackEnqueueDoesNotWake(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	rejectRecipientInserts(t, f.db)
+
+	waker := &recordingWaker{}
+	_, _, err := f.emails.WithWorkerWake(waker).
+		CreateSend(ctx(), emails.SendEmailPayload{Subject: "Hi", Body: "Body"})
+	require.Error(t, err)
+	assert.Equal(t, 0, waker.calls)
+	_, total, listErr := f.emails.ListSends(ctx())
+	require.NoError(t, listErr)
+	assert.Equal(t, 0, total, "send insert must roll back with the recipient insert")
+}
+
 func TestCreateSend_ExcludesUnsubscribedGuests(t *testing.T) {
 	f := newFixtures(t)
 	p := createPartyT(t, f, "The Smiths", partyOpts{})

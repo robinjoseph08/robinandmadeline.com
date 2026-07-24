@@ -20,12 +20,13 @@ how production was built should it ever need rebuilding.
   to `master`, with migrations applied first via the Fly `release_command`.
   Steady state is one machine.
 
-> **Pending accepted change:** ADR 0010 is accepted but not yet implemented or
-> deployed. Until it lands, the current process still pings Postgres at startup,
-> `/api/health` still reports database reachability, the email worker still
-> starts at process boot, and unknown frontend paths still receive the SPA
-> shell. Current-state verification and operations below intentionally describe
-> that behavior.
+> **Partially implemented accepted change:** ADR 0010 is accepted but not fully
+> deployed. The email worker is now demand-driven: its supervisor waits at
+> process boot without querying Postgres, and committed enqueues or authenticated
+> email-admin API activity wake delivery. The current process still performs
+> its separate startup ping, `/api/health` still reports database reachability, and unknown
+> frontend paths still receive the SPA shell. Current-state verification and
+> operations below intentionally describe that remaining behavior.
 
 ## Already done in this repo
 
@@ -110,8 +111,8 @@ The email system was added after the initial setup, and its secrets are now
 configured in production. `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` enable sending.
 `MAILGUN_WEBHOOK_SIGNING_KEY` verifies delivery webhooks; without it, the app
 fails closed and rejects every webhook, so delivery statuses will not advance.
-The currently deployed worker lifecycle follows ADR 0004; ADR 0010 records its
-accepted demand-started replacement.
+The worker follows ADR 0004's demand-driven lifecycle. ADR 0010 tracks the
+remaining database-activation work that has not yet landed.
 
 ### 4. First deploy
 
@@ -214,11 +215,11 @@ secret with `gh secret delete FLY_API_TOKEN`.
   deploy in the GitHub Actions run or with `fly logs`. A migration failure
   aborts the deploy and the previous release keeps serving. To deploy by hand
   (for a rollback or when CI is unavailable), run `fly deploy` locally.
-- **Scale-to-zero behavior (until ADR 0010 is deployed)**: Fly's proxy stops
+- **Scale-to-zero behavior (during the ADR 0010 rollout)**: Fly's proxy stops
   the machine when idle and boots it on the next request. The Go cold start is
   sub-second (static binary, no startup migrations, background-only DB ping),
   so visitors just see a normally fast first load while Neon also wakes from
-  idle.
+  idle. The email supervisor remains database-free until explicitly woken.
 - **Logs**: `fly logs` (JSON via `LOG_FORMAT=json`).
 - **Rollback**: `fly releases` then `fly deploy --image <previous image ref>`.
 - **Local image check**: `mise build:docker` builds the exact production

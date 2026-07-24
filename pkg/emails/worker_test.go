@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,7 +16,49 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 )
+
+type queryCounter struct {
+	count atomic.Int32
+}
+
+func (h *queryCounter) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	h.count.Add(1)
+	return ctx
+}
+
+func (h *queryCounter) AfterQuery(context.Context, *bun.QueryEvent) {}
+
+type cancelAfterQuery struct {
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (h *cancelAfterQuery) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	return ctx
+}
+
+func (h *cancelAfterQuery) AfterQuery(context.Context, *bun.QueryEvent) {
+	h.once.Do(h.cancel)
+}
+
+type closeDBAfterQuery struct {
+	db     *bun.DB
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (h *closeDBAfterQuery) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	return ctx
+}
+
+func (h *closeDBAfterQuery) AfterQuery(context.Context, *bun.QueryEvent) {
+	h.once.Do(func() {
+		_ = h.db.Close()
+		close(h.closed)
+	})
+}
 
 // fakeMailgun is the test double for the MailgunClient seam: it records every
 // send, can fail specific addresses, can block mid-send (for the shutdown
@@ -98,14 +141,13 @@ func (f *fakeMailgun) sentMessages() []emails.Message {
 
 const testFrom = "Robin & Madeline <hello@example.test>"
 
-// workerConfig is the default test tuning: small batches, fast polling, and a
-// short stuck threshold so reconciliation tests do not wait minutes.
+// workerConfig is the default test tuning: small batches and a short stuck
+// threshold so reconciliation tests do not wait minutes.
 func workerConfig() emails.WorkerConfig {
 	return emails.WorkerConfig{
 		From:           testFrom,
 		PublicBaseURL:  testBaseURL,
 		BatchSize:      10,
-		PollInterval:   10 * time.Millisecond,
 		StuckThreshold: time.Minute,
 	}
 }
@@ -427,6 +469,135 @@ func TestProcessBatch_RespectsBatchSize(t *testing.T) {
 	assert.Len(t, client.sentMessages(), 2)
 }
 
+func TestRun_ReconcileDatabaseErrorEndsActivationUntilAnotherWake(t *testing.T) {
+	f := newFixtures(t)
+	// Make the reconcile SELECT fail while leaving the connection itself usable.
+	// If cycle continued into claimBatch after that terminal error, it would
+	// issue a second query against the missing table in the same activation.
+	_, err := f.db.ExecContext(ctx(), `ALTER TABLE email_recipients RENAME TO email_recipients_unavailable`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = f.db.ExecContext(ctx(), `ALTER TABLE email_recipients_unavailable RENAME TO email_recipients`)
+	})
+
+	counter := new(queryCounter)
+	f.db.AddQueryHook(counter)
+	w := newWorker(f, newFakeMailgun(), workerConfig())
+	runCtx, cancel := context.WithCancel(ctx())
+	go w.Run(runCtx)
+	w.Wake()
+	require.Eventually(t, func() bool {
+		return counter.count.Load() > 0
+	}, 5*time.Second, 10*time.Millisecond, "worker did not attempt reconciliation")
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, int32(1), counter.count.Load(),
+		"reconcile failure must end the activation before a claim query")
+
+	// The supervisor is waiting again rather than retrying on a timer. A later
+	// authenticated email-admin wake permits exactly one new reconcile attempt.
+	w.Wake()
+	require.Eventually(t, func() bool {
+		return counter.count.Load() == 2
+	}, 5*time.Second, 10*time.Millisecond, "later wake did not start a new activation")
+	cancel()
+	<-w.Done()
+}
+
+func TestRun_SingleWakeDrainsMultipleBatches(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	cfg := workerConfig()
+	cfg.BatchSize = 1
+	client := newFakeMailgun()
+	w := newWorker(f, client, cfg)
+	runCtx, cancel := context.WithCancel(ctx())
+	go w.Run(runCtx)
+	w.Wake()
+
+	require.Eventually(t, func() bool {
+		return statusCounts(t, f, send.ID)[models.EmailSent] == 2
+	}, 5*time.Second, 10*time.Millisecond, "one wake did not drain both batches")
+	cancel()
+	<-w.Done()
+	assert.Len(t, client.sentMessages(), 2)
+}
+
+func TestRun_RequeuedStuckRowSendsInSameActivation(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	strandRow(t, f, recipientsForSend(t, f.db, send.ID)[alice.ID].ID, 10*time.Minute)
+
+	client := newFakeMailgun()
+	w := newWorker(f, client, workerConfig())
+	runCtx, cancel := context.WithCancel(ctx())
+	go w.Run(runCtx)
+	w.Wake()
+
+	require.Eventually(t, func() bool {
+		return statusCounts(t, f, send.ID)[models.EmailSent] == 1
+	}, 5*time.Second, 10*time.Millisecond, "requeued row was not sent by the same activation")
+	cancel()
+	<-w.Done()
+	assert.Len(t, client.sentMessages(), 1)
+}
+
+func TestRun_ClaimDatabaseErrorEndsActivation(t *testing.T) {
+	f := newFixtures(t)
+	counter := new(queryCounter)
+	closed := make(chan struct{})
+	f.db.AddQueryHook(counter)
+	f.db.AddQueryHook(&closeDBAfterQuery{db: f.db, closed: closed})
+
+	w := newWorker(f, newFakeMailgun(), workerConfig())
+	runCtx, cancel := context.WithCancel(ctx())
+	go w.Run(runCtx)
+	w.Wake()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconciliation query did not complete")
+	}
+
+	require.Eventually(t, func() bool {
+		return counter.count.Load() >= 2
+	}, 5*time.Second, 10*time.Millisecond, "worker did not attempt the claim query")
+	queryCount := counter.count.Load()
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, queryCount, counter.count.Load(), "claim failure caused an idle retry loop")
+	cancel()
+	<-w.Done()
+}
+
+func TestRun_ShutdownDuringReconciliationDoesNotClaimBatch(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	client := newFakeMailgun()
+	w := newWorker(f, client, workerConfig())
+	runCtx, cancel := context.WithCancel(ctx())
+	f.db.AddQueryHook(&cancelAfterQuery{cancel: cancel})
+
+	go w.Run(runCtx)
+	w.Wake()
+	select {
+	case <-w.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not stop after cancellation during reconciliation")
+	}
+
+	rows := recipientsForSend(t, f.db, send.ID)
+	assert.Equal(t, models.EmailQueued, rows[alice.ID].Status)
+	assert.Empty(t, client.sentMessages())
+}
+
 func TestRun_GracefulShutdownFinishesInFlightBatchAndStops(t *testing.T) {
 	f := newFixtures(t)
 	p := createPartyT(t, f, "The Smiths", partyOpts{})
@@ -444,6 +615,7 @@ func TestRun_GracefulShutdownFinishesInFlightBatchAndStops(t *testing.T) {
 
 	runCtx, cancel := context.WithCancel(ctx())
 	go w.Run(runCtx)
+	w.Wake()
 
 	// Wait until the first send is in flight, then signal shutdown mid-batch.
 	select {
@@ -486,6 +658,7 @@ func TestRun_StopsPickingUpNewBatchesAfterCancel(t *testing.T) {
 
 	runCtx, cancel := context.WithCancel(ctx())
 	go w.Run(runCtx)
+	w.Wake()
 
 	select {
 	case <-client.claimed:
@@ -682,6 +855,39 @@ func TestReconcileStuck_FreshSendingRowsAreLeftAlone(t *testing.T) {
 	assert.Equal(t, models.EmailSending, recipientsForSend(t, f.db, send.ID)[alice.ID].Status)
 }
 
+func TestRun_NonStaleSendingRowWaitsForLaterWakeToReconcile(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	strandRow(t, f, row.ID, time.Second)
+
+	client := newFakeMailgun()
+	client.accepted[row.ID] = "recovered-id@test.mailgun"
+	w := newWorker(f, client, workerConfig())
+	runCtx, cancel := context.WithCancel(ctx())
+	go w.Run(runCtx)
+	w.Wake()
+
+	// The first activation sees a fresh sending row and leaves it durable.
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, models.EmailSending, recipientsForSend(t, f.db, send.ID)[alice.ID].Status)
+	assert.Empty(t, client.sentMessages())
+
+	// Once later activity wakes a now-stale row, reconciliation settles it
+	// without dispatching a duplicate.
+	strandRow(t, f, row.ID, 10*time.Minute)
+	w.Wake()
+	require.Eventually(t, func() bool {
+		return recipientsForSend(t, f.db, send.ID)[alice.ID].Status == models.EmailSent
+	}, 5*time.Second, 20*time.Millisecond, "later wake did not reconcile stale work")
+	cancel()
+	<-w.Done()
+	assert.Empty(t, client.sentMessages())
+}
+
 func TestRun_ReconcilesStuckRowsWithoutADirectCall(t *testing.T) {
 	f := newFixtures(t)
 	p := createPartyT(t, f, "The Smiths", partyOpts{})
@@ -701,6 +907,7 @@ func TestRun_ReconcilesStuckRowsWithoutADirectCall(t *testing.T) {
 
 	runCtx, cancel := context.WithCancel(ctx())
 	go w.Run(runCtx)
+	w.Wake()
 
 	require.Eventually(t, func() bool {
 		return recipientsForSend(t, f.db, send.ID)[alice.ID].Status == models.EmailSent
@@ -1174,7 +1381,7 @@ func TestProcessBatch_UnlimitedBudgetBypassesTheDailyCap(t *testing.T) {
 	assert.Equal(t, 3, statusCounts(t, f, send.ID)[models.EmailSent])
 }
 
-func TestRun_ReconciliationStillRunsWhileBudgetIsExhausted(t *testing.T) {
+func TestRun_QuotaBlockedWorkWaitsForALaterWake(t *testing.T) {
 	f := newFixtures(t)
 	p := createPartyT(t, f, "The Smiths", partyOpts{})
 	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
@@ -1184,31 +1391,43 @@ func TestRun_ReconciliationStillRunsWhileBudgetIsExhausted(t *testing.T) {
 	rows := recipientsForSend(t, f.db, send.ID)
 
 	// Alice's row is crash-stranded in `sending` (already accepted by Mailgun
-	// before the crash). Bob's row was attempted today and requeued, which
-	// spends the whole daily budget of one.
+	// before the crash). Bob's row was attempted on the fake clock's current
+	// day and requeued, which spends the whole daily budget of one.
 	strandRow(t, f, rows[alice.ID].ID, 10*time.Minute)
-	setAttemptedAt(t, f, rows[bob.ID].ID, time.Now().UTC())
+	clock := &fakeClock{t: time.Now().UTC()}
+	setAttemptedAt(t, f, rows[bob.ID].ID, clock.t)
 
 	cfg := workerConfig()
 	cfg.DailySendLimit = 1
+	cfg.Now = clock.now
 	client := newFakeMailgun()
 	client.accepted[rows[alice.ID].ID] = "recovered-id@test.mailgun"
 	w := newWorker(f, client, cfg)
 
 	runCtx, cancel := context.WithCancel(ctx())
 	go w.Run(runCtx)
+	w.Wake()
 
-	// The paused worker must still reconcile: Alice's stranded row settles to
-	// sent even though no claim budget remains.
+	// The activation still reconciles interrupted work, but Bob remains durable
+	// and no timer dispatches him while today's budget is exhausted.
 	require.Eventually(t, func() bool {
 		return recipientsForSend(t, f.db, send.ID)[alice.ID].Status == models.EmailSent
 	}, 5*time.Second, 20*time.Millisecond, "Run never reconciled the stranded row while paused")
-	cancel()
-	<-w.Done()
-
-	// Nothing was dispatched: Bob's row waits for tomorrow's budget.
 	assert.Empty(t, client.sentMessages())
 	assert.Equal(t, models.EmailQueued, recipientsForSend(t, f.db, send.ID)[bob.ID].Status)
+
+	clock.set(clock.t.Add(24 * time.Hour))
+	time.Sleep(100 * time.Millisecond)
+	assert.Empty(t, client.sentMessages(), "midnight must not wake the worker")
+
+	// Later authenticated email-administration activity is represented by the
+	// explicit wake. With a fresh daily budget, it resumes Bob's durable row.
+	w.Wake()
+	require.Eventually(t, func() bool {
+		return recipientsForSend(t, f.db, send.ID)[bob.ID].Status == models.EmailSent
+	}, 5*time.Second, 20*time.Millisecond, "later wake did not resume quota-blocked work")
+	cancel()
+	<-w.Done()
 }
 
 func TestReconcileStuck_CheckErrorLeavesRowSending(t *testing.T) {

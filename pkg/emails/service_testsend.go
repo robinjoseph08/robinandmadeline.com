@@ -132,6 +132,9 @@ func (s *Service) SendTest(ctx context.Context, in TestEmailPayload) (*TestEmail
 	if err != nil {
 		return nil, err
 	}
+	// Match normal sends: RunInTx has committed before the worker is signaled,
+	// and every rollback returns above without a signal.
+	s.wakeWorker()
 	return &TestEmailResponse{SendID: send.ID, Queued: len(rows)}, nil
 }
 

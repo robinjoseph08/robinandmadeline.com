@@ -33,6 +33,21 @@ type fixtures struct {
 	db      *bun.DB
 }
 
+// recordingWaker captures synchronous wake calls from enqueue paths. onWake
+// can query through another pooled connection to prove the transaction is
+// already committed when signaling occurs.
+type recordingWaker struct {
+	calls  int
+	onWake func()
+}
+
+func (w *recordingWaker) Wake() {
+	w.calls++
+	if w.onWake != nil {
+		w.onWake()
+	}
+}
+
 // newFixtures returns the services backed by this package's own Postgres test
 // database (NewIsolated: these tests truncate parties and events, which other
 // package binaries own in the shared database), truncating all touched tables
@@ -51,6 +66,27 @@ func newFixtures(t *testing.T) fixtures {
 
 // ctx returns a background context for service calls in tests.
 func ctx() context.Context { return context.Background() }
+
+// rejectRecipientInserts installs a test-only trigger that fails the recipient
+// insert after the send row has been inserted, forcing RunInTx to roll back.
+func rejectRecipientInserts(t *testing.T, db *bun.DB) {
+	t.Helper()
+	const function = "email_test_reject_recipient_insert"
+	const trigger = "email_test_reject_recipient_insert_trigger"
+	_, err := db.ExecContext(ctx(), `
+		CREATE FUNCTION `+function+`() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'forced recipient insert failure';
+		END;
+		$$`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx(), `CREATE TRIGGER `+trigger+` BEFORE INSERT ON email_recipients FOR EACH ROW EXECUTE FUNCTION `+function+`()`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx(), `DROP TRIGGER IF EXISTS `+trigger+` ON email_recipients`)
+		_, _ = db.ExecContext(ctx(), `DROP FUNCTION IF EXISTS `+function+`()`)
+	})
+}
 
 // assertErrCode asserts that err resolves to an *errcodes.Error with the given
 // code.

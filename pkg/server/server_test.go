@@ -67,6 +67,81 @@ func TestAdminLoginRoute_RejectsBadCredentials(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
+type recordingWaker struct {
+	calls int
+}
+
+func (w *recordingWaker) Wake() { w.calls++ }
+
+func TestEmailAdminActivity_WakesOnlyAfterAuthentication(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.StaticDir = newStaticDir(t)
+	waker := &recordingWaker{}
+	srv := server.NewWithEmailWorker(cfg, nil, waker)
+
+	// A frontend admin document is static activity, not authenticated email API
+	// activity, so serving its SPA shell must leave delivery asleep.
+	staticReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/admin/emails", http.NoBody)
+	staticRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(staticRec, staticReq)
+	require.Equal(t, http.StatusOK, staticRec.Code)
+	assert.Equal(t, 0, waker.calls)
+
+	// The same API route is rejected before the email child middleware when no
+	// valid admin JWT is present.
+	rejectedReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/emails/templates", http.NoBody)
+	rejectedRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rejectedRec, rejectedReq)
+	require.Equal(t, http.StatusUnauthorized, rejectedRec.Code)
+	assert.Equal(t, 0, waker.calls)
+
+	loginBody := `{"username":"admin","password":"correct-horse"}`
+	loginReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/admin/login", strings.NewReader(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(loginRec, loginReq)
+	require.Equal(t, http.StatusOK, loginRec.Code)
+	var login struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(loginRec.Body.Bytes(), &login))
+
+	// Authenticated non-email administration does not request reconciliation.
+	meReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/me", http.NoBody)
+	meReq.Header.Set("Authorization", "Bearer "+login.Token)
+	meRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(meRec, meReq)
+	require.Equal(t, http.StatusOK, meRec.Code)
+	assert.Equal(t, 0, waker.calls)
+
+	// Once admin auth succeeds, every email API route wakes before the handler's
+	// database work. The nil DB or empty body may fail the handler, but
+	// reconciliation was still justified by authenticated activity.
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/admin/emails/templates"},
+		{http.MethodPost, "/api/admin/emails/templates"},
+		{http.MethodGet, "/api/admin/emails/templates/template-id"},
+		{http.MethodPut, "/api/admin/emails/templates/template-id"},
+		{http.MethodDelete, "/api/admin/emails/templates/template-id"},
+		{http.MethodPost, "/api/admin/emails/preview"},
+		{http.MethodPost, "/api/admin/emails/send"},
+		{http.MethodPost, "/api/admin/emails/test"},
+		{http.MethodGet, "/api/admin/emails/shell-preview"},
+		{http.MethodGet, "/api/admin/emails/sends"},
+		{http.MethodGet, "/api/admin/emails/sends/send-id"},
+	}
+	for i, route := range routes {
+		authedReq := httptest.NewRequestWithContext(context.Background(), route.method, route.path, http.NoBody)
+		authedReq.Header.Set("Authorization", "Bearer "+login.Token)
+		authedRec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(authedRec, authedReq)
+		assert.Equal(t, i+1, waker.calls, "%s %s", route.method, route.path)
+	}
+}
+
 func TestProtectedAdminRoute_RequiresToken(t *testing.T) {
 	srv := server.New(newTestConfig(t), nil)
 

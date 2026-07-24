@@ -26,22 +26,19 @@ type WorkerConfig struct {
 	PublicBaseURL string
 	// BatchSize is how many queued rows one batch claims.
 	BatchSize int
-	// PollInterval is how long the worker sleeps between cycles when the
-	// queue is empty.
-	PollInterval time.Duration
-	// StuckThreshold is how old a `sending` row must be before the worker's
-	// reconcile pass (run each cycle, including immediately on restart)
-	// treats it as stuck (left behind by a crash) and checks it against
-	// Mailgun. It must comfortably exceed the longest plausible in-flight
-	// send so a row a live worker is processing is never touched; the worker
+	// StuckThreshold is how old a `sending` row must be before an activated
+	// worker's reconcile pass treats it as stuck (left behind by a crash) and
+	// checks it against Mailgun. It must comfortably exceed the longest
+	// plausible in-flight send so a row a live worker is processing is never
+	// touched; the worker
 	// enforces that itself by flooring the effective threshold at the batch
 	// budget (see effectiveStuckThreshold).
 	StuckThreshold time.Duration
 	// DailySendLimit caps how many rows the worker dispatches per UTC day,
 	// matching Mailgun's free-plan quota (which resets at midnight UTC). Zero
-	// or negative disables the cap. When the budget is spent, claims pause
-	// until the next UTC day and queued rows simply wait; reconciliation
-	// keeps running.
+	// or negative disables the cap. When the budget is spent, queued rows wait
+	// for a later activation after the next UTC day begins; reconciliation also
+	// resumes only on a later activation.
 	DailySendLimit int
 	// Now returns the current time; nil means time.Now. The daily budget
 	// computes its UTC day boundaries from it, so tests inject a fake clock
@@ -64,10 +61,9 @@ const maxFailureReason = 1000
 // of a rejection misclassified as quota: such a row sorts back to the head of
 // the claim order and re-arms the day-long quota pause on every attempt, so
 // without the cap it would starve the queue forever with no admin-visible
-// signal. Three requeues tolerates a genuinely quota-blocked stretch (e.g. a
-// weekend of manual dashboard sends) while keeping the worst case for a
-// misclassified row at maxQuotaRequeues+1 stalled days ending in a visible
-// failed row.
+// signal. Three requeues tolerate a genuinely quota-blocked stretch while
+// ensuring that maxQuotaRequeues+1 explicit activations on eligible UTC days
+// end a misclassified row in a visible failed state.
 const maxQuotaRequeues = 3
 
 // Worker drains the email_recipients queue through Mailgun (ADR 0004). Each
@@ -76,8 +72,8 @@ const maxQuotaRequeues = 3
 // renders each recipient's merge fields, and records `sent` (with the Mailgun
 // message id) or `failed` per row. Claims are capped at what remains of the
 // daily send budget (DailySendLimit per UTC day, Mailgun's free-plan quota);
-// when it is spent, queued rows wait for the next UTC day while
-// reconciliation keeps running.
+// when it is spent, queued rows wait for a later activation on a day with
+// available budget. Reconciliation still runs at the start of every activation.
 //
 // Shutdown contract: cancel the context passed to Run. The worker stops
 // picking up new batches but finishes the batch in flight (its Mailgun and DB
@@ -97,11 +93,10 @@ type Worker struct {
 	// send for quota: the local count evidently undercounts (e.g. manual
 	// dashboard sends), so every further dispatch today is doomed and claims
 	// stop until Mailgun's quota resets. In-memory on purpose: it is a
-	// defensive backstop, and after a restart the first doomed send simply
-	// re-arms it.
+	// defensive backstop, and after a restart the first doomed send on a later
+	// activation simply re-arms it.
 	quotaPauseUntil time.Time
-	// pauseLoggedDay dedupes the budget-pause log line to once per UTC day;
-	// without it an exhausted budget would log every poll cycle.
+	// pauseLoggedDay dedupes the budget-pause log line to once per UTC day.
 	pauseLoggedDay string
 }
 
@@ -113,7 +108,7 @@ func NewWorker(db *bun.DB, client MailgunClient, cfg WorkerConfig, log logger.Lo
 		cfg:    cfg,
 		log:    log,
 	}
-	w.supervisor = newWorkerSupervisor(cfg.PollInterval, w.cycle, log)
+	w.supervisor = newWorkerSupervisor(w.cycle, log)
 	return w
 }
 
@@ -127,12 +122,10 @@ func (w *Worker) Wake() { w.supervisor.Wake() }
 // batch before closing the database.
 func (w *Worker) Done() <-chan struct{} { return w.supervisor.Done() }
 
-// Run activates immediately, when an explicit wake is pending, and on the
-// existing poll interval until ctx is canceled. Keeping polling temporarily means callers do
-// not yet need to signal every enqueue path, so queued recipients cannot be
-// stranded before demand-started delivery is wired. Call Run in a goroutine;
-// it never returns an error (failures are logged and retried next activation,
-// since the queue must outlive transient Mailgun or DB hiccups).
+// Run waits without database work until an explicit wake is pending, then
+// performs one activation. After the activation drains immediately actionable
+// work or encounters a cycle-level database error, it waits again. Call Run in
+// a goroutine; it returns only after ctx is canceled.
 func (w *Worker) Run(ctx context.Context) { w.supervisor.Run(ctx) }
 
 // cycle runs one reconcile pass plus as many batches as the queue holds,
@@ -141,16 +134,25 @@ func (w *Worker) Run(ctx context.Context) { w.supervisor.Run(ctx) }
 // midway (the finish-current-batch guarantee); each batch is separately
 // time-bounded instead.
 func (w *Worker) cycle(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	detached := context.WithoutCancel(ctx)
 
 	if _, err := w.ReconcileStuck(detached); err != nil {
 		w.log.Err(err).Error("email worker reconcile failed")
+		return
 	}
 
 	for {
-		n, err := w.ProcessBatch(detached)
+		// Reconciliation and an already-claimed batch are detached so they can
+		// finish, but the claim itself remains cancellation-aware. This closes
+		// the race between checking ctx and beginning the claim transaction.
+		n, err := w.processBatch(ctx, detached)
 		if err != nil {
-			w.log.Err(err).Error("email worker batch failed")
+			if ctx.Err() == nil {
+				w.log.Err(err).Error("email worker batch failed")
+			}
 			return
 		}
 		if n == 0 {
@@ -184,10 +186,19 @@ func (w *Worker) batchBudget() time.Duration {
 // (see claimBatch). It returns how many rows it claimed; zero means the queue
 // is empty or the budget is exhausted.
 func (w *Worker) ProcessBatch(ctx context.Context) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, w.batchBudget())
-	defer cancel()
+	return w.processBatch(ctx, ctx)
+}
 
-	claimed, err := w.claimBatch(ctx)
+// processBatch lets Run cancel a not-yet-committed claim while finishing a
+// successfully claimed batch on a detached context. Direct callers use the
+// same context for both through ProcessBatch.
+func (w *Worker) processBatch(claimParent, workParent context.Context) (int, error) {
+	claimCtx, cancelClaim := context.WithTimeout(claimParent, w.batchBudget())
+	defer cancelClaim()
+	workCtx, cancelWork := context.WithTimeout(workParent, w.batchBudget())
+	defer cancelWork()
+
+	claimed, err := w.claimBatch(claimCtx)
 	if err != nil {
 		return 0, err
 	}
@@ -203,10 +214,10 @@ func (w *Worker) ProcessBatch(ctx context.Context) (int, error) {
 		// dispatch today is doomed to the same answer: requeue the rest of
 		// the claim for the next UTC day without hammering Mailgun.
 		if w.quotaPaused() {
-			w.requeue(ctx, row)
+			w.requeue(workCtx, row)
 			continue
 		}
-		w.sendOne(ctx, row, sends, events)
+		w.sendOne(workCtx, row, sends, events)
 	}
 	return len(claimed), nil
 }
@@ -223,8 +234,8 @@ const emailBudgetLockID int64 = 0x656d6c627564 // "emlbud"
 // The count and the claim run in one transaction under an advisory lock, so
 // two overlapping instances (a deploy handing off) can never both spend the
 // same remaining slots. With the budget exhausted (or the quota pause armed)
-// it claims nothing and logs the pause once per UTC day; queued rows simply
-// wait for the next day.
+// it claims nothing and logs the pause once per UTC day; queued rows wait for
+// an explicit activation on a later eligible day.
 func (w *Worker) claimBatch(ctx context.Context) ([]*models.EmailRecipient, error) {
 	if w.quotaPaused() {
 		w.logBudgetPaused(logger.Data{"reason": "mailgun quota rejection", "limit": w.cfg.DailySendLimit})
@@ -306,7 +317,7 @@ func (w *Worker) quotaPaused() bool {
 }
 
 // logBudgetPaused logs that claims are paused until the next UTC day, at most
-// once per UTC day so an exhausted budget does not log every poll cycle.
+// once per UTC day so repeated admin activity does not produce duplicate logs.
 func (w *Worker) logBudgetPaused(data logger.Data) {
 	day := startOfUTCDay(w.now()).Format("2006-01-02")
 	w.mu.Lock()

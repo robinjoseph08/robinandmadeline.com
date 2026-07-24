@@ -24,7 +24,7 @@ type Message struct {
 	Text    string
 	HTML    string
 	// RecipientID is the email_recipients row id, attached to the Mailgun
-	// message as a custom variable so a restart can reconcile a stuck
+	// message as a custom variable so a later activation can reconcile a stuck
 	// `sending` row against Mailgun's event log without sending a duplicate
 	// (ADR 0004).
 	RecipientID string
@@ -63,10 +63,11 @@ func (e *RejectionError) Error() string {
 // bare word "limit": a quota-classified row is requeued (keeping its place at
 // the head of the claim order) and arms a day-long pause, so misreading an
 // ordinary rejection whose body merely says "limit is N" would stall the
-// whole queue day after day, not cost one retry. A residual false positive
-// is still bounded: the worker fails the row outright after maxQuotaRequeues
-// requeues (see the worker's quota branch), so the worst case is a few
-// stalled days ending in a visible failed row, never a starved queue.
+// whole queue across later activations, not cost one retry. A residual false
+// positive is still bounded: the worker fails the row outright after
+// maxQuotaRequeues requeues (see the worker's quota branch), so enough explicit
+// activations on eligible later days end in a visible failed row rather than a
+// permanently starved queue.
 func (e *RejectionError) IsQuotaLimited() bool {
 	if e.StatusCode == http.StatusTooManyRequests {
 		return true
@@ -91,8 +92,8 @@ type MailgunClient interface {
 	// FindAcceptedMessageID reports whether Mailgun already accepted a message
 	// for the given email_recipients row id (matched via the recipient_id
 	// custom variable on recent events for that address), returning its
-	// message id when found. The restart reconciliation uses it to decide
-	// between marking a stuck row sent and retrying it.
+	// message id when found. Reconciliation on a later activation uses it to
+	// decide between marking a stuck row sent and retrying it.
 	FindAcceptedMessageID(ctx context.Context, recipientID, recipientEmail string) (string, bool, error)
 }
 
