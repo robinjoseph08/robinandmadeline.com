@@ -83,11 +83,11 @@ const maxQuotaRequeues = 3
 // picking up new batches but finishes the batch in flight (its Mailgun and DB
 // calls run on a detached context), then Run returns and Done() closes.
 type Worker struct {
-	db     *bun.DB
-	client MailgunClient
-	cfg    WorkerConfig
-	log    logger.Logger
-	done   chan struct{}
+	db         *bun.DB
+	client     MailgunClient
+	cfg        WorkerConfig
+	log        logger.Logger
+	supervisor *workerSupervisor
 
 	// mu guards the two pause fields below. The worker itself is single
 	// goroutine, but the guard keeps the fields race-free if a test (or a
@@ -107,37 +107,33 @@ type Worker struct {
 
 // NewWorker builds a Worker.
 func NewWorker(db *bun.DB, client MailgunClient, cfg WorkerConfig, log logger.Logger) *Worker {
-	return &Worker{
+	w := &Worker{
 		db:     db,
 		client: client,
 		cfg:    cfg,
 		log:    log,
-		done:   make(chan struct{}),
 	}
+	w.supervisor = newWorkerSupervisor(cfg.PollInterval, w.cycle, log)
+	return w
 }
+
+// Wake requests an email delivery activation without doing database work in
+// the caller. It never blocks: one pending wake is retained and additional
+// simultaneous wakes coalesce into it. A wake received during an activation
+// remains pending for another actionable-work check before the worker idles.
+func (w *Worker) Wake() { w.supervisor.Wake() }
 
 // Done is closed when Run has returned, letting main wait for the in-flight
 // batch before closing the database.
-func (w *Worker) Done() <-chan struct{} { return w.done }
+func (w *Worker) Done() <-chan struct{} { return w.supervisor.Done() }
 
-// Run loops until ctx is canceled: reconcile stuck rows, drain the queue,
-// sleep, repeat. The first cycle runs immediately, so a restart reconciles and
-// resumes the queue without waiting out a poll interval. Call it in a
-// goroutine; it never returns an error (failures are logged and retried next
-// cycle, since the queue must outlive transient Mailgun or DB hiccups).
-func (w *Worker) Run(ctx context.Context) {
-	defer close(w.done)
-	w.log.Info("email worker started")
-	for {
-		w.cycle(ctx)
-		select {
-		case <-ctx.Done():
-			w.log.Info("email worker stopped")
-			return
-		case <-time.After(w.cfg.PollInterval):
-		}
-	}
-}
+// Run activates immediately, when an explicit wake is pending, and on the
+// existing poll interval until ctx is canceled. Keeping polling temporarily means callers do
+// not yet need to signal every enqueue path, so queued recipients cannot be
+// stranded before demand-started delivery is wired. Call Run in a goroutine;
+// it never returns an error (failures are logged and retried next activation,
+// since the queue must outlive transient Mailgun or DB hiccups).
+func (w *Worker) Run(ctx context.Context) { w.supervisor.Run(ctx) }
 
 // cycle runs one reconcile pass plus as many batches as the queue holds,
 // stopping between batches once ctx is canceled. The work itself runs on a
