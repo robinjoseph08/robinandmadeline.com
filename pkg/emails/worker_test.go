@@ -476,7 +476,7 @@ func TestRun_StopsPickingUpNewBatchesAfterCancel(t *testing.T) {
 	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
 
 	// Batch size 1: Alice's row is the in-flight batch; after cancel the
-	// worker must NOT claim Bob's.
+	// worker must NOT claim Bob's, even with an explicit wake pending.
 	cfg := workerConfig()
 	cfg.BatchSize = 1
 	client := newFakeMailgun()
@@ -492,6 +492,9 @@ func TestRun_StopsPickingUpNewBatchesAfterCancel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("worker never started sending")
 	}
+	// Queue a wake while the batch is in flight, then cancel before releasing
+	// Mailgun. Shutdown wins over the pending activation.
+	w.Wake()
 	cancel()
 	close(client.blockSends)
 
@@ -502,7 +505,7 @@ func TestRun_StopsPickingUpNewBatchesAfterCancel(t *testing.T) {
 	}
 
 	rows := recipientsForSend(t, f.db, send.ID)
-	// The claimed batch finished; the next one was never picked up.
+	// The claimed batch finished; the pending wake never picked up the next.
 	sentCount := 0
 	queuedCount := 0
 	for _, g := range []*models.Guest{alice, bob} {
