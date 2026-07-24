@@ -36,9 +36,9 @@ type WorkerConfig struct {
 	StuckThreshold time.Duration
 	// DailySendLimit caps how many rows the worker dispatches per UTC day,
 	// matching Mailgun's free-plan quota (which resets at midnight UTC). Zero
-	// or negative disables the cap. When the budget is spent, claims pause
-	// until the next UTC day and queued rows simply wait; reconciliation
-	// keeps running.
+	// or negative disables the cap. When the budget is spent, queued rows wait
+	// for a later activation after the next UTC day begins; reconciliation also
+	// resumes only on a later activation.
 	DailySendLimit int
 	// Now returns the current time; nil means time.Now. The daily budget
 	// computes its UTC day boundaries from it, so tests inject a fake clock
@@ -135,6 +135,9 @@ func (w *Worker) Run(ctx context.Context) { w.supervisor.Run(ctx) }
 // midway (the finish-current-batch guarantee); each batch is separately
 // time-bounded instead.
 func (w *Worker) cycle(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	detached := context.WithoutCancel(ctx)
 
 	if _, err := w.ReconcileStuck(detached); err != nil {
@@ -143,6 +146,11 @@ func (w *Worker) cycle(ctx context.Context) {
 	}
 
 	for {
+		// Reconciliation is detached so an interrupted consistency check can
+		// finish, but shutdown must win before the next batch is claimed.
+		if ctx.Err() != nil {
+			return
+		}
 		n, err := w.ProcessBatch(detached)
 		if err != nil {
 			w.log.Err(err).Error("email worker batch failed")

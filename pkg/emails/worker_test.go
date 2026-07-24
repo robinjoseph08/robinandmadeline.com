@@ -30,6 +30,19 @@ func (h *queryCounter) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) conte
 
 func (h *queryCounter) AfterQuery(context.Context, *bun.QueryEvent) {}
 
+type cancelAfterQuery struct {
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (h *cancelAfterQuery) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	return ctx
+}
+
+func (h *cancelAfterQuery) AfterQuery(context.Context, *bun.QueryEvent) {
+	h.once.Do(h.cancel)
+}
+
 // fakeMailgun is the test double for the MailgunClient seam: it records every
 // send, can fail specific addresses, can block mid-send (for the shutdown
 // test), and serves canned answers to the reconciliation lookup. No test ever
@@ -471,6 +484,30 @@ func TestRun_ReconcileDatabaseErrorEndsActivationUntilAnotherWake(t *testing.T) 
 	}, 5*time.Second, 10*time.Millisecond, "later wake did not start a new activation")
 	cancel()
 	<-w.Done()
+}
+
+func TestRun_ShutdownDuringReconciliationDoesNotClaimBatch(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	client := newFakeMailgun()
+	w := newWorker(f, client, workerConfig())
+	runCtx, cancel := context.WithCancel(ctx())
+	f.db.AddQueryHook(&cancelAfterQuery{cancel: cancel})
+
+	go w.Run(runCtx)
+	w.Wake()
+	select {
+	case <-w.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not stop after cancellation during reconciliation")
+	}
+
+	rows := recipientsForSend(t, f.db, send.ID)
+	assert.Equal(t, models.EmailQueued, rows[alice.ID].Status)
+	assert.Empty(t, client.sentMessages())
 }
 
 func TestRun_GracefulShutdownFinishesInFlightBatchAndStops(t *testing.T) {
