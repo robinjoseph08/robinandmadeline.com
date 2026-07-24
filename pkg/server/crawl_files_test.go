@@ -25,32 +25,54 @@ func publicFile(t *testing.T, name string) []byte {
 
 func TestSitemap_ListsOnlyPublicLandingRoutes(t *testing.T) {
 	var sitemap struct {
-		URLs []struct {
+		XMLName xml.Name
+		URLs    []struct {
 			Location string `xml:"loc"`
 		} `xml:"url"`
 	}
 	require.NoError(t, xml.Unmarshal(publicFile(t, "sitemap.xml"), &sitemap))
+	assert.Equal(t, "urlset", sitemap.XMLName.Local)
+	assert.Equal(t, "http://www.sitemaps.org/schemas/sitemap/0.9", sitemap.XMLName.Space)
 
 	actual := make([]string, 0, len(sitemap.URLs))
 	for _, entry := range sitemap.URLs {
-		actual = append(actual, strings.TrimPrefix(entry.Location, canonicalBaseURL))
+		actual = append(actual, entry.Location)
 	}
 	assert.Equal(t, []string{
-		"/", "/story", "/schedule", "/travel", "/games", "/photos", "/faq", "/rsvp",
+		canonicalBaseURL + "/",
+		canonicalBaseURL + "/story",
+		canonicalBaseURL + "/schedule",
+		canonicalBaseURL + "/travel",
+		canonicalBaseURL + "/games",
+		canonicalBaseURL + "/photos",
+		canonicalBaseURL + "/faq",
+		canonicalBaseURL + "/rsvp",
 	}, actual)
 
 	for _, excluded := range []string{"/admin", "/i/", "/u/", "/rsvp/form", "/rsvp/confirmation", "/games/mini"} {
-		assert.NotContains(t, actual, excluded)
+		assert.NotContains(t, actual, canonicalBaseURL+excluded)
 	}
 }
 
 func TestRobots_DiscouragesPrivateAndIntermediateCrawling(t *testing.T) {
 	robots := string(publicFile(t, "robots.txt"))
 	assert.Contains(t, robots, "Crawl guidance only. These rules are not access controls.")
-	assert.Contains(t, robots, "User-agent: *")
-	for _, path := range []string{"/admin", "/games/", "/i/", "/u/", "/rsvp/form", "/rsvp/confirmation"} {
-		assert.Contains(t, robots, "Disallow: "+path+"\n")
+
+	var directives []string
+	for _, line := range strings.Split(robots, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			directives = append(directives, line)
+		}
 	}
-	assert.NotContains(t, robots, "Disallow: /rsvp\n")
-	assert.Contains(t, robots, "Sitemap: "+canonicalBaseURL+"/sitemap.xml")
+	assert.Equal(t, []string{
+		"User-agent: *",
+		"Disallow: /admin",
+		"Disallow: /games/",
+		"Disallow: /i/",
+		"Disallow: /u/",
+		"Disallow: /rsvp/form",
+		"Disallow: /rsvp/confirmation",
+		"Sitemap: " + canonicalBaseURL + "/sitemap.xml",
+	}, directives)
 }

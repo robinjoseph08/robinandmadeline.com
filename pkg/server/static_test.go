@@ -93,11 +93,17 @@ func TestStaticServing_RouteMatchingMirrorsCaseAndTrailingSlash(t *testing.T) {
 	cfg.StaticDir = newStaticDir(t)
 	srv := server.New(cfg, nil)
 
-	for _, target := range []string{"/StOrY", "/STORY/", "/AdMiN/PaRtIeS/anything/"} {
+	for _, target := range []string{"/StOrY", "/STORY/", "/AdMiN/PaRtIeS/anything/", "/I/token"} {
 		rec := get(srv.Handler, target)
 		require.Equal(t, http.StatusOK, rec.Code, target)
 		assert.Equal(t, "<html>spa shell</html>", rec.Body.String(), target)
 	}
+
+	// React Router's case-insensitive matching folds ASCII route literals, but
+	// does not treat Unicode lookalikes as those literals.
+	rec := get(srv.Handler, "/%C4%B0/token")
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	assert.NotEqual(t, "<html>spa shell</html>", rec.Body.String())
 }
 
 func TestStaticServing_UnknownDocumentRoutesAre404(t *testing.T) {
@@ -326,7 +332,7 @@ func TestStaticServing_UnsafePathsCannotBecomeFrontendRoutes(t *testing.T) {
 	srv := server.New(cfg, nil)
 
 	targets := []string{
-		"/rsvp%2fform", "/admin%2fparties", // encoded separators
+		"/rsvp%2fform", "/rsvp%2Fform", "/admin%2fparties", "/admin%2Fparties", // encoded separators
 		"/story\\", "/admin\\parties", // literal backslashes
 		"//story", "/admin//parties", // repeated interior separators
 		"/./story", "/admin/../story", // traversal and normalization

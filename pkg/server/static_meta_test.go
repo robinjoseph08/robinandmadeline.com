@@ -265,9 +265,9 @@ func TestShellMeta_PublicRoutesAreIndexableAndCaseInsensitive(t *testing.T) {
 
 func TestShellMeta_TrailingSlashIsNormalized(t *testing.T) {
 	srv := newMetaServer(t)
-	// The static handler filepath.Clean's the request path before injectMeta sees
-	// it, so a trailing slash is stripped and a route is classified the same with
-	// or without one, matching React Router, which ignores trailing slashes. A
+	// The static handler strips one trailing slash before injectMeta sees the
+	// request path, so a route is classified the same with or without one,
+	// matching React Router, which ignores trailing slashes. A
 	// gated puzzle and an RSVP step therefore keep their noindex + title at the
 	// slashed URL rather than falling through to an untreated shell.
 	for _, tc := range []struct{ path, title string }{

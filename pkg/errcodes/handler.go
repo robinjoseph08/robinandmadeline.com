@@ -49,8 +49,8 @@ func (h *Handler) Handle(err error, c echo.Context) {
 		logger.FromEchoContext(c).Err(err).Error("server error")
 	}
 
-	// HEAD has the same status and headers as GET, but never a response body.
-	// Echo's JSON writer does not suppress that body itself.
+	// HEAD renders the same status as GET, but never a response body. Echo's
+	// JSON writer does not suppress that body itself.
 	if c.Request().Method == http.MethodHead {
 		if writeErr := c.NoContent(httpCode); writeErr != nil {
 			logger.FromEchoContext(c).Err(errors.WithStack(writeErr)).Error("error handler failed to write response")

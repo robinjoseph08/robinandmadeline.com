@@ -197,7 +197,7 @@ func safeRequestPath(req *http.Request) (string, bool) {
 // mirroring React Router. Dynamic parameters match exactly one safe segment and
 // deliberately do not duplicate application-level identifier validation.
 func isFrontendRoute(p string) bool {
-	p = strings.ToLower(trimTrailingSlash(p))
+	p = trimTrailingSlash(p)
 	actual := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	if p == "/" {
 		actual = nil
@@ -219,7 +219,7 @@ func isFrontendRoute(p string) bool {
 				}
 				continue
 			}
-			if actual[i] != want[i] {
+			if !equalASCIIFold(actual[i], want[i]) {
 				matched = false
 				break
 			}
@@ -229,6 +229,25 @@ func isFrontendRoute(p string) bool {
 		}
 	}
 	return false
+}
+
+// equalASCIIFold mirrors React Router's case-insensitive matching for the
+// allowlist's ASCII literal segments without treating additional Unicode
+// characters as their ASCII lookalikes. Dynamic segments remain opaque.
+func equalASCIIFold(actual, want string) bool {
+	if len(actual) != len(want) {
+		return false
+	}
+	for i := range actual {
+		c := actual[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func isSafeDynamicSegment(segment string) bool {
@@ -397,8 +416,8 @@ func injectMeta(doc, urlPath, canonicalHost string, req *http.Request, titler in
 
 	// Puzzle pages (/games/:slug) are gated client-side by RequireGamesAccess,
 	// so every safe route-shape match is noindex, including an unknown slug that
-	// receives the page's friendly not-found treatment. Known puzzles additionally
-	// get their registry title and canonical URL. When the gate is removed and the
+	// remains client-handled. Known puzzles additionally get their registry title
+	// and canonical URL. When the gate is removed and the
 	// games are public, drop addNoindex here so puzzles can be indexed.
 	if slug, ok := puzzleSlug(key); ok {
 		doc = addNoindex(doc)

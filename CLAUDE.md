@@ -28,7 +28,7 @@ Each commit should be in the format of `[{Category}] {Change description}`
 - **Migrations**: run via the Fly release_command in production and `mise db:migrate` locally, not at server startup. See ADR 0007.
 - **Worktrees**: the dev setup isolates concurrent git worktrees automatically. Each linked worktree gets its own dev and test databases (`pkg/worktree` derives the name; the main checkout keeps the canonical `robinandmadeline`), and `mise start` binds a free port if its preferred one is taken. A new worktree's database starts empty: seed it with `mise db:clone`. So a worktree showing no guest data is expected, not a bug.
 - **SPA route allowlist**: production serves the React shell only for route shapes listed in `frontendRoutes` in `pkg/server/static.go`; arbitrary document paths receive a real server-side 404. Whenever a route is added, removed, or reshaped in `app/router.tsx`, update that allowlist and `TestStaticServing_ServesEveryFrontendRouteShape` in the same change. Keep this as an allowlist; never accumulate denylisted scanner paths such as `*.php`.
-- **Crawler guidance**: `public/sitemap.xml` lists only public landing pages. `public/robots.txt` discourages cooperative crawlers from admin, tokenized, intermediate RSVP, and gated puzzle routes, but it is crawl hygiene rather than access control. Keep both files synchronized with public route changes.
+- **Crawler guidance**: `public/sitemap.xml` lists only public landing pages and must stay synchronized with that inventory. `public/robots.txt` discourages cooperative crawlers from admin, tokenized, intermediate RSVP, and gated puzzle routes and must stay synchronized with those route shapes. Robots rules are crawl hygiene rather than access control.
 
 ## Agent skills
 
