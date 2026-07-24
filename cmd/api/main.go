@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"net"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/server"
+	"github.com/uptrace/bun"
 )
 
 // shutdownTimeout bounds how long we wait for in-flight requests to drain
@@ -43,59 +45,16 @@ func main() {
 		log.Err(err).Fatal("config error")
 	}
 
-	db, err := database.New(cfg)
+	app, err := newApplication(ctx, cfg, productionApplicationDependencies(cfg, log))
 	if err != nil {
-		log.Err(err).Fatal("database error")
+		log.Err(err).Fatal("application assembly error")
 	}
-	// The startup connectivity probe is informational only, and it runs in the
-	// background: a failed ping is logged but non-fatal (the health endpoint
-	// stays reachable and the DB recovers independently), and keeping it off
-	// the startup path means a cold Neon database never delays the listener,
-	// preserving the sub-second cold start that scale-to-zero relies on
-	// (ADR 0001).
-	go func() {
-		pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
-		defer pingCancel()
-		if err := database.Ping(pingCtx, db); err != nil {
-			log.Err(err).Warn("database not reachable at startup")
-		} else {
-			log.Info("database connected")
-		}
-	}()
-
-	// The email queue worker (ADR 0004) drains email_recipients through
-	// Mailgun. Without an API key (local dev, e2e) it stays off and queued
-	// emails simply wait, so nothing can ever call the real Mailgun API
-	// unconfigured. Run starts an idle, database-free supervisor; successful
-	// enqueues and authenticated email-admin API requests wake it through the
-	// server wiring below.
-	var worker *emails.Worker
-	workerCtx, stopWorker := context.WithCancel(ctx)
-	defer stopWorker()
-	if cfg.MailgunAPIKey != "" {
-		client := emails.NewMailgunClient(cfg.MailgunBaseURL, cfg.MailgunDomain, cfg.MailgunAPIKey)
-		worker = emails.NewWorker(db, client, emails.WorkerConfig{
-			From:           cfg.EmailFrom,
-			PublicBaseURL:  cfg.PublicBaseURL,
-			BatchSize:      cfg.EmailWorkerBatchSize,
-			StuckThreshold: cfg.EmailWorkerStuckThreshold,
-			DailySendLimit: cfg.EmailDailySendLimit,
-		}, log)
-		go worker.Run(workerCtx)
-	} else {
-		log.Warn("MAILGUN_API_KEY not set; email worker disabled, sends will stay queued")
-	}
+	defer app.stopWorker()
 
 	// The server does NOT migrate at startup. Production runs migrations via the
 	// Fly release_command (`cmd/migrations migrate`) before the new release takes
 	// traffic; local dev applies them through the `mise start` task, which depends
 	// on `db:migrate`.
-	var srv *http.Server
-	if worker == nil {
-		srv = server.New(cfg, db)
-	} else {
-		srv = server.NewWithEmailWorker(cfg, db, worker)
-	}
 
 	listener, err := listen(ctx, cfg)
 	if err != nil {
@@ -108,7 +67,7 @@ func main() {
 	graceful := signals.Setup()
 
 	go func() {
-		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := app.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Err(err).Fatal("server stopped unexpectedly")
 		}
 	}()
@@ -123,23 +82,108 @@ func main() {
 	// batches but finishes the one in flight (ADR 0004). HTTP requests already
 	// being drained may still commit durable queue work, which a later explicit
 	// activation will pick up.
-	stopWorker()
+	app.stopWorker()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	if err := app.server.Shutdown(shutdownCtx); err != nil {
 		log.Err(err).Error("server shutdown error")
 	}
 	// Wait for the worker before closing the database. A genuinely stuck worker
 	// can be forced with a second signal, which signals.Setup turns into an
 	// immediate exit.
-	if worker != nil {
-		<-worker.Done()
+	if app.worker != nil {
+		<-app.worker.Done()
 	}
-	if err := db.Close(); err != nil {
+	if err := app.db.Close(); err != nil {
 		log.Err(err).Error("database close error")
 	}
 	log.Info("shutdown complete")
+}
+
+// application is the assembled production runtime below the executable
+// boundary. Listener binding, signals, port publication, fatal logging, and
+// graceful shutdown remain in main, while tests can assemble the exact lazy
+// database, HTTP handler, and idle email supervisor without opening sockets.
+type application struct {
+	db         *bun.DB
+	server     *http.Server
+	worker     *emails.Worker
+	stopWorker context.CancelFunc
+}
+
+type applicationDependencies struct {
+	connector              driver.Connector
+	observeFirstConnection database.FirstConnectionObserver
+	mailgunClient          emails.MailgunClient
+	log                    logger.Logger
+}
+
+func productionApplicationDependencies(cfg *config.Config, log logger.Logger) applicationDependencies {
+	deps := applicationDependencies{
+		connector: database.NewConnector(cfg),
+		log:       log,
+	}
+	deps.observeFirstConnection = func(ctx context.Context, attempt database.FirstConnectionAttempt) {
+		data := logger.Data{"operation": attempt.Operation.String(), "outcome": "connected"}
+		// The middleware's request logger also carries the raw URL path and
+		// caller-controlled headers. Scope the injected application logger to a
+		// child of this request with only the generated request ID, then emit from
+		// that context. This keeps request attribution while preventing this one
+		// bounded event from inheriting secrets or the request's x-log-level.
+		requestID := logger.FromContext(ctx).GetID()
+		eventCtx := log.ID(requestID).WithContext(ctx)
+		eventLog := logger.FromContext(eventCtx)
+		if attempt.Err != nil {
+			// Deliberately omit the connector error from this attribution event:
+			// driver errors can contain DSN or host details, while the bounded
+			// operation and outcome are sufficient to explain the activation.
+			data["outcome"] = "failed"
+			eventLog.Data(data).Warn("first database connection attempt")
+			return
+		}
+		eventLog.Data(data).Info("first database connection attempt")
+	}
+	if cfg.MailgunAPIKey != "" {
+		deps.mailgunClient = emails.NewMailgunClient(cfg.MailgunBaseURL, cfg.MailgunDomain, cfg.MailgunAPIKey)
+	}
+	return deps
+}
+
+func newApplication(ctx context.Context, cfg *config.Config, deps applicationDependencies) (*application, error) {
+	db, err := database.NewWithConnector(deps.connector, deps.observeFirstConnection)
+	if err != nil {
+		return nil, errors.Wrap(err, "open database handle")
+	}
+
+	// Request middleware supplies its own scoped logger. Background database
+	// work inherits the injected application logger through this root context.
+	workerCtx, stopWorker := context.WithCancel(deps.log.WithContext(ctx))
+	app := &application{db: db, stopWorker: stopWorker}
+	if cfg.MailgunAPIKey != "" {
+		if deps.mailgunClient == nil {
+			stopWorker()
+			_ = db.Close()
+			return nil, errors.New("mailgun client is required when email delivery is configured")
+		}
+		app.worker = emails.NewWorker(db, deps.mailgunClient, emails.WorkerConfig{
+			From:           cfg.EmailFrom,
+			PublicBaseURL:  cfg.PublicBaseURL,
+			BatchSize:      cfg.EmailWorkerBatchSize,
+			StuckThreshold: cfg.EmailWorkerStuckThreshold,
+			DailySendLimit: cfg.EmailDailySendLimit,
+		}, deps.log)
+		go app.worker.Run(workerCtx)
+	} else {
+		deps.log.Warn("MAILGUN_API_KEY not set; email worker disabled, sends will stay queued")
+	}
+
+	if app.worker == nil {
+		app.server = server.New(cfg, db)
+	} else {
+		app.server = server.NewWithEmailWorker(cfg, db, app.worker)
+	}
+	return app, nil
 }
 
 // listen opens the server's TCP listener. When PORT is set to a non-empty value

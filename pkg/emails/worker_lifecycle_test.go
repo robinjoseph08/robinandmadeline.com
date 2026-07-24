@@ -2,19 +2,36 @@ package emails
 
 import (
 	"context"
+	"database/sql/driver"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/robinjoseph08/golib/logger"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func lifecycleTestWorker(activate func(context.Context)) *Worker {
 	return &Worker{
 		supervisor: newWorkerSupervisor(activate, logger.New()),
 	}
+}
+
+type lifecycleConnector struct {
+	err error
+}
+
+func (c *lifecycleConnector) Connect(context.Context) (driver.Conn, error) { return nil, c.err }
+func (c *lifecycleConnector) Driver() driver.Driver                        { return lifecycleDriver{} }
+
+type lifecycleDriver struct{}
+
+func (lifecycleDriver) Open(string) (driver.Conn, error) {
+	return nil, errors.New("lifecycle test driver cannot open by name")
 }
 
 func waitForSignal(t *testing.T, signal <-chan struct{}, message string) {
@@ -110,6 +127,31 @@ func TestWorkerRun_ConfiguredWorkerStartsIdleWithoutDatabaseAccess(t *testing.T)
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 	waitForSignal(t, worker.Done(), "idle worker did not stop")
+}
+
+func TestWorkerRun_AttributesActivatedDatabaseConnection(t *testing.T) {
+	connectErr := errors.New("connection failed")
+	attempts := make(chan database.FirstConnectionAttempt, 1)
+	db, err := database.NewWithConnector(&lifecycleConnector{err: connectErr}, func(_ context.Context, attempt database.FirstConnectionAttempt) {
+		attempts <- attempt
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	worker := NewWorker(db, nil, WorkerConfig{}, logger.NewWithLevel("error"))
+	runCtx, cancel := context.WithCancel(context.Background())
+	go worker.Run(runCtx)
+	worker.Wake()
+
+	select {
+	case attempt := <-attempts:
+		assert.Equal(t, "email_worker", attempt.Operation.String())
+		require.ErrorIs(t, attempt.Err, connectErr)
+	case <-time.After(time.Second):
+		t.Fatal("activated worker did not attempt a database connection")
+	}
+	cancel()
+	waitForSignal(t, worker.Done(), "worker did not stop")
 }
 
 func TestWorkerRun_WaitsForExplicitWakesWithoutStartupOrIdlePolling(t *testing.T) {

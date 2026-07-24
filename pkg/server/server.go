@@ -2,7 +2,6 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/dashboard"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
@@ -71,15 +71,29 @@ func NewWithEmailWorker(cfg *config.Config, db *bun.DB, worker emails.WorkerWake
 	e.Use(logger.Middleware())
 	e.Use(recovery.Middleware())
 
+	e.Use(middleware.CORS())
+
 	// In production every domain (the alternate apexes, www variants) resolves
 	// to this one app and the server consolidates them onto the canonical host
-	// with 301s. Dev leaves CanonicalHost empty and is never redirected. After
-	// logger/recovery so redirects are logged.
+	// with 301s. Dev leaves CanonicalHost empty and is never redirected. This is
+	// after the required logger, recovery, CORS base order, so redirects are
+	// logged and recovered consistently with every other request.
 	if cfg.CanonicalHost != "" {
 		e.Use(canonicalHostMiddleware(cfg.CanonicalHost))
 	}
 
-	e.Use(middleware.CORS())
+	// Echo resolves the registered route before ordinary middleware runs, so
+	// c.Path is the bounded route template rather than the raw request URL. Put
+	// that safe template on the request context for first-connection telemetry;
+	// dynamic Info Tokens, RSVP Codes, UUIDs, and query strings never enter it.
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			operation := database.HTTPRouteOperation(c.Path())
+			req := c.Request().WithContext(database.WithOperation(c.Request().Context(), operation))
+			c.SetRequest(req)
+			return next(c)
+		}
+	})
 
 	// The info-collection service backs both the open /i/:token API and the
 	// personalized title injected into that page's shell for its link preview, so
@@ -97,7 +111,7 @@ func NewWithEmailWorker(cfg *config.Config, db *bun.DB, worker emails.WorkerWake
 	authMiddleware := auth.NewMiddleware(authService)
 
 	api := e.Group("/api")
-	registerHealth(e, db)
+	registerHealth(e)
 	// Both login endpoints share one per-IP rate limiter (ADR 0006), the
 	// compensating control for the low-entropy RSVP codes.
 	auth.RegisterRoutes(api, authService, db, auth.RateLimit{
@@ -199,28 +213,12 @@ func registerGuest(g *echo.Group, mw *auth.Middleware, db *bun.DB) {
 // Fly's health checks (which arrive with an internal Host) get their 200.
 const healthPath = "/api/health"
 
-// registerHealth mounts the liveness endpoint. It reports database
-// connectivity in the body but always returns 200 so the route stays a
-// reliable liveness signal even when the DB is unavailable. It registers on
-// the echo instance directly (with healthPath absolute) so the path has a
+// registerHealth mounts the process-liveness endpoint. It intentionally does
+// not inspect Postgres, so Fly health checks cannot activate Neon. It registers
+// on the Echo instance directly (with healthPath absolute) so the path has a
 // single definition for both routing and the redirect exemption.
-func registerHealth(e *echo.Echo, db *bun.DB) {
+func registerHealth(e *echo.Echo) {
 	e.GET(healthPath, func(c echo.Context) error {
-		dbStatus := "unknown"
-		if db != nil {
-			// The ping is bounded so the 200 always arrives fast: a cold or
-			// unreachable database (Neon waking from idle) reports "down" in the
-			// body instead of stalling the response past Fly's check timeout,
-			// which would mark the only machine unhealthy and take the whole
-			// site down with it.
-			pingCtx, cancel := context.WithTimeout(c.Request().Context(), time.Second)
-			defer cancel()
-			if err := db.PingContext(pingCtx); err != nil {
-				dbStatus = "down"
-			} else {
-				dbStatus = "up"
-			}
-		}
-		return c.JSON(http.StatusOK, HealthResponse{Status: "ok", Database: dbStatus})
+		return c.JSON(http.StatusOK, HealthResponse{Status: "ok"})
 	})
 }

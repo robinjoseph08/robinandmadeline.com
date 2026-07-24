@@ -2,6 +2,8 @@ package server_test
 
 import (
 	"context"
+	"database/sql/driver"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,8 +11,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/robinjoseph08/robinandmadeline.com/internal/databasetest"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/server"
@@ -77,6 +81,48 @@ func newMetaServer(t *testing.T) http.Handler {
 	cfg.StaticDir = dir
 	cfg.CanonicalHost = metaHost
 	return server.New(cfg, nil).Handler
+}
+
+type metadataConnector struct {
+	err error
+}
+
+func (c *metadataConnector) Connect(context.Context) (driver.Conn, error) { return nil, c.err }
+func (c *metadataConnector) Driver() driver.Driver                        { return metadataDriver{} }
+
+type metadataDriver struct{}
+
+func (metadataDriver) Open(string) (driver.Conn, error) {
+	return nil, errors.New("metadata test driver cannot open by name")
+}
+
+func TestShellMeta_InfoLookupAttributesDatabaseConnectionWithoutToken(t *testing.T) {
+	connectErr := errors.New("connection failed")
+	attempts := make(chan database.FirstConnectionAttempt, 1)
+	db, err := database.NewWithConnector(&metadataConnector{err: connectErr}, func(_ context.Context, attempt database.FirstConnectionAttempt) {
+		attempts <- attempt
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte(metaShell), 0o600))
+	cfg := newTestConfig(t)
+	cfg.StaticDir = dir
+	cfg.CanonicalHost = metaHost
+	handler := server.New(cfg, db).Handler
+
+	const infoToken = "sensitiveinfotoken123456789012"
+	rec := getCanonical(handler, "/i/"+infoToken)
+	require.Equal(t, http.StatusOK, rec.Code)
+	select {
+	case attempt := <-attempts:
+		assert.Equal(t, "info_metadata", attempt.Operation.String())
+		assert.NotContains(t, attempt.Operation.String(), infoToken)
+		require.ErrorIs(t, attempt.Err, connectErr)
+	case <-time.After(time.Second):
+		t.Fatal("Info metadata lookup did not attempt a database connection")
+	}
 }
 
 func TestShellMeta_PublicRouteOverridesTitleAndPreview(t *testing.T) {

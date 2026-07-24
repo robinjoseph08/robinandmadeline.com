@@ -4,10 +4,14 @@ package database
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/uptrace/bun"
@@ -15,22 +19,199 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 )
 
-// New opens a Bun DB backed by Postgres using the configured DATABASE_URL.
-//
-// It does not verify connectivity; call Ping (or rely on the first query) to
-// confirm the database is reachable. This keeps startup non-fatal when the DB
-// is briefly unavailable.
-func New(cfg *config.Config) (*bun.DB, error) {
-	connector := pgdriver.NewConnector(pgdriver.WithDSN(cfg.DatabaseURL))
-	sqldb := sql.OpenDB(connector)
-	db := bun.NewDB(sqldb, pgdialect.New())
-	return db, nil
+// Operation is a bounded, non-sensitive label describing the work that first
+// needed a physical database connection. Values are constructed here rather
+// than from request URLs so connection telemetry cannot contain credentials,
+// identifiers, query strings, or raw URLs.
+type Operation struct {
+	label string
 }
 
-// Ping verifies that the database is reachable.
-func Ping(ctx context.Context, db *bun.DB) error {
-	if err := db.PingContext(ctx); err != nil {
-		return fmt.Errorf("database ping failed: %w", err)
+// String returns the safe telemetry label.
+func (o Operation) String() string {
+	if o.label == "" {
+		return "unattributed"
+	}
+	return o.label
+}
+
+// These are the registered HTTP routes without dynamic parameter markers.
+// Dynamic templates are safe by shape because they retain only the known
+// parameter names below. Keeping static routes closed means an accidental
+// URL.Path call cannot turn an Info Token, RSVP Code, or UUID into a label.
+var staticHTTPRoutes = map[string]struct{}{
+	"/api/admin/dashboard":            {},
+	"/api/admin/emails/preview":       {},
+	"/api/admin/emails/send":          {},
+	"/api/admin/emails/sends":         {},
+	"/api/admin/emails/shell-preview": {},
+	"/api/admin/emails/templates":     {},
+	"/api/admin/emails/test":          {},
+	"/api/admin/events":               {},
+	"/api/admin/games/sessions":       {},
+	"/api/admin/guests":               {},
+	"/api/admin/guests/tags":          {},
+	"/api/admin/me":                   {},
+	"/api/admin/parties":              {},
+	"/api/admin/photo-groups":         {},
+	"/api/admin/photo-groups/reorder": {},
+	"/api/admin/settings":             {},
+	"/api/auth/admin/login":           {},
+	"/api/auth/guest/login":           {},
+	"/api/events":                     {},
+	"/api/games/leaderboard":          {},
+	"/api/games/sessions":             {},
+	"/api/guest/photo-groups":         {},
+	"/api/guest/rsvp":                 {},
+	"/api/health":                     {},
+	"/api/webhooks/mailgun":           {},
+}
+
+var routeParameterNames = map[string]struct{}{
+	":guestId": {},
+	":id":      {},
+	":token":   {},
+}
+
+// HTTPRouteOperation attributes work to an Echo route template. Callers must
+// pass the registered template (for example /api/parties/:id), never URL.Path.
+// Route templates have bounded cardinality and replace sensitive path values
+// with parameter names.
+func HTTPRouteOperation(routeTemplate string) Operation {
+	if routeTemplate == "" || len(routeTemplate) > 128 ||
+		!strings.HasPrefix(routeTemplate, "/") || strings.ContainsAny(routeTemplate, "?#%") {
+		return Operation{}
+	}
+
+	dynamic := false
+	for _, segment := range strings.Split(strings.TrimPrefix(routeTemplate, "/"), "/") {
+		if segment == "" {
+			return Operation{}
+		}
+		if strings.HasPrefix(segment, ":") {
+			if _, ok := routeParameterNames[segment]; !ok {
+				return Operation{}
+			}
+			dynamic = true
+			continue
+		}
+		for _, r := range segment {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+				continue
+			}
+			return Operation{}
+		}
+	}
+	if !dynamic {
+		if _, ok := staticHTTPRoutes[routeTemplate]; !ok {
+			return Operation{}
+		}
+	}
+	return Operation{label: "http:" + routeTemplate}
+}
+
+// InfoMetadataOperation attributes a connection to the one database-backed
+// SPA shell metadata lookup without including its Info Token.
+func InfoMetadataOperation() Operation {
+	return Operation{label: "info_metadata"}
+}
+
+// EmailWorkerOperation attributes a connection to an activated email worker.
+func EmailWorkerOperation() Operation {
+	return Operation{label: "email_worker"}
+}
+
+type operationContextKey struct{}
+
+// WithOperation attaches a safe operation label to database work.
+func WithOperation(ctx context.Context, operation Operation) context.Context {
+	return context.WithValue(ctx, operationContextKey{}, operation)
+}
+
+func operationFromContext(ctx context.Context) Operation {
+	operation, _ := ctx.Value(operationContextKey{}).(Operation)
+	return operation
+}
+
+// FirstConnectionAttempt describes the first physical connection attempt made
+// by this database handle. Err is set when that attempt failed.
+type FirstConnectionAttempt struct {
+	Operation Operation
+	Err       error
+}
+
+// FirstConnectionObserver receives exactly one event, after the first physical
+// attempt finishes, whether it succeeds or fails. The connection context lets
+// observers retain request-scoped telemetry without exposing raw request data.
+type FirstConnectionObserver func(context.Context, FirstConnectionAttempt)
+
+// NewConnector builds the real Postgres connector without opening a physical
+// connection. The connector is exposed so production assembly can substitute
+// an instrumented standard connector in deterministic tests.
+func NewConnector(cfg *config.Config) driver.Connector {
+	return pgdriver.NewConnector(pgdriver.WithDSN(cfg.DatabaseURL))
+}
+
+// New opens a lazy Bun database handle using the configured DATABASE_URL.
+func New(cfg *config.Config) (*bun.DB, error) {
+	return NewWithConnector(NewConnector(cfg), nil)
+}
+
+// NewWithConnector opens a lazy Bun database handle around connector. Neither
+// construction nor pool configuration calls Connector.Connect.
+func NewWithConnector(connector driver.Connector, observer FirstConnectionObserver) (*bun.DB, error) {
+	if connector == nil {
+		return nil, errors.New("database connector is required")
+	}
+	observed := &observedConnector{connector: connector, observer: observer}
+	sqldb := sql.OpenDB(observed)
+	configurePool(sqldb)
+	return bun.NewDB(sqldb, pgdialect.New()), nil
+}
+
+const (
+	maxOpenConnections = 5
+	maxIdleConnections = 1
+	maxConnectionIdle  = time.Minute
+)
+
+type poolConfigurer interface {
+	SetMaxOpenConns(int)
+	SetMaxIdleConns(int)
+	SetConnMaxIdleTime(time.Duration)
+}
+
+func configurePool(pool poolConfigurer) {
+	pool.SetMaxOpenConns(maxOpenConnections)
+	pool.SetMaxIdleConns(maxIdleConnections)
+	pool.SetConnMaxIdleTime(maxConnectionIdle)
+}
+
+type observedConnector struct {
+	connector driver.Connector
+	observer  FirstConnectionObserver
+	started   atomic.Bool
+}
+
+func (c *observedConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	first := c.started.CompareAndSwap(false, true)
+	conn, err := c.connector.Connect(ctx)
+	if first && c.observer != nil {
+		c.observer(ctx, FirstConnectionAttempt{Operation: operationFromContext(ctx), Err: err})
+	}
+	return conn, err
+}
+
+func (c *observedConnector) Driver() driver.Driver {
+	return c.connector.Driver()
+}
+
+// Close preserves the standard Connector lifecycle through the observation
+// decorator, so closing Bun's shared handle also closes connectors that own
+// resources.
+func (c *observedConnector) Close() error {
+	if closer, ok := c.connector.(io.Closer); ok {
+		return closer.Close()
 	}
 	return nil
 }
