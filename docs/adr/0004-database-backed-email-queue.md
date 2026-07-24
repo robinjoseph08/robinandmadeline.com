@@ -11,7 +11,7 @@ This survives Fly.io scale-to-zero shutdowns without losing emails or sending du
 
 ## Consequences
 
-More logic than a goroutine: a worker loop, an intermediate `sending` state to prevent duplicate pickup, and a Mailgun reconciliation check on the next authenticated email-administration activation after interruption. Graceful shutdown stops new batches on SIGTERM and finishes the current one.
+More logic than a goroutine: a worker loop, an intermediate `sending` state to prevent duplicate pickup, and a Mailgun reconciliation check on the next explicit activation after interruption, whether from a committed enqueue or authenticated email-administration activity. Graceful shutdown stops new batches on SIGTERM and finishes the current one.
 
 ## Demand-driven lifecycle
 

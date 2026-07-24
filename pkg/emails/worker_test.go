@@ -43,6 +43,23 @@ func (h *cancelAfterQuery) AfterQuery(context.Context, *bun.QueryEvent) {
 	h.once.Do(h.cancel)
 }
 
+type closeDBAfterQuery struct {
+	db     *bun.DB
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (h *closeDBAfterQuery) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context {
+	return ctx
+}
+
+func (h *closeDBAfterQuery) AfterQuery(context.Context, *bun.QueryEvent) {
+	h.once.Do(func() {
+		_ = h.db.Close()
+		close(h.closed)
+	})
+}
+
 // fakeMailgun is the test double for the MailgunClient seam: it records every
 // send, can fail specific addresses, can block mid-send (for the shutdown
 // test), and serves canned answers to the reconciliation lookup. No test ever
@@ -482,6 +499,77 @@ func TestRun_ReconcileDatabaseErrorEndsActivationUntilAnotherWake(t *testing.T) 
 	require.Eventually(t, func() bool {
 		return counter.count.Load() == 2
 	}, 5*time.Second, 10*time.Millisecond, "later wake did not start a new activation")
+	cancel()
+	<-w.Done()
+}
+
+func TestRun_SingleWakeDrainsMultipleBatches(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	cfg := workerConfig()
+	cfg.BatchSize = 1
+	client := newFakeMailgun()
+	w := newWorker(f, client, cfg)
+	runCtx, cancel := context.WithCancel(ctx())
+	go w.Run(runCtx)
+	w.Wake()
+
+	require.Eventually(t, func() bool {
+		return statusCounts(t, f, send.ID)[models.EmailSent] == 2
+	}, 5*time.Second, 10*time.Millisecond, "one wake did not drain both batches")
+	cancel()
+	<-w.Done()
+	assert.Len(t, client.sentMessages(), 2)
+}
+
+func TestRun_RequeuedStuckRowSendsInSameActivation(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	strandRow(t, f, recipientsForSend(t, f.db, send.ID)[alice.ID].ID, 10*time.Minute)
+
+	client := newFakeMailgun()
+	w := newWorker(f, client, workerConfig())
+	runCtx, cancel := context.WithCancel(ctx())
+	go w.Run(runCtx)
+	w.Wake()
+
+	require.Eventually(t, func() bool {
+		return statusCounts(t, f, send.ID)[models.EmailSent] == 1
+	}, 5*time.Second, 10*time.Millisecond, "requeued row was not sent by the same activation")
+	cancel()
+	<-w.Done()
+	assert.Len(t, client.sentMessages(), 1)
+}
+
+func TestRun_ClaimDatabaseErrorEndsActivation(t *testing.T) {
+	f := newFixtures(t)
+	counter := new(queryCounter)
+	closed := make(chan struct{})
+	f.db.AddQueryHook(counter)
+	f.db.AddQueryHook(&closeDBAfterQuery{db: f.db, closed: closed})
+
+	w := newWorker(f, newFakeMailgun(), workerConfig())
+	runCtx, cancel := context.WithCancel(ctx())
+	go w.Run(runCtx)
+	w.Wake()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconciliation query did not complete")
+	}
+
+	require.Eventually(t, func() bool {
+		return counter.count.Load() >= 2
+	}, 5*time.Second, 10*time.Millisecond, "worker did not attempt the claim query")
+	queryCount := counter.count.Load()
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, queryCount, counter.count.Load(), "claim failure caused an idle retry loop")
 	cancel()
 	<-w.Done()
 }

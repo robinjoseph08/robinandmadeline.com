@@ -119,16 +119,20 @@ func main() {
 	<-graceful
 	log.Info("starting graceful shutdown")
 
+	// Stop the email worker as soon as shutdown begins: it picks up no new
+	// batches but finishes the one in flight (ADR 0004). HTTP requests already
+	// being drained may still commit durable queue work, which a later explicit
+	// activation will pick up.
+	stopWorker()
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Err(err).Error("server shutdown error")
 	}
-	// Stop the email worker: it picks up no new batches but finishes the one
-	// in flight (ADR 0004), so wait for it before closing the database. A
-	// genuinely stuck worker can be forced with a second signal, which
-	// signals.Setup turns into an immediate exit.
-	stopWorker()
+	// Wait for the worker before closing the database. A genuinely stuck worker
+	// can be forced with a second signal, which signals.Setup turns into an
+	// immediate exit.
 	if worker != nil {
 		<-worker.Done()
 	}

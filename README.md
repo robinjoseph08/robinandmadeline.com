@@ -115,17 +115,17 @@ sends.
 
 Outbound volume is capped by `EMAIL_DAILY_SEND_LIMIT` (default 100, matching
 Mailgun's free plan). The worker counts dispatch attempts per UTC day, which
-is Mailgun's own reset boundary, and pauses until the next UTC day once the
-budget is spent; queued emails simply wait, so a 200-recipient send on the
-default limit drains over two days. Set it to 0 (or any negative value) for
-unlimited on a paid plan. The counter only tracks sends made by this app:
-manual sends from the Mailgun dashboard are invisible to it, so set a lower
-limit for margin if you ever send manually. As a backstop, a send Mailgun
-itself rejects for quota is requeued for the next day rather than failed, and
-sending pauses for the rest of the UTC day; after a few such rejections of
-the same email it is marked failed instead, so a rejection misread as quota
-surfaces in the send history within days instead of silently stalling the
-queue.
+is Mailgun's own reset boundary. Once the budget is spent, queued emails remain
+durable and become eligible on the next UTC day, but delivery resumes only
+after another committed enqueue or authenticated email-admin API request wakes
+the worker. Set the limit to 0 (or any negative value) for unlimited sending on
+a paid plan. The counter only tracks sends made by this app: manual sends from
+the Mailgun dashboard are invisible to it, so set a lower limit for margin if
+you ever send manually. As a backstop, a send Mailgun itself rejects for quota
+is requeued rather than failed, and sending pauses for the rest of that UTC day.
+After quota rejections on several explicit activations on eligible later days,
+the same email is marked failed so a rejection misread as quota eventually
+surfaces once enough later activity occurs.
 
 ## Deployment
 

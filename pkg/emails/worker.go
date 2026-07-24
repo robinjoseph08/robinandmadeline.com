@@ -61,10 +61,9 @@ const maxFailureReason = 1000
 // of a rejection misclassified as quota: such a row sorts back to the head of
 // the claim order and re-arms the day-long quota pause on every attempt, so
 // without the cap it would starve the queue forever with no admin-visible
-// signal. Three requeues tolerates a genuinely quota-blocked stretch (e.g. a
-// weekend of manual dashboard sends) while keeping the worst case for a
-// misclassified row at maxQuotaRequeues+1 stalled days ending in a visible
-// failed row.
+// signal. Three requeues tolerate a genuinely quota-blocked stretch while
+// ensuring that maxQuotaRequeues+1 explicit activations on eligible UTC days
+// end a misclassified row in a visible failed state.
 const maxQuotaRequeues = 3
 
 // Worker drains the email_recipients queue through Mailgun (ADR 0004). Each
@@ -146,14 +145,14 @@ func (w *Worker) cycle(ctx context.Context) {
 	}
 
 	for {
-		// Reconciliation is detached so an interrupted consistency check can
-		// finish, but shutdown must win before the next batch is claimed.
-		if ctx.Err() != nil {
-			return
-		}
-		n, err := w.ProcessBatch(detached)
+		// Reconciliation and an already-claimed batch are detached so they can
+		// finish, but the claim itself remains cancellation-aware. This closes
+		// the race between checking ctx and beginning the claim transaction.
+		n, err := w.processBatch(ctx, detached)
 		if err != nil {
-			w.log.Err(err).Error("email worker batch failed")
+			if ctx.Err() == nil {
+				w.log.Err(err).Error("email worker batch failed")
+			}
 			return
 		}
 		if n == 0 {
@@ -187,10 +186,19 @@ func (w *Worker) batchBudget() time.Duration {
 // (see claimBatch). It returns how many rows it claimed; zero means the queue
 // is empty or the budget is exhausted.
 func (w *Worker) ProcessBatch(ctx context.Context) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, w.batchBudget())
-	defer cancel()
+	return w.processBatch(ctx, ctx)
+}
 
-	claimed, err := w.claimBatch(ctx)
+// processBatch lets Run cancel a not-yet-committed claim while finishing a
+// successfully claimed batch on a detached context. Direct callers use the
+// same context for both through ProcessBatch.
+func (w *Worker) processBatch(claimParent, workParent context.Context) (int, error) {
+	claimCtx, cancelClaim := context.WithTimeout(claimParent, w.batchBudget())
+	defer cancelClaim()
+	workCtx, cancelWork := context.WithTimeout(workParent, w.batchBudget())
+	defer cancelWork()
+
+	claimed, err := w.claimBatch(claimCtx)
 	if err != nil {
 		return 0, err
 	}
@@ -206,10 +214,10 @@ func (w *Worker) ProcessBatch(ctx context.Context) (int, error) {
 		// dispatch today is doomed to the same answer: requeue the rest of
 		// the claim for the next UTC day without hammering Mailgun.
 		if w.quotaPaused() {
-			w.requeue(ctx, row)
+			w.requeue(workCtx, row)
 			continue
 		}
-		w.sendOne(ctx, row, sends, events)
+		w.sendOne(workCtx, row, sends, events)
 	}
 	return len(claimed), nil
 }
@@ -226,8 +234,8 @@ const emailBudgetLockID int64 = 0x656d6c627564 // "emlbud"
 // The count and the claim run in one transaction under an advisory lock, so
 // two overlapping instances (a deploy handing off) can never both spend the
 // same remaining slots. With the budget exhausted (or the quota pause armed)
-// it claims nothing and logs the pause once per UTC day; queued rows simply
-// wait for the next day.
+// it claims nothing and logs the pause once per UTC day; queued rows wait for
+// an explicit activation on a later eligible day.
 func (w *Worker) claimBatch(ctx context.Context) ([]*models.EmailRecipient, error) {
 	if w.quotaPaused() {
 		w.logBudgetPaused(logger.Data{"reason": "mailgun quota rejection", "limit": w.cfg.DailySendLimit})

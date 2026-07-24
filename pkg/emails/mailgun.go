@@ -63,10 +63,11 @@ func (e *RejectionError) Error() string {
 // bare word "limit": a quota-classified row is requeued (keeping its place at
 // the head of the claim order) and arms a day-long pause, so misreading an
 // ordinary rejection whose body merely says "limit is N" would stall the
-// whole queue day after day, not cost one retry. A residual false positive
-// is still bounded: the worker fails the row outright after maxQuotaRequeues
-// requeues (see the worker's quota branch), so the worst case is a few
-// stalled days ending in a visible failed row, never a starved queue.
+// whole queue across later activations, not cost one retry. A residual false
+// positive is still bounded: the worker fails the row outright after
+// maxQuotaRequeues requeues (see the worker's quota branch), so enough explicit
+// activations on eligible later days end in a visible failed row rather than a
+// permanently starved queue.
 func (e *RejectionError) IsQuotaLimited() bool {
 	if e.StatusCode == http.StatusTooManyRequests {
 		return true

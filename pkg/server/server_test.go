@@ -114,14 +114,32 @@ func TestEmailAdminActivity_WakesOnlyAfterAuthentication(t *testing.T) {
 	require.Equal(t, http.StatusOK, meRec.Code)
 	assert.Equal(t, 0, waker.calls)
 
-	// Once admin auth succeeds, email API activity wakes before the handler's
-	// database work. The nil DB may fail the handler, but reconciliation was
-	// still justified by authenticated activity.
-	authedReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/emails/templates", http.NoBody)
-	authedReq.Header.Set("Authorization", "Bearer "+login.Token)
-	authedRec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(authedRec, authedReq)
-	assert.Equal(t, 1, waker.calls)
+	// Once admin auth succeeds, every email API route wakes before the handler's
+	// database work. The nil DB or empty body may fail the handler, but
+	// reconciliation was still justified by authenticated activity.
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/admin/emails/templates"},
+		{http.MethodPost, "/api/admin/emails/templates"},
+		{http.MethodGet, "/api/admin/emails/templates/template-id"},
+		{http.MethodPut, "/api/admin/emails/templates/template-id"},
+		{http.MethodDelete, "/api/admin/emails/templates/template-id"},
+		{http.MethodPost, "/api/admin/emails/preview"},
+		{http.MethodPost, "/api/admin/emails/send"},
+		{http.MethodPost, "/api/admin/emails/test"},
+		{http.MethodGet, "/api/admin/emails/shell-preview"},
+		{http.MethodGet, "/api/admin/emails/sends"},
+		{http.MethodGet, "/api/admin/emails/sends/send-id"},
+	}
+	for i, route := range routes {
+		authedReq := httptest.NewRequestWithContext(context.Background(), route.method, route.path, http.NoBody)
+		authedReq.Header.Set("Authorization", "Bearer "+login.Token)
+		authedRec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(authedRec, authedReq)
+		assert.Equal(t, i+1, waker.calls, "%s %s", route.method, route.path)
+	}
 }
 
 func TestProtectedAdminRoute_RequiresToken(t *testing.T) {

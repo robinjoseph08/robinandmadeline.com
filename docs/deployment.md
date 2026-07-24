@@ -111,8 +111,8 @@ The email system was added after the initial setup, and its secrets are now
 configured in production. `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` enable sending.
 `MAILGUN_WEBHOOK_SIGNING_KEY` verifies delivery webhooks; without it, the app
 fails closed and rejects every webhook, so delivery statuses will not advance.
-The currently deployed worker lifecycle follows ADR 0004; ADR 0010 records its
-accepted demand-started replacement.
+The worker follows ADR 0004's demand-driven lifecycle. ADR 0010 tracks the
+remaining database-activation work that has not yet landed.
 
 ### 4. First deploy
 
