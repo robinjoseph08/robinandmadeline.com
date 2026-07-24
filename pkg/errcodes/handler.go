@@ -69,9 +69,12 @@ func resolve(err error) (int, string, string) {
 	var e *Error
 	if errors.As(err, &e) {
 		msg := e.Message
-		// A 5xx *Error renders a generic message: the constructor's text is for
-		// the log line Handle writes, never for the response body.
-		if e.HTTPCode >= http.StatusInternalServerError {
+		// Internal errors are always masked. The exact ServiceUnavailable
+		// status/code pair is the one client-safe 5xx shape, and its message is
+		// fixed here rather than trusted from a caller-built Error.
+		if e.HTTPCode == http.StatusServiceUnavailable && e.Code == string(CodeServiceUnavailable) {
+			msg = http.StatusText(http.StatusServiceUnavailable)
+		} else if e.HTTPCode >= http.StatusInternalServerError {
 			msg = "Internal Server Error"
 		}
 		return e.HTTPCode, e.Code, msg

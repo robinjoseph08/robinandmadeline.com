@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -169,6 +171,28 @@ func NewWithConnector(connector driver.Connector, observer FirstConnectionObserv
 	return bun.NewDB(sqldb, pgdialect.New()), nil
 }
 
+// HTTPWorkBudget is the aggregate database-work budget for one matched API
+// request. The server installs it once before authentication and every query or
+// transaction uses the same request context, so later work receives only the
+// time left from earlier work.
+const HTTPWorkBudget = 5 * time.Second
+
+var errHTTPWorkBudgetExceeded = errors.New("HTTP database-work budget exceeded")
+
+// WithHTTPWorkBudget returns a context carrying the one aggregate database
+// deadline for an API request. The distinct cancellation cause lets the server
+// distinguish this budget from a caller disconnect or an earlier caller-owned
+// deadline.
+func WithHTTPWorkBudget(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeoutCause(ctx, HTTPWorkBudget, errHTTPWorkBudgetExceeded)
+}
+
+// HTTPWorkBudgetExceeded reports whether the request's own database-work
+// budget, rather than its parent context, canceled ctx.
+func HTTPWorkBudgetExceeded(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errHTTPWorkBudgetExceeded)
+}
+
 const (
 	maxOpenConnections = 5
 	maxIdleConnections = 1
@@ -199,7 +223,162 @@ func (c *observedConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if first && c.observer != nil {
 		c.observer(ctx, FirstConnectionAttempt{Operation: operationFromContext(ctx), Err: err})
 	}
-	return conn, err
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, &connectionFailure{err: err}
+	}
+	if pgConn, ok := conn.(*pgdriver.Conn); ok {
+		return &contextualPGConn{Conn: pgConn}, nil
+	}
+	return conn, nil
+}
+
+// contextualPGConn carries operation contexts through pgdriver boundaries that
+// otherwise fall back to background contexts. It also marks transport failures
+// without changing PostgreSQL statement and programming errors.
+type contextualPGConn struct {
+	*pgdriver.Conn
+}
+
+func (c *contextualPGConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	stmt, err := c.Conn.PrepareContext(ctx, query)
+	return stmt, normalizeDatabaseError(ctx, err)
+}
+
+func (c *contextualPGConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	tx, err := c.Conn.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, normalizeDatabaseError(ctx, err)
+	}
+	return &contextualTx{Tx: tx, ctx: ctx, execer: c.Conn}, nil
+}
+
+func (c *contextualPGConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	result, err := c.Conn.ExecContext(ctx, query, args)
+	return result, normalizeDatabaseError(ctx, err)
+}
+
+func (c *contextualPGConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	rows, err := c.Conn.QueryContext(ctx, query, args)
+	if err != nil {
+		return nil, normalizeDatabaseError(ctx, err)
+	}
+	return newContextualRows(ctx, rows, c.Close), nil
+}
+
+func (c *contextualPGConn) Ping(ctx context.Context) error {
+	return normalizeDatabaseError(ctx, c.Conn.Ping(ctx))
+}
+
+type contextualTx struct {
+	driver.Tx
+	ctx    context.Context
+	execer driver.ExecerContext
+}
+
+func (tx *contextualTx) Commit() error {
+	_, err := tx.execer.ExecContext(tx.ctx, "COMMIT", nil)
+	return normalizeDatabaseError(tx.ctx, err)
+}
+
+func (tx *contextualTx) Rollback() error {
+	_, err := tx.execer.ExecContext(tx.ctx, "ROLLBACK", nil)
+	return normalizeDatabaseError(tx.ctx, err)
+}
+
+type contextualRows struct {
+	driver.Rows
+	ctx         context.Context
+	closeConn   func() error
+	done        chan struct{}
+	watcherDone chan struct{}
+	doneOnce    sync.Once
+}
+
+func newContextualRows(ctx context.Context, rows driver.Rows, closeConn func() error) *contextualRows {
+	wrapped := &contextualRows{
+		Rows:        rows,
+		ctx:         ctx,
+		closeConn:   closeConn,
+		done:        make(chan struct{}),
+		watcherDone: make(chan struct{}),
+	}
+	go func() {
+		defer close(wrapped.watcherDone)
+		select {
+		case <-ctx.Done():
+			_ = closeConn()
+		case <-wrapped.done:
+		}
+	}()
+	return wrapped
+}
+
+func (rows *contextualRows) Next(dest []driver.Value) error {
+	err := rows.Rows.Next(dest)
+	if err == io.EOF {
+		return err
+	}
+	return normalizeDatabaseError(rows.ctx, err)
+}
+
+func (rows *contextualRows) Close() error {
+	err := rows.Rows.Close()
+	rows.doneOnce.Do(func() { close(rows.done) })
+	<-rows.watcherDone
+	return normalizeDatabaseError(rows.ctx, err)
+}
+
+func normalizeDatabaseError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if isDatabaseTransportError(err) {
+		return &connectionFailure{err: err}
+	}
+	return err
+}
+
+type postgresError interface {
+	error
+	Field(byte) string
+}
+
+func isDatabaseTransportError(err error) bool {
+	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var postgresErr postgresError
+	if errors.As(err, &postgresErr) {
+		severity := postgresErr.Field('V')
+		return severity == "FATAL" || severity == "PANIC"
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
+// connectionFailure marks an error returned while opening a physical database
+// connection or using its transport. PostgreSQL statement and programming
+// errors deliberately do not receive this marker, so request translation cannot
+// turn them into service-unavailable responses.
+type connectionFailure struct {
+	err error
+}
+
+func (e *connectionFailure) Error() string { return e.err.Error() }
+func (e *connectionFailure) Unwrap() error { return e.err }
+
+// IsConnectionFailure reports whether err arose while opening or using a
+// physical database connection. It traverses infrastructure wrapping added by
+// services.
+func IsConnectionFailure(err error) bool {
+	var failure *connectionFailure
+	return errors.As(err, &failure)
 }
 
 func (c *observedConnector) Driver() driver.Driver {

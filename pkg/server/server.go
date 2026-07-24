@@ -95,6 +95,11 @@ func NewWithEmailWorker(cfg *config.Config, db *bun.DB, worker emails.WorkerWake
 		}
 	})
 
+	// Matched API routes receive one aggregate database-work budget before any
+	// route authentication or handler runs. Database-free rejections finish
+	// normally, while all Bun work on the request shares the same deadline.
+	e.Use(databaseBudgetMiddleware)
+
 	// The info-collection service backs both the open /i/:token API and the
 	// personalized title injected into that page's shell for its link preview, so
 	// build it once and share it.

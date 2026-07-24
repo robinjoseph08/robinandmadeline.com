@@ -129,11 +129,15 @@ func TestWorkerRun_ConfiguredWorkerStartsIdleWithoutDatabaseAccess(t *testing.T)
 	waitForSignal(t, worker.Done(), "idle worker did not stop")
 }
 
-func TestWorkerRun_AttributesActivatedDatabaseConnection(t *testing.T) {
+func TestWorkerRun_AttributesActivatedDatabaseConnectionWithoutHTTPRequestBudget(t *testing.T) {
 	connectErr := errors.New("connection failed")
-	attempts := make(chan database.FirstConnectionAttempt, 1)
-	db, err := database.NewWithConnector(&lifecycleConnector{err: connectErr}, func(_ context.Context, attempt database.FirstConnectionAttempt) {
-		attempts <- attempt
+	type observedAttempt struct {
+		ctx     context.Context
+		attempt database.FirstConnectionAttempt
+	}
+	attempts := make(chan observedAttempt, 1)
+	db, err := database.NewWithConnector(&lifecycleConnector{err: connectErr}, func(ctx context.Context, attempt database.FirstConnectionAttempt) {
+		attempts <- observedAttempt{ctx: ctx, attempt: attempt}
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
@@ -144,9 +148,13 @@ func TestWorkerRun_AttributesActivatedDatabaseConnection(t *testing.T) {
 	worker.Wake()
 
 	select {
-	case attempt := <-attempts:
-		assert.Equal(t, "email_worker", attempt.Operation.String())
-		require.ErrorIs(t, attempt.Err, connectErr)
+	case observed := <-attempts:
+		assert.Equal(t, "email_worker", observed.attempt.Operation.String())
+		require.ErrorIs(t, observed.attempt.Err, connectErr)
+		deadline, ok := observed.ctx.Deadline()
+		require.True(t, ok, "the worker should retain its independent batch budget")
+		assert.Greater(t, time.Until(deadline), database.HTTPWorkBudget,
+			"background work must not inherit the five-second HTTP request budget")
 	case <-time.After(time.Second):
 		t.Fatal("activated worker did not attempt a database connection")
 	}

@@ -25,7 +25,7 @@ The Go backend is Echo + Bun on Postgres. These conventions keep the API typed e
 
 ## Errors
 
-- Return a `pkg/errcodes` constructor (`NotFound`, `BadRequest`, `ValidationError`, `Conflict`, `Unauthorized`, `Forbidden`, `Internal`, plus the binder's `UnknownParameter`, `ValidationTypeError`, `MalformedPayload`, `EmptyRequestBody`, `UnsupportedMediaType`). Never `echo.NewHTTPError`.
+- Return a `pkg/errcodes` constructor (`NotFound`, `BadRequest`, `ValidationError`, `Conflict`, `Unauthorized`, `Forbidden`, `ServiceUnavailable`, `Internal`, plus the binder's `UnknownParameter`, `ValidationTypeError`, `MalformedPayload`, `EmptyRequestBody`, `UnsupportedMediaType`). `ServiceUnavailable` is reserved for the server's database connectivity and request-budget translation. Never `echo.NewHTTPError`.
 - Wrap infrastructure errors with `github.com/pkg/errors` (`errors.Wrap` / `errors.WithStack`) so a stack reaches the logs.
 - The single `e.HTTPErrorHandler` (`errcodes.NewHandler().Handle`) renders the `{ "error": { code, message, status_code } }` envelope for body-bearing responses and logs only 5xx, through the request-scoped logger (the request method/path/route ride on it, and `.Err(err)` attaches the stack). HEAD renders the same status without a body. Do not log expected 4xx, and never put an internal error's text in a 500 response body. Client-disconnect and `context.Canceled` errors are dropped via `golib/errutils.IsIgnorableErr`.
 - A Postgres unique violation becomes a 409 through `errcodes.ConflictOnUnique`.

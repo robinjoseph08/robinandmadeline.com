@@ -4,14 +4,19 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"io"
+	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun/driver/pgdriver"
 )
 
 type stubConnector struct {
@@ -41,12 +46,71 @@ func (*stubConn) Prepare(string) (driver.Stmt, error) {
 func (*stubConn) Close() error              { return nil }
 func (*stubConn) Begin() (driver.Tx, error) { return nil, errors.New("stub connection cannot begin") }
 
+type recordingTx struct {
+	commits   atomic.Int32
+	rollbacks atomic.Int32
+}
+
+func (tx *recordingTx) Commit() error {
+	tx.commits.Add(1)
+	return nil
+}
+func (tx *recordingTx) Rollback() error {
+	tx.rollbacks.Add(1)
+	return nil
+}
+
+type recordingCommitExecer struct {
+	ctx   context.Context
+	query string
+	args  []driver.NamedValue
+}
+
+func (e *recordingCommitExecer) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	e.ctx = ctx
+	e.query = query
+	e.args = args
+	return driver.RowsAffected(0), nil
+}
+
+type stubPostgresError struct {
+	severity string
+}
+
+func (err stubPostgresError) Error() string { return "postgres " + err.severity }
+func (err stubPostgresError) Field(field byte) string {
+	if field == 'V' {
+		return err.severity
+	}
+	return ""
+}
+
+type blockingRows struct {
+	release chan struct{}
+}
+
+func (*blockingRows) Columns() []string { return []string{"value"} }
+func (*blockingRows) Close() error      { return nil }
+func (rows *blockingRows) Next([]driver.Value) error {
+	<-rows.release
+	return driver.ErrBadConn
+}
+
 type blockingConnector struct {
 	attempts atomic.Int32
 	err      error
 	started  chan struct{}
 	release  chan struct{}
 }
+
+type cancellationErrorConnector struct{}
+
+func (*cancellationErrorConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	<-ctx.Done()
+	return nil, &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
+}
+
+func (*cancellationErrorConnector) Driver() driver.Driver { return stubDriver{} }
 
 func (c *blockingConnector) Connect(context.Context) (driver.Conn, error) {
 	c.attempts.Add(1)
@@ -204,6 +268,160 @@ func TestNewWithConnector_RequiresConnector(t *testing.T) {
 	db, err := NewWithConnector(nil, nil)
 	assert.Nil(t, db)
 	assert.EqualError(t, err, "database connector is required")
+}
+
+func TestNewWithConnector_MarksOnlyPhysicalConnectionFailures(t *testing.T) {
+	connectErr := errors.New("dial failed")
+	db, err := NewWithConnector(&stubConnector{err: connectErr}, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	err = db.PingContext(context.Background())
+	require.ErrorIs(t, err, connectErr)
+	assert.True(t, IsConnectionFailure(err))
+	assert.False(t, IsConnectionFailure(errors.New("ordinary SQL error")))
+}
+
+func TestObservedConnector_PreservesContextCancellationOverDriverError(t *testing.T) {
+	connector := &observedConnector{connector: &cancellationErrorConnector{}}
+
+	parent, cancelParent := context.WithCancel(context.Background())
+	cancelParent()
+	_, err := connector.Connect(parent)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.False(t, IsConnectionFailure(err))
+
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancelBudget := WithHTTPWorkBudget(context.Background())
+		defer cancelBudget()
+		_, err := connector.Connect(ctx)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.True(t, HTTPWorkBudgetExceeded(ctx))
+		assert.False(t, IsConnectionFailure(err))
+	})
+}
+
+func TestObservedConnector_WrapsPGDriverConnection(t *testing.T) {
+	connector := &observedConnector{connector: &stubConnector{conn: &pgdriver.Conn{}}}
+
+	conn, err := connector.Connect(context.Background())
+	require.NoError(t, err)
+	assert.IsType(t, &contextualPGConn{}, conn)
+}
+
+func TestContextualTx_CommitAndRollbackUseTransactionContext(t *testing.T) {
+	for _, operation := range []string{"COMMIT", "ROLLBACK"} {
+		t.Run(operation, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), HTTPWorkBudget)
+			defer cancel()
+			rawTx := &recordingTx{}
+			execer := &recordingCommitExecer{}
+			tx := &contextualTx{Tx: rawTx, ctx: ctx, execer: execer}
+
+			var err error
+			if operation == "COMMIT" {
+				err = tx.Commit()
+			} else {
+				err = tx.Rollback()
+			}
+			require.NoError(t, err)
+			assert.Equal(t, ctx, execer.ctx)
+			assert.Equal(t, operation, execer.query)
+			assert.Nil(t, execer.args)
+			assert.Zero(t, rawTx.commits.Load(), "the background-context driver commit must not run")
+			assert.Zero(t, rawTx.rollbacks.Load(), "the background-context driver rollback must not run")
+		})
+	}
+}
+
+func TestContextualRows_StopsBlockedIterationAtBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := WithHTTPWorkBudget(context.Background())
+		defer cancel()
+		rawRows := &blockingRows{release: make(chan struct{})}
+		var closeOnce sync.Once
+		rows := newContextualRows(ctx, rawRows, func() error {
+			closeOnce.Do(func() { close(rawRows.release) })
+			return nil
+		})
+
+		startedAt := time.Now()
+		err := rows.Next(make([]driver.Value, 1))
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, HTTPWorkBudget, time.Since(startedAt))
+		require.NoError(t, rows.Close())
+	})
+}
+
+func TestContextualRows_CloseWaitsForCancellationWatcher(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		closeStarted := make(chan struct{})
+		releaseClose := make(chan struct{})
+		rows := newContextualRows(ctx, &blockingRows{release: make(chan struct{})}, func() error {
+			close(closeStarted)
+			<-releaseClose
+			return nil
+		})
+
+		cancel()
+		<-closeStarted
+		result := make(chan error, 1)
+		go func() { result <- rows.Close() }()
+		synctest.Wait()
+		select {
+		case <-result:
+			t.Fatal("rows closed before the cancellation watcher finished")
+		default:
+		}
+
+		close(releaseClose)
+		synctest.Wait()
+		require.NoError(t, <-result)
+	})
+}
+
+func TestNormalizeDatabaseError_MarksOnlyTransportFailures(t *testing.T) {
+	for _, err := range []error{
+		driver.ErrBadConn,
+		io.EOF,
+		io.ErrUnexpectedEOF,
+		stubPostgresError{severity: "FATAL"},
+		stubPostgresError{severity: "PANIC"},
+	} {
+		assert.True(t, IsConnectionFailure(normalizeDatabaseError(context.Background(), err)))
+	}
+	assert.False(t, IsConnectionFailure(normalizeDatabaseError(context.Background(), stubPostgresError{severity: "ERROR"})))
+	assert.False(t, IsConnectionFailure(normalizeDatabaseError(context.Background(), errors.New("ordinary SQL error"))))
+}
+
+func TestHTTPWorkBudget_HasOneExactFiveSecondDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		ctx, cancel := WithHTTPWorkBudget(context.Background())
+		defer cancel()
+
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok)
+		assert.Equal(t, 5*time.Second, deadline.Sub(start))
+
+		time.Sleep(HTTPWorkBudget - time.Nanosecond)
+		require.NoError(t, ctx.Err())
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+		assert.True(t, HTTPWorkBudgetExceeded(ctx))
+	})
+}
+
+func TestHTTPWorkBudget_DistinguishesParentCancellation(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	ctx, cancelBudget := WithHTTPWorkBudget(parent)
+	cancelParent()
+	defer cancelBudget()
+
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	assert.False(t, HTTPWorkBudgetExceeded(ctx))
 }
 
 func TestHTTPRouteOperation_RejectsRawOrUnboundedLabels(t *testing.T) {

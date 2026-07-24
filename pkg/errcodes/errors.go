@@ -1,8 +1,9 @@
 // Package errcodes defines the application's typed HTTP errors and the Echo
 // error handler that renders them. Constructors return an *Error carrying the
-// HTTP status, a stable machine code, and a message (client-safe for 4xx; 5xx
-// messages are log-only detail the handler masks); the handler resolves any
-// error to the standard envelope. No custom As/Is is defined: stdlib
+// HTTP status, a stable machine code, and a message (client-safe for 4xx and
+// the fixed ServiceUnavailable constructor; caller-detailed 5xx messages are
+// log-only and masked by the handler); the handler resolves any error to the
+// standard envelope. No custom As/Is is defined: stdlib
 // errors.As / errors.Is traverse the chain (including pkg/errors wraps) to
 // find an *Error.
 package errcodes
@@ -38,7 +39,7 @@ const (
 	// *echo.HTTPError (e.g. a 405) is rendered by the handler with its reason
 	// snake-cased, which can fall outside the union; the frontend's envelope
 	// parse stays defensive for that reason, and such codes are display-only.
-	//tygo:emit export type ErrorCode = "not_found" | "bad_request" | "validation_error" | "unknown_parameter" | "validation_type_error" | "malformed_payload" | "empty_request_body" | "unsupported_media_type" | "conflict" | "unauthorized" | "forbidden" | "too_many_requests" | "internal_server_error";
+	//tygo:emit export type ErrorCode = "not_found" | "bad_request" | "validation_error" | "unknown_parameter" | "validation_type_error" | "malformed_payload" | "empty_request_body" | "unsupported_media_type" | "conflict" | "unauthorized" | "forbidden" | "too_many_requests" | "service_unavailable" | "internal_server_error";
 	CodeNotFound             Code = "not_found"
 	CodeBadRequest           Code = "bad_request"
 	CodeValidationError      Code = "validation_error"
@@ -51,6 +52,7 @@ const (
 	CodeUnauthorized         Code = "unauthorized"
 	CodeForbidden            Code = "forbidden"
 	CodeTooManyRequests      Code = "too_many_requests"
+	CodeServiceUnavailable   Code = "service_unavailable"
 	CodeInternal             Code = "internal_server_error"
 )
 
@@ -150,9 +152,17 @@ func TooManyRequests(msg string) error {
 	return &Error{http.StatusTooManyRequests, msg, string(CodeTooManyRequests)}
 }
 
+// ServiceUnavailable returns the named 503 used when an API request cannot
+// acquire a database connection or exhausts its aggregate database-work
+// budget. Its fixed message is safe for clients; infrastructure detail belongs
+// only in wrappers that the handler logs.
+func ServiceUnavailable() error {
+	return &Error{http.StatusServiceUnavailable, http.StatusText(http.StatusServiceUnavailable), string(CodeServiceUnavailable)}
+}
+
 // Internal returns a 500 with the given message. The message is for logs only;
-// the handler masks every 5xx message to a generic one before it reaches the
-// client (see resolve in handler.go), so the text here may carry detail.
+// the handler masks it to a generic one before it reaches the client (see
+// resolve in handler.go), so the text here may carry detail.
 func Internal(msg string) error {
 	return &Error{http.StatusInternalServerError, msg, string(CodeInternal)}
 }
