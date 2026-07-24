@@ -84,11 +84,17 @@ func newMetaServer(t *testing.T) http.Handler {
 }
 
 type metadataConnector struct {
-	err error
+	err     error
+	connect func(context.Context) (driver.Conn, error)
 }
 
-func (c *metadataConnector) Connect(context.Context) (driver.Conn, error) { return nil, c.err }
-func (c *metadataConnector) Driver() driver.Driver                        { return metadataDriver{} }
+func (c *metadataConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	if c.connect != nil {
+		return c.connect(ctx)
+	}
+	return nil, c.err
+}
+func (c *metadataConnector) Driver() driver.Driver { return metadataDriver{} }
 
 type metadataDriver struct{}
 
@@ -115,6 +121,7 @@ func TestShellMeta_InfoLookupAttributesDatabaseConnectionWithoutToken(t *testing
 	const infoToken = "sensitiveinfotoken123456789012"
 	rec := getCanonical(handler, "/i/"+infoToken)
 	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "<title>Your Details · Robin &amp; Madeline</title>")
 	select {
 	case attempt := <-attempts:
 		assert.Equal(t, "info_metadata", attempt.Operation.String())
@@ -122,6 +129,38 @@ func TestShellMeta_InfoLookupAttributesDatabaseConnectionWithoutToken(t *testing
 		require.ErrorIs(t, attempt.Err, connectErr)
 	case <-time.After(time.Second):
 		t.Fatal("Info metadata lookup did not attempt a database connection")
+	}
+}
+
+func TestShellMeta_InfoLookupTimeoutReachesDatabaseConnection(t *testing.T) {
+	connectionErr := make(chan error, 1)
+	db, err := database.NewWithConnector(&metadataConnector{connect: func(ctx context.Context) (driver.Conn, error) {
+		<-ctx.Done()
+		connectionErr <- ctx.Err()
+		return nil, ctx.Err()
+	}}, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte(metaShell), 0o600))
+	cfg := newTestConfig(t)
+	cfg.StaticDir = dir
+	cfg.CanonicalHost = metaHost
+	handler := server.New(cfg, db).Handler
+	started := time.Now()
+
+	rec := getCanonical(handler, "/i/sensitiveinfotoken123456789012")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "<title>Your Details · Robin &amp; Madeline</title>")
+	assert.GreaterOrEqual(t, time.Since(started), 900*time.Millisecond)
+	assert.Less(t, time.Since(started), 2*time.Second)
+	select {
+	case err := <-connectionErr:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(time.Second):
+		t.Fatal("Info metadata database connection did not observe timeout cancellation")
 	}
 }
 
@@ -202,10 +241,9 @@ func TestShellMeta_NoindexTitledRoutesGetGenericTitle(t *testing.T) {
 	// preview: the per-guest token/UUID links (no login, reachable by anyone
 	// holding the link) and the RSVP flow steps. Each gets a title while staying
 	// noindex. Mixed case confirms the match is case-insensitive. The /i/ link
-	// shows its generic "Your Details" fallback here because this meta server is
-	// wired with a nil DB, so its primary-guest-name lookup yields nothing; the
-	// personalized "<name>'s Info" title is covered in static_meta_internal_test.go
-	// (injection) and pkg/info (the query).
+	// shows its generic "Your Details" fallback here because these sample tokens
+	// are not eligible for a metadata lookup. Personalized titles and the nil-DB
+	// fallback are covered in static_meta_internal_test.go and pkg/info.
 	for _, tc := range []struct{ path, title, ogURL string }{
 		{"/i/some-token", "Your Details · Robin &amp; Madeline", "https://www.robinandmadeline.com/i/some-token"},
 		{"/I/Some-Token", "Your Details · Robin &amp; Madeline", "https://www.robinandmadeline.com/i/some-token"},
