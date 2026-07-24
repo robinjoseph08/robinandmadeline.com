@@ -13,18 +13,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type failingConnector struct {
+type stubConnector struct {
 	attempts atomic.Int32
 	err      error
 	conn     driver.Conn
 }
 
-func (c *failingConnector) Connect(context.Context) (driver.Conn, error) {
+func (c *stubConnector) Connect(context.Context) (driver.Conn, error) {
 	c.attempts.Add(1)
 	return c.conn, c.err
 }
 
-func (c *failingConnector) Driver() driver.Driver { return stubDriver{} }
+func (c *stubConnector) Driver() driver.Driver { return stubDriver{} }
 
 type stubDriver struct{}
 
@@ -41,7 +41,7 @@ func (*stubConn) Close() error              { return nil }
 func (*stubConn) Begin() (driver.Tx, error) { return nil, errors.New("stub connection cannot begin") }
 
 type closingConnector struct {
-	failingConnector
+	stubConnector
 	closes   atomic.Int32
 	closeErr error
 }
@@ -72,11 +72,11 @@ func TestConfigurePool_UsesConservativeProductionSettings(t *testing.T) {
 
 func TestNewWithConnector_IsLazyAndObservesFirstFailedAttemptOnce(t *testing.T) {
 	connectErr := errors.New("connection failed")
-	connector := &failingConnector{err: connectErr}
+	connector := &stubConnector{err: connectErr}
 	var mu sync.Mutex
 	var attempts []FirstConnectionAttempt
 
-	db, err := NewWithConnector(connector, func(attempt FirstConnectionAttempt) {
+	db, err := NewWithConnector(connector, func(_ context.Context, attempt FirstConnectionAttempt) {
 		mu.Lock()
 		attempts = append(attempts, attempt)
 		mu.Unlock()
@@ -100,9 +100,9 @@ func TestNewWithConnector_IsLazyAndObservesFirstFailedAttemptOnce(t *testing.T) 
 }
 
 func TestNewWithConnector_ObservesFirstSuccessfulAttempt(t *testing.T) {
-	connector := &failingConnector{conn: &stubConn{}}
+	connector := &stubConnector{conn: &stubConn{}}
 	var attempts []FirstConnectionAttempt
-	db, err := NewWithConnector(connector, func(attempt FirstConnectionAttempt) {
+	db, err := NewWithConnector(connector, func(_ context.Context, attempt FirstConnectionAttempt) {
 		attempts = append(attempts, attempt)
 	})
 	require.NoError(t, err)

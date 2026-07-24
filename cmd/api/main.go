@@ -124,17 +124,18 @@ func productionApplicationDependencies(cfg *config.Config, log logger.Logger) ap
 		connector: database.NewConnector(cfg),
 		log:       log,
 	}
-	deps.observeFirstConnection = func(attempt database.FirstConnectionAttempt) {
+	deps.observeFirstConnection = func(ctx context.Context, attempt database.FirstConnectionAttempt) {
 		data := logger.Data{"operation": attempt.Operation.String(), "outcome": "connected"}
+		eventLog := logger.FromContext(ctx)
 		if attempt.Err != nil {
 			// Deliberately omit the connector error from this attribution event:
 			// driver errors can contain DSN or host details, while the bounded
 			// operation and outcome are sufficient to explain the activation.
 			data["outcome"] = "failed"
-			log.Data(data).Warn("first database connection attempt")
+			eventLog.Data(data).Warn("first database connection attempt")
 			return
 		}
-		log.Data(data).Info("first database connection attempt")
+		eventLog.Data(data).Info("first database connection attempt")
 	}
 	if cfg.MailgunAPIKey != "" {
 		deps.mailgunClient = emails.NewMailgunClient(cfg.MailgunBaseURL, cfg.MailgunDomain, cfg.MailgunAPIKey)
@@ -148,7 +149,9 @@ func newApplication(ctx context.Context, cfg *config.Config, deps applicationDep
 		return nil, errors.Wrap(err, "open database handle")
 	}
 
-	workerCtx, stopWorker := context.WithCancel(ctx)
+	// Request middleware supplies its own scoped logger. Background database
+	// work inherits the injected application logger through this root context.
+	workerCtx, stopWorker := context.WithCancel(deps.log.WithContext(ctx))
 	app := &application{db: db, stopWorker: stopWorker}
 	if cfg.MailgunAPIKey != "" {
 		if deps.mailgunClient == nil {

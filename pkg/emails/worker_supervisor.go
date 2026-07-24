@@ -16,6 +16,7 @@ type workerSupervisor struct {
 	activate func(context.Context)
 	log      logger.Logger
 	wake     chan struct{}
+	started  chan struct{}
 	done     chan struct{}
 	runOnce  sync.Once
 }
@@ -25,6 +26,7 @@ func newWorkerSupervisor(activate func(context.Context), log logger.Logger) *wor
 		activate: activate,
 		log:      log,
 		wake:     make(chan struct{}, 1),
+		started:  make(chan struct{}),
 		done:     make(chan struct{}),
 	}
 }
@@ -36,7 +38,8 @@ func (s *workerSupervisor) Wake() {
 	}
 }
 
-func (s *workerSupervisor) Done() <-chan struct{} { return s.done }
+func (s *workerSupervisor) Started() <-chan struct{} { return s.started }
+func (s *workerSupervisor) Done() <-chan struct{}    { return s.done }
 
 func (s *workerSupervisor) Run(ctx context.Context) {
 	// Run is process-lifetime state. Guarding it ensures even accidental
@@ -46,6 +49,7 @@ func (s *workerSupervisor) Run(ctx context.Context) {
 		defer close(s.done)
 		s.log.Info("email worker started")
 		defer s.log.Info("email worker stopped")
+		close(s.started)
 
 		for {
 			select {

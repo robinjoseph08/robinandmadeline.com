@@ -90,8 +90,9 @@ type FirstConnectionAttempt struct {
 }
 
 // FirstConnectionObserver receives exactly one event, after the first physical
-// attempt finishes, whether it succeeds or fails.
-type FirstConnectionObserver func(FirstConnectionAttempt)
+// attempt finishes, whether it succeeds or fails. The connection context lets
+// observers retain request-scoped telemetry without exposing raw request data.
+type FirstConnectionObserver func(context.Context, FirstConnectionAttempt)
 
 // NewConnector builds the real Postgres connector without opening a physical
 // connection. The connector is exposed so production assembly can substitute
@@ -145,7 +146,7 @@ func (c *observedConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	first := c.started.CompareAndSwap(false, true)
 	conn, err := c.connector.Connect(ctx)
 	if first && c.observer != nil {
-		c.observer(FirstConnectionAttempt{Operation: operationFromContext(ctx), Err: err})
+		c.observer(ctx, FirstConnectionAttempt{Operation: operationFromContext(ctx), Err: err})
 	}
 	return conn, err
 }

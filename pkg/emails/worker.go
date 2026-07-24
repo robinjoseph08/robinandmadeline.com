@@ -119,6 +119,9 @@ func NewWorker(db *bun.DB, client MailgunClient, cfg WorkerConfig, log logger.Lo
 // remains pending for another actionable-work check before the worker idles.
 func (w *Worker) Wake() { w.supervisor.Wake() }
 
+// Started is closed once Run has entered its database-free supervision loop.
+func (w *Worker) Started() <-chan struct{} { return w.supervisor.Started() }
+
 // Done is closed when Run has returned, letting main wait for the in-flight
 // batch before closing the database.
 func (w *Worker) Done() <-chan struct{} { return w.supervisor.Done() }

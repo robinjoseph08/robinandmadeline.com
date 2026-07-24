@@ -141,7 +141,7 @@ func TestApplicationAssembly_StartupIdleWorkerAndHealthAreDatabaseFree(t *testin
 	var observed atomic.Int32
 	app, err := newApplication(context.Background(), assemblyConfig(), applicationDependencies{
 		connector: connector,
-		observeFirstConnection: func(database.FirstConnectionAttempt) {
+		observeFirstConnection: func(context.Context, database.FirstConnectionAttempt) {
 			observed.Add(1)
 		},
 		mailgunClient: &assemblyMailgun{},
@@ -150,9 +150,13 @@ func TestApplicationAssembly_StartupIdleWorkerAndHealthAreDatabaseFree(t *testin
 	require.NoError(t, err)
 	defer closeApplication(t, app)
 
-	// Give the supervisor an opportunity to enter its idle wait. It has no
-	// startup wake or timer, so this must not call the connector.
-	time.Sleep(20 * time.Millisecond)
+	// Wait until the supervisor has actually entered Run rather than relying on
+	// scheduler timing. Reaching Started performs no wake or database work.
+	select {
+	case <-app.worker.Started():
+	case <-time.After(time.Second):
+		t.Fatal("email worker did not enter its supervision loop")
+	}
 	assert.Zero(t, connector.attempts.Load())
 	assert.Zero(t, observed.Load())
 
@@ -172,7 +176,7 @@ func TestApplicationAssembly_DatabaseBackedRequestAttemptsConnection(t *testing.
 	attempts := make(chan database.FirstConnectionAttempt, 1)
 	app, err := newApplication(context.Background(), assemblyConfig(), applicationDependencies{
 		connector: connector,
-		observeFirstConnection: func(attempt database.FirstConnectionAttempt) {
+		observeFirstConnection: func(_ context.Context, attempt database.FirstConnectionAttempt) {
 			attempts <- attempt
 		},
 		mailgunClient: &assemblyMailgun{},
@@ -202,20 +206,22 @@ func TestProductionApplicationDependencies_FirstConnectionLogIsSafe(t *testing.T
 	logger.SetOutput(&output)
 	t.Cleanup(func() { logger.SetOutput(previous) })
 
-	log := logger.NewWithLevel("info")
+	log := logger.NewWithLevel("info").ID("request-id")
 	deps := productionApplicationDependencies(&config.Config{
 		DatabaseURL: "postgres://localhost/test?sslmode=disable",
 	}, log)
-	deps.observeFirstConnection(database.FirstConnectionAttempt{
+	deps.observeFirstConnection(log.WithContext(context.Background()), database.FirstConnectionAttempt{
 		Operation: database.HTTPRouteOperation("/api/info/:token"),
 		Err:       errors.New("postgres://user:password@example.test/private?token=secret"),
 	})
 
 	var event struct {
+		ID      string         `json:"id"`
 		Message string         `json:"message"`
 		Data    map[string]any `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(output.Bytes(), &event))
+	assert.Equal(t, "request-id", event.ID)
 	assert.Equal(t, "first database connection attempt", event.Message)
 	assert.Equal(t, "http:/api/info/:token", event.Data["operation"])
 	assert.Equal(t, "failed", event.Data["outcome"])
