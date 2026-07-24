@@ -126,7 +126,14 @@ func productionApplicationDependencies(cfg *config.Config, log logger.Logger) ap
 	}
 	deps.observeFirstConnection = func(ctx context.Context, attempt database.FirstConnectionAttempt) {
 		data := logger.Data{"operation": attempt.Operation.String(), "outcome": "connected"}
-		eventLog := logger.FromContext(ctx)
+		// The middleware's request logger also carries the raw URL path and
+		// caller-controlled headers. Scope the injected application logger to a
+		// child of this request with only the generated request ID, then emit from
+		// that context. This keeps request attribution while preventing this one
+		// bounded event from inheriting secrets or the request's x-log-level.
+		requestID := logger.FromContext(ctx).GetID()
+		eventCtx := log.ID(requestID).WithContext(ctx)
+		eventLog := logger.FromContext(eventCtx)
 		if attempt.Err != nil {
 			// Deliberately omit the connector error from this attribution event:
 			// driver errors can contain DSN or host details, while the bounded

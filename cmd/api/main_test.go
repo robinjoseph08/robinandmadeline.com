@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -173,11 +175,15 @@ func TestApplicationAssembly_StartupIdleWorkerAndHealthAreDatabaseFree(t *testin
 func TestApplicationAssembly_DatabaseBackedRequestAttemptsConnection(t *testing.T) {
 	connectErr := errors.New("physical connection failed")
 	connector := &assemblyConnector{err: connectErr}
-	attempts := make(chan database.FirstConnectionAttempt, 1)
+	type observation struct {
+		ctx     context.Context
+		attempt database.FirstConnectionAttempt
+	}
+	attempts := make(chan observation, 1)
 	app, err := newApplication(context.Background(), assemblyConfig(), applicationDependencies{
 		connector: connector,
-		observeFirstConnection: func(_ context.Context, attempt database.FirstConnectionAttempt) {
-			attempts <- attempt
+		observeFirstConnection: func(ctx context.Context, attempt database.FirstConnectionAttempt) {
+			attempts <- observation{ctx: ctx, attempt: attempt}
 		},
 		mailgunClient: &assemblyMailgun{},
 		log:           logger.NewWithLevel("error"),
@@ -185,48 +191,142 @@ func TestApplicationAssembly_DatabaseBackedRequestAttemptsConnection(t *testing.
 	require.NoError(t, err)
 	defer closeApplication(t, app)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/events?party_id=secret", http.NoBody)
+	const infoToken = "sensitiveinfotoken123456789012"
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/info/"+infoToken, http.NoBody)
 	rec := httptest.NewRecorder()
 	app.server.Handler.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Equal(t, int32(1), connector.attempts.Load())
 	select {
-	case attempt := <-attempts:
-		assert.Equal(t, "http:/api/events", attempt.Operation.String())
-		require.ErrorIs(t, attempt.Err, connectErr)
+	case observed := <-attempts:
+		assert.Equal(t, "http:/api/info/:token", observed.attempt.Operation.String())
+		assert.NotContains(t, observed.attempt.Operation.String(), infoToken)
+		assert.NotEmpty(t, logger.FromContext(observed.ctx).GetID(), "request context must reach the connector observer")
+		require.ErrorIs(t, observed.attempt.Err, connectErr)
 	default:
 		t.Fatal("first connection attempt was not observed")
 	}
 }
 
-func TestProductionApplicationDependencies_FirstConnectionLogIsSafe(t *testing.T) {
-	var output bytes.Buffer
+type synchronizedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+type loggedEvent struct {
+	Level   string         `json:"level"`
+	ID      string         `json:"id"`
+	Message string         `json:"message"`
+	Method  string         `json:"method"`
+	Path    string         `json:"path"`
+	Route   string         `json:"route"`
+	Version string         `json:"version"`
+	Data    map[string]any `json:"data"`
+}
+
+func firstConnectionLog(t *testing.T, output string) loggedEvent {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		var event loggedEvent
+		require.NoError(t, json.Unmarshal([]byte(line), &event))
+		if event.Message == "first database connection attempt" {
+			return event
+		}
+	}
+	t.Fatal("first database connection log was not emitted")
+	return loggedEvent{}
+}
+
+func TestProductionApplicationDependencies_FirstConnectionLogsBothOutcomesSafely(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		err        error
+		wantLevel  string
+		wantResult string
+	}{
+		{name: "success", wantLevel: "info", wantResult: "connected"},
+		{
+			name:       "failure",
+			err:        errors.New("postgres://user:password@example.test/private?token=secret"),
+			wantLevel:  "warn",
+			wantResult: "failed",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var output synchronizedBuffer
+			previous := logger.Output()
+			logger.SetOutput(&output)
+			t.Cleanup(func() { logger.SetOutput(previous) })
+
+			log := logger.NewWithLevel("info").ID("request-id")
+			deps := productionApplicationDependencies(&config.Config{
+				DatabaseURL: "postgres://localhost/test?sslmode=disable",
+			}, log)
+			deps.observeFirstConnection(log.WithContext(context.Background()), database.FirstConnectionAttempt{
+				Operation: database.HTTPRouteOperation("/api/info/:token"),
+				Err:       tt.err,
+			})
+
+			event := firstConnectionLog(t, output.String())
+			assert.Equal(t, tt.wantLevel, event.Level)
+			assert.Equal(t, "request-id", event.ID)
+			assert.Equal(t, "http:/api/info/:token", event.Data["operation"])
+			assert.Equal(t, tt.wantResult, event.Data["outcome"])
+			assert.NotContains(t, output.String(), "password")
+			assert.NotContains(t, output.String(), "token=secret")
+		})
+	}
+}
+
+func TestProductionApplicationDependencies_FirstConnectionLogStripsUntrustedRequestFields(t *testing.T) {
+	var output synchronizedBuffer
 	previous := logger.Output()
 	logger.SetOutput(&output)
 	t.Cleanup(func() { logger.SetOutput(previous) })
 
-	log := logger.NewWithLevel("info").ID("request-id")
-	deps := productionApplicationDependencies(&config.Config{
-		DatabaseURL: "postgres://localhost/test?sslmode=disable",
-	}, log)
-	deps.observeFirstConnection(log.WithContext(context.Background()), database.FirstConnectionAttempt{
-		Operation: database.HTTPRouteOperation("/api/info/:token"),
-		Err:       errors.New("postgres://user:password@example.test/private?token=secret"),
-	})
+	cfg := assemblyConfig()
+	cfg.DatabaseURL = "postgres://localhost/test?sslmode=disable"
+	baseLog := logger.NewWithLevel("info")
+	deps := productionApplicationDependencies(cfg, baseLog)
+	deps.connector = &assemblyConnector{err: errors.New("connection failed")}
+	deps.mailgunClient = &assemblyMailgun{}
+	app, err := newApplication(context.Background(), cfg, deps)
+	require.NoError(t, err)
+	defer closeApplication(t, app)
 
-	var event struct {
-		ID      string         `json:"id"`
-		Message string         `json:"message"`
-		Data    map[string]any `json:"data"`
-	}
-	require.NoError(t, json.Unmarshal(output.Bytes(), &event))
-	assert.Equal(t, "request-id", event.ID)
-	assert.Equal(t, "first database connection attempt", event.Message)
+	const infoToken = "sensitiveinfotoken123456789012"
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/info/"+infoToken, http.NoBody)
+	req.Header.Set("x-log-level", "error")
+	req.Header.Set("x-version", "caller-controlled-secret")
+	rec := httptest.NewRecorder()
+	app.server.Handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	event := firstConnectionLog(t, output.String())
+	assert.Equal(t, "warn", event.Level, "the request log level must not suppress attribution")
+	assert.NotEmpty(t, event.ID)
+	assert.Empty(t, event.Method)
+	assert.Empty(t, event.Path)
+	assert.Empty(t, event.Route)
+	assert.Empty(t, event.Version)
 	assert.Equal(t, "http:/api/info/:token", event.Data["operation"])
-	assert.Equal(t, "failed", event.Data["outcome"])
-	assert.NotContains(t, output.String(), "password")
-	assert.NotContains(t, output.String(), "token=secret")
+	eventJSON, err := json.Marshal(event)
+	require.NoError(t, err)
+	assert.NotContains(t, string(eventJSON), infoToken)
+	assert.NotContains(t, string(eventJSON), "caller-controlled-secret")
 }
 
 func TestApplicationAssembly_RequiresConnector(t *testing.T) {

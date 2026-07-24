@@ -14,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/labstack/echo/v4"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +36,19 @@ func newTestConfig(t *testing.T) *config.Config {
 		GuestSessionDuration: time.Hour,
 		LoginRatePerMinute:   6000,
 		LoginRateBurst:       1000,
+	}
+}
+
+func TestDatabaseOperationAttributionAcceptsEveryRegisteredRoute(t *testing.T) {
+	srv := server.New(newTestConfig(t), nil)
+	e, ok := srv.Handler.(*echo.Echo)
+	require.True(t, ok)
+
+	for _, route := range e.Routes() {
+		if route.Method == echo.RouteNotFound {
+			continue
+		}
+		assert.NotEqual(t, "unattributed", database.HTTPRouteOperation(route.Path).String(), "%s %s", route.Method, route.Path)
 	}
 }
 

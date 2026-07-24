@@ -35,6 +35,44 @@ func (o Operation) String() string {
 	return o.label
 }
 
+// These are the registered HTTP routes without dynamic parameter markers.
+// Dynamic templates are safe by shape because they retain only the known
+// parameter names below. Keeping static routes closed means an accidental
+// URL.Path call cannot turn an Info Token, RSVP Code, or UUID into a label.
+var staticHTTPRoutes = map[string]struct{}{
+	"/api/admin/dashboard":            {},
+	"/api/admin/emails/preview":       {},
+	"/api/admin/emails/send":          {},
+	"/api/admin/emails/sends":         {},
+	"/api/admin/emails/shell-preview": {},
+	"/api/admin/emails/templates":     {},
+	"/api/admin/emails/test":          {},
+	"/api/admin/events":               {},
+	"/api/admin/games/sessions":       {},
+	"/api/admin/guests":               {},
+	"/api/admin/guests/tags":          {},
+	"/api/admin/me":                   {},
+	"/api/admin/parties":              {},
+	"/api/admin/photo-groups":         {},
+	"/api/admin/photo-groups/reorder": {},
+	"/api/admin/settings":             {},
+	"/api/auth/admin/login":           {},
+	"/api/auth/guest/login":           {},
+	"/api/events":                     {},
+	"/api/games/leaderboard":          {},
+	"/api/games/sessions":             {},
+	"/api/guest/photo-groups":         {},
+	"/api/guest/rsvp":                 {},
+	"/api/health":                     {},
+	"/api/webhooks/mailgun":           {},
+}
+
+var routeParameterNames = map[string]struct{}{
+	":guestId": {},
+	":id":      {},
+	":token":   {},
+}
+
 // HTTPRouteOperation attributes work to an Echo route template. Callers must
 // pass the registered template (for example /api/parties/:id), never URL.Path.
 // Route templates have bounded cardinality and replace sensitive path values
@@ -44,15 +82,28 @@ func HTTPRouteOperation(routeTemplate string) Operation {
 		!strings.HasPrefix(routeTemplate, "/") || strings.ContainsAny(routeTemplate, "?#%") {
 		return Operation{}
 	}
+
+	dynamic := false
 	for _, segment := range strings.Split(strings.TrimPrefix(routeTemplate, "/"), "/") {
 		if segment == "" {
 			return Operation{}
 		}
+		if strings.HasPrefix(segment, ":") {
+			if _, ok := routeParameterNames[segment]; !ok {
+				return Operation{}
+			}
+			dynamic = true
+			continue
+		}
 		for _, r := range segment {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-				(r >= '0' && r <= '9') || r == '-' || r == '_' || r == ':' || r == '.' {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
 				continue
 			}
+			return Operation{}
+		}
+	}
+	if !dynamic {
+		if _, ok := staticHTTPRoutes[routeTemplate]; !ok {
 			return Operation{}
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -39,6 +40,22 @@ func (*stubConn) Prepare(string) (driver.Stmt, error) {
 }
 func (*stubConn) Close() error              { return nil }
 func (*stubConn) Begin() (driver.Tx, error) { return nil, errors.New("stub connection cannot begin") }
+
+type blockingConnector struct {
+	attempts atomic.Int32
+	err      error
+	started  chan struct{}
+	release  chan struct{}
+}
+
+func (c *blockingConnector) Connect(context.Context) (driver.Conn, error) {
+	c.attempts.Add(1)
+	c.started <- struct{}{}
+	<-c.release
+	return nil, c.err
+}
+
+func (c *blockingConnector) Driver() driver.Driver { return stubDriver{} }
 
 type closingConnector struct {
 	stubConnector
@@ -99,6 +116,48 @@ func TestNewWithConnector_IsLazyAndObservesFirstFailedAttemptOnce(t *testing.T) 
 	assert.ErrorIs(t, attempts[0].Err, connectErr)
 }
 
+func TestNewWithConnector_ObservesFirstConcurrentAttemptExactlyOnce(t *testing.T) {
+	const concurrentAttempts = 5
+	connectErr := errors.New("connection failed")
+	connector := &blockingConnector{
+		err:     connectErr,
+		started: make(chan struct{}, concurrentAttempts),
+		release: make(chan struct{}),
+	}
+	var observations atomic.Int32
+	db, err := NewWithConnector(connector, func(context.Context, FirstConnectionAttempt) {
+		observations.Add(1)
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	var wg sync.WaitGroup
+	errs := make(chan error, concurrentAttempts)
+	for range concurrentAttempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- db.PingContext(WithOperation(context.Background(), HTTPRouteOperation("/api/events")))
+		}()
+	}
+	for range concurrentAttempts {
+		select {
+		case <-connector.started:
+		case <-time.After(time.Second):
+			t.Fatal("connection attempts did not overlap")
+		}
+	}
+	close(connector.release)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		require.ErrorIs(t, err, connectErr)
+	}
+	assert.Equal(t, int32(concurrentAttempts), connector.attempts.Load())
+	assert.Equal(t, int32(1), observations.Load())
+}
+
 func TestNewWithConnector_ObservesFirstSuccessfulAttempt(t *testing.T) {
 	connector := &stubConnector{conn: &stubConn{}}
 	var attempts []FirstConnectionAttempt
@@ -155,10 +214,20 @@ func TestHTTPRouteOperation_RejectsRawOrUnboundedLabels(t *testing.T) {
 		"https://example.com/api/events",
 		"/api/info/%2Fsecret",
 		"/api//events",
+		"/api/info/sensitiveinfotoken123456789012",
+		"/api/admin/guests/019f9533-4e31-7850-ab21-46e1f620a00d",
+		"/api/rsvp/ABCDE",
+		"/api/rsvp/PEPPER",
+		"/api/new-route",
 	}
 	for _, value := range tests {
 		assert.Equal(t, "unattributed", HTTPRouteOperation(value).String(), value)
 	}
+
+	bounded := "/" + strings.Repeat("a/", 62) + ":id"
+	require.Len(t, bounded, 128)
+	assert.Equal(t, "http:"+bounded, HTTPRouteOperation(bounded).String())
+	assert.Equal(t, "unattributed", HTTPRouteOperation(bounded+"a").String())
 
 	assert.Equal(t, "http:/api/info/:token", HTTPRouteOperation("/api/info/:token").String())
 	assert.Equal(t, "info_metadata", InfoMetadataOperation().String())
