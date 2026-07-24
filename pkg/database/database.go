@@ -224,6 +224,9 @@ func (c *observedConnector) Connect(ctx context.Context) (driver.Conn, error) {
 		c.observer(ctx, FirstConnectionAttempt{Operation: operationFromContext(ctx), Err: err})
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, &connectionFailure{err: err}
 	}
 	if pgConn, ok := conn.(*pgdriver.Conn); ok {

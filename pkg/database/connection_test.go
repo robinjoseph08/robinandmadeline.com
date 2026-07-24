@@ -5,6 +5,8 @@ import (
 	"database/sql/driver"
 	"errors"
 	"io"
+	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -100,6 +102,15 @@ type blockingConnector struct {
 	started  chan struct{}
 	release  chan struct{}
 }
+
+type cancellationErrorConnector struct{}
+
+func (*cancellationErrorConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	<-ctx.Done()
+	return nil, &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
+}
+
+func (*cancellationErrorConnector) Driver() driver.Driver { return stubDriver{} }
 
 func (c *blockingConnector) Connect(context.Context) (driver.Conn, error) {
 	c.attempts.Add(1)
@@ -269,6 +280,25 @@ func TestNewWithConnector_MarksOnlyPhysicalConnectionFailures(t *testing.T) {
 	require.ErrorIs(t, err, connectErr)
 	assert.True(t, IsConnectionFailure(err))
 	assert.False(t, IsConnectionFailure(errors.New("ordinary SQL error")))
+}
+
+func TestObservedConnector_PreservesContextCancellationOverDriverError(t *testing.T) {
+	connector := &observedConnector{connector: &cancellationErrorConnector{}}
+
+	parent, cancelParent := context.WithCancel(context.Background())
+	cancelParent()
+	_, err := connector.Connect(parent)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.False(t, IsConnectionFailure(err))
+
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancelBudget := WithHTTPWorkBudget(context.Background())
+		defer cancelBudget()
+		_, err := connector.Connect(ctx)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.True(t, HTTPWorkBudgetExceeded(ctx))
+		assert.False(t, IsConnectionFailure(err))
+	})
 }
 
 func TestObservedConnector_WrapsPGDriverConnection(t *testing.T) {
