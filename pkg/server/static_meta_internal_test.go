@@ -118,6 +118,8 @@ func TestInjectMeta_InfoLookupEligibility(t *testing.T) {
 		{name: "long token", method: http.MethodGet, target: "/i/" + validInfoToken + "a", wantStatus: http.StatusOK},
 		{name: "uppercase token", method: http.MethodGet, target: "/i/Abcdefghijklmnopqrstuvwxyz1234", wantStatus: http.StatusOK},
 		{name: "symbol in token", method: http.MethodGet, target: "/i/abcdefghijklmnopqrstuvwxy-1234", wantStatus: http.StatusOK},
+		{name: "underscore in token", method: http.MethodGet, target: "/i/abcdefghijklmnopqrstuvwxy_1234", wantStatus: http.StatusOK},
+		{name: "non-ASCII token character", method: http.MethodGet, target: "/i/abcdefghijklmnopqrstuvwxyé1234", wantStatus: http.StatusOK},
 		{name: "percent-encoded route character", method: http.MethodGet, target: "/%69/" + validInfoToken, wantStatus: http.StatusOK},
 		{name: "percent-encoded token character", method: http.MethodGet, target: "/i/abcdefghijklmnopqrstuvwxy%7A1234", wantStatus: http.StatusOK},
 		{name: "encoded slash", method: http.MethodGet, target: "/i/" + validInfoToken + "%2Fextra", wantStatus: http.StatusNotFound},
@@ -149,6 +151,7 @@ func TestInjectMeta_InfoPageGenericFallbacks(t *testing.T) {
 	}{
 		{name: "unknown token", titler: &stubInfoTitler{}},
 		{name: "database error", titler: &stubInfoTitler{err: errors.New("db down")}},
+		{name: "name with database error", titler: &stubInfoTitler{name: "Ada Lovelace", err: errors.New("db down")}},
 		{name: "nil resolver", titler: nil},
 	}
 
