@@ -336,9 +336,19 @@ func normalizeDatabaseError(ctx context.Context, err error) error {
 	return err
 }
 
+type postgresError interface {
+	error
+	Field(byte) string
+}
+
 func isDatabaseTransportError(err error) bool {
 	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
+	}
+	var postgresErr postgresError
+	if errors.As(err, &postgresErr) {
+		severity := postgresErr.Field('V')
+		return severity == "FATAL" || severity == "PANIC"
 	}
 	var netErr net.Error
 	return errors.As(err, &netErr)

@@ -71,6 +71,18 @@ func (e *recordingCommitExecer) ExecContext(ctx context.Context, query string, a
 	return driver.RowsAffected(0), nil
 }
 
+type stubPostgresError struct {
+	severity string
+}
+
+func (err stubPostgresError) Error() string { return "postgres " + err.severity }
+func (err stubPostgresError) Field(field byte) string {
+	if field == 'V' {
+		return err.severity
+	}
+	return ""
+}
+
 type blockingRows struct {
 	release chan struct{}
 }
@@ -312,9 +324,16 @@ func TestContextualRows_StopsBlockedIterationAtBudget(t *testing.T) {
 }
 
 func TestNormalizeDatabaseError_MarksOnlyTransportFailures(t *testing.T) {
-	for _, err := range []error{driver.ErrBadConn, io.EOF, io.ErrUnexpectedEOF} {
+	for _, err := range []error{
+		driver.ErrBadConn,
+		io.EOF,
+		io.ErrUnexpectedEOF,
+		stubPostgresError{severity: "FATAL"},
+		stubPostgresError{severity: "PANIC"},
+	} {
 		assert.True(t, IsConnectionFailure(normalizeDatabaseError(context.Background(), err)))
 	}
+	assert.False(t, IsConnectionFailure(normalizeDatabaseError(context.Background(), stubPostgresError{severity: "ERROR"})))
 	assert.False(t, IsConnectionFailure(normalizeDatabaseError(context.Background(), errors.New("ordinary SQL error"))))
 }
 
