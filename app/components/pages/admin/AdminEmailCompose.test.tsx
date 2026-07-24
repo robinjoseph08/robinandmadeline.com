@@ -186,7 +186,7 @@ describe("AdminEmailCompose preview", () => {
     expect(screen.getByText("Gone")).toBeInTheDocument();
   });
 
-  it("notes in the preview panel when the send will span multiple days", async () => {
+  it("notes the quota windows and explicit wake needed for a large send", async () => {
     setMock({ preview: makePreview({ total: 250, daily_sends_used: 50 }) });
     const user = userEvent.setup();
     renderCompose();
@@ -195,7 +195,12 @@ describe("AdminEmailCompose preview", () => {
     await user.type(screen.getByLabelText("Body"), "Body");
     await user.click(screen.getByRole("button", { name: "Preview" }));
 
-    expect(await screen.findByText(/approximately 3 days/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/at least 3 UTC-day quota windows/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/return to email administration.*resume delivery/i),
+    ).toBeInTheDocument();
   });
 
   it("clears the shown preview when the composed email changes", async () => {
@@ -332,8 +337,8 @@ describe("AdminEmailCompose send", () => {
   });
 
   it("warns in the confirm dialog when the send exceeds today's daily budget", async () => {
-    // 250 recipients against a limit of 100 with 50 already used: 50 go today,
-    // 100 tomorrow, 100 the day after, so roughly 3 days.
+    // 250 recipients against a limit of 100 with 50 already used needs at least
+    // today's partial window plus two later UTC-day quota windows.
     setMock({
       preview: makePreview({ total: 250, daily_sends_used: 50 }),
     });
@@ -346,7 +351,7 @@ describe("AdminEmailCompose send", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(
-      within(dialog).getByText(/approximately 3 days/),
+      within(dialog).getByText(/at least 3 UTC-day quota windows/),
     ).toBeInTheDocument();
     expect(
       within(dialog).getByText(/daily send limit is 100 \(50 used today\)/),
@@ -354,9 +359,8 @@ describe("AdminEmailCompose send", () => {
   });
 
   it("does not count today when its budget is already spent", async () => {
-    // 100 recipients with the whole limit of 100 already used: nothing goes
-    // out today, all 100 go out tomorrow, so the estimate is one day (not
-    // two, which counting today would claim).
+    // 100 recipients with the whole limit of 100 already used need one later
+    // quota window, not two windows from counting the spent current day.
     setMock({
       preview: makePreview({ total: 100, daily_sends_used: 100 }),
     });
@@ -369,11 +373,11 @@ describe("AdminEmailCompose send", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(
-      within(dialog).getByText(/approximately 1 day\./),
+      within(dialog).getByText(/at least 1 UTC-day quota window\./),
     ).toBeInTheDocument();
   });
 
-  it("does not mention multiple days when today's budget covers the send", async () => {
+  it("does not mention quota windows when today's budget covers the send", async () => {
     setMock({ preview: makePreview({ total: 3 }) });
     const user = userEvent.setup();
     renderCompose();
@@ -383,10 +387,10 @@ describe("AdminEmailCompose send", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).queryByText(/approximately/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/quota window/)).not.toBeInTheDocument();
   });
 
-  it("does not mention multiple days when the limit is unlimited", async () => {
+  it("does not mention quota windows when the limit is unlimited", async () => {
     setMock({
       preview: makePreview({ total: 250, daily_send_limit: 0 }),
     });
@@ -398,7 +402,7 @@ describe("AdminEmailCompose send", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).queryByText(/approximately/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/quota window/)).not.toBeInTheDocument();
   });
 
   it("calls out skipped no-email guests in the confirm dialog", async () => {
