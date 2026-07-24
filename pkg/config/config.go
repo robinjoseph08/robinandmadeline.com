@@ -57,10 +57,10 @@ type Config struct {
 	LoginRateBurst int
 
 	// StaticDir is the directory holding the built frontend (the Vite bundle)
-	// for the server to serve with an SPA fallback. Empty (the default) disables
-	// static serving entirely: in local dev the Vite dev server serves the
-	// frontend and proxies /api to this server. Production sets it to the
-	// bundle directory baked into the Docker image.
+	// for the server to serve with its frontend route allowlist. Empty (the
+	// default) disables static serving entirely: in local dev the Vite dev server
+	// serves the frontend and proxies /api to this server. Production sets it to
+	// the bundle directory baked into the Docker image.
 	StaticDir string
 
 	// CanonicalHost is the one hostname the site should be served from

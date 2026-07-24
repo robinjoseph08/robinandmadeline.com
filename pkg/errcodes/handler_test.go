@@ -58,6 +58,18 @@ func TestHandle_ErrcodesErrorRendersEnvelope(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, status)
 }
 
+func TestHandle_HEADRendersStatusWithoutBody(t *testing.T) {
+	h := errcodes.NewHandler()
+	e := echo.New()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodHead, "/missing", nil)
+	rec := httptest.NewRecorder()
+
+	h.Handle(errcodes.NotFound("document"), e.NewContext(req, rec))
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Empty(t, rec.Body.String())
+}
+
 func TestHandle_WrappedErrcodesErrorIsResolved(t *testing.T) {
 	// A pkg/errors-wrapped errcodes error must still resolve via errors.As.
 	rec := handle(t, errors.Wrap(errcodes.Conflict("dupe code"), "create party"))
