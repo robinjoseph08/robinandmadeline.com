@@ -111,7 +111,9 @@ type blockingAssemblyConnector struct {
 }
 
 func (c *blockingAssemblyConnector) Connect(ctx context.Context) (driver.Conn, error) {
-	c.attempts.Add(1)
+	if c.attempts.Add(1) > 1 {
+		return nil, errors.New("unexpected additional connection attempt")
+	}
 	c.started <- ctx
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -217,6 +219,8 @@ func TestApplicationAssembly_DatabaseFreeTrafficMakesNoConnectionAttempts(t *tes
 		{name: "missing admin authentication", method: http.MethodGet, target: "/api/admin/parties", host: cfg.CanonicalHost, wantStatus: http.StatusUnauthorized},
 		{name: "invalid guest authentication", method: http.MethodGet, target: "/api/guest/rsvp", host: cfg.CanonicalHost, authorize: "Bearer not-a-jwt", wantStatus: http.StatusUnauthorized},
 		{name: "config-only admin rejection", method: http.MethodPost, target: "/api/auth/admin/login", host: cfg.CanonicalHost, body: `{"username":"admin","password":"wrong"}`, wantStatus: http.StatusUnauthorized},
+		{name: "malformed guest login", method: http.MethodPost, target: "/api/auth/guest/login", host: cfg.CanonicalHost, body: `{"code":`, wantStatus: http.StatusBadRequest},
+		{name: "validation-rejected guest login", method: http.MethodPost, target: "/api/auth/guest/login", host: cfg.CanonicalHost, body: `{}`, wantStatus: http.StatusUnprocessableEntity},
 		{name: "HEAD info metadata", method: http.MethodHead, target: "/i/sensitiveinfotoken123456789012", host: cfg.CanonicalHost, wantStatus: http.StatusOK},
 		{name: "short info token", method: http.MethodGet, target: "/i/short", host: cfg.CanonicalHost, wantStatus: http.StatusOK},
 		{name: "uppercase info token", method: http.MethodGet, target: "/i/Sensitiveinfotoken123456789012", host: cfg.CanonicalHost, wantStatus: http.StatusOK},
@@ -250,6 +254,28 @@ func TestApplicationAssembly_DatabaseFreeTrafficMakesNoConnectionAttempts(t *tes
 			assert.Zero(t, observed.Load())
 		})
 	}
+}
+
+func TestApplicationAssembly_IdleSupervisionDoesNotPoll(t *testing.T) {
+	staticDir := assemblyStaticDir(t)
+
+	synctest.Test(t, func(t *testing.T) {
+		connector := &assemblyConnector{err: errors.New("database must not be reached")}
+		cfg := assemblyConfig()
+		cfg.StaticDir = staticDir
+		app, err := newApplication(context.Background(), cfg, applicationDependencies{
+			connector:     connector,
+			mailgunClient: &assemblyMailgun{},
+			log:           logger.NewWithLevel("error"),
+		})
+		require.NoError(t, err)
+		defer closeApplication(t, app)
+
+		<-app.worker.Started()
+		time.Sleep(24 * time.Hour)
+		synctest.Wait()
+		assert.Zero(t, connector.attempts.Load())
+	})
 }
 
 func TestApplicationAssembly_DatabaseBackedOperationsAttemptConnection(t *testing.T) {
@@ -292,15 +318,24 @@ func TestApplicationAssembly_DatabaseBackedOperationsAttemptConnection(t *testin
 			},
 		},
 		{
-			name:          "active email processing",
+			name:          "authenticated email administration",
 			wantOperation: "email_worker",
 			trigger: func(t *testing.T, app *application) {
-				select {
-				case <-app.worker.Started():
-				case <-time.After(time.Second):
-					t.Fatal("email worker did not enter its supervision loop")
+				loginReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/admin/login", strings.NewReader(`{"username":"admin","password":"password"}`))
+				loginReq.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+				loginRec := httptest.NewRecorder()
+				app.server.Handler.ServeHTTP(loginRec, loginReq)
+				require.Equal(t, http.StatusOK, loginRec.Code)
+				var login struct {
+					Token string `json:"token"`
 				}
-				app.worker.Wake()
+				require.NoError(t, json.Unmarshal(loginRec.Body.Bytes(), &login))
+
+				req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/emails/shell-preview", http.NoBody)
+				req.Header.Set(echo.HeaderAuthorization, "Bearer "+login.Token)
+				rec := httptest.NewRecorder()
+				app.server.Handler.ServeHTTP(rec, req)
+				assert.Equal(t, http.StatusOK, rec.Code)
 			},
 		},
 	}
@@ -595,6 +630,8 @@ func TestApplicationAssembly_FirstConnectionTelemetryIsEmittedOnceWithSafeAttrib
 	cfg.DatabaseURL = "postgres://localhost/test?sslmode=disable"
 	baseLog := logger.NewWithLevel("info")
 	deps := productionApplicationDependencies(cfg, baseLog)
+	require.NotNil(t, deps.connector)
+	require.NotNil(t, deps.mailgunClient)
 	connector := &assemblyConnector{err: errors.New("connection failed")}
 	deps.connector = connector
 	deps.mailgunClient = &assemblyMailgun{}

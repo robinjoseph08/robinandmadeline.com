@@ -237,16 +237,17 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://robeline.co/story
 The expected results are `{"status":"ok"}`, successful static responses, a
 real 404 for the unknown document, and a 301 canonical redirect. The health
 response is liveness-only and says nothing about Postgres availability. To
-verify lazy activation operationally, let Neon suspend, stream `fly logs`, and
-run only the commands above. Neon must remain suspended and there must be no
-`first database connection attempt` event. Then request the public Schedule API:
+verify lazy activation operationally, stop the Fly machine so the next request
+starts a fresh process, let Neon suspend, stream `fly logs`, and run only the
+commands above. Neon must remain suspended and there must be no `first database
+connection attempt` event. Then request the public Schedule API:
 
 ```sh
 curl -fsS https://www.robinandmadeline.com/api/events >/dev/null
 ```
 
-That request reads Events from Postgres, wakes Neon if needed, and emits exactly
-one first-connection event for the process with operation `http:/api/events`.
+That request reads Events from Postgres, wakes Neon if needed, and emits the
+process's one first-connection event with operation `http:/api/events`.
 The event never contains an RSVP Code, Info Token, Guest ID, Party ID, query
 string, or raw URL. A successful email enqueue similarly starts delivery; an
 idle worker produces no periodic database traffic.
