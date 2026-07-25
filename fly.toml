@@ -66,9 +66,9 @@ kill_timeout = "10s"
   processes = ["app"]
 
   [[http_service.checks]]
-    # The liveness endpoint always answers 200 quickly (the DB ping is
-    # bounded and only informs the body) and is exempt from the canonical-host
-    # redirect, so this check never flaps on Host or DB state.
+    # The liveness endpoint always answers 200 quickly without checking
+    # Postgres and is exempt from the canonical-host redirect, so this check
+    # never flaps on Host or database state.
     interval = "30s"
     timeout = "5s"
     grace_period = "10s"

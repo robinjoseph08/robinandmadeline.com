@@ -20,12 +20,21 @@ how production was built should it ever need rebuilding.
   to `master`, with migrations applied first via the Fly `release_command`.
   Steady state is one machine.
 
-> **Partially implemented accepted change:** ADR 0010 is accepted but not fully
-> deployed. Application startup, the idle email supervisor, and `/api/health`
-> are database-free. The health response reports process liveness only, and the
-> first physical database connection is attributed to the triggering operation.
-> Unknown frontend paths still receive the SPA shell. Current-state verification
-> and operations below intentionally describe that remaining behavior.
+The deployed app follows ADR 0010's demand-driven database lifecycle. Process
+startup is lazy: application construction, the idle email supervisor,
+`/api/health`, static files and assets, canonical redirects, allowlisted
+frontend shells, authentication rejections that need no stored data, and real
+404 responses do not connect to Postgres. Database-backed API work connects on
+demand with a five-second request budget. Event schedules remain live Postgres
+reads with no server cache. The first physical connection attempt is logged once
+with a bounded operation label that excludes tokens, identifiers, query strings,
+and raw URLs.
+
+Email delivery is also demand-started. A committed normal or test-send enqueue
+wakes the worker immediately, and authenticated email-administration API
+activity wakes reconciliation. With no wake pending, the supervisor performs no
+Postgres polling. Quota-blocked and interrupted work remains durable until a
+later explicit activation.
 
 ## Already done in this repo
 
@@ -110,8 +119,7 @@ The email system was added after the initial setup, and its secrets are now
 configured in production. `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` enable sending.
 `MAILGUN_WEBHOOK_SIGNING_KEY` verifies delivery webhooks; without it, the app
 fails closed and rejects every webhook, so delivery statuses will not advance.
-The worker follows ADR 0004's demand-driven lifecycle. ADR 0010 tracks the
-remaining database-activation work that has not yet landed.
+The worker follows ADR 0004 and ADR 0010's deployed demand-driven lifecycle.
 
 ### 4. First deploy
 
@@ -178,6 +186,74 @@ apex.
 
 ### 7. Verify
 
+Run the focused production-assembly verification after changing activation,
+routing, authentication ordering, metadata, Events, or email supervision:
+
+```sh
+go test ./cmd/api -run '^TestApplicationAssembly_' -count=1
+go test ./pkg/database ./pkg/emails ./pkg/server
+```
+
+The first command exercises the exact production application assembly with
+instrumented, blocking, and real Postgres connectors. It pins the database-free
+boundary, positive activation paths, the five-second 503 deadline with
+concurrent database-free traffic, Event freshness between requests, and
+first-connection attribution. The second command retains the lower-level pool,
+worker lifecycle, route classifier, metadata timeout, and crawl-file checks.
+Before deployment, run the complete CI-equivalent verification:
+
+```sh
+mise lint
+mise test
+mise tygo && mise lint:js
+mise tygo && mise test:unit
+mise build
+mise tygo && pnpm build
+mise build:docker
+mise e2e:chromium
+```
+
+After the Docker build, perform the same stable-static-file check as CI:
+
+```sh
+docker run --rm --entrypoint sh robinandmadeline -c '
+  set -e
+  for f in favicon.ico favicon.svg apple-touch-icon.png robots.txt sitemap.xml; do
+    test -f "/app/public/$f" || exit 1
+  done
+'
+```
+
+For a production smoke check:
+
+```sh
+curl -fsS https://www.robinandmadeline.com/api/health
+curl -fsS https://www.robinandmadeline.com/robots.txt >/dev/null
+curl -fsS https://www.robinandmadeline.com/story >/dev/null
+curl -sS -o /dev/null -w '%{http_code}\n' https://www.robinandmadeline.com/wp-login.php
+curl -sS -o /dev/null -w '%{http_code}\n' https://robeline.co/story
+```
+
+The expected results are `{"status":"ok"}`, successful static responses, a
+real 404 for the unknown document, and a 301 canonical redirect. The health
+response is liveness-only and says nothing about Postgres availability. To
+verify lazy activation operationally, stop the Fly machine so the next request
+starts a fresh process, let Neon suspend, stream `fly logs`, and run only the
+commands above. Neon must remain suspended and there must be no `first database
+connection attempt` event. Then request the public Schedule API:
+
+```sh
+curl -fsS https://www.robinandmadeline.com/api/events >/dev/null
+```
+
+That request reads Events from Postgres, wakes Neon if needed, and emits the
+process's one first-connection event with operation `http:/api/events`.
+The event never contains an RSVP Code, Info Token, Guest ID, Party ID, query
+string, or raw URL. A successful email enqueue similarly starts delivery; an
+idle worker produces no periodic database traffic.
+
+Also verify the stable topology:
+
 - `https://www.robinandmadeline.com` serves the site.
 - `https://robinandmadeline.com/anything?x=1` (the apex) 301s to
   `https://www.robinandmadeline.com/anything?x=1`.
@@ -185,7 +261,7 @@ apex.
   `https://www.robinandmadeline.com/anything?x=1`.
 - `https://robeline.co/rsvp` and `https://robeline.com/rsvp` 301 to
   `https://www.robinandmadeline.com/rsvp`.
-- The health endpoint returns `{"status":"ok"}` without checking Postgres.
+- Every Cloudflare record remains DNS only (grey cloud).
 - Scale-to-zero: `fly machine list` shows the machine `stopped` a few minutes
   after the last request, and the next request starts it again.
 
@@ -213,11 +289,11 @@ secret with `gh secret delete FLY_API_TOKEN`.
   deploy in the GitHub Actions run or with `fly logs`. A migration failure
   aborts the deploy and the previous release keeps serving. To deploy by hand
   (for a rollback or when CI is unavailable), run `fly deploy` locally.
-- **Scale-to-zero behavior (during the ADR 0010 rollout)**: Fly's proxy stops
-  the machine when idle and boots it on the next request. The Go cold start is
-  sub-second (static binary, no startup migrations or database ping). Neon
-  stays asleep until persistent data is needed, and the email supervisor
-  remains database-free until explicitly woken.
+- **Scale-to-zero behavior**: Fly's proxy stops the machine when idle and boots
+  it on the next request. The Go cold start is sub-second (static binary, no
+  startup migrations or database ping). Neon stays asleep until persistent
+  data is needed, and the email supervisor remains database-free until
+  explicitly woken.
 - **Logs**: `fly logs` (JSON via `LOG_FORMAT=json`).
 - **Rollback**: `fly releases` then `fly deploy --image <previous image ref>`.
 - **Local image check**: `mise build:docker` builds the exact production
