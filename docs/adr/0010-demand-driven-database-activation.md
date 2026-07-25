@@ -4,7 +4,7 @@ status: accepted
 
 # Activate Neon only on demand for persistent data
 
-This decision is accepted and is being implemented incrementally. The demand-driven email lifecycle, database-free application startup and liveness, conservative connection pool, first-connection attribution, request classification, API database-work budget, and independent Info Collection metadata timeout are implemented. A Fly machine can start for arbitrary scanner traffic even when the requested response needs no persistent data. Neon compute is therefore activated only by operations whose correct response requires Postgres; process startup, liveness checks, static pages and assets, redirects, unknown routes, and authentication rejection that can be decided from request data or in-memory configuration must not connect. Guest login remains database-backed because rejecting an unknown RSVP Code requires a Party lookup.
+This decision is implemented. A Fly machine can start for arbitrary scanner traffic even when the requested response needs no persistent data. Neon compute is activated only by operations whose correct response requires Postgres; process startup, liveness checks, static pages and assets, redirects, unknown routes, and authentication rejection that can be decided from request data or in-memory configuration do not connect. Guest login remains database-backed because rejecting an unknown RSVP Code requires a Party lookup. The integrated production assembly verifies the complete boundary, including the demand-driven email lifecycle, conservative connection pool, first-connection attribution, request database-work budget, Info Collection metadata timeout, and live database-backed Event schedules.
 
 ## Considered Options
 

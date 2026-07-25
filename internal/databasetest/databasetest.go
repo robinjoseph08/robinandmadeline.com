@@ -95,7 +95,17 @@ func New(t *testing.T) *bun.DB {
 // migrated exactly like the shared one.
 func NewIsolated(t *testing.T, dbName string) *bun.DB {
 	t.Helper()
-	return newAtDSN(t, isolatedDSN(t, dbName))
+	db, _ := NewIsolatedWithDSN(t, dbName)
+	return db
+}
+
+// NewIsolatedWithDSN is NewIsolated plus the resolved connection string. It is
+// for production-assembly tests that need one handle to arrange fixtures and a
+// separate, production-configured connector to exercise the application.
+func NewIsolatedWithDSN(t *testing.T, dbName string) (*bun.DB, string) {
+	t.Helper()
+	dsn := isolatedDSN(t, dbName)
+	return newAtDSN(t, dsn), dsn
 }
 
 // newAtDSN connects to the database at dsn, creating it if absent and bringing
