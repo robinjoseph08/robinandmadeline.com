@@ -25,8 +25,9 @@
 # Usage:
 #   scripts/build-gallery-photos.sh <source-dir>
 #
-# where <source-dir> holds the originals named "M&R-<n>.jpg". The curated set and
-# its display order live in CURATED below; keep it in sync with the order in
+# where <source-dir> holds the originals named "M&R-<n>.jpg". This rebuilds the
+# engagement-session subset only and leaves story-* assets intact. The subset's
+# order lives in CURATED below; keep its block in sync with the order in
 # app/components/pages/photos-content.ts.
 
 set -euo pipefail
@@ -40,8 +41,9 @@ SRC_DIR="$1"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${REPO_ROOT}/app/assets/gallery"
 
-# Curated photos, in display order. Edit this list (and photos-content.ts) to
-# change which photos appear or in what order.
+# Curated engagement-session photos, in display order. Edit this list (and its
+# block in photos-content.ts) to change which session photos appear or their
+# order.
 CURATED=(
   8 9 10 11 19 25 34 40 41 43 47 49 50 53 57 59 60 62 90 91 92 94 95 96
   100 101 103 105 107 108 109 113 114 115
@@ -49,8 +51,8 @@ CURATED=(
 
 mkdir -p "$OUT_DIR"
 
-# Clear prior outputs so a re-run is reproducible: no orphaned assets linger from
-# a since-removed slug, and the final file-count check reflects only this run.
+# Clear prior engagement-session outputs so a re-run is reproducible without
+# disturbing the separately generated story-* assets.
 # `-f` ignores the no-match case (the glob stays literal when the dir is empty).
 rm -f "${OUT_DIR}"/mr-*.avif "${OUT_DIR}"/mr-*.jpg
 
