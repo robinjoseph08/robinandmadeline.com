@@ -373,4 +373,124 @@ describe("AdminCrossword hide", () => {
     });
     errorSpy.mockRestore();
   });
+
+  it("restores a hidden session and refetches it onto the leaderboard", async () => {
+    let hidden = true;
+    adminRequest.mockImplementation((path: string, options?: object) => {
+      if (
+        path === "/admin/games/sessions/s1/unhide" &&
+        (options as { method?: string } | undefined)?.method === "POST"
+      ) {
+        hidden = false;
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve({
+        items: [
+          makeSession({
+            id: "s1",
+            completed_at: "2026-06-02T15:00:00Z",
+            display_name: "Ada",
+            hidden_at: hidden ? "2026-06-02T15:01:00Z" : undefined,
+            on_leaderboard: !hidden,
+          }),
+        ],
+        total: 1,
+      });
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Hidden");
+    await user.click(
+      screen.getByRole("button", { name: "Restore Ada's time" }),
+    );
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "Restore Ada's time to the public leaderboard?",
+    );
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith(
+        "/admin/games/sessions/s1/unhide",
+        { method: "POST" },
+      );
+    });
+    await waitFor(() =>
+      expect(screen.getByText("On leaderboard")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Restore Ada's time" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Hide Ada's time" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does nothing when restoring is not confirmed", async () => {
+    adminRequest.mockResolvedValue({
+      items: [
+        makeSession({
+          id: "s1",
+          completed_at: "2026-06-02T15:00:00Z",
+          display_name: "Ada",
+          hidden_at: "2026-06-02T15:01:00Z",
+          on_leaderboard: false,
+        }),
+      ],
+      total: 1,
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Hidden");
+    await user.click(
+      screen.getByRole("button", { name: "Restore Ada's time" }),
+    );
+
+    expect(adminRequest).not.toHaveBeenCalledWith(
+      "/admin/games/sessions/s1/unhide",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("surfaces a toast when restoring fails", async () => {
+    adminRequest.mockImplementation((path: string, options?: object) => {
+      if (
+        path === "/admin/games/sessions/s1/unhide" &&
+        (options as { method?: string } | undefined)?.method === "POST"
+      ) {
+        return Promise.reject(new Error("Restore failed"));
+      }
+      return Promise.resolve({
+        items: [
+          makeSession({
+            id: "s1",
+            completed_at: "2026-06-02T15:00:00Z",
+            display_name: "Ada",
+            hidden_at: "2026-06-02T15:01:00Z",
+            on_leaderboard: false,
+          }),
+        ],
+        total: 1,
+      });
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const errorSpy = vi.spyOn(toast, "error");
+
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Hidden");
+    await user.click(
+      screen.getByRole("button", { name: "Restore Ada's time" }),
+    );
+
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith("Restore failed");
+    });
+    errorSpy.mockRestore();
+  });
 });

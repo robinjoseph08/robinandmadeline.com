@@ -3,6 +3,7 @@ package games_test
 import (
 	"testing"
 
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/games"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
@@ -160,5 +161,49 @@ func TestHideSession_UnknownSessionIs404(t *testing.T) {
 	svc, _, _ := newServices(t)
 
 	err := svc.HideSession(ctx(), "00000000-0000-0000-0000-000000000000")
+	assertErrCode(t, err, errcodes.CodeNotFound)
+}
+
+func TestUnhideSession_RestoresHiddenSolveToTheBoard(t *testing.T) {
+	svc, _, db := newServices(t)
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	require.NoError(t, svc.HideSession(ctx(), session.ID))
+
+	require.NoError(t, svc.UnhideSession(ctx(), session.ID))
+
+	row := sessionRow(t, db, session.ID)
+	assert.True(t, row.OnLeaderboard)
+	assert.Nil(t, row.HiddenAt)
+	require.NotNil(t, row.DisplayName)
+	assert.Equal(t, "Alice", *row.DisplayName)
+	assert.EqualValues(t, 30000, row.ElapsedMS)
+
+	entries, total, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:   "wedding-mini-v1",
+		Difficulty: pointerutil.String(models.GameDifficultyEasy),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "Alice", entries[0].DisplayName)
+	assert.Nil(t, viewer)
+}
+
+func TestUnhideSession_LeavesUnpostedSolveOffTheBoard(t *testing.T) {
+	svc, _, db := newServices(t)
+	session := completeSessionT(t, svc, models.GameDifficultyEasy, 30000)
+
+	require.NoError(t, svc.UnhideSession(ctx(), session.ID))
+
+	row := sessionRow(t, db, session.ID)
+	assert.False(t, row.OnLeaderboard)
+	assert.Nil(t, row.HiddenAt)
+	assert.Nil(t, row.DisplayName)
+}
+
+func TestUnhideSession_UnknownSessionIs404(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	err := svc.UnhideSession(ctx(), "00000000-0000-0000-0000-000000000000")
 	assertErrCode(t, err, errcodes.CodeNotFound)
 }

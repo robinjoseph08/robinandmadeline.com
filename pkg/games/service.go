@@ -473,6 +473,38 @@ func (s *Service) HideSession(ctx context.Context, id string) error {
 	})
 }
 
+// UnhideSession restores a previously posted, admin-hidden solve to public
+// leaderboards. The retained display name proves the solver had opted in before
+// moderation. Ordinary unposted sessions are left unchanged, so this admin
+// action cannot publish a solve on the solver's behalf. Restoring an unknown
+// session is a 404; restoring an already-visible row is idempotent.
+func (s *Service) UnhideSession(ctx context.Context, id string) error {
+	return s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		session, err := loadSessionForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if session.HiddenAt == nil {
+			return nil
+		}
+		if session.DisplayName == nil || session.CompletedAt == nil {
+			return errcodes.Internal("hidden game session is missing leaderboard data")
+		}
+
+		now := dbNow()
+		session.OnLeaderboard = true
+		session.HiddenAt = nil
+		session.UpdatedAt = now
+		_, err = tx.NewUpdate().Model(session).
+			Column("on_leaderboard", "hidden_at", "updated_at").
+			WherePK().Exec(ctx)
+		if err != nil {
+			return errors.Wrap(err, "unhide game session")
+		}
+		return nil
+	})
+}
+
 // loadSessionForUpdate fetches a session by id with a row lock (FOR UPDATE)
 // inside the caller's transaction, so the read-check-write cycles above cannot
 // race a concurrent report from the same client. An unknown id is a 404; ids

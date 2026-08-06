@@ -1,4 +1,4 @@
-import { EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
 import { DIFFICULTY_LABELS } from "@/components/library/crossword/puzzle";
@@ -16,6 +16,7 @@ import {
 import {
   useAdminGameSessions,
   useHideGameSession,
+  useUnhideGameSession,
 } from "@/hooks/queries/games";
 import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { formatDateTime, formatDuration } from "@/libraries/format";
@@ -29,12 +30,14 @@ import type { AdminGameSessionResponse } from "@/types/generated/games";
  * so a bad actor's public row can be hidden while retaining the solve for that
  * solver.
  * The backend already sorts newest-first and the data is wedding-bounded, so
- * v1 is a plain table with a one-way hide action and no paging, search, or sort.
+ * v1 is a plain table with reversible leaderboard moderation and no paging,
+ * search, or sort.
  */
 export default function AdminCrossword() {
   useAdminPageTitle("Crossword");
   const sessionsQuery = useAdminGameSessions();
   const hideSession = useHideGameSession();
+  const unhideSession = useUnhideGameSession();
 
   const sessions = sessionsQuery.data?.items ?? [];
 
@@ -56,6 +59,23 @@ export default function AdminCrossword() {
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to hide time",
+      );
+    }
+  };
+
+  const handleUnhide = async (session: AdminGameSessionResponse) => {
+    if (
+      !window.confirm(
+        `Restore ${solverName(session)}'s time to the public leaderboard?`,
+      )
+    )
+      return;
+    try {
+      await unhideSession.mutateAsync({ sessionId: session.id });
+      toast.success("Time restored");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to restore time",
       );
     }
   };
@@ -154,15 +174,27 @@ export default function AdminCrossword() {
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end">
-                      {session.on_leaderboard && (
+                      {session.on_leaderboard ? (
                         <TooltipIconButton
-                          disabled={hideSession.isPending}
+                          disabled={
+                            hideSession.isPending || unhideSession.isPending
+                          }
                           label={`Hide ${solverName(session)}'s time`}
                           onClick={() => handleHide(session)}
                         >
                           <EyeOff />
                         </TooltipIconButton>
-                      )}
+                      ) : session.hidden_at ? (
+                        <TooltipIconButton
+                          disabled={
+                            hideSession.isPending || unhideSession.isPending
+                          }
+                          label={`Restore ${solverName(session)}'s time`}
+                          onClick={() => handleUnhide(session)}
+                        >
+                          <Eye />
+                        </TooltipIconButton>
+                      ) : null}
                     </div>
                   </TableCell>
                 </TableRow>

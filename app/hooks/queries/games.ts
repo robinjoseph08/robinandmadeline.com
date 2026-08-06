@@ -19,8 +19,8 @@ import type { GameDifficulty } from "@/types/generated/models";
  * read lives here: solver session writes are best-effort telemetry driven by
  * timers and lifecycle events, so they go through useSolveSession's queue
  * instead of mutations (a failed report must never surface to the solver). The
- * admin sessions list and hide action also live here; they are normal admin
- * mutations (a failure must surface to the admin), so unlike the solver writes
+ * admin sessions list and moderation actions also live here; they are normal
+ * admin mutations (a failure must surface to the admin), so unlike the solver writes
  * they go through adminRequest with the admin token.
  */
 
@@ -80,6 +80,25 @@ export const useHideGameSession = () => {
   return useMutation<void, ApiError, { sessionId: string }>({
     mutationFn: ({ sessionId }) =>
       adminRequest(`/admin/games/sessions/${sessionId}/hide`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: [QueryKey.AdminGameSessions],
+      });
+    },
+  });
+};
+
+// useUnhideGameSession restores one admin-hidden solve to the public
+// leaderboard. Only rows carrying hidden_at expose this action in the admin UI;
+// the backend leaves ordinary unposted solves unchanged.
+export const useUnhideGameSession = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation<void, ApiError, { sessionId: string }>({
+    mutationFn: ({ sessionId }) =>
+      adminRequest(`/admin/games/sessions/${sessionId}/unhide`, {
         method: "POST",
       }),
     onSuccess: () => {

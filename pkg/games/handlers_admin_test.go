@@ -18,7 +18,7 @@ import (
 
 // newAdminGamesEcho wires the games admin routes onto a bare Echo group with the
 // shared error handler and the custom binder, but WITHOUT the admin auth
-// middleware: these tests exercise the handlers, the list/hide behavior, and
+// middleware: these tests exercise the handlers, the list/moderation behavior, and
 // the response shapes, while auth enforcement on the admin group is covered in
 // pkg/server. It uses the package's isolated Postgres test database.
 func newAdminGamesEcho(t *testing.T, svc *games.Service) *echo.Echo {
@@ -33,7 +33,7 @@ func newAdminGamesEcho(t *testing.T, svc *games.Service) *echo.Echo {
 }
 
 // doAdmin issues a request against the admin games surface and returns the
-// recorder. The list and hide endpoints take no body.
+// recorder. The list and moderation endpoints take no body.
 func doAdmin(t *testing.T, e *echo.Echo, method, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequestWithContext(context.Background(), method, target, http.NoBody)
@@ -167,6 +167,41 @@ func TestAdminHideSessionHandler_MalformedIDIs404(t *testing.T) {
 	// A malformed id can never name a row, so pathID makes it a 404 before any
 	// query rather than a 500 from a failing uuid cast.
 	rec := doAdmin(t, e, http.MethodPost, "/api/admin/games/sessions/not-a-uuid/hide")
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, string(errcodes.CodeNotFound), errCodeOf(t, rec))
+}
+
+func TestAdminUnhideSessionHandler_Returns204AndRestoresRow(t *testing.T) {
+	svc, _, db := newServices(t)
+	e := newAdminGamesEcho(t, svc)
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	require.NoError(t, svc.HideSession(ctx(), session.ID))
+
+	rec := doAdmin(t, e, http.MethodPost, "/api/admin/games/sessions/"+session.ID+"/unhide")
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Empty(t, rec.Body.Bytes(), "a 204 carries no body")
+
+	row := sessionRow(t, db, session.ID)
+	assert.True(t, row.OnLeaderboard)
+	assert.Nil(t, row.HiddenAt)
+	require.NotNil(t, row.DisplayName)
+	assert.Equal(t, "Alice", *row.DisplayName)
+}
+
+func TestAdminUnhideSessionHandler_UnknownIDIs404(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e := newAdminGamesEcho(t, svc)
+
+	rec := doAdmin(t, e, http.MethodPost, "/api/admin/games/sessions/00000000-0000-0000-0000-000000000000/unhide")
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, string(errcodes.CodeNotFound), errCodeOf(t, rec))
+}
+
+func TestAdminUnhideSessionHandler_MalformedIDIs404(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e := newAdminGamesEcho(t, svc)
+
+	rec := doAdmin(t, e, http.MethodPost, "/api/admin/games/sessions/not-a-uuid/unhide")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, string(errcodes.CodeNotFound), errCodeOf(t, rec))
 }

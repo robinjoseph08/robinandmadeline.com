@@ -184,3 +184,17 @@ func (h *handler) adminHideSession(c echo.Context) error {
 	}
 	return c.NoContent(http.StatusNoContent)
 }
+
+// adminUnhideSession handles POST /api/admin/games/sessions/:id/unhide,
+// returning 204 on success. Only a previously posted, admin-hidden solve can
+// be restored; ordinary unposted sessions remain off the leaderboard.
+func (h *handler) adminUnhideSession(c echo.Context) error {
+	id, err := pathID(c)
+	if err != nil {
+		return err
+	}
+	if err := h.service.UnhideSession(c.Request().Context(), id); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
