@@ -11,6 +11,8 @@ import {
 export interface CrosswordSettings extends NavigationSettings {
   /** Display-only: hide or show the timer readout while solving. */
   showTimer: boolean;
+  /** Whether jumpToNextClue reflects an explicit guest choice. */
+  jumpToNextClueExplicit: boolean;
 }
 
 export const SETTINGS_STORAGE_KEY = "crossword:settings";
@@ -18,6 +20,7 @@ export const SETTINGS_STORAGE_KEY = "crossword:settings";
 export const DEFAULT_SETTINGS: CrosswordSettings = {
   ...DEFAULT_NAVIGATION_SETTINGS,
   showTimer: true,
+  jumpToNextClueExplicit: false,
 };
 
 /**
@@ -65,10 +68,21 @@ export function loadSettings(): CrosswordSettings {
     "jumpBackToFirstBlank",
     "jumpToNextClue",
     "showTimer",
+    "jumpToNextClueExplicit",
   ] as const) {
     if (typeof stored[key] === "boolean") {
       settings[key] = stored[key];
     }
+  }
+
+  // Older saves did not distinguish the original false default from an
+  // explicit choice. Preserve a stored true as intentional, while allowing
+  // legacy false values to receive the new mobile default.
+  if (
+    typeof stored.jumpToNextClueExplicit !== "boolean" &&
+    stored.jumpToNextClue === true
+  ) {
+    settings.jumpToNextClueExplicit = true;
   }
 
   return settings;

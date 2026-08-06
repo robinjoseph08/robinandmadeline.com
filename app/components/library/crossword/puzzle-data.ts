@@ -13,13 +13,14 @@
 //   S P E N T
 //   H A R E .
 
-import type { CrosswordPuzzle } from "./puzzle";
+import { definePuzzle } from "./puzzle";
 
-export const weddingMini: CrosswordPuzzle = {
+export const weddingMini = definePuzzle({
   id: "wedding-mini-v1",
   title: "The Wedding Mini",
   width: 5,
   height: 5,
+  difficulties: ["easy", "medium", "hard"],
   solution: ".KISSDANCEAPNEASPENTHARE.",
   clues: {
     easy: {
@@ -71,4 +72,4 @@ export const weddingMini: CrosswordPuzzle = {
       },
     },
   },
-};
+});

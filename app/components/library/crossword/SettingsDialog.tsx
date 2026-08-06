@@ -84,7 +84,12 @@ export default function SettingsDialog({
             checked={settings.jumpToNextClue}
             id="setting-jump-next"
             label="Jump to the next clue after finishing a word"
-            onChange={(jumpToNextClue) => onSettingsChange({ jumpToNextClue })}
+            onChange={(jumpToNextClue) =>
+              onSettingsChange({
+                jumpToNextClue,
+                jumpToNextClueExplicit: true,
+              })
+            }
           />
           <ChoiceRow
             label="Space bar"

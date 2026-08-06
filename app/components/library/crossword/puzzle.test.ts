@@ -2,19 +2,20 @@ import { describe, expect, it } from "vitest";
 
 import {
   CrosswordPuzzle,
-  DIFFICULTIES,
   entriesFromGrid,
   gridFromEntries,
   validatePuzzle,
 } from "@/components/library/crossword/puzzle";
 import { weddingMini } from "@/components/library/crossword/puzzle-data";
 import { weddingFull } from "@/components/library/crossword/puzzle-data-full";
+import { proposal } from "@/components/library/crossword/puzzle-data-proposal";
+import { PUZZLES_BY_SLUG } from "@/components/library/crossword/puzzles";
 
 function clone(puzzle: CrosswordPuzzle): CrosswordPuzzle {
   return JSON.parse(JSON.stringify(puzzle)) as CrosswordPuzzle;
 }
 
-const shippedPuzzles = [weddingMini, weddingFull];
+const shippedPuzzles = Object.values(PUZZLES_BY_SLUG);
 
 describe("validatePuzzle", () => {
   it.each(shippedPuzzles.map((puzzle) => [puzzle.id, puzzle] as const))(
@@ -24,21 +25,71 @@ describe("validatePuzzle", () => {
     },
   );
 
-  it.each(shippedPuzzles.map((puzzle) => [puzzle.id, puzzle] as const))(
-    "%s provides clue sets for every difficulty with distinct text",
-    (_id, puzzle) => {
-      // The same answers get different clue text per difficulty, so switching
-      // difficulty must actually change what guests read.
-      for (const direction of ["across", "down"] as const) {
-        for (const number of Object.keys(puzzle.clues.easy[direction])) {
-          const texts = DIFFICULTIES.map(
-            (difficulty) => puzzle.clues[difficulty][direction][number],
-          );
-          expect(new Set(texts).size).toBe(DIFFICULTIES.length);
-        }
+  it.each(
+    [weddingMini, weddingFull].map((puzzle) => [puzzle.id, puzzle] as const),
+  )("%s provides distinct text for every clue difficulty", (_id, puzzle) => {
+    for (const direction of ["across", "down"] as const) {
+      for (const number of Object.keys(puzzle.clues.easy![direction])) {
+        const texts = puzzle.difficulties.map(
+          (difficulty) => puzzle.clues[difficulty]![direction][number],
+        );
+        expect(new Set(texts).size).toBe(puzzle.difficulties.length);
       }
-    },
-  );
+    }
+  });
+
+  it("proposal-v1 provides distinct authored clue sets", () => {
+    // The source CSV intentionally repeats some individual clues between Easy
+    // and Hard, but switching difficulty must still change the set overall.
+    expect(JSON.stringify(proposal.clues.easy)).not.toBe(
+      JSON.stringify(proposal.clues.hard),
+    );
+  });
+
+  it("lets each puzzle choose its available difficulties", () => {
+    expect(weddingMini.difficulties).toEqual(["easy", "medium", "hard"]);
+    expect(proposal.difficulties).toEqual(["easy", "hard"]);
+    expect(proposal.clues.medium).toBeUndefined();
+  });
+
+  it("rejects clues for a difficulty the puzzle does not offer", () => {
+    const puzzle = clone(proposal);
+    puzzle.clues.medium = puzzle.clues.easy;
+    expect(validatePuzzle(puzzle)).toContain(
+      'puzzle has clues for unavailable difficulty "medium"',
+    );
+  });
+
+  it("rejects clues keyed by an unknown difficulty", () => {
+    const puzzle = clone(proposal);
+    (puzzle.clues as Record<string, typeof puzzle.clues.easy>).expert =
+      puzzle.clues.easy;
+    expect(validatePuzzle(puzzle)).toContain(
+      'puzzle has clues for unknown difficulty "expert"',
+    );
+  });
+
+  it("rejects an empty difficulty list", () => {
+    const puzzle = clone(proposal);
+    puzzle.difficulties = [] as unknown as CrosswordPuzzle["difficulties"];
+    expect(validatePuzzle(puzzle)).toContain(
+      "puzzle must offer at least one difficulty",
+    );
+  });
+
+  it("rejects difficulties that are duplicated or out of order", () => {
+    const duplicated = clone(proposal);
+    duplicated.difficulties = ["easy", "easy"];
+    expect(validatePuzzle(duplicated)).toContain(
+      "puzzle difficulties must not contain duplicates",
+    );
+
+    const outOfOrder = clone(proposal);
+    outOfOrder.difficulties = ["hard", "easy"];
+    expect(validatePuzzle(outOfOrder)).toContain(
+      "puzzle difficulties must be ordered easiest to hardest",
+    );
+  });
 
   it("rejects an empty id and non-positive dimensions", () => {
     const puzzle = clone(weddingMini);
@@ -69,18 +120,50 @@ describe("validatePuzzle", () => {
 
   it("reports a difficulty missing a clue for a word in the grid", () => {
     const puzzle = clone(weddingMini);
-    delete puzzle.clues.medium.across["5"];
+    delete puzzle.clues.medium!.across["5"];
     expect(validatePuzzle(puzzle)).toEqual([
       "medium is missing a clue for 5 across",
     ]);
   });
 
+  it("reports a cross-clue reference whose target does not exist", () => {
+    const puzzle = clone(weddingMini);
+    puzzle.clues.easy!.across["1"] = "Where 99-Down lives";
+    expect(validatePuzzle(puzzle)).toContain(
+      "easy clue 1 across references 99 down, but the grid has no such word",
+    );
+  });
+
   it("reports a clue for a word the grid does not contain", () => {
     const puzzle = clone(weddingMini);
-    puzzle.clues.hard.down["9"] = "A clue with no home";
+    puzzle.clues.hard!.down["9"] = "A clue with no home";
     expect(validatePuzzle(puzzle)).toEqual([
       "hard has a clue for 9 down, but the grid has no such word",
     ]);
+  });
+
+  it("validates the message extracted by a puzzle celebration", () => {
+    const puzzle = clone(proposal);
+    puzzle.celebration!.cells[0] = { row: 0, col: 0 };
+    expect(validatePuzzle(puzzle)).toContain(
+      'celebration cells spell "FILL YOU MARRY ME", expected "WILL YOU MARRY ME"',
+    );
+  });
+
+  it("rejects celebration coordinates outside the grid", () => {
+    const puzzle = clone(proposal);
+    puzzle.celebration!.cells[0] = { row: 15, col: 0 };
+    expect(validatePuzzle(puzzle)).toContain(
+      "celebration cell at row 15, column 0 is outside the grid",
+    );
+  });
+
+  it("rejects a compact celebration layout that does not cover every cell", () => {
+    const puzzle = clone(proposal);
+    puzzle.celebration!.compactLineLengths = [5, 4, 7];
+    expect(validatePuzzle(puzzle)).toContain(
+      "celebration compact line lengths must be positive integers that cover every celebration cell",
+    );
   });
 
   it("rejects a grid with a square that belongs to no word", () => {
@@ -96,6 +179,7 @@ describe("validatePuzzle", () => {
       title: "Isolated Square",
       width: 3,
       height: 3,
+      difficulties: ["easy", "medium", "hard"],
       solution: "AB...CDE.",
       clues: { easy: clueSet, medium: clueSet, hard: clueSet },
     };

@@ -23,7 +23,7 @@ func publicFile(t *testing.T, name string) []byte {
 	return content
 }
 
-func TestSitemap_ListsOnlyPublicLandingRoutes(t *testing.T) {
+func TestSitemap_ListsPublicLandingRoutes(t *testing.T) {
 	var sitemap struct {
 		XMLName xml.Name
 		URLs    []struct {
@@ -49,7 +49,7 @@ func TestSitemap_ListsOnlyPublicLandingRoutes(t *testing.T) {
 		canonicalBaseURL + "/rsvp",
 	}, actual)
 
-	for _, excluded := range []string{"/admin", "/i/", "/u/", "/rsvp/form", "/rsvp/confirmation", "/games/mini"} {
+	for _, excluded := range []string{"/admin", "/i/", "/u/", "/rsvp/form", "/rsvp/confirmation", "/games/proposal", "/games/mini", "/games/crossword"} {
 		assert.NotContains(t, actual, canonicalBaseURL+excluded)
 	}
 }
@@ -68,7 +68,6 @@ func TestRobots_DiscouragesPrivateAndIntermediateCrawling(t *testing.T) {
 	assert.Equal(t, []string{
 		"User-agent: *",
 		"Disallow: /admin",
-		"Disallow: /games/",
 		"Disallow: /i/",
 		"Disallow: /u/",
 		"Disallow: /rsvp/form",

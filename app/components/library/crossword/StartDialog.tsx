@@ -18,9 +18,10 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 
-import { DIFFICULTIES, Difficulty, DIFFICULTY_LABELS } from "./puzzle";
+import { Difficulty, DIFFICULTY_LABELS, PuzzleDifficulties } from "./puzzle";
 
 interface StartDialogProps {
+  difficulties: PuzzleDifficulties;
   /**
    * Radix close-focus hook: the page uses it to put focus in the grid when
    * the dialog closes because the solve started.
@@ -32,17 +33,21 @@ interface StartDialogProps {
   open: boolean;
   /** Lives in the shared settings, so it is the same value the gear menu edits. */
   showTimer: boolean;
+  /** Show the mobile recommendation to use a desktop when possible. */
+  showDesktopRecommendation: boolean;
 }
 
 export default function StartDialog({
+  difficulties,
   onCloseAutoFocus,
   onOpenChange,
   onShowTimerChange,
   onStart,
   open,
+  showDesktopRecommendation,
   showTimer,
 }: StartDialogProps) {
-  const [difficulty, setDifficulty] = useState<Difficulty>("easy");
+  const [difficulty, setDifficulty] = useState<Difficulty>(difficulties[0]);
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -63,7 +68,7 @@ export default function StartDialog({
             className="flex flex-wrap gap-2"
             role="group"
           >
-            {DIFFICULTIES.map((level) => (
+            {difficulties.map((level) => (
               <Button
                 aria-pressed={difficulty === level}
                 key={level}
@@ -76,10 +81,18 @@ export default function StartDialog({
               </Button>
             ))}
           </div>
-          <p className="text-sm text-muted-foreground">
-            You can switch difficulty mid-solve, but your time is recorded at
-            the easiest difficulty you use at any point.
-          </p>
+          {difficulties.length > 1 && (
+            <p className="text-sm text-muted-foreground">
+              You can switch difficulty mid-solve, but your time is recorded at
+              the easiest difficulty you use at any point.
+            </p>
+          )}
+          {showDesktopRecommendation && (
+            <p className="rounded-md border border-secondary/30 bg-secondary/10 p-3 text-sm text-muted-foreground">
+              This puzzle is doable on mobile, but the best and most accurate
+              experience is on desktop.
+            </p>
+          )}
           <div className="flex items-center gap-2">
             <Checkbox
               checked={showTimer}

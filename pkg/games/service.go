@@ -28,6 +28,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/uptrace/bun"
@@ -75,22 +76,33 @@ func dbNow() time.Time {
 	return time.Now().Truncate(time.Microsecond)
 }
 
+// CreateGameSessionInput combines the bound client payload with request
+// metadata captured by the server. The named fields keep PartyID, IPAddress,
+// and UserAgent distinct at service call sites.
+type CreateGameSessionInput struct {
+	Payload   CreateGameSessionPayload
+	PartyID   string
+	IPAddress string
+	UserAgent string
+}
+
 // CreateSession starts a solve: it inserts a session for the given puzzle at
-// the given starting difficulty, capturing the client IP and, when partyID is
-// non-blank (a valid guest token rode the request) and the party still exists
-// (see attachParty), the party affiliation.
-func (s *Service) CreateSession(ctx context.Context, in CreateGameSessionPayload, partyID, ipAddress string) (*models.GameSession, error) {
+// the given starting difficulty, capturing the client IP and user agent. When
+// PartyID is non-blank (a valid guest token rode the request) and the party
+// still exists (see attachParty), it also captures the party affiliation.
+func (s *Service) CreateSession(ctx context.Context, in CreateGameSessionInput) (*models.GameSession, error) {
 	now := dbNow()
 	session := &models.GameSession{
 		ID:         newID(),
-		PuzzleID:   in.PuzzleID,
-		IPAddress:  ipAddress,
-		Difficulty: in.Difficulty,
+		PuzzleID:   in.Payload.PuzzleID,
+		IPAddress:  in.IPAddress,
+		UserAgent:  in.UserAgent,
+		Difficulty: in.Payload.Difficulty,
 		ElapsedMS:  0,
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	if err := attachParty(ctx, s.db, session, partyID); err != nil {
+	if err := attachParty(ctx, s.db, session, in.PartyID); err != nil {
 		return nil, err
 	}
 	if _, err := s.db.NewInsert().Model(session).Exec(ctx); err != nil {
@@ -173,8 +185,11 @@ func isCompletedNoop(session *models.GameSession, in UpdateGameSessionPayload) b
 // it sets on_leaderboard (the explicit opt-in that makes the session visible)
 // and stores the display_name shown on the board. Posting an uncompleted
 // session is a 422. Re-posting is idempotent when the name matches what was
-// already published and a 409 otherwise (the leaderboard is append-once; there
-// is no rename in v1). Like UpdateSession, a party is attached opportunistically,
+// first published and a 409 otherwise (the leaderboard is append-once; there
+// is no rename in v1). An admin-hidden row retains its display name and
+// hidden_at marker with on_leaderboard false, so an idempotent retry must not
+// make it public again.
+// Like UpdateSession, a party is attached opportunistically,
 // so a guest who signs in between completing and posting still gets their entry
 // affiliated.
 func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeaderboardPayload, partyID string) (*models.GameSession, error) {
@@ -187,12 +202,11 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 		if loaded.CompletedAt == nil {
 			return errcodes.ValidationError("The puzzle must be completed before posting to the leaderboard.")
 		}
-		// on_leaderboard is the opt-in source of truth: a row already on the
-		// board carries a display_name too (this method sets both, the backfill
-		// set the flag only where display_name was non-NULL, and a DB CHECK,
-		// game_sessions_on_leaderboard_needs_name, enforces the coupling on every
-		// path), so the dereference below is safe.
-		if loaded.OnLeaderboard {
+		// A retained display name means this solve has already been published,
+		// even when an admin later hid it by clearing on_leaderboard. The name is
+		// append-once and a same-name retry is a no-op, so a client retry can never
+		// accidentally unhide a moderated entry.
+		if loaded.DisplayName != nil {
 			if *loaded.DisplayName != in.DisplayName {
 				return errcodes.Conflict("This solve is already on the leaderboard under a different name.")
 			}
@@ -202,13 +216,14 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 
 		loaded.OnLeaderboard = true
 		loaded.DisplayName = &in.DisplayName
+		loaded.HiddenAt = nil
 		if err := attachParty(ctx, tx, loaded, partyID); err != nil {
 			return err
 		}
 		loaded.UpdatedAt = dbNow()
 
 		_, err = tx.NewUpdate().Model(loaded).
-			Column("on_leaderboard", "display_name", "party_id", "updated_at").
+			Column("on_leaderboard", "display_name", "hidden_at", "party_id", "updated_at").
 			WherePK().Exec(ctx)
 		if err != nil {
 			return errors.Wrap(err, "post game session to leaderboard")
@@ -222,16 +237,15 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 	return session, nil
 }
 
-// Leaderboard reads one puzzle's opted-in entries: completed sessions with
+// Leaderboard reads one puzzle's public entries: completed sessions with
 // on_leaderboard set, fastest first (ties broken by who completed earlier, then
 // by session id so even a full tie orders identically across requests), capped
-// at leaderboardLimit. An optional difficulty filter narrows the board to
-// sessions whose recorded (easiest-used) difficulty matches; the cap and the
-// returned total then both apply within that difficulty, so each per-difficulty
-// board is capped and counted independently. The returned total counts every
-// matching opted-in entry, beyond the cap. The cap is a defensive ceiling well
-// above any real board, so at wedding scale every opted-in entry is returned.
-// The slice is never nil, so it serializes as []. The partial leaderboard index
+// at leaderboardLimit. When a session bearer is supplied, its previously posted
+// solve is added to that personalized response even if an admin hid it. An
+// optional difficulty filter narrows the board to sessions whose recorded
+// (easiest-used) difficulty matches; the cap and returned total then both apply
+// within that difficulty. The slice is never nil, so it serializes as []. The
+// partial leaderboard index
 // covers (puzzle_id, elapsed_ms) without difficulty; the filter rides it as a
 // row recheck, which is plenty at wedding scale (a board holds at most a few
 // hundred rows).
@@ -239,15 +253,49 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 // When in.SessionID is set it also computes the viewer: the requesting solver's
 // own ranked entry (see leaderboardViewer), so the client can always show that
 // solver their own row with its true rank even when the solver falls off the
-// capped list. The viewer is nil when no session_id was given, when the id
-// names no row, or when the named session is not an eligible opted-in solve on
-// the board being read; none of those is an error.
+// capped list. An admin-hidden entry is included in items and total only when
+// the read carries that exact session bearer; it never enters another user's
+// or an anonymous response. The viewer is nil when no session_id was given,
+// when the id names no row, or when the named session was never posted or does
+// not belong to the board being read.
 func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]LeaderboardEntry, int, *LeaderboardViewer, error) {
+	var entries []LeaderboardEntry
+	var total int
+	var viewer *LeaderboardViewer
+	err := s.db.RunInTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	}, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		entries, total, viewer, err = leaderboard(ctx, tx, in)
+		return err
+	})
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	return entries, total, viewer, nil
+}
+
+// leaderboard performs the list and viewer-rank reads against one database
+// handle. Leaderboard passes a repeatable-read transaction so both halves of
+// the response describe the same board snapshot even while solves are posted,
+// hidden, or restored concurrently.
+func leaderboard(ctx context.Context, db bun.IDB, in LeaderboardQuery) ([]LeaderboardEntry, int, *LeaderboardViewer, error) {
 	var sessions []*models.GameSession
-	q := s.db.NewSelect().Model(&sessions).
+	q := db.NewSelect().Model(&sessions).
 		Where("gs.puzzle_id = ?", in.PuzzleID).
-		Where("gs.on_leaderboard = ?", true).
 		Where("gs.completed_at IS NOT NULL")
+	if in.SessionID == nil {
+		q = q.Where("gs.on_leaderboard = ?", true)
+	} else {
+		// Personalize only with the exact session bearer: public rows plus this
+		// solver's previously posted row, even when an admin hid it. No other
+		// hidden row can enter the response.
+		q = q.Where(
+			"(gs.on_leaderboard = ? OR (gs.id = ? AND gs.hidden_at IS NOT NULL))",
+			true, *in.SessionID,
+		)
+	}
 	if in.Difficulty != nil {
 		q = q.Where("gs.difficulty = ?", *in.Difficulty)
 	}
@@ -261,6 +309,11 @@ func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]Leade
 
 	entries := make([]LeaderboardEntry, 0, len(sessions))
 	for _, session := range sessions {
+		// The list predicate guarantees every public row has a name through the
+		// DB CHECK, and the personalized hidden branch explicitly requires one.
+		if session.DisplayName == nil {
+			return nil, 0, nil, errcodes.Internal("leaderboard session is missing display_name")
+		}
 		entries = append(entries, LeaderboardEntry{
 			DisplayName: *session.DisplayName,
 			Difficulty:  session.Difficulty,
@@ -269,7 +322,7 @@ func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]Leade
 		})
 	}
 
-	viewer, err := s.leaderboardViewer(ctx, in)
+	viewer, err := leaderboardViewer(ctx, db, in)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -280,23 +333,25 @@ func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]Leade
 // Leaderboard read, or nil when there is none to show. It returns nil (never an
 // error) for every non-eligible case so a viewer that simply does not belong on
 // the board reads as "no viewer," not a failure: no session_id given, an id
-// that names no row, or a session that is not an opted-in, completed solve on
-// this exact board (the same puzzle, and the same difficulty when the read is
-// filtered, so a solver only appears on their own difficulty tab). The lookup
-// is a plain read with no row lock: this is read-only and outside any
-// transaction. When the session is eligible, the rank is one more than the
+// that names no row, or a session that was never posted, is incomplete, or is
+// not on this exact board (the same puzzle, and the same difficulty when the
+// read is filtered, so a solver only appears on their own difficulty tab). An
+// admin-hidden row remains eligible because its retained display_name proves it
+// was posted; only its bearer-aware list includes it. The lookup is a plain
+// read with no row lock inside the leaderboard's repeatable-read transaction.
+// When the session is eligible, the rank is one more than the
 // count of opted-in entries that sort strictly before it in the list's
 // (elapsed_ms ASC, completed_at ASC, id ASC) ordering, counted within the same
 // scope as the list, so the rank stays correct even past the returned cap. That
 // count rides the same partial (puzzle_id, elapsed_ms) index the list uses; no
 // new index is needed at wedding scale.
-func (s *Service) leaderboardViewer(ctx context.Context, in LeaderboardQuery) (*LeaderboardViewer, error) {
+func leaderboardViewer(ctx context.Context, db bun.IDB, in LeaderboardQuery) (*LeaderboardViewer, error) {
 	if in.SessionID == nil {
 		return nil, nil
 	}
 
 	session := new(models.GameSession)
-	err := s.db.NewSelect().Model(session).Where("gs.id = ?", *in.SessionID).Scan(ctx)
+	err := db.NewSelect().Model(session).Where("gs.id = ?", *in.SessionID).Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -305,7 +360,8 @@ func (s *Service) leaderboardViewer(ctx context.Context, in LeaderboardQuery) (*
 	}
 
 	eligible := session.PuzzleID == in.PuzzleID &&
-		session.OnLeaderboard &&
+		(session.OnLeaderboard || session.HiddenAt != nil) &&
+		session.DisplayName != nil &&
 		session.CompletedAt != nil &&
 		(in.Difficulty == nil || session.Difficulty == *in.Difficulty)
 	if !eligible {
@@ -318,7 +374,7 @@ func (s *Service) leaderboardViewer(ctx context.Context, in LeaderboardQuery) (*
 	// (elapsed_ms, completed_at, id) tuple binds once each and is reused across
 	// the three OR branches. The id comparison is the uuid column against the
 	// session's id string, exactly like the existing gs.id = ? reads.
-	q := s.db.NewSelect().Model((*models.GameSession)(nil)).
+	q := db.NewSelect().Model((*models.GameSession)(nil)).
 		Where("gs.puzzle_id = ?", in.PuzzleID).
 		Where("gs.on_leaderboard = ?", true).
 		Where("gs.completed_at IS NOT NULL").
@@ -337,7 +393,8 @@ func (s *Service) leaderboardViewer(ctx context.Context, in LeaderboardQuery) (*
 	}
 
 	return &LeaderboardViewer{
-		Rank: ahead + 1,
+		Rank:    ahead + 1,
+		InItems: ahead < leaderboardLimit,
 		Entry: LeaderboardEntry{
 			DisplayName: *session.DisplayName,
 			Difficulty:  session.Difficulty,
@@ -349,8 +406,8 @@ func (s *Service) leaderboardViewer(ctx context.Context, in LeaderboardQuery) (*
 
 // adminSessionRow is the scan target for ListSessions: the full session row
 // plus the affiliated party's name, joined in. It embeds models.GameSession so
-// every stored column (ip_address included, which the session's own JSON hides)
-// lands on the struct, and adds PartyName from the LEFT JOIN. PartyName is a
+// every stored column (including the request metadata that the session's own
+// JSON hides) lands on the struct, and adds PartyName from the LEFT JOIN. PartyName is a
 // pointer so it stays NULL for an anonymous session, matching party_id. It
 // repeats the game_sessions table/alias so bun targets that table and the gs.*
 // / join clauses resolve, rather than deriving a table name from this struct.
@@ -396,9 +453,11 @@ func (s *Service) ListSessions(ctx context.Context) ([]AdminGameSessionResponse,
 			CompletedAt:   row.CompletedAt,
 			OnLeaderboard: row.OnLeaderboard,
 			DisplayName:   row.DisplayName,
+			HiddenAt:      row.HiddenAt,
 			PartyID:       row.PartyID,
 			PartyName:     row.PartyName,
 			IPAddress:     row.IPAddress,
+			UserAgent:     row.UserAgent,
 			CreatedAt:     row.CreatedAt,
 			UpdatedAt:     row.UpdatedAt,
 		})
@@ -406,22 +465,66 @@ func (s *Service) ListSessions(ctx context.Context) ([]AdminGameSessionResponse,
 	return items, total, nil
 }
 
-// DeleteSession hard-deletes one solve session by id. Deleting a non-existent
-// session is a 404. This is the admin's tool to remove a bad-actor or junk
-// solve outright; there is no soft delete.
-func (s *Service) DeleteSession(ctx context.Context, id string) error {
-	res, err := s.db.NewDelete().Model((*models.GameSession)(nil)).Where("id = ?", id).Exec(ctx)
-	if err != nil {
-		return errors.Wrap(err, "delete game session")
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return errors.Wrap(err, "delete game session rows affected")
-	}
-	if n == 0 {
-		return errcodes.NotFound("session")
-	}
-	return nil
+// HideSession removes one published solve from public leaderboards while
+// retaining its time, bearer id, display name, and attribution. The retained
+// name lets the solver continue seeing the entry through a viewer-aware read
+// and prevents a posting retry from making it public again. Hiding an unknown
+// session is a 404; hiding an already-hidden row is idempotent. An unposted row
+// is retained unchanged because it is already absent from public boards.
+func (s *Service) HideSession(ctx context.Context, id string) error {
+	return s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		session, err := loadSessionForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if session.HiddenAt != nil || !session.OnLeaderboard {
+			return nil
+		}
+
+		now := dbNow()
+		session.OnLeaderboard = false
+		session.HiddenAt = pointerutil.Time(now)
+		session.UpdatedAt = now
+		_, err = tx.NewUpdate().Model(session).
+			Column("on_leaderboard", "hidden_at", "updated_at").
+			WherePK().Exec(ctx)
+		if err != nil {
+			return errors.Wrap(err, "hide game session")
+		}
+		return nil
+	})
+}
+
+// UnhideSession restores a previously posted, admin-hidden solve to public
+// leaderboards. The retained display name proves the solver had opted in before
+// moderation. Ordinary unposted sessions are left unchanged, so this admin
+// action cannot publish a solve on the solver's behalf. Restoring an unknown
+// session is a 404; restoring an already-visible row is idempotent.
+func (s *Service) UnhideSession(ctx context.Context, id string) error {
+	return s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		session, err := loadSessionForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if session.HiddenAt == nil {
+			return nil
+		}
+		if session.DisplayName == nil || session.CompletedAt == nil {
+			return errcodes.Internal("hidden game session is missing leaderboard data")
+		}
+
+		now := dbNow()
+		session.OnLeaderboard = true
+		session.HiddenAt = nil
+		session.UpdatedAt = now
+		_, err = tx.NewUpdate().Model(session).
+			Column("on_leaderboard", "hidden_at", "updated_at").
+			WherePK().Exec(ctx)
+		if err != nil {
+			return errors.Wrap(err, "unhide game session")
+		}
+		return nil
+	})
 }
 
 // loadSessionForUpdate fetches a session by id with a row lock (FOR UPDATE)

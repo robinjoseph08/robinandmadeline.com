@@ -117,6 +117,37 @@ describe("ClueList", () => {
     expect(scrollTo).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves authored clue line breaks", () => {
+    render(
+      <ClueList
+        {...clueListProps({ clues: { "1": "First line\n\nAuthor note" } })}
+      />,
+    );
+
+    const clue = screen.getByRole("button", { name: /1\. First line/ });
+    expect(clue).toHaveClass("whitespace-pre-line");
+    expect(clue.textContent).toBe("1. First line\n\nAuthor note");
+  });
+
+  it("gives referenced clues a distinct pink treatment", () => {
+    render(
+      <ClueList {...clueListProps({ referencedNumbers: new Set(["5"]) })} />,
+    );
+
+    const referenced = screen.getByRole("button", { name: "5. Fifth clue" });
+    expect(referenced).toHaveClass("bg-rose-soft");
+    expect(referenced.className).not.toMatch(/ring-|text-foreground/);
+    expect(referenced).not.toHaveClass("bg-secondary/50");
+  });
+
+  it("lets a parent mobile view own scrolling", () => {
+    render(<ClueList {...clueListProps({ scrollMode: "page" })} />);
+
+    const list = screen.getByTestId("crossword-clues-across");
+    expect(list.className).not.toContain("overflow-y-auto");
+    expect(list.className).not.toContain("max-h-");
+  });
+
   it("stays memoized so the page's unrelated re-renders skip unchanged lists", () => {
     // The typing-performance work hangs off this export being memo-wrapped;
     // render counting cannot see it from the page (the component boundary is

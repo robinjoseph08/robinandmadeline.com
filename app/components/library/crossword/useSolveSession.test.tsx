@@ -7,6 +7,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "@/libraries/api";
 import type { UpdateGameSessionPayload } from "@/types/generated/games";
 import type { GameSession } from "@/types/generated/models";
 
@@ -108,10 +109,215 @@ describe("useSolveSession locking", () => {
     vi.useRealTimers();
   });
 
+  it("preserves a restored session while falling back from an unavailable difficulty", async () => {
+    localStorage.setItem(
+      "crossword:proposal-v1:session",
+      JSON.stringify({
+        id: "sess-legacy",
+        elapsedMs: 45_000,
+        completed: false,
+        difficulty: "medium",
+      }),
+    );
+
+    const { result } = renderHook(() =>
+      useSolveSession({
+        puzzleId: "proposal-v1",
+        availableDifficulties: ["easy", "hard"],
+        initiallyStarted: true,
+        initialDifficulty: "easy",
+        initiallyPaused: true,
+      }),
+    );
+
+    expect(result.current.sessionId).toBe("sess-legacy");
+    expect(result.current.elapsedMs).toBe(45_000);
+    expect(result.current.recordedDifficulty).toBe("easy");
+    expect(result.current.finished).toBe(false);
+    expect(result.current.postable).toBe(false);
+
+    act(() => result.current.reportDifficulty("easy"));
+    await flush();
+
+    expect(apiRequest).toHaveBeenCalledWith(
+      "/games/sessions/sess-legacy",
+      expect.objectContaining({
+        method: "PATCH",
+        body: expect.objectContaining({ difficulty: "easy" }),
+      }),
+    );
+    await waitFor(() => expect(result.current.postable).toBe(true));
+  });
+
+  it("blocks a completed legacy session whose difficulty is missing", () => {
+    localStorage.setItem(
+      "crossword:proposal-v1:session",
+      JSON.stringify({
+        id: "sess-legacy",
+        elapsedMs: 45_000,
+        completed: true,
+      }),
+    );
+
+    const { result } = renderHook(() =>
+      useSolveSession({
+        puzzleId: "proposal-v1",
+        availableDifficulties: ["easy", "hard"],
+        initiallyStarted: true,
+        initialDifficulty: "easy",
+      }),
+    );
+
+    expect(result.current.sessionId).toBe("sess-legacy");
+    expect(result.current.elapsedMs).toBe(45_000);
+    expect(result.current.recordedDifficulty).toBe("easy");
+    expect(result.current.finished).toBe(true);
+    expect(result.current.postable).toBe(false);
+  });
+
+  it("does not expose an unavailable difficulty returned by the server", async () => {
+    localStorage.setItem(
+      "crossword:proposal-v1:session",
+      JSON.stringify({
+        id: "sess-legacy",
+        elapsedMs: 45_000,
+        completed: false,
+        difficulty: "easy",
+      }),
+    );
+    apiRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        if (
+          path === "/games/sessions/sess-legacy" &&
+          options?.method === "PATCH"
+        ) {
+          return Promise.resolve(makeSession({ difficulty: "medium" }));
+        }
+        return Promise.reject(new Error(`unexpected ${path}`));
+      },
+    );
+
+    const { result } = renderHook(() =>
+      useSolveSession({
+        puzzleId: "proposal-v1",
+        availableDifficulties: ["easy", "hard"],
+        initiallyStarted: true,
+        initialDifficulty: "easy",
+        initiallyPaused: true,
+      }),
+    );
+
+    act(() => result.current.reportDifficulty("easy"));
+    await flush();
+
+    expect(result.current.recordedDifficulty).toBe("easy");
+    expect(result.current.postable).toBe(false);
+  });
+
+  it("marks a conflict-finalized restored session unpostable", async () => {
+    localStorage.setItem(
+      "crossword:wedding-mini-v1:session",
+      JSON.stringify({
+        id: "sess-final",
+        elapsedMs: 45_000,
+        completed: false,
+        difficulty: "easy",
+      }),
+    );
+    apiRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        if (
+          path === "/games/sessions/sess-final" &&
+          options?.method === "PATCH"
+        ) {
+          return Promise.reject(new ApiError(409, "completed"));
+        }
+        return Promise.reject(new Error(`unexpected ${path}`));
+      },
+    );
+
+    const { result } = renderHook(() =>
+      useSolveSession({
+        puzzleId: "wedding-mini-v1",
+        availableDifficulties: ["easy", "medium", "hard"],
+        initiallyStarted: true,
+        initialDifficulty: "easy",
+        initiallyPaused: true,
+      }),
+    );
+
+    act(() => result.current.reportDifficulty("easy"));
+    await flush();
+
+    await waitFor(() => expect(result.current.finished).toBe(true));
+    expect(result.current.postable).toBe(false);
+    await expect(result.current.postToLeaderboard("Robin")).rejects.toThrow(
+      /can't verify/i,
+    );
+  });
+
+  it("ignores a session creation that finishes after the local solve is discarded", async () => {
+    const key = "crossword:wedding-mini-v1:session";
+    let resolveCreate: ((session: GameSession) => void) | undefined;
+    apiRequest.mockImplementation(
+      (path: string, options?: { method?: string }) => {
+        if (path === "/games/sessions" && options?.method === "POST") {
+          return new Promise<GameSession>((resolve) => {
+            resolveCreate = resolve;
+          });
+        }
+        return Promise.reject(new Error(`unexpected ${path}`));
+      },
+    );
+
+    const { result } = renderHook(() =>
+      useSolveSession({
+        puzzleId: "wedding-mini-v1",
+        availableDifficulties: ["easy", "medium", "hard"],
+        initiallyStarted: false,
+        initialDifficulty: "easy",
+      }),
+    );
+
+    act(() => result.current.start("easy"));
+    expect(localStorage.getItem(key)).not.toBeNull();
+    act(() => result.current.discardLocalRecord());
+    expect(localStorage.getItem(key)).toBeNull();
+
+    await act(async () => resolveCreate?.(makeSession({ id: "sess-late" })));
+    await flush();
+
+    expect(result.current.sessionId).toBeNull();
+    expect(localStorage.getItem(key)).toBeNull();
+  });
+
+  it("does not recreate a discarded local record during unmount cleanup", async () => {
+    const key = "crossword:wedding-mini-v1:session";
+    const { result, unmount } = renderHook(() =>
+      useSolveSession({
+        puzzleId: "wedding-mini-v1",
+        availableDifficulties: ["easy", "medium", "hard"],
+        initiallyStarted: false,
+        initialDifficulty: "easy",
+      }),
+    );
+
+    act(() => result.current.start("easy"));
+    await flush();
+    expect(localStorage.getItem(key)).not.toBeNull();
+
+    act(() => result.current.discardLocalRecord());
+    expect(localStorage.getItem(key)).toBeNull();
+    unmount();
+
+    expect(localStorage.getItem(key)).toBeNull();
+  });
+
   it("ignores reportDifficulty once the solve has completed", async () => {
     const { result } = renderHook(() =>
       useSolveSession({
         puzzleId: "wedding-mini-v1",
+        availableDifficulties: ["easy", "medium", "hard"],
         initiallyStarted: false,
         initialDifficulty: "hard",
       }),
@@ -152,6 +358,7 @@ describe("useSolveSession locking", () => {
     const { result } = renderHook(() =>
       useSolveSession({
         puzzleId: "wedding-mini-v1",
+        availableDifficulties: ["easy", "medium", "hard"],
         initiallyStarted: false,
         initialDifficulty: "easy",
       }),
@@ -189,6 +396,7 @@ describe("useSolveSession locking", () => {
     const { result } = renderHook(() =>
       useSolveSession({
         puzzleId: "wedding-mini-v1",
+        availableDifficulties: ["easy", "medium", "hard"],
         initiallyStarted: true,
         initialDifficulty: "medium",
         initiallyFinished: true,

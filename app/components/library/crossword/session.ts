@@ -17,6 +17,11 @@ export interface SolveSessionRecord {
    * server (authoritative) or tracked locally while offline.
    */
   difficulty?: Difficulty;
+  /**
+   * True while the local difficulty is only a compatibility fallback and has
+   * not yet been confirmed by a successful server response.
+   */
+  difficultyUnverified?: boolean;
   /** The display name posted to the leaderboard, once the guest opted in. */
   postedName?: string;
 }
@@ -52,10 +57,14 @@ export function loadSessionRecord(puzzleId: string): SolveSessionRecord | null {
     return null;
   }
 
-  const { id, elapsedMs, completed, difficulty, postedName } = parsed as Record<
-    string,
-    unknown
-  >;
+  const {
+    id,
+    elapsedMs,
+    completed,
+    difficulty,
+    difficultyUnverified,
+    postedName,
+  } = parsed as Record<string, unknown>;
   if (typeof id !== "string" && id !== null) {
     return null;
   }
@@ -70,8 +79,18 @@ export function loadSessionRecord(puzzleId: string): SolveSessionRecord | null {
     difficulty: DIFFICULTIES.includes(difficulty as Difficulty)
       ? (difficulty as Difficulty)
       : undefined,
+    ...(difficultyUnverified === true ? { difficultyUnverified: true } : {}),
     postedName: typeof postedName === "string" ? postedName : undefined,
   };
+}
+
+export function clearSessionRecord(puzzleId: string): void {
+  try {
+    localStorage.removeItem(storageKey(puzzleId));
+  } catch {
+    // Storage may be unavailable. The current solve can still be discarded
+    // in memory even if the browser refuses to remove the persisted copy.
+  }
 }
 
 export function saveSessionRecord(

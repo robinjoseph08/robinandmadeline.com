@@ -19,8 +19,8 @@ import type { GameDifficulty } from "@/types/generated/models";
  * read lives here: solver session writes are best-effort telemetry driven by
  * timers and lifecycle events, so they go through useSolveSession's queue
  * instead of mutations (a failed report must never surface to the solver). The
- * admin sessions list and delete also live here; they are normal admin
- * mutations (a failure must surface to the admin), so unlike the solver writes
+ * admin sessions list and moderation actions also live here; they are normal
+ * admin mutations (a failure must surface to the admin), so unlike the solver writes
  * they go through adminRequest with the admin token.
  */
 
@@ -55,7 +55,8 @@ export const useLeaderboard = (
 
 // useAdminGameSessions reads the admin solve-times list: every session
 // regardless of state (in-progress, completed-unposted, posted), newest first,
-// with the admin-only ip_address. Behind the admin token via adminRequest.
+// with the admin-only IP address and user agent. Behind the admin token via
+// adminRequest.
 export const useAdminGameSessions = (
   options: Omit<
     UseQueryOptions<ListAdminGameSessionsResponse, ApiError>,
@@ -69,15 +70,37 @@ export const useAdminGameSessions = (
   });
 };
 
-// useDeleteGameSession deletes one solve session (the admin cleanup for a bad
-// actor). The DELETE returns 204 (no body), so the mutation resolves to void;
-// on success it invalidates the admin sessions list to drop the deleted row.
-export const useDeleteGameSession = () => {
+// useHideGameSession removes one posted solve from public leaderboards while
+// retaining its time for the solver. The POST returns 204 (no body), so the
+// mutation resolves to void; on success the admin list refetches the retained
+// row with on_leaderboard false.
+export const useHideGameSession = () => {
   const queryClient = useQueryClient();
 
   return useMutation<void, ApiError, { sessionId: string }>({
     mutationFn: ({ sessionId }) =>
-      adminRequest(`/admin/games/sessions/${sessionId}`, { method: "DELETE" }),
+      adminRequest(`/admin/games/sessions/${sessionId}/hide`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: [QueryKey.AdminGameSessions],
+      });
+    },
+  });
+};
+
+// useUnhideGameSession restores one admin-hidden solve to the public
+// leaderboard. Only rows carrying hidden_at expose this action in the admin UI;
+// the backend leaves ordinary unposted solves unchanged.
+export const useUnhideGameSession = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation<void, ApiError, { sessionId: string }>({
+    mutationFn: ({ sessionId }) =>
+      adminRequest(`/admin/games/sessions/${sessionId}/unhide`, {
+        method: "POST",
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: [QueryKey.AdminGameSessions],

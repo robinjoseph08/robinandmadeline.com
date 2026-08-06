@@ -16,6 +16,8 @@ import { SquareModel } from "./types";
 interface Props {
   /** Whether this square is the cursor. */
   isSelected: boolean;
+  /** Whether this square is in a clue referenced by the selected clue. */
+  isInReferencedWord: boolean;
   /** Whether this square is in the selected word (but not the cursor). */
   isInSelectedWord: boolean;
   onMouseDown: (e: MouseEvent, square: SquareModel) => void;
@@ -24,6 +26,7 @@ interface Props {
 
 const Square = memo(function Square({
   isSelected,
+  isInReferencedWord,
   isInSelectedWord,
   onMouseDown,
   square,
@@ -36,6 +39,9 @@ const Square = memo(function Square({
         square.row === 0 && "border-t",
         // This is a block.
         square.type === "block" && "bg-ink",
+        // A referenced answer uses the site's romantic rose tint. The selected
+        // cursor and word remain blue and override this treatment below.
+        square.type !== "block" && isInReferencedWord && "bg-rose-soft",
         // This is the selected square.
         square.type !== "block" && isSelected && "bg-secondary",
         // This is a square that's in the same word as the selection.
@@ -65,7 +71,7 @@ const Square = memo(function Square({
           </span>
         )}
         {square.solution !== undefined && (
-          <span className="absolute inset-0 flex items-end justify-center pb-[6cqw] text-[60cqw] font-bold leading-none">
+          <span className="absolute inset-0 flex items-end justify-center pb-[16cqw] text-[60cqw] font-bold leading-none">
             {square.solution}
           </span>
         )}

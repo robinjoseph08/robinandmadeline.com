@@ -119,6 +119,169 @@ const onLeaderboardMigrationName = "20260614130000"
 // from display_name. It then runs the down and asserts the column is dropped, so
 // a regression in either direction of this single migration is caught by name
 // rather than only transitively.
+func TestHiddenGameSessionMigration_RefusesRollbackWhileModeratedRowsExist(t *testing.T) {
+	db := scratchDB(t)
+	ctx := context.Background()
+
+	// Apply every migration before hidden_at as one group, then hidden_at alone
+	// as a second group. Rolling back the second group must leave game_sessions
+	// intact so its privacy-preserving data transform can be observed.
+	before := migrate.NewMigrations()
+	withTarget := migrate.NewMigrations()
+	var found bool
+	for _, m := range migrations.Migrations.Sorted() {
+		withTarget.Add(m)
+		if m.Name == "20260622000000" {
+			found = true
+			break
+		}
+		before.Add(m)
+	}
+	require.True(t, found, "the hidden_at migration must be registered")
+
+	beforeMigrator := migrate.NewMigrator(db, before, migrate.WithMarkAppliedOnSuccess(true))
+	require.NoError(t, beforeMigrator.Init(ctx))
+	_, err := beforeMigrator.Migrate(ctx)
+	require.NoError(t, err, "apply migrations before hidden_at")
+	require.False(t, columnExists(t, db, "hidden_at"))
+
+	targetMigrator := migrate.NewMigrator(db, withTarget, migrate.WithMarkAppliedOnSuccess(true))
+	require.NoError(t, targetMigrator.Init(ctx))
+	_, err = targetMigrator.Migrate(ctx)
+	require.NoError(t, err, "apply hidden_at migration")
+	require.True(t, columnExists(t, db, "hidden_at"))
+
+	stamp := "2026-06-22T12:00:00Z"
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO game_sessions (
+			id, puzzle_id, ip_address, difficulty, elapsed_ms, completed_at,
+			on_leaderboard, display_name, hidden_at, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		"00000000-0000-4000-8000-0000000000aa",
+		"wedding-mini-v1",
+		"203.0.113.7",
+		"easy",
+		5000,
+		stamp,
+		false,
+		"Hidden Robin",
+		stamp,
+		stamp,
+		stamp,
+	)
+	require.NoError(t, err)
+
+	_, err = targetMigrator.Rollback(ctx)
+	require.Error(t, err, "rollback must refuse to discard the moderation marker")
+	assert.Contains(t, err.Error(), "cannot drop game_sessions hidden_at while 1 hidden sessions exist")
+	assert.True(t, tableExists(t, db, "game_sessions"))
+	assert.True(t, columnExists(t, db, "hidden_at"), "the transaction keeps the moderation column when rollback is refused")
+
+	var hiddenAt *string
+	require.NoError(t, db.NewRaw(
+		"SELECT hidden_at::text FROM game_sessions WHERE id = ?",
+		"00000000-0000-4000-8000-0000000000aa",
+	).Scan(ctx, &hiddenAt))
+	assert.NotNil(t, hiddenAt, "the moderated row remains marked hidden")
+
+	// Once the moderated row is explicitly removed, the down migration can run
+	// cleanly. This proves the refusal is data-dependent, not an unusable down.
+	_, err = db.NewDelete().Table("game_sessions").
+		Where("id = ?", "00000000-0000-4000-8000-0000000000aa").
+		Exec(ctx)
+	require.NoError(t, err)
+	_, err = targetMigrator.Rollback(ctx)
+	require.NoError(t, err, "rollback after removing hidden rows")
+	assert.False(t, columnExists(t, db, "hidden_at"))
+}
+
+func TestGameSessionUserAgentMigration_BackfillsAndDropsColumn(t *testing.T) {
+	db := scratchDB(t)
+	ctx := context.Background()
+
+	before := migrate.NewMigrations()
+	withTarget := migrate.NewMigrations()
+	var found bool
+	for _, m := range migrations.Migrations.Sorted() {
+		withTarget.Add(m)
+		if m.Name == "20260622000001" {
+			found = true
+			break
+		}
+		before.Add(m)
+	}
+	require.True(t, found, "the user_agent migration must be registered")
+
+	beforeMigrator := migrate.NewMigrator(db, before, migrate.WithMarkAppliedOnSuccess(true))
+	require.NoError(t, beforeMigrator.Init(ctx))
+	_, err := beforeMigrator.Migrate(ctx)
+	require.NoError(t, err, "apply migrations before user_agent")
+	require.False(t, columnExists(t, db, "user_agent"))
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO game_sessions (
+			id, puzzle_id, ip_address, difficulty, elapsed_ms, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, now(), now())
+	`,
+		"00000000-0000-4000-8000-0000000000bb",
+		"wedding-mini-v1",
+		"203.0.113.7",
+		"easy",
+		5000,
+	)
+	require.NoError(t, err)
+
+	targetMigrator := migrate.NewMigrator(db, withTarget, migrate.WithMarkAppliedOnSuccess(true))
+	require.NoError(t, targetMigrator.Init(ctx))
+	_, err = targetMigrator.Migrate(ctx)
+	require.NoError(t, err, "apply user_agent migration")
+	require.True(t, columnExists(t, db, "user_agent"))
+
+	var userAgent string
+	require.NoError(t, db.NewRaw(
+		"SELECT user_agent FROM game_sessions WHERE id = ?",
+		"00000000-0000-4000-8000-0000000000bb",
+	).Scan(ctx, &userAgent))
+	assert.Empty(t, userAgent, "existing sessions are backfilled with an empty user agent")
+
+	var columnDefault *string
+	require.NoError(t, db.NewRaw(`
+		SELECT column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'game_sessions'
+			AND column_name = 'user_agent'
+	`).Scan(ctx, &columnDefault))
+	require.NotNil(t, columnDefault, "the default must remain for rolling-deployment compatibility")
+	assert.Equal(t, "''::text", *columnDefault)
+
+	// Simulate an older application binary writing after the migration. It does
+	// not know about user_agent, so the retained default must keep the insert
+	// compatible while the deployment rolls forward.
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO game_sessions (
+			id, puzzle_id, ip_address, difficulty, elapsed_ms, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, now(), now())
+	`,
+		"00000000-0000-4000-8000-0000000000cc",
+		"wedding-mini-v1",
+		"203.0.113.8",
+		"medium",
+		7000,
+	)
+	require.NoError(t, err, "an old writer can omit user_agent after migration")
+	require.NoError(t, db.NewRaw(
+		"SELECT user_agent FROM game_sessions WHERE id = ?",
+		"00000000-0000-4000-8000-0000000000cc",
+	).Scan(ctx, &userAgent))
+	assert.Empty(t, userAgent, "the retained default fills user_agent for an old writer")
+
+	_, err = targetMigrator.Rollback(ctx)
+	require.NoError(t, err, "roll the user_agent migration back")
+	assert.False(t, columnExists(t, db, "user_agent"))
+}
+
 func TestOnLeaderboardMigration_BackfillsAndDropsColumn(t *testing.T) {
 	db := scratchDB(t)
 	ctx := context.Background()
@@ -149,7 +312,7 @@ func TestOnLeaderboardMigration_BackfillsAndDropsColumn(t *testing.T) {
 	require.NoError(t, beforeMigrator.Init(ctx))
 	_, err := beforeMigrator.Migrate(ctx)
 	require.NoError(t, err, "apply migrations before on_leaderboard")
-	require.False(t, columnExists(t, db, "game_sessions", "on_leaderboard"), "precondition: the column does not exist yet")
+	require.False(t, columnExists(t, db, "on_leaderboard"), "precondition: the column does not exist yet")
 
 	// Seed two completed solves that diverge on the name: one posted under the
 	// old implicit rule (display_name set), one completed-but-unposted (NULL).
@@ -169,7 +332,7 @@ func TestOnLeaderboardMigration_BackfillsAndDropsColumn(t *testing.T) {
 	require.NoError(t, targetMigrator.Init(ctx))
 	_, err = targetMigrator.Migrate(ctx)
 	require.NoError(t, err, "apply the on_leaderboard migration")
-	assert.True(t, columnExists(t, db, "game_sessions", "on_leaderboard"), "the column is added")
+	assert.True(t, columnExists(t, db, "on_leaderboard"), "the column is added")
 
 	flag := func(id string) bool {
 		t.Helper()
@@ -186,7 +349,7 @@ func TestOnLeaderboardMigration_BackfillsAndDropsColumn(t *testing.T) {
 	// (its backfilled data discarded with it).
 	_, err = targetMigrator.Rollback(ctx)
 	require.NoError(t, err, "roll the on_leaderboard migration back")
-	assert.False(t, columnExists(t, db, "game_sessions", "on_leaderboard"), "the down drops the column")
+	assert.False(t, columnExists(t, db, "on_leaderboard"), "the down drops the column")
 }
 
 // tableExists reports whether a table is present in the public schema.
@@ -203,12 +366,12 @@ func tableExists(t *testing.T, db *bun.DB, name string) bool {
 
 // columnExists reports whether a column is present on a table in the public
 // schema.
-func columnExists(t *testing.T, db *bun.DB, table, column string) bool {
+func columnExists(t *testing.T, db *bun.DB, column string) bool {
 	t.Helper()
 	var exists bool
 	err := db.NewRaw(
-		"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ? AND column_name = ?)",
-		table, column,
+		"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'game_sessions' AND column_name = ?)",
+		column,
 	).Scan(context.Background(), &exists)
 	require.NoError(t, err)
 	return exists

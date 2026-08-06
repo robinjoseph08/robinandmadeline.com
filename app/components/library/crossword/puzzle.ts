@@ -1,15 +1,40 @@
 // The authorable crossword puzzle format and its bridge to the solver's
-// GridModel. A puzzle is plain JSON-shaped data: one grid and answer string
-// shared by every difficulty, plus one clue set per difficulty (same answers,
-// different clue text). See puzzle-data.ts and puzzle-data-full.ts for the
-// live examples, and puzzles.ts for the slug registry that routes to them.
+// GridModel. A puzzle is plain JSON-shaped data: one grid and answer string,
+// an ordered subset of the supported difficulties, and one clue set for each
+// offered difficulty (same answers, different clue text). See puzzle-data.ts,
+// puzzle-data-full.ts, and puzzle-data-proposal.ts for live examples, and
+// puzzles.ts for the slug registry that routes to them.
 
+import {
+  GameDifficultyEasy,
+  GameDifficultyHard,
+  GameDifficultyMedium,
+  type GameDifficulty,
+} from "@/types/generated/models";
+
+import { parseClueReferences } from "./clueReferences";
 import { generateGridModel } from "./helpers";
 import type { Direction, GridModel } from "./types";
 
-export const DIFFICULTIES = ["easy", "medium", "hard"] as const;
+function defineAllDifficulties<const D extends readonly GameDifficulty[]>(
+  difficulties: D &
+    ([GameDifficulty] extends [D[number]]
+      ? unknown
+      : readonly ["missing generated GameDifficulty"]),
+): D {
+  return difficulties;
+}
 
-export type Difficulty = (typeof DIFFICULTIES)[number];
+export const DIFFICULTIES = defineAllDifficulties([
+  GameDifficultyEasy,
+  GameDifficultyMedium,
+  GameDifficultyHard,
+] as const);
+
+export type Difficulty = GameDifficulty;
+
+/** A puzzle must offer at least one difficulty, easiest first. */
+export type PuzzleDifficulties = readonly [Difficulty, ...Difficulty[]];
 
 /** Guest-facing labels, shared by the dialogs, menus, and leaderboard. */
 export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
@@ -29,19 +54,59 @@ export interface ClueSet {
   down: Record<string, string>;
 }
 
+export interface PuzzleCell {
+  row: number;
+  col: number;
+}
+
+export interface ProposalCelebration {
+  kind: "proposal";
+  /** Accessible text represented by the animated cells. */
+  message: string;
+  /** Solved cells extracted in reading order; blocks represent spaces. */
+  cells: PuzzleCell[];
+  /** Cell counts for the compact, multi-line arrangement on narrow screens. */
+  compactLineLengths: number[];
+}
+
 export interface CrosswordPuzzle {
   /** Stable identifier, used to key saved progress in localStorage. */
   id: string;
   title: string;
   width: number;
   height: number;
+  /** Difficulties this puzzle offers, ordered from easiest to hardest. */
+  difficulties: PuzzleDifficulties;
   /**
    * One character per square in reading order: an uppercase answer letter,
    * or "." for a block.
    */
   solution: string;
-  /** One clue set per difficulty; all difficulties share the grid and answers. */
-  clues: Record<Difficulty, ClueSet>;
+  /** Clue sets for the offered difficulties; all share the grid and answers. */
+  clues: Partial<Record<Difficulty, ClueSet>>;
+  /** Optional solve treatment owned by this puzzle definition. */
+  celebration?: ProposalCelebration;
+}
+
+type PuzzleDefinition<D extends PuzzleDifficulties> = Omit<
+  CrosswordPuzzle,
+  "difficulties" | "clues"
+> & {
+  difficulties: D;
+  clues: { [K in D[number]]: ClueSet } & Partial<
+    Record<Exclude<Difficulty, D[number]>, never>
+  >;
+};
+
+/**
+ * Define a shipped puzzle while keeping its difficulty list and clue-set keys
+ * tied together at compile time. Runtime validation still checks clue numbers
+ * and protects dynamically loaded or hand-edited data.
+ */
+export function definePuzzle<const D extends PuzzleDifficulties>(
+  puzzle: PuzzleDefinition<D>,
+): PuzzleDefinition<D> {
+  return puzzle;
 }
 
 /**
@@ -108,7 +173,41 @@ export function validatePuzzle(puzzle: CrosswordPuzzle): string[] {
     return problems;
   }
 
-  // Compute the words the grid actually contains, then require every
+  if (puzzle.difficulties.length === 0) {
+    problems.push("puzzle must offer at least one difficulty");
+  }
+  if (new Set(puzzle.difficulties).size !== puzzle.difficulties.length) {
+    problems.push("puzzle difficulties must not contain duplicates");
+  }
+  const orderedDifficulties = [...puzzle.difficulties].sort(
+    (a, b) => DIFFICULTIES.indexOf(a) - DIFFICULTIES.indexOf(b),
+  );
+  if (
+    puzzle.difficulties.some(
+      (difficulty, index) => difficulty !== orderedDifficulties[index],
+    )
+  ) {
+    problems.push("puzzle difficulties must be ordered easiest to hardest");
+  }
+  for (const difficulty of puzzle.difficulties) {
+    if (!DIFFICULTIES.includes(difficulty)) {
+      problems.push(`unknown puzzle difficulty "${difficulty}"`);
+    }
+  }
+  for (const key of Object.keys(puzzle.clues)) {
+    if (!DIFFICULTIES.includes(key as Difficulty)) {
+      problems.push(`puzzle has clues for unknown difficulty "${key}"`);
+      continue;
+    }
+    const difficulty = key as Difficulty;
+    if (!puzzle.difficulties.includes(difficulty)) {
+      problems.push(
+        `puzzle has clues for unavailable difficulty "${difficulty}"`,
+      );
+    }
+  }
+
+  // Compute the words the grid actually contains, then require every offered
   // difficulty's clue sets to cover exactly those words.
   const grid = generateGridModel(puzzle.width, puzzle.height, puzzle.solution);
 
@@ -139,7 +238,7 @@ export function validatePuzzle(puzzle: CrosswordPuzzle): string[] {
     }
   }
 
-  for (const difficulty of DIFFICULTIES) {
+  for (const difficulty of puzzle.difficulties) {
     const clueSet = puzzle.clues[difficulty];
     if (!clueSet) {
       problems.push(`missing clue set for difficulty "${difficulty}"`);
@@ -160,7 +259,53 @@ export function validatePuzzle(puzzle: CrosswordPuzzle): string[] {
             `${difficulty} has a clue for ${number} ${direction}, but the grid has no such word`,
           );
         }
+        const clue = clueSet[direction]?.[number];
+        if (!clue) {
+          continue;
+        }
+        for (const reference of parseClueReferences(clue)) {
+          if (!wordNumbers[reference.direction].has(reference.number)) {
+            problems.push(
+              `${difficulty} clue ${number} ${direction} references ${reference.number} ${reference.direction}, but the grid has no such word`,
+            );
+          }
+        }
       }
+    }
+  }
+
+  if (puzzle.celebration) {
+    const compactCellCount = puzzle.celebration.compactLineLengths.reduce(
+      (total, length) => total + length,
+      0,
+    );
+    if (
+      puzzle.celebration.compactLineLengths.length === 0 ||
+      puzzle.celebration.compactLineLengths.some(
+        (length) => !Number.isInteger(length) || length <= 0,
+      ) ||
+      compactCellCount !== puzzle.celebration.cells.length
+    ) {
+      problems.push(
+        "celebration compact line lengths must be positive integers that cover every celebration cell",
+      );
+    }
+
+    const extracted: string[] = [];
+    for (const { row, col } of puzzle.celebration.cells) {
+      if (row < 0 || row >= puzzle.height || col < 0 || col >= puzzle.width) {
+        problems.push(
+          `celebration cell at row ${row}, column ${col} is outside the grid`,
+        );
+        continue;
+      }
+      extracted.push(puzzle.solution[row * puzzle.width + col]);
+    }
+    const message = extracted.join("").replace(/\.+/g, " ").trim();
+    if (message !== puzzle.celebration.message) {
+      problems.push(
+        `celebration cells spell "${message}", expected "${puzzle.celebration.message}"`,
+      );
     }
   }
 

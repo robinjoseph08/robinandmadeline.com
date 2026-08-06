@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
@@ -67,7 +68,8 @@ func newGamesServer(t *testing.T, db *bun.DB, trustProxyHeaders bool) http.Handl
 // createSessionOnServer posts a session through an http.Handler (the full
 // server) with the given remote address and headers, and returns the new
 // session id. remoteAddr shapes the socket peer the IPExtractor sees; "" leaves
-// httptest's default 192.0.2.1:1234.
+// httptest's default 192.0.2.1:1234. Headers also shape server-captured request
+// metadata such as User-Agent.
 func createSessionOnServer(t *testing.T, h http.Handler, remoteAddr string, headers map[string]string) string {
 	t.Helper()
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/games/sessions",
@@ -153,8 +155,8 @@ func TestPostGameSession_AnonymousCreates201WithNullParty(t *testing.T) {
 	assert.False(t, resp.OnLeaderboard, "a fresh session has not opted into the leaderboard")
 	assert.NotEmpty(t, sessionRow(t, db, resp.ID).IPAddress, "the IP is captured server-side")
 
-	// The IP is stored but never serialized: a session response carries no
-	// ip_address key (the model field is json:"-").
+	// Client metadata is stored but never serialized: a session response carries
+	// no ip_address or user_agent key (the model fields are json:"-").
 	asMap := make(map[string]json.RawMessage)
 	rec := doGamesRequest(t, e, gamesRequest{
 		method: http.MethodPost,
@@ -164,6 +166,7 @@ func TestPostGameSession_AnonymousCreates201WithNullParty(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code)
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &asMap))
 	assert.NotContains(t, asMap, "ip_address")
+	assert.NotContains(t, asMap, "user_agent")
 }
 
 func TestPostGameSession_ValidGuestTokenAttachesParty(t *testing.T) {
@@ -227,6 +230,38 @@ func TestPostGameSession_BinderRejectsBadPayloads(t *testing.T) {
 		rec := doGamesRequest(t, e, gamesRequest{method: http.MethodPost, path: "/api/games/sessions", body: body})
 		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "%s: %s", name, rec.Body.String())
 	}
+}
+
+func TestPostGameSession_TrimsAndCapturesNormalUserAgentServerSide(t *testing.T) {
+	_, _, db := newServices(t)
+	h := newGamesServer(t, db, false)
+
+	id := createSessionOnServer(t, h, "192.0.2.55:9999", map[string]string{
+		"User-Agent": " \tMozilla/5.0 (X11; Linux x86_64) CrosswordBrowser/1.0 \t",
+	})
+	assert.Equal(t, "Mozilla/5.0 (X11; Linux x86_64) CrosswordBrowser/1.0", sessionRow(t, db, id).UserAgent)
+}
+
+func TestPostGameSession_StoresMissingUserAgentAsEmpty(t *testing.T) {
+	_, _, db := newServices(t)
+	h := newGamesServer(t, db, false)
+
+	id := createSessionOnServer(t, h, "192.0.2.56:9999", nil)
+	assert.Empty(t, sessionRow(t, db, id).UserAgent)
+}
+
+func TestPostGameSession_ClampsMultibyteUserAgentWithoutSplittingUTF8(t *testing.T) {
+	_, _, db := newServices(t)
+	h := newGamesServer(t, db, false)
+
+	prefix := strings.Repeat("é", 255)
+	id := createSessionOnServer(t, h, "192.0.2.57:9999", map[string]string{
+		"User-Agent": "  " + prefix + "🙂suffix  ",
+	})
+	userAgent := sessionRow(t, db, id).UserAgent
+	assert.Equal(t, prefix, userAgent)
+	assert.LessOrEqual(t, len(userAgent), 512)
+	assert.True(t, utf8.ValidString(userAgent))
 }
 
 func TestPostGameSession_CapturesFlyClientIPBehindTrustedProxy(t *testing.T) {
@@ -457,6 +492,7 @@ func TestPostLeaderboard_FullFlowOverHTTP(t *testing.T) {
 	require.Len(t, board.Items, 1)
 	assert.NotContains(t, board.Items[0], "id")
 	assert.NotContains(t, board.Items[0], "ip_address")
+	assert.NotContains(t, board.Items[0], "user_agent")
 	assert.NotContains(t, board.Items[0], "party_id")
 	assert.Contains(t, board.Items[0], "display_name")
 	assert.Contains(t, board.Items[0], "difficulty")
@@ -644,6 +680,39 @@ func TestGetLeaderboard_ReturnsViewerForSolversOwnSession(t *testing.T) {
 	assert.EqualValues(t, 60000, board.Viewer.Entry.ElapsedMS)
 	// The viewer is returned even though it is already in items at index rank-1.
 	assert.Equal(t, "Bob", board.Items[board.Viewer.Rank-1].DisplayName)
+}
+
+func TestGetLeaderboard_HiddenSolveIsVisibleOnlyToItsOwnSessionBearer(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+
+	hidden := postSessionT(t, svc, "Robin", models.GameDifficultyEasy, 5000)
+	postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	require.NoError(t, svc.HideSession(ctx(), hidden.ID))
+
+	// Anonymous reads exclude the hidden row.
+	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=easy"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var board games.ListLeaderboardEntriesResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &board))
+	assert.Equal(t, 1, board.Total)
+	require.Len(t, board.Items, 1)
+	assert.Equal(t, "Alice", board.Items[0].DisplayName)
+	assert.Nil(t, board.Viewer)
+
+	// The exact hidden session bearer gets a personalized response containing
+	// public rows plus its own retained solve.
+	rec = doGamesRequest(t, e, gamesRequest{method: http.MethodGet, path: "/api/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=easy&session_id=" + hidden.ID})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &board))
+	assert.Equal(t, 2, board.Total)
+	require.Len(t, board.Items, 2)
+	assert.Equal(t, "Robin", board.Items[0].DisplayName)
+	assert.Equal(t, "Alice", board.Items[1].DisplayName)
+	require.NotNil(t, board.Viewer)
+	assert.Equal(t, 1, board.Viewer.Rank)
+	assert.True(t, board.Viewer.InItems)
+	assert.Equal(t, "Robin", board.Viewer.Entry.DisplayName)
 }
 
 func TestGetLeaderboard_ViewerScopedToDifficultyTabOverHTTP(t *testing.T) {

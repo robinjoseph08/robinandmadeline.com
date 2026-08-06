@@ -8,6 +8,8 @@ export interface CrosswordProgress {
   /** Entries string in the entriesFromGrid format ("." block, "?" empty). */
   entries: string;
   difficulty: Difficulty;
+  /** True after the guest advances past this puzzle's one-time solve reveal. */
+  celebrationAcknowledged?: boolean;
 }
 
 function storageKey(puzzleId: string): string {
@@ -40,7 +42,10 @@ export function loadProgress(puzzleId: string): CrosswordProgress | null {
     return null;
   }
 
-  const { entries, difficulty } = parsed as Record<string, unknown>;
+  const { entries, difficulty, celebrationAcknowledged } = parsed as Record<
+    string,
+    unknown
+  >;
   if (typeof entries !== "string") {
     return null;
   }
@@ -48,7 +53,20 @@ export function loadProgress(puzzleId: string): CrosswordProgress | null {
     return null;
   }
 
-  return { entries, difficulty: difficulty as Difficulty };
+  return {
+    entries,
+    difficulty: difficulty as Difficulty,
+    celebrationAcknowledged: celebrationAcknowledged === true,
+  };
+}
+
+export function clearProgress(puzzleId: string): void {
+  try {
+    localStorage.removeItem(storageKey(puzzleId));
+  } catch {
+    // Storage may be unavailable. The in-memory reset still works for this
+    // visit even if the browser refuses to remove the persisted copy.
+  }
 }
 
 export function saveProgress(

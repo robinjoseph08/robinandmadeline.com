@@ -323,17 +323,13 @@ var publicPageMeta = map[string]shellMeta{
 	"/rsvp":     {label: "RSVP", description: "RSVP to Robin and Madeline's wedding on April 10, 2027."},
 }
 
-// puzzlePageTitles maps a /games/:slug puzzle slug to the title its page shows.
-// Each puzzle is a distinct page, so it gets its own title. The pages are gated
-// client-side by RequireGamesAccess today, so they are also served noindex (see
-// injectMeta); once that gate is removed and the games are public, they should be
-// indexed like the /games landing they hang off. Mirror these with the
-// PUZZLES_BY_SLUG registry (app/components/library/crossword/puzzles.ts) and the
-// usePageTitle(puzzle?.title) call (app/components/pages/Crossword.tsx); keep them
-// in sync.
+// puzzlePageTitles maps each publicly playable /games/:slug puzzle to the title
+// its page shows. Known puzzles are indexable; unknown and retired slugs remain
+// noindex even though the frontend route serves their friendly not-found page.
+// Mirror this with PUZZLES_BY_SLUG (app/components/library/crossword/puzzles.ts)
+// and the usePageTitle(puzzle?.title) call (app/components/pages/Crossword.tsx).
 var puzzlePageTitles = map[string]string{
-	"mini":      "The Wedding Mini",
-	"crossword": "The Wedding Crossword",
+	"proposal": "The Proposal Crossword",
 }
 
 // The noindex routes that still get a title so a shared link previews sensibly.
@@ -389,10 +385,10 @@ type infoTitler interface {
 }
 
 // injectMeta overrides the shell's head per route. Indexed landing pages
-// (publicPageMeta) get their title, description, and canonical URL; puzzle pages
-// get their own title and canonical URL but are noindex while gated; the
-// token/UUID links and RSVP flow steps are noindex with a title and canonical
-// URL so a shared link previews correctly and its preview card links back to the
+// (publicPageMeta) get their title, description, and canonical URL; known puzzle
+// pages get their own title and canonical URL; unknown and retired puzzle slugs
+// stay noindex; the token/UUID links and RSVP flow steps are noindex with a
+// title and canonical URL so a shared link previews correctly and its preview card links back to the
 // same page; the login-gated admin routes get noindex alone. The info-collection
 // link's title carries the primary guest's first name (see infoPageName): a
 // deliberate exception to the otherwise guest-data-free previews, since the
@@ -417,18 +413,15 @@ func injectMeta(doc, urlPath, canonicalHost string, req *http.Request, titler in
 		return doc
 	}
 
-	// Puzzle pages (/games/:slug) are gated client-side by RequireGamesAccess,
-	// so every safe route-shape match is noindex, including an unknown slug that
-	// remains client-handled. Known puzzles additionally get their registry title
-	// and canonical URL. When the gate is removed and the
-	// games are public, drop addNoindex here so puzzles can be indexed.
-	if slug, ok := puzzleSlug(key); ok {
-		doc = addNoindex(doc)
+	// Known puzzle pages are public and indexable. Any other safe slug remains
+	// client-handled so the app can show its friendly not-found treatment, but is
+	// noindex because it is unknown or belongs to a retired puzzle.
+	if slug, ok := puzzleSlug(urlPath); ok {
 		if label, known := puzzlePageTitles[slug]; known {
 			doc = setHeadTitle(doc, label+titleSep+appName)
 			return setCanonicalURL(doc, canonicalHost, req, key)
 		}
-		return doc
+		return addNoindex(doc)
 	}
 
 	// Noindex routes. The token/UUID links and RSVP flow steps additionally get a
@@ -614,9 +607,15 @@ func infoMetadataToken(req *http.Request) (string, bool) {
 }
 
 // puzzleSlug returns the slug when p has the frontend /games/:puzzleSlug shape.
+// React Router matches the literal /games/ prefix case-insensitively, but the
+// dynamic slug remains opaque and case-sensitive to match PUZZLES_BY_SLUG.
 func puzzleSlug(p string) (string, bool) {
-	slug, ok := strings.CutPrefix(p, "/games/")
-	return slug, ok && isSafeDynamicSegment(slug)
+	const prefix = "/games/"
+	if len(p) <= len(prefix) || !equalASCIIFold(p[:len(prefix)], prefix) {
+		return "", false
+	}
+	slug := p[len(prefix):]
+	return slug, isSafeDynamicSegment(slug)
 }
 
 // absoluteURL builds the canonical absolute https URL for a route's og:url. It

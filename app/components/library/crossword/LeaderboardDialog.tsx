@@ -48,13 +48,13 @@ import { formatDuration } from "@/libraries/format";
 import { cn } from "@/libraries/utils";
 import type { LeaderboardEntry } from "@/types/generated/games";
 
-import { DIFFICULTIES, Difficulty, DIFFICULTY_LABELS } from "./puzzle";
+import { Difficulty, DIFFICULTY_LABELS, PuzzleDifficulties } from "./puzzle";
 
 interface LeaderboardDialogProps {
+  difficulties: PuzzleDifficulties;
   /**
    * The tab to open on: the difficulty the guest's solve was recorded at.
-   * The dialog is gated behind solving, so this always exists; "easy" is a
-   * defensive fallback only.
+   * Falls back to this puzzle's easiest available difficulty.
    */
   defaultDifficulty?: Difficulty;
   onOpenChange: (open: boolean) => void;
@@ -73,14 +73,19 @@ interface LeaderboardDialogProps {
 }
 
 export default function LeaderboardDialog({
-  defaultDifficulty = "easy",
+  defaultDifficulty,
+  difficulties,
   onOpenChange,
   open,
   puzzleId,
   puzzleTitle,
   sessionId,
 }: LeaderboardDialogProps) {
-  const [difficulty, setDifficulty] = useState<Difficulty>(defaultDifficulty);
+  const anchoredDifficulty =
+    defaultDifficulty && difficulties.includes(defaultDifficulty)
+      ? defaultDifficulty
+      : difficulties[0];
+  const [difficulty, setDifficulty] = useState<Difficulty>(anchoredDifficulty);
 
   // Re-anchor to the solve's own difficulty each time the dialog opens, so a
   // tab explored on a previous open doesn't stick (the render-time adjustment
@@ -89,7 +94,7 @@ export default function LeaderboardDialog({
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
-      setDifficulty(defaultDifficulty);
+      setDifficulty(anchoredDifficulty);
     }
   }
 
@@ -101,8 +106,8 @@ export default function LeaderboardDialog({
   );
 
   // The backend sends viewer as null when there is no eligible solver (a
-  // tab that is not the solver's, an anonymous read), so a falsy check is
-  // all that is needed before reading its rank.
+  // tab that is not the solver's, an anonymous read). A hidden solve appears
+  // only in the personalized response carrying its exact session bearer.
   const viewer = data?.viewer;
 
   // The list's own scroll container and the viewer's row within it, for the
@@ -189,7 +194,7 @@ export default function LeaderboardDialog({
             className="flex shrink-0 gap-1 rounded-md bg-secondary/20 p-1"
             role="group"
           >
-            {DIFFICULTIES.map((level) => (
+            {difficulties.map((level) => (
               <button
                 aria-pressed={difficulty === level}
                 className={cn(
@@ -214,7 +219,7 @@ export default function LeaderboardDialog({
             <p className="mt-4 text-sm text-muted-foreground" role="alert">
               We couldn't load the leaderboard. Please try again in a bit.
             </p>
-          ) : data.items.length === 0 ? (
+          ) : data.items.length === 0 && !viewer ? (
             <p className="mt-4 text-sm text-muted-foreground">
               No {DIFFICULTY_LABELS[difficulty].toLowerCase()} times posted yet.
               Be the first!
@@ -243,7 +248,9 @@ export default function LeaderboardDialog({
                   // rank falls within the displayed items; highlight that row
                   // rather than appending a duplicate below.
                   const isViewer =
-                    Boolean(viewer) && viewer!.rank === index + 1;
+                    Boolean(viewer) &&
+                    viewer!.in_items &&
+                    viewer!.rank === index + 1;
                   return (
                     // The index disambiguates entries that share a name and a
                     // completion timestamp (the backend dedupes neither); the
@@ -268,19 +275,21 @@ export default function LeaderboardDialog({
               {/* The solver's rank is past the displayed items: show their own
                   row anyway, separated, with its true number. (Only reachable
                   past the 500 cap, i.e. never at wedding scale.) */}
-              {viewer && viewer.rank > data.items.length && (
-                <>
-                  <div className="my-3 border-t border-dashed" />
-                  <ol className="space-y-1.5">
-                    <Row
-                      entry={viewer.entry}
-                      isViewer
-                      rank={viewer.rank}
-                      rowRef={viewerRowRef}
-                    />
-                  </ol>
-                </>
-              )}
+              {viewer &&
+                (viewer.in_items === false ||
+                  viewer.rank > data.items.length) && (
+                  <>
+                    <div className="my-3 border-t border-dashed" />
+                    <ol className="space-y-1.5">
+                      <Row
+                        entry={viewer.entry}
+                        isViewer
+                        rank={viewer.rank}
+                        rowRef={viewerRowRef}
+                      />
+                    </ol>
+                  </>
+                )}
             </div>
           )}
         </DialogBody>

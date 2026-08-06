@@ -59,10 +59,14 @@ func createPartyT(t *testing.T, svc *parties.Service, name string) *models.Party
 // startSessionT creates an anonymous session fixture on the mini puzzle.
 func startSessionT(t *testing.T, svc *games.Service, difficulty string) *models.GameSession {
 	t.Helper()
-	session, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
-		PuzzleID:   "wedding-mini-v1",
-		Difficulty: difficulty,
-	}, "", "203.0.113.7")
+	session, err := svc.CreateSession(ctx(), games.CreateGameSessionInput{
+		Payload: games.CreateGameSessionPayload{
+			PuzzleID:   "wedding-mini-v1",
+			Difficulty: difficulty,
+		},
+		IPAddress: "203.0.113.7",
+		UserAgent: "games-service-test",
+	})
 	require.NoError(t, err)
 	return session
 }
@@ -105,19 +109,24 @@ func sessionRow(t *testing.T, db *bun.DB, id string) *models.GameSession {
 	return row
 }
 
-func TestCreateSession_CapturesPuzzleDifficultyIPAndNullParty(t *testing.T) {
+func TestCreateSession_CapturesPuzzleDifficultyClientAndNullParty(t *testing.T) {
 	svc, _, db := newServices(t)
 
-	session, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
-		PuzzleID:   "wedding-mini-v1",
-		Difficulty: models.GameDifficultyMedium,
-	}, "", "203.0.113.7")
+	session, err := svc.CreateSession(ctx(), games.CreateGameSessionInput{
+		Payload: games.CreateGameSessionPayload{
+			PuzzleID:   "wedding-mini-v1",
+			Difficulty: models.GameDifficultyMedium,
+		},
+		IPAddress: "203.0.113.7",
+		UserAgent: "Mozilla/5.0 create-test",
+	})
 	require.NoError(t, err)
 
 	row := sessionRow(t, db, session.ID)
 	assert.Equal(t, "wedding-mini-v1", row.PuzzleID)
 	assert.Equal(t, models.GameDifficultyMedium, row.Difficulty)
 	assert.Equal(t, "203.0.113.7", row.IPAddress)
+	assert.Equal(t, "Mozilla/5.0 create-test", row.UserAgent)
 	assert.Nil(t, row.PartyID, "an anonymous solve has no party")
 	assert.EqualValues(t, 0, row.ElapsedMS)
 	assert.Nil(t, row.CompletedAt, "a fresh session is started-but-not-completed")
@@ -130,10 +139,15 @@ func TestCreateSession_AttachesPartyWhenAuthed(t *testing.T) {
 	svc, partySvc, db := newServices(t)
 	p := createPartyT(t, partySvc, "The Smiths")
 
-	session, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
-		PuzzleID:   "wedding-mini-v1",
-		Difficulty: models.GameDifficultyEasy,
-	}, p.ID, "203.0.113.7")
+	session, err := svc.CreateSession(ctx(), games.CreateGameSessionInput{
+		Payload: games.CreateGameSessionPayload{
+			PuzzleID:   "wedding-mini-v1",
+			Difficulty: models.GameDifficultyEasy,
+		},
+		PartyID:   p.ID,
+		IPAddress: "203.0.113.7",
+		UserAgent: "games-service-test",
+	})
 	require.NoError(t, err)
 
 	row := sessionRow(t, db, session.ID)
@@ -147,10 +161,15 @@ func TestCreateSession_StalePartyClaimDegradesToAnonymous(t *testing.T) {
 	// A guest token outlives its party row (the import recreates every party
 	// with fresh ids, an admin can delete one), so a claim naming a vanished
 	// party must create an anonymous session, not fail the party FK.
-	session, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
-		PuzzleID:   "wedding-mini-v1",
-		Difficulty: models.GameDifficultyEasy,
-	}, "00000000-0000-0000-0000-000000000000", "203.0.113.7")
+	session, err := svc.CreateSession(ctx(), games.CreateGameSessionInput{
+		Payload: games.CreateGameSessionPayload{
+			PuzzleID:   "wedding-mini-v1",
+			Difficulty: models.GameDifficultyEasy,
+		},
+		PartyID:   "00000000-0000-0000-0000-000000000000",
+		IPAddress: "203.0.113.7",
+		UserAgent: "games-service-test",
+	})
 	require.NoError(t, err)
 	assert.Nil(t, sessionRow(t, db, session.ID).PartyID, "the stale claim degrades to an anonymous session")
 }
@@ -363,10 +382,14 @@ func TestLeaderboard_ReturnsOnlyPostedEntriesFastestFirst(t *testing.T) {
 	// Started but never completed: must not appear either.
 	startSessionT(t, svc, models.GameDifficultyEasy)
 	// A different puzzle's entry stays on its own board.
-	other, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
-		PuzzleID:   "wedding-full-v1",
-		Difficulty: models.GameDifficultyEasy,
-	}, "", "203.0.113.7")
+	other, err := svc.CreateSession(ctx(), games.CreateGameSessionInput{
+		Payload: games.CreateGameSessionPayload{
+			PuzzleID:   "wedding-full-v1",
+			Difficulty: models.GameDifficultyEasy,
+		},
+		IPAddress: "203.0.113.7",
+		UserAgent: "games-service-test",
+	})
 	require.NoError(t, err)
 	_, err = update(svc, other.ID, 500, nil, true)
 	require.NoError(t, err)
@@ -416,50 +439,74 @@ func TestLeaderboard_CollectsCompletedTimesButOnlyShowsOptedIn(t *testing.T) {
 	assert.Equal(t, 2, completedCount, "both completed solves are stored, opted in or not")
 }
 
-func TestLeaderboard_VisibilityKeysOffTheFlagNotTheName(t *testing.T) {
-	svc, _, db := newServices(t)
+func TestLeaderboard_HiddenSolveIsPrivateToItsSessionBearer(t *testing.T) {
+	svc, _, _ := newServices(t)
 
-	// The opt-in is now the explicit on_leaderboard flag, NOT the old implicit
-	// "display_name is set" rule. The service never sets one without the other,
-	// so a divergent row can only be made by inserting it directly; do that to
-	// prove the list and the viewer-rank both filter on the flag. A revert of
-	// either query back to `display_name IS NOT NULL` would resurrect the ghost
-	// row below (a completed solve that carries a name but opted out, e.g. a
-	// future "remove from board but keep the time" action) and fail this test.
-	now := time.Now().Truncate(time.Microsecond)
-	ghost := &models.GameSession{
-		ID:            "00000000-0000-4000-8000-000000000abc",
-		PuzzleID:      "wedding-mini-v1",
-		IPAddress:     "203.0.113.7",
-		Difficulty:    models.GameDifficultyEasy,
-		ElapsedMS:     5000, // faster than the real entry, so an implicit-rule read would rank it first
-		CompletedAt:   pointerutil.Time(now),
-		OnLeaderboard: false,
-		DisplayName:   pointerutil.String("Ghost"),
-		CreatedAt:     now,
-		UpdatedAt:     now,
-	}
-	_, err := db.NewInsert().Model(ghost).Exec(ctx())
+	hidden := postSessionT(t, svc, "Robin", models.GameDifficultyEasy, 5000)
+	public := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	require.NoError(t, svc.HideSession(ctx(), hidden.ID))
+
+	// Anonymous and other-session reads show only the public entry.
+	entries, total, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
 	require.NoError(t, err)
-
-	// A genuinely opted-in solve sits beside the ghost.
-	postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
-
-	// The list shows only the opted-in entry; the faster ghost is absent.
-	entries, total, _, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{PuzzleID: "wedding-mini-v1"})
-	require.NoError(t, err)
-	assert.Equal(t, 1, total, "only the opted-in solve is counted, not the named-but-opted-out ghost")
+	assert.Equal(t, 1, total)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "Alice", entries[0].DisplayName)
+	assert.Nil(t, viewer)
 
-	// The ghost's own session_id yields no viewer: eligibility keys off the flag,
-	// so a named-but-opted-out solve is not on the board even to itself.
-	_, _, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+	entries, total, viewer, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
 		PuzzleID:  "wedding-mini-v1",
-		SessionID: pointerutil.String(ghost.ID),
+		SessionID: pointerutil.String(public.ID),
 	})
 	require.NoError(t, err)
-	assert.Nil(t, viewer, "an opted-out solve shows no viewer even with its own session_id")
+	assert.Equal(t, 1, total)
+	require.Len(t, entries, 1)
+	require.NotNil(t, viewer)
+	assert.True(t, viewer.InItems)
+	assert.Equal(t, "Alice", viewer.Entry.DisplayName)
+
+	// The exact hidden session bearer receives a personalized board containing
+	// public entries plus its own retained time. Other hidden rows stay excluded.
+	entries, total, viewer, err = svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String(hidden.ID),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "Robin", entries[0].DisplayName)
+	assert.Equal(t, "Alice", entries[1].DisplayName)
+	require.NotNil(t, viewer)
+	assert.True(t, viewer.InItems)
+	assert.Equal(t, 1, viewer.Rank)
+	assert.Equal(t, "Robin", viewer.Entry.DisplayName)
+	assert.EqualValues(t, 5000, viewer.Entry.ElapsedMS)
+}
+
+func TestPostToLeaderboard_DoesNotUnhideAnAdminHiddenSolve(t *testing.T) {
+	svc, _, db := newServices(t)
+	hidden := postSessionT(t, svc, "Robin", models.GameDifficultyEasy, 5000)
+	require.NoError(t, svc.HideSession(ctx(), hidden.ID))
+
+	retry, err := svc.PostToLeaderboard(ctx(), hidden.ID, games.PostLeaderboardPayload{DisplayName: "Robin"}, "")
+	require.NoError(t, err)
+	assert.False(t, retry.OnLeaderboard)
+	require.NotNil(t, retry.HiddenAt)
+	stored := sessionRow(t, db, hidden.ID)
+	assert.False(t, stored.OnLeaderboard)
+	require.NotNil(t, stored.HiddenAt)
+
+	// The DB constraint is the rollback-safe privacy boundary: an older app
+	// binary that knows only on_leaderboard cannot make a moderated row public.
+	_, err = db.NewUpdate().Model((*models.GameSession)(nil)).
+		Set("on_leaderboard = ?", true).
+		Where("id = ?", hidden.ID).Exec(ctx())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "game_sessions_hidden_not_on_leaderboard")
+
+	_, err = svc.PostToLeaderboard(ctx(), hidden.ID, games.PostLeaderboardPayload{DisplayName: "Other"}, "")
+	assertErrCode(t, err, errcodes.CodeConflict)
+	assert.False(t, sessionRow(t, db, hidden.ID).OnLeaderboard)
 }
 
 func TestGameSession_OnLeaderboardRequiresDisplayName(t *testing.T) {
@@ -512,10 +559,14 @@ func TestLeaderboard_FiltersByDifficulty(t *testing.T) {
 	}
 	// A faster easy solve on another puzzle: the difficulty filter must not
 	// loosen the puzzle scoping.
-	other, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
-		PuzzleID:   "wedding-full-v1",
-		Difficulty: models.GameDifficultyEasy,
-	}, "", "203.0.113.7")
+	other, err := svc.CreateSession(ctx(), games.CreateGameSessionInput{
+		Payload: games.CreateGameSessionPayload{
+			PuzzleID:   "wedding-full-v1",
+			Difficulty: models.GameDifficultyEasy,
+		},
+		IPAddress: "203.0.113.7",
+		UserAgent: "games-service-test",
+	})
 	require.NoError(t, err)
 	_, err = update(svc, other.ID, 500, nil, true)
 	require.NoError(t, err)
@@ -681,10 +732,14 @@ func TestLeaderboard_ViewerWrongPuzzleIsNil(t *testing.T) {
 
 	// A published solve on a different puzzle must never surface as the viewer of
 	// this puzzle's board (the defensive puzzle gate).
-	other, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
-		PuzzleID:   "wedding-full-v1",
-		Difficulty: models.GameDifficultyEasy,
-	}, "", "203.0.113.7")
+	other, err := svc.CreateSession(ctx(), games.CreateGameSessionInput{
+		Payload: games.CreateGameSessionPayload{
+			PuzzleID:   "wedding-full-v1",
+			Difficulty: models.GameDifficultyEasy,
+		},
+		IPAddress: "203.0.113.7",
+		UserAgent: "games-service-test",
+	})
 	require.NoError(t, err)
 	_, err = update(svc, other.ID, 500, nil, true)
 	require.NoError(t, err)

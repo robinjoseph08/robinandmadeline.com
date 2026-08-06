@@ -27,35 +27,82 @@ const DialogOverlay = React.forwardRef<
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
+function useVisualViewportBounds() {
+  const readBounds = React.useCallback(() => {
+    const viewport = window.visualViewport;
+    return viewport
+      ? {
+          height: viewport.height,
+          offsetLeft: viewport.offsetLeft,
+          offsetTop: viewport.offsetTop,
+          width: viewport.width,
+        }
+      : null;
+  }, []);
+  const [bounds, setBounds] = React.useState(readBounds);
+
+  React.useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) {
+      return;
+    }
+    const update = () => setBounds(readBounds());
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+    };
+  }, [readBounds]);
+
+  return bounds;
+}
+
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
-  <DialogPortal>
-    <DialogOverlay />
-    <DialogPrimitive.Content
-      className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid max-h-[90vh] w-full max-w-lg translate-x-[-50%] translate-y-[-50%] grid-rows-[auto_minmax(0,1fr)_auto] gap-4 overflow-hidden border bg-background p-0 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
-        className,
-      )}
-      ref={ref}
-      {...props}
-    >
-      {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 cursor-pointer rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring disabled:pointer-events-none">
-        <X className="h-4 w-4" />
-        <span className="sr-only">Close</span>
-      </DialogPrimitive.Close>
-    </DialogPrimitive.Content>
-  </DialogPortal>
-));
+>(({ className, children, style, ...props }, ref) => {
+  const visualViewport = useVisualViewportBounds();
+
+  return (
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogPrimitive.Content
+        className={cn(
+          "fixed left-[50%] top-[50dvh] z-50 flex max-h-[calc(100dvh-1rem)] w-full max-w-lg translate-x-[-50%] translate-y-[-50%] flex-col overflow-hidden border bg-background p-0 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
+          className,
+        )}
+        ref={ref}
+        style={{
+          ...style,
+          ...(visualViewport
+            ? {
+                left: `${visualViewport.offsetLeft + visualViewport.width / 2}px`,
+                maxHeight: `calc(${visualViewport.height}px - 1rem)`,
+                maxWidth: `min(32rem, calc(${visualViewport.width}px - 1rem))`,
+                top: `${visualViewport.offsetTop + visualViewport.height / 2}px`,
+              }
+            : null),
+        }}
+        {...props}
+      >
+        {children}
+        <DialogPrimitive.Close className="absolute right-4 top-4 cursor-pointer rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring disabled:pointer-events-none">
+          <X className="h-4 w-4" />
+          <span className="sr-only">Close</span>
+        </DialogPrimitive.Close>
+      </DialogPrimitive.Content>
+    </DialogPortal>
+  );
+});
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "flex flex-col gap-1.5 border-b px-6 py-4 text-left",
+        "flex shrink-0 flex-col gap-1.5 border-b px-6 py-4 text-left",
         className,
       )}
       {...props}
@@ -67,7 +114,10 @@ DialogHeader.displayName = "DialogHeader";
 function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("min-h-0 overflow-y-auto px-6 py-2", className)}
+      className={cn(
+        "min-h-0 flex-1 overflow-y-auto px-6 py-2 empty:hidden",
+        className,
+      )}
       {...props}
     />
   );
@@ -78,7 +128,7 @@ function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "flex flex-col-reverse gap-2 border-t px-6 py-4 sm:flex-row sm:justify-end",
+        "flex shrink-0 flex-col-reverse gap-2 border-t px-6 py-4 sm:flex-row sm:justify-end",
         className,
       )}
       {...props}

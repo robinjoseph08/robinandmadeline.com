@@ -9,9 +9,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { weddingFull } from "@/components/library/crossword/puzzle-data-full";
+import { proposal } from "@/components/library/crossword/puzzle-data-proposal";
 import { SETTINGS_STORAGE_KEY } from "@/components/library/crossword/settings";
 import Crossword from "@/components/pages/Crossword";
 import type { GameSession } from "@/types/generated/models";
@@ -30,6 +31,7 @@ vi.mock("@/libraries/api", async () => {
 const PROGRESS_KEY = "crossword:wedding-mini-v1:progress";
 const SOLUTION = ".KISSDANCEAPNEASPENTHARE.";
 const EMPTY_ENTRIES = SOLUTION.replace(/[A-Z]/g, "?");
+const PARTIAL_ENTRIES = `${SOLUTION.slice(0, 4)}${EMPTY_ENTRIES.slice(4)}`;
 
 /** The solution with every letter filled in except the last one (row 4, col 3). */
 const ALL_BUT_LAST = `${SOLUTION.slice(0, 23)}?.`;
@@ -131,6 +133,21 @@ function square(row: number, col: number) {
   return screen.getByTestId(`crossword-square-${row}-${col}`);
 }
 
+function stubMatchMedia(customKeyboard: boolean) {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches:
+      query === "(max-width: 767px), (any-pointer: coarse)" ||
+      query === "(max-width: 767px)"
+        ? customKeyboard
+        : query === "(min-width: 768px)"
+          ? !customKeyboard
+          : false,
+    media: query,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+}
+
 /** Open the "more" menu and switch to the given difficulty. */
 async function switchDifficulty(label: string) {
   fireEvent.click(screen.getByRole("button", { name: "More options" }));
@@ -143,6 +160,11 @@ describe("Crossword", () => {
     localStorage.clear();
     apiRequest.mockReset();
     mockApiRoutes();
+    stubMatchMedia(false);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   describe("start dialog", () => {
@@ -283,6 +305,34 @@ describe("Crossword", () => {
       ).toBeInTheDocument();
     });
 
+    it("recommends desktop only for large puzzles using the custom keyboard", () => {
+      stubMatchMedia(true);
+      const mobile = renderCrossword("proposal");
+      expect(
+        screen.getByRole("dialog", { name: /ready to solve/i }),
+      ).toHaveTextContent(/best and most accurate experience is on desktop/i);
+
+      mobile.unmount();
+      stubMatchMedia(false);
+      renderCrossword("proposal");
+      expect(
+        screen.getByRole("dialog", { name: /ready to solve/i }),
+      ).not.toHaveTextContent(
+        /best and most accurate experience is on desktop/i,
+      );
+    });
+
+    it("does not recommend desktop for a small mobile puzzle", () => {
+      stubMatchMedia(true);
+      renderCrossword();
+
+      expect(
+        screen.getByRole("dialog", { name: /ready to solve/i }),
+      ).not.toHaveTextContent(
+        /best and most accurate experience is on desktop/i,
+      );
+    });
+
     it("hides the timer readout when the guest opts out, display only", async () => {
       renderCrossword();
 
@@ -319,6 +369,20 @@ describe("Crossword", () => {
       expect(hiddenInput()).toHaveFocus();
       await user.keyboard("k");
       expect(square(0, 1)).toHaveTextContent("K");
+    });
+
+    it("selects the first incomplete square when resuming restored progress", async () => {
+      localStorage.setItem(
+        PROGRESS_KEY,
+        JSON.stringify({ entries: PARTIAL_ENTRIES, difficulty: "easy" }),
+      );
+
+      renderCrossword();
+      await resumeGame();
+
+      expect(square(0, 4)).toHaveClass("bg-secondary");
+      expect(square(0, 1)).not.toHaveClass("bg-secondary");
+      expect(hiddenInput()).toHaveFocus();
     });
 
     it("keeps the prior selection when resuming a paused solve", async () => {
@@ -389,12 +453,81 @@ describe("Crossword", () => {
       ).toBeInTheDocument();
       expect(screen.getAllByTestId(/^crossword-square-/)).toHaveLength(225);
       // Its first easy across clue shows, proving the clue sets are wired up.
-      const [number, text] = Object.entries(weddingFull.clues.easy.across).sort(
-        ([a], [b]) => parseInt(a, 10) - parseInt(b, 10),
-      )[0];
+      const [number, text] = Object.entries(
+        weddingFull.clues.easy!.across,
+      ).sort(([a], [b]) => parseInt(a, 10) - parseInt(b, 10))[0];
       expect(
         screen.getByRole("button", { name: `${number}. ${text}` }),
       ).toBeInTheDocument();
+    });
+
+    it("gives a large puzzle more page and clue width without enlarging its grid", async () => {
+      renderCrossword("proposal");
+      await startGame();
+
+      const section = screen
+        .getByRole("heading", { name: proposal.title })
+        .closest("section");
+      expect(section).toHaveClass(
+        "w-screen",
+        "md:w-[calc(100vw-2rem)]",
+        "max-w-7xl",
+      );
+      const playArea = screen.getByTestId("crossword-play-area");
+      expect(playArea.className).toContain(
+        "xl:grid-cols-[minmax(0,36rem)_minmax(0,1fr)]",
+      );
+      expect(gridEl().parentElement).toHaveClass("w-screen", "md:max-w-xl");
+    });
+
+    it("renders the proposal puzzle at its slug", async () => {
+      renderCrossword("proposal");
+      await startGame();
+
+      expect(
+        screen.getByRole("heading", { name: proposal.title }),
+      ).toBeInTheDocument();
+      expect(screen.getAllByTestId(/^crossword-square-/)).toHaveLength(225);
+      expect(
+        screen.getByRole("button", {
+          name: /1\. ___-flop\s+\(also known as a chappal in India\)/,
+        }),
+      ).toBeInTheDocument();
+    });
+
+    it("offers only easy and hard for the proposal puzzle", async () => {
+      renderCrossword("proposal");
+
+      const startDialog = screen.getByRole("dialog", {
+        name: /ready to solve/i,
+      });
+      expect(
+        within(startDialog).getByRole("button", { name: "Easy" }),
+      ).toBeInTheDocument();
+      expect(
+        within(startDialog).queryByRole("button", { name: "Medium" }),
+      ).not.toBeInTheDocument();
+      fireEvent.click(
+        within(startDialog).getByRole("button", { name: "Hard" }),
+      );
+      await startGame();
+
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/games/sessions",
+        expect.objectContaining({
+          method: "POST",
+          body: { puzzle_id: "proposal-v1", difficulty: "hard" },
+        }),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "More options" }));
+      expect(
+        await screen.findByRole("button", { name: "Easy" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Medium" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Hard" })).toBeInTheDocument();
     });
 
     it("shows the not-found message for an unknown puzzle slug", () => {
@@ -425,7 +558,7 @@ describe("Crossword", () => {
       // grid size. A fixed pixel font would be wrong at one extreme or the
       // other, so lock the mechanism in.
       const letter = within(square(0, 1)).getByText("K");
-      expect(letter.className).toContain("cqw]");
+      expect(letter).toHaveClass("pb-[16cqw]");
       expect(letter.parentElement?.className).toContain("@container");
       const clueNumber = within(square(0, 1)).getByText("1");
       expect(clueNumber.className).toContain("cqw]");
@@ -592,6 +725,318 @@ describe("Crossword", () => {
       expect(square(1, 0)).toHaveTextContent("D");
     });
 
+    it("highlights a referenced clue and answer with a distinct treatment", async () => {
+      renderCrossword("proposal");
+      await startGame();
+
+      const source = screen.getByRole("button", {
+        name: `45. ${proposal.clues.easy!.across["45"]}`,
+      });
+      fireEvent.click(source);
+
+      const referenced = screen.getByRole("button", {
+        name: `43. ${proposal.clues.easy!.across["43"]}`,
+      });
+      expect(referenced).toHaveClass("bg-rose-soft");
+      expect(referenced.className).not.toMatch(/ring-|text-foreground/);
+      for (const col of [5, 6, 7]) {
+        expect(square(8, col)).toHaveClass("bg-rose-soft");
+      }
+      expect(source).toHaveClass("bg-secondary/50");
+      expect(referenced).not.toHaveClass("bg-secondary/50");
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: `44. ${proposal.clues.easy!.across["44"]}`,
+        }),
+      );
+      expect(referenced).not.toHaveClass("bg-rose-soft");
+      for (const col of [5, 6, 7]) {
+        expect(square(8, col)).not.toHaveClass("bg-rose-soft");
+      }
+    });
+
+    it("shows a clue-only mobile banner and toggles direction in place", async () => {
+      stubMatchMedia(true);
+      renderCrossword();
+      await startGame();
+
+      const clueBar = screen.getByTestId("crossword-mobile-clue-bar");
+      const keyboard = screen.getByTestId("crossword-mobile-keyboard");
+      expect(clueBar).not.toHaveTextContent("1 A");
+      expect(clueBar).toHaveTextContent(/Smooch shared at the altar/);
+      expect(
+        within(clueBar).getByRole("button", {
+          name: "Switch to down clues",
+        }),
+      ).toBeInTheDocument();
+      expect(hiddenInput()).toHaveAttribute("inputmode", "none");
+
+      fireEvent.click(
+        within(keyboard).getByRole("button", { name: "Enter K" }),
+      );
+      expect(square(0, 1)).toHaveTextContent("K");
+      fireEvent.click(
+        within(keyboard).getByRole("button", { name: "Delete letter" }),
+      );
+      expect(square(0, 1)).not.toHaveTextContent("K");
+
+      fireEvent.click(
+        within(clueBar).getByRole("button", {
+          name: "Switch to down clues",
+        }),
+      );
+      expect(square(0, 1)).toHaveClass("bg-secondary");
+      expect(clueBar).toHaveTextContent(/Greek letter after iota/);
+      expect(screen.getByTestId("crossword-solving-status")).toHaveTextContent(
+        /1 down: Greek letter after iota\. Row 1, column 2, blank\./i,
+      );
+
+      fireEvent.click(
+        within(clueBar).getByRole("button", { name: "Next clue" }),
+      );
+      expect(square(0, 2)).toHaveClass("bg-secondary");
+      expect(clueBar).toHaveTextContent(/Like some circles and voices/);
+      expect(screen.getByTestId("crossword-solving-status")).toHaveTextContent(
+        /2 down: Like some circles and voices\. Row 1, column 3, blank\./i,
+      );
+    });
+
+    it("keeps the inline clue list, toolbar, answer squares, and shared keyboard solveable", async () => {
+      stubMatchMedia(true);
+      renderCrossword();
+      await startGame();
+
+      const listToggle = screen.getByRole("button", { name: "List all clues" });
+      fireEvent.click(listToggle);
+      expect(
+        screen.getByRole("button", { name: "Show crossword grid" }),
+      ).toHaveAttribute("aria-pressed", "true");
+      const allClues = screen.getByTestId("crossword-all-clues");
+      const playArea = screen.getByTestId("crossword-play-area");
+      expect(playArea).toHaveClass("block", "md:grid");
+      expect(playArea.parentElement).toHaveClass("mt-0");
+      expect(playArea.parentElement).not.toHaveClass(
+        "mt-3",
+        "mb-[17rem]",
+        "min-h-[calc(100dvh-3.625rem)]",
+        "pb-[var(--crossword-mobile-dock-height)]",
+      );
+      expect(allClues).not.toHaveClass("overflow-y-auto", "rounded-md");
+      expect(screen.getByTestId("crossword-dev-controls")).toBeInTheDocument();
+      expect(
+        within(allClues)
+          .getAllByRole("heading")
+          .map((heading) => heading.textContent),
+      ).toEqual(["Across", "Down"]);
+      expect(
+        screen.getByRole("application", { name: /crossword grid/i }),
+      ).toBeInTheDocument();
+      expect(gridEl().parentElement).toHaveClass("invisible");
+      expect(
+        screen.getByRole("button", { name: "Pause timer" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Settings" }),
+      ).toBeInTheDocument();
+      const keyboard = screen.getByTestId("crossword-mobile-keyboard");
+
+      const firstSquare = within(allClues).getByRole("button", {
+        name: /1 Down answer, square 1 of 5, empty/,
+      });
+      fireEvent.click(firstSquare);
+      fireEvent.click(
+        within(keyboard).getByRole("button", { name: "Enter K" }),
+      );
+      const downClue = within(allClues).getByRole("button", {
+        name: /1\. Greek letter after iota/,
+      });
+      fireEvent.click(downClue);
+      const secondSquare = within(allClues).getByRole("button", {
+        name: /1 Down answer, square 2 of 5, empty/,
+      });
+      expect(secondSquare).toHaveAttribute("aria-current", "true");
+      fireEvent.click(secondSquare);
+      expect(secondSquare).toHaveAttribute("aria-current", "true");
+      expect(square(1, 1)).toHaveClass("bg-secondary");
+
+      fireEvent.click(
+        within(keyboard).getByRole("button", { name: "Enter A" }),
+      );
+      expect(square(1, 1)).toHaveTextContent("A");
+      expect(secondSquare).toHaveTextContent("A");
+      fireEvent.click(
+        within(keyboard).getByRole("button", { name: "Delete letter" }),
+      );
+      expect(square(1, 1)).not.toHaveTextContent("A");
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Show crossword grid" }),
+      );
+      expect(
+        screen.queryByTestId("crossword-all-clues"),
+      ).not.toBeInTheDocument();
+      expect(gridEl().parentElement).not.toHaveClass("invisible");
+    });
+
+    it("returns dialog focus to the selected answer square while the clue list is open", async () => {
+      stubMatchMedia(true);
+      renderCrossword();
+      await startGame();
+
+      fireEvent.click(screen.getByRole("button", { name: "List all clues" }));
+      const allClues = screen.getByTestId("crossword-all-clues");
+      const selectedSquare = within(allClues).getByRole("button", {
+        name: /1 Across answer, square 2 of 4, empty/,
+      });
+      fireEvent.click(selectedSquare);
+
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+      fireEvent.click(
+        within(
+          await screen.findByTestId("crossword-settings-dialog"),
+        ).getByRole("button", { name: "Close" }),
+      );
+      await flushDialogClose();
+      expect(selectedSquare).toHaveFocus();
+
+      fireEvent.click(screen.getByRole("button", { name: "Pause timer" }));
+      fireEvent.click(
+        within(screen.getByTestId("crossword-pause-dialog")).getByRole(
+          "button",
+          { name: "Resume" },
+        ),
+      );
+      await flushDialogClose();
+      expect(selectedSquare).toHaveFocus();
+    });
+
+    it("closes the clue list and focuses the grid on a desktop transition", async () => {
+      let desktopMatches = false;
+      let desktopListener: (() => void) | undefined;
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        get matches() {
+          return query === "(max-width: 767px), (any-pointer: coarse)"
+            ? true
+            : query === "(min-width: 768px)"
+              ? desktopMatches
+              : false;
+        },
+        media: query,
+        addEventListener: vi.fn((event: string, listener: () => void) => {
+          if (query === "(min-width: 768px)" && event === "change") {
+            desktopListener = listener;
+          }
+        }),
+        removeEventListener: vi.fn(),
+      }));
+      renderCrossword();
+      await startGame();
+      fireEvent.click(screen.getByRole("button", { name: "List all clues" }));
+
+      act(() => {
+        desktopMatches = true;
+        desktopListener?.();
+      });
+
+      expect(
+        screen.queryByTestId("crossword-all-clues"),
+      ).not.toBeInTheDocument();
+      expect(hiddenInput()).toHaveFocus();
+    });
+
+    it("uses native text input when the custom keyboard mode is unavailable", async () => {
+      renderCrossword();
+      await startGame();
+
+      expect(hiddenInput()).toHaveAttribute("inputmode", "text");
+      expect(hiddenInput()).not.toHaveAttribute("readonly");
+      expect(
+        screen.queryByTestId("crossword-mobile-keyboard"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("adds mobile gutters to the puzzle title and toolbar controls", async () => {
+      renderCrossword("proposal");
+      await startGame();
+
+      expect(screen.getByRole("heading", { name: proposal.title })).toHaveClass(
+        "px-4",
+        "md:px-0",
+      );
+      expect(
+        screen.getByRole("group", { name: "Crossword controls" }),
+      ).toHaveClass("px-4", "md:px-0");
+    });
+
+    it("aligns the mobile controls bar to the top when solving starts", async () => {
+      stubMatchMedia(true);
+      const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
+
+      renderCrossword("proposal");
+      await startGame();
+
+      const controls = document.querySelector(
+        '[aria-label="Crossword controls"]',
+      );
+      expect(controls).not.toBeNull();
+      expect(
+        screen.getByTestId("crossword-play-area").parentElement,
+      ).toHaveClass(
+        "min-h-[calc(100dvh-3.625rem)]",
+        "pb-[var(--crossword-mobile-dock-height)]",
+      );
+      await vi.waitFor(() =>
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" }),
+      );
+      scrollIntoView.mockRestore();
+    });
+
+    it("does not auto-scroll a wide touch device", async () => {
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches:
+          query === "(max-width: 767px), (any-pointer: coarse)" ||
+          query === "(min-width: 768px)",
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }));
+      const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
+
+      renderCrossword("proposal");
+      await startGame();
+
+      expect(scrollIntoView).not.toHaveBeenCalledWith({ block: "start" });
+      scrollIntoView.mockRestore();
+    });
+
+    it("keeps the mobile toolbar to the requested controls", async () => {
+      renderCrossword();
+      await startGame();
+
+      const controls = screen.getByRole("group", {
+        name: "Crossword controls",
+      });
+      expect(within(controls).getByLabelText("Solve time")).toBeInTheDocument();
+      expect(
+        within(controls).getByRole("button", { name: "List all clues" }),
+      ).toBeInTheDocument();
+      expect(
+        within(controls).getByRole("button", { name: "Pause timer" }),
+      ).toBeInTheDocument();
+      expect(
+        within(controls).getByRole("button", { name: "Settings" }),
+      ).toBeInTheDocument();
+      expect(
+        within(controls).getByRole("button", { name: "More options" }),
+      ).toBeInTheDocument();
+      expect(
+        within(controls).queryByRole("button", {
+          name: /pencil|hint|info/i,
+        }),
+      ).not.toBeInTheDocument();
+    });
+
     it("accents the clue crossing the cursor in the other direction's list only", async () => {
       renderCrossword();
       await startGame();
@@ -734,6 +1179,68 @@ describe("Crossword", () => {
     });
   });
 
+  describe("development controls", () => {
+    it("renders above the user-facing time and settings bar", () => {
+      renderCrossword();
+
+      const devControls = screen.getByTestId("crossword-dev-controls");
+      const controls = document.querySelector(
+        '[aria-label="Crossword controls"]',
+      );
+      expect(controls).not.toBeNull();
+      expect(
+        devControls.compareDocumentPosition(controls!) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    it("fills all but the final open square and selects it", async () => {
+      renderCrossword();
+      await startGame();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Fill all but final square" }),
+      );
+
+      expect(square(4, 3)).not.toHaveTextContent("E");
+      expect(square(4, 3)).toHaveClass("bg-secondary");
+      expect(hiddenInput()).toHaveFocus();
+      const saved = JSON.parse(localStorage.getItem(PROGRESS_KEY)!) as {
+        entries: string;
+      };
+      expect(saved.entries).toBe(ALL_BUT_LAST);
+    });
+
+    it("clears this puzzle's local progress and session but keeps settings", async () => {
+      renderCrossword();
+      await startGame();
+      fireEvent.keyDown(gridEl(), { key: "K" });
+      localStorage.setItem(
+        SETTINGS_STORAGE_KEY,
+        JSON.stringify({ showTimer: false }),
+      );
+      expect(
+        localStorage.getItem("crossword:wedding-mini-v1:session"),
+      ).not.toBeNull();
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Clear this puzzle's saved state",
+        }),
+      );
+
+      expect(localStorage.getItem(PROGRESS_KEY)).toBeNull();
+      expect(
+        localStorage.getItem("crossword:wedding-mini-v1:session"),
+      ).toBeNull();
+      expect(localStorage.getItem(SETTINGS_STORAGE_KEY)).not.toBeNull();
+      expect(
+        screen.getByRole("dialog", { name: /ready to solve/i }),
+      ).toBeInTheDocument();
+      expect(square(0, 1)).not.toHaveTextContent("K");
+    });
+  });
+
   describe("solving outcomes", () => {
     it("celebrates a finished solve and keeps the grid locked afterward", async () => {
       localStorage.setItem(
@@ -755,7 +1262,13 @@ describe("Crossword", () => {
         within(dialog).getByRole("button", { name: "No thanks" }),
       );
 
-      expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
+      const solvedStatus = screen.getByRole("status");
+      expect(solvedStatus).toHaveTextContent(/you solved it/i);
+      expect(
+        within(solvedStatus.parentElement!).getByRole("button", {
+          name: "Leaderboard",
+        }),
+      ).toBeInTheDocument();
 
       // Stray keystrokes after the win must not corrupt the solved grid.
       fireEvent.keyDown(gridEl(), { key: "X" });
@@ -763,6 +1276,39 @@ describe("Crossword", () => {
 
       expect(square(4, 3)).toHaveTextContent("E");
       expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
+    });
+
+    it("pads the proposal solve summary and its actions on mobile", () => {
+      localStorage.setItem(
+        "crossword:proposal-v1:progress",
+        JSON.stringify({
+          entries: proposal.solution,
+          difficulty: "easy",
+          celebrationAcknowledged: true,
+        }),
+      );
+      localStorage.setItem(
+        "crossword:proposal-v1:session",
+        JSON.stringify({
+          id: "sess-proposal-solved",
+          elapsedMs: 442_000,
+          completed: true,
+          difficulty: "easy",
+        }),
+      );
+
+      renderCrossword("proposal");
+
+      const solvedSummary = screen.getByRole("status").parentElement!;
+      expect(solvedSummary).toHaveClass("px-4", "md:px-0");
+      expect(
+        within(solvedSummary).getByRole("button", { name: "Leaderboard" }),
+      ).toBeInTheDocument();
+      expect(
+        within(solvedSummary).getByRole("button", {
+          name: "Replay animation",
+        }),
+      ).toBeInTheDocument();
     });
 
     it("nudges the guest when the grid is full but incorrect, and recovers", async () => {
@@ -777,9 +1323,18 @@ describe("Crossword", () => {
       fireEvent.mouseDown(square(4, 3));
       fireEvent.keyDown(gridEl(), { key: "X" });
 
-      expect(screen.getByRole("status")).toHaveTextContent(
-        /not quite right yet/i,
+      const incorrect = await screen.findByTestId("crossword-incorrect-dialog");
+      expect(incorrect).toHaveTextContent(/not quite/i);
+      expect(screen.getByTestId("crossword-play-area")).toHaveAttribute(
+        "inert",
       );
+      fireEvent.click(
+        within(incorrect).getByRole("button", { name: "Keep trying" }),
+      );
+      await flushDialogClose();
+      const incorrectStatus = screen.getByRole("status");
+      expect(incorrectStatus).toHaveTextContent(/not quite right yet/i);
+      expect(incorrectStatus).toHaveClass("px-4", "md:px-0");
 
       // Fixing the wrong letter solves the puzzle.
       fireEvent.keyDown(gridEl(), { key: "Backspace" });
@@ -929,6 +1484,62 @@ describe("Crossword", () => {
       // last square instead of jumping back.
       expect(square(0, 4)).toHaveTextContent("K");
       expect(square(0, 1)).not.toHaveTextContent("K");
+    });
+
+    it("defaults mobile solving to the next clue without overriding an explicit opt-out", async () => {
+      stubMatchMedia(true);
+      const mobileDefault = renderCrossword();
+      await startGame();
+      for (const key of ["K", "I", "S", "S"]) {
+        fireEvent.keyDown(gridEl(), { key });
+      }
+      fireEvent.keyDown(gridEl(), { key: "D" });
+      expect(square(1, 0)).toHaveTextContent("D");
+
+      mobileDefault.unmount();
+      localStorage.clear();
+      mockApiRoutes();
+      seedSettings({
+        jumpToNextClue: false,
+        jumpToNextClueExplicit: true,
+      });
+      renderCrossword();
+      await startGame();
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+      const dialog = await screen.findByTestId("crossword-settings-dialog");
+      expect(
+        within(dialog).getByRole("checkbox", {
+          name: /jump to the next clue/i,
+        }),
+      ).toHaveAttribute("data-state", "unchecked");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await flushDialogClose();
+      for (const key of ["K", "I", "S", "S", "X"]) {
+        fireEvent.keyDown(gridEl(), { key });
+      }
+      expect(square(0, 4)).toHaveTextContent("X");
+      expect(square(1, 0)).not.toHaveTextContent("X");
+    });
+
+    it("persists the mobile jump checkbox as an explicit preference", async () => {
+      stubMatchMedia(true);
+      renderCrossword();
+      await startGame();
+
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+      const dialog = await screen.findByTestId("crossword-settings-dialog");
+      const jump = within(dialog).getByRole("checkbox", {
+        name: /jump to the next clue/i,
+      });
+      expect(jump).toHaveAttribute("data-state", "checked");
+      fireEvent.click(jump);
+
+      expect(
+        JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY)!),
+      ).toMatchObject({
+        jumpToNextClue: false,
+        jumpToNextClueExplicit: true,
+      });
     });
 
     it("stays at the end of a finished word by default, and jumps to the next clue when configured", async () => {

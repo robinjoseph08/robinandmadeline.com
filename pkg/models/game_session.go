@@ -51,19 +51,23 @@ func EasierDifficulty(a, b string) string {
 // accumulated active-solving milliseconds the client reports; the service only
 // lets it grow. CompletedAt is NULL for a started-but-never-finished solve and
 // set server-side exactly once. OnLeaderboard is the explicit leaderboard
-// opt-in: every completed solve is stored regardless, and this flag alone says
-// whether the solver chose to appear on the board (it replaces the old implicit
-// "display_name is set" rule, so an admin view can list the completed solves
-// that opted out). DisplayName is the name shown on the leaderboard, set when
+// opt-in and current visibility: every completed solve is stored regardless,
+// and this flag says whether the solve is currently public (the solver can opt
+// in, and an admin can later clear it without deleting the time). It replaces
+// the old implicit "display_name is set" rule, so an admin view can distinguish
+// unposted and hidden solves. DisplayName is the name shown on the leaderboard, set when
 // opting in and stored even for signed-in parties so an anonymous entry can be
 // retroactively affiliated with a party later. An on-board row always carries a
 // DisplayName (a DB CHECK enforces "on_leaderboard implies display_name is set",
-// since the leaderboard reads filter on the flag and then read the name), but an
-// off-board row may have either: a name without the flag (collected, opted out)
-// or neither (in-progress or completed-but-unposted).
+// since public leaderboard reads filter on the flag and then read the name),
+// but an off-board row may have either: a retained name after an admin hides a
+// previously posted solve, or neither (in-progress or completed-but-unposted).
+// HiddenAt is the first-class moderation marker. It is set when an admin hides
+// a posted solve and stays NULL otherwise; a DB CHECK prevents a hidden row
+// from being on the public leaderboard, including under an older app binary.
 //
-// IPAddress is a server-side abuse-tracing concern: it is excluded from JSON
-// (and so from every response and the generated TypeScript) on purpose.
+// IPAddress and UserAgent are server-side abuse-tracing concerns. They are
+// excluded from JSON and the generated TypeScript on purpose.
 type GameSession struct {
 	bun.BaseModel `bun:"table:game_sessions,alias:gs" tstype:"-"`
 
@@ -71,12 +75,14 @@ type GameSession struct {
 	PuzzleID   string  `bun:"puzzle_id" json:"puzzle_id"`
 	PartyID    *string `bun:"party_id" json:"party_id"`
 	IPAddress  string  `bun:"ip_address" json:"-"`
+	UserAgent  string  `bun:"user_agent" json:"-" tstype:"-"`
 	Difficulty string  `bun:"difficulty" json:"difficulty" tstype:"GameDifficulty"`
 	ElapsedMS  int64   `bun:"elapsed_ms" json:"elapsed_ms"`
 
 	CompletedAt   *time.Time `bun:"completed_at" json:"completed_at"`
 	OnLeaderboard bool       `bun:"on_leaderboard" json:"on_leaderboard"`
 	DisplayName   *string    `bun:"display_name" json:"display_name"`
+	HiddenAt      *time.Time `bun:"hidden_at" json:"-" tstype:"-"`
 
 	CreatedAt time.Time `bun:"created_at,nullzero" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero" json:"updated_at"`

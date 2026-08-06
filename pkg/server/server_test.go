@@ -212,17 +212,22 @@ func TestGamesAdminRoutes_RequireToken(t *testing.T) {
 	// The games admin routes hang off the same protected group, so a tokenless
 	// request to either is a 401 (proving RegisterAdminRoutes mounted them
 	// behind the middleware, not beside it). A 401 here, before any handler
-	// runs, also keeps this wiring test db-free; the list/delete behavior is
-	// covered in pkg/games.
+	// runs, also keeps this wiring test db-free; the list and moderation behavior
+	// is covered in pkg/games.
 	listReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/games/sessions", http.NoBody)
 	listRec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(listRec, listReq)
 	require.Equal(t, http.StatusUnauthorized, listRec.Code)
 
-	deleteReq := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/api/admin/games/sessions/00000000-0000-0000-0000-000000000000", http.NoBody)
-	deleteRec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(deleteRec, deleteReq)
-	require.Equal(t, http.StatusUnauthorized, deleteRec.Code)
+	hideReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/admin/games/sessions/00000000-0000-0000-0000-000000000000/hide", http.NoBody)
+	hideRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(hideRec, hideReq)
+	require.Equal(t, http.StatusUnauthorized, hideRec.Code)
+
+	unhideReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/admin/games/sessions/00000000-0000-0000-0000-000000000000/unhide", http.NoBody)
+	unhideRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(unhideRec, unhideReq)
+	require.Equal(t, http.StatusUnauthorized, unhideRec.Code)
 }
 
 func TestGuestRoute_RequiresGuestToken(t *testing.T) {

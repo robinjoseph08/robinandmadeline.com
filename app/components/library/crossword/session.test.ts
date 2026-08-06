@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { loadSessionRecord, saveSessionRecord } from "./session";
+import {
+  clearSessionRecord,
+  loadSessionRecord,
+  saveSessionRecord,
+} from "./session";
 
 const PUZZLE_ID = "wedding-mini-v1";
 const KEY = `crossword:${PUZZLE_ID}:session`;
@@ -8,6 +12,10 @@ const KEY = `crossword:${PUZZLE_ID}:session`;
 describe("solve session record persistence", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("returns null when nothing is stored", () => {
@@ -29,6 +37,45 @@ describe("solve session record persistence", () => {
       difficulty: "medium",
       postedName: undefined,
     });
+  });
+
+  it("round-trips an unverified compatibility fallback", () => {
+    saveSessionRecord(PUZZLE_ID, {
+      id: "sess-legacy",
+      elapsedMs: 45000,
+      completed: false,
+      difficulty: "easy",
+      difficultyUnverified: true,
+    });
+    expect(loadSessionRecord(PUZZLE_ID)).toEqual({
+      id: "sess-legacy",
+      elapsedMs: 45000,
+      completed: false,
+      difficulty: "easy",
+      difficultyUnverified: true,
+      postedName: undefined,
+    });
+  });
+
+  it("clears one puzzle's saved session", () => {
+    saveSessionRecord(PUZZLE_ID, {
+      id: "sess-1",
+      elapsedMs: 90000,
+      completed: true,
+      difficulty: "easy",
+    });
+
+    clearSessionRecord(PUZZLE_ID);
+
+    expect(loadSessionRecord(PUZZLE_ID)).toBeNull();
+  });
+
+  it("swallows storage errors while clearing", () => {
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("storage disabled");
+    });
+
+    expect(() => clearSessionRecord(PUZZLE_ID)).not.toThrow();
   });
 
   it("keeps the posted name and completion flag", () => {

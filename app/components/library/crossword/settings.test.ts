@@ -26,6 +26,7 @@ describe("crossword settings persistence", () => {
       skipFilledSquares: true,
       jumpBackToFirstBlank: true,
       jumpToNextClue: false,
+      jumpToNextClueExplicit: false,
       showTimer: true,
     });
   });
@@ -61,7 +62,43 @@ describe("crossword settings persistence", () => {
     expect(loadSettings()).toEqual({
       ...DEFAULT_SETTINGS,
       jumpToNextClue: true,
+      jumpToNextClueExplicit: true,
     });
+  });
+
+  it("treats a legacy stored true jump preference as explicit", () => {
+    localStorage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({ jumpToNextClue: true }),
+    );
+
+    expect(loadSettings()).toMatchObject({
+      jumpToNextClue: true,
+      jumpToNextClueExplicit: true,
+    });
+  });
+
+  it("keeps a legacy stored false jump preference non-explicit", () => {
+    localStorage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({ jumpToNextClue: false }),
+    );
+
+    expect(loadSettings()).toMatchObject({
+      jumpToNextClue: false,
+      jumpToNextClueExplicit: false,
+    });
+  });
+
+  it("round-trips an explicit opt-out", () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      jumpToNextClue: false,
+      jumpToNextClueExplicit: true,
+    };
+    saveSettings(settings);
+
+    expect(loadSettings()).toEqual(settings);
   });
 
   it("ignores malformed JSON", () => {

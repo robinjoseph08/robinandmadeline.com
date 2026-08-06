@@ -24,13 +24,14 @@
 //   A R T I E . E L M E R . S E A
 //   T E S T S . S L E D S . E A R
 
-import type { CrosswordPuzzle } from "./puzzle";
+import { definePuzzle } from "./puzzle";
 
-export const weddingFull: CrosswordPuzzle = {
+export const weddingFull = definePuzzle({
   id: "wedding-full-v1",
   title: "The Wedding Crossword",
   width: 15,
   height: 15,
+  difficulties: ["easy", "medium", "hard"],
   solution:
     "YOU.TILDE.DRIED" +
     "ADS.EMAIL.JETLI" +
@@ -301,4 +302,4 @@ export const weddingFull: CrosswordPuzzle = {
       },
     },
   },
-};
+});

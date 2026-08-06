@@ -32,9 +32,11 @@ function makeSession(
     completed_at: undefined,
     on_leaderboard: false,
     display_name: undefined,
+    hidden_at: undefined,
     party_id: undefined,
     party_name: undefined,
     ip_address: "203.0.113.1",
+    user_agent: "Mozilla/5.0 TestBrowser/1.0",
     created_at: "2026-06-01T12:00:00Z",
     updated_at: "2026-06-01T12:00:00Z",
     ...overrides,
@@ -76,6 +78,19 @@ describe("AdminCrossword list", () => {
           party_id: "p1",
           party_name: "The Lovelaces",
           ip_address: "203.0.113.10",
+          user_agent: "Mozilla/5.0 Chrome/126.0",
+        }),
+        // Admin-hidden: name retained, but no longer publicly listed.
+        makeSession({
+          id: "s-hidden",
+          difficulty: "easy",
+          elapsed_ms: 90000,
+          completed_at: "2026-06-02T15:30:00Z",
+          on_leaderboard: false,
+          display_name: "Robin",
+          hidden_at: "2026-06-02T15:31:00Z",
+          ip_address: "203.0.113.15",
+          user_agent: "Mozilla/5.0 Safari/17.5",
         }),
         // Completed but never posted: no display name, anonymous, no party.
         makeSession({
@@ -85,6 +100,7 @@ describe("AdminCrossword list", () => {
           completed_at: "2026-06-02T16:00:00Z",
           on_leaderboard: false,
           ip_address: "203.0.113.20",
+          user_agent: "Mozilla/5.0 Firefox/127.0",
         }),
         // In progress / abandoned: no completed_at.
         makeSession({
@@ -92,20 +108,23 @@ describe("AdminCrossword list", () => {
           elapsed_ms: 5000,
           completed_at: undefined,
           ip_address: "203.0.113.30",
+          user_agent: "CrosswordBot/1.0",
         }),
       ],
-      total: 3,
+      total: 4,
     });
 
     renderCrossword();
 
     // Status badges, one per state.
     expect(await screen.findByText("On leaderboard")).toBeInTheDocument();
+    expect(screen.getByText("Hidden")).toBeInTheDocument();
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("In progress")).toBeInTheDocument();
 
     // Solver name: display_name when set, otherwise the Anonymous fallback.
     expect(screen.getByText("Ada")).toBeInTheDocument();
+    expect(screen.getByText("Robin")).toBeInTheDocument();
     // The completed-unposted and in-progress rows are both anonymous.
     const anonymous = screen.getAllByText("Anonymous");
     expect(anonymous).toHaveLength(2);
@@ -121,25 +140,38 @@ describe("AdminCrossword list", () => {
 
     // Puzzle titles mapped from the id.
     expect(screen.getByText("The Wedding Crossword")).toBeInTheDocument();
-    expect(screen.getAllByText("The Wedding Mini")).toHaveLength(2);
+    expect(screen.getAllByText("The Wedding Mini")).toHaveLength(3);
 
     // Difficulty labels.
     expect(screen.getByText("Hard")).toBeInTheDocument();
     expect(screen.getByText("Medium")).toBeInTheDocument();
-    expect(screen.getByText("Easy")).toBeInTheDocument();
+    expect(screen.getAllByText("Easy")).toHaveLength(2);
 
     // Times, formatted as the clock readout (hours once past an hour).
     expect(screen.getByText("1:02:03")).toBeInTheDocument();
+    expect(screen.getByText("1:30")).toBeInTheDocument();
     expect(screen.getByText("2:05")).toBeInTheDocument();
     expect(screen.getByText("0:05")).toBeInTheDocument();
 
-    // The admin-only IP column.
+    // The admin-only Client column pairs IP and user agent in one cell rather
+    // than adding another wide table column.
+    expect(
+      screen.getByRole("columnheader", { name: "Client" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: "IP address" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("203.0.113.10")).toBeInTheDocument();
+    expect(screen.getByText("203.0.113.15")).toBeInTheDocument();
     expect(screen.getByText("203.0.113.20")).toBeInTheDocument();
     expect(screen.getByText("203.0.113.30")).toBeInTheDocument();
+    expect(screen.getByText("Mozilla/5.0 Chrome/126.0")).toBeInTheDocument();
+    expect(screen.getByText("Mozilla/5.0 Safari/17.5")).toBeInTheDocument();
+    expect(screen.getByText("Mozilla/5.0 Firefox/127.0")).toBeInTheDocument();
+    expect(screen.getByText("CrosswordBot/1.0")).toBeInTheDocument();
 
     // The header count.
-    expect(screen.getByText("3 solve times")).toBeInTheDocument();
+    expect(screen.getByText("4 solve times")).toBeInTheDocument();
   });
 
   it("shows the completion time for a finished solve and the start time for one still in progress", async () => {
@@ -171,11 +203,13 @@ describe("AdminCrossword list", () => {
     expect(screen.queryByText(/Jul.*2026/)).not.toBeInTheDocument();
   });
 
-  it("shows a dash for a solve with no captured IP", async () => {
-    // clientIP returns "" when no header parses as an IP (a direct, non-proxied
-    // hit), so the cell must read as a plain dash rather than rendering blank.
+  it("shows dashes for a solve with no captured client details", async () => {
+    // A request can lack a usable IP or User-Agent, so both lines in the Client
+    // cell must read as plain dashes rather than rendering blank.
     adminRequest.mockResolvedValue({
-      items: [makeSession({ id: "s-noip", ip_address: "" })],
+      items: [
+        makeSession({ id: "s-no-client", ip_address: "", user_agent: "" }),
+      ],
       total: 1,
     });
 
@@ -183,8 +217,8 @@ describe("AdminCrossword list", () => {
 
     await screen.findByText("The Wedding Mini");
     expect(document.body.textContent).not.toContain("—");
-    // Two dashes: the empty party cell and the empty IP cell.
-    expect(screen.getAllByText("-")).toHaveLength(2);
+    // Three dashes: the empty party, IP, and user-agent values.
+    expect(screen.getAllByText("-")).toHaveLength(3);
   });
 
   it("falls back to the raw puzzle id for an id not in the registry", async () => {
@@ -231,53 +265,64 @@ describe("AdminCrossword states", () => {
   });
 });
 
-describe("AdminCrossword delete", () => {
-  it("DELETEs the session after confirmation and refetches so the row disappears", async () => {
-    // The list returns the row until the DELETE lands, then comes back empty.
-    // The row only leaves the table if the delete invalidates and refetches the
-    // list on success, so asserting it disappears pins that invalidation, not
-    // just the DELETE call.
-    let deleted = false;
+describe("AdminCrossword hide", () => {
+  it("hides a public session and refetches the retained row as hidden", async () => {
+    let hidden = false;
     adminRequest.mockImplementation((path: string, options?: object) => {
       if (
-        path === "/admin/games/sessions/s1" &&
-        (options as { method?: string } | undefined)?.method === "DELETE"
+        path === "/admin/games/sessions/s1/hide" &&
+        (options as { method?: string } | undefined)?.method === "POST"
       ) {
-        deleted = true;
+        hidden = true;
         return Promise.resolve(undefined);
       }
-      return Promise.resolve(
-        deleted
-          ? { items: [], total: 0 }
-          : {
-              items: [makeSession({ id: "s1", display_name: "Ada" })],
-              total: 1,
-            },
-      );
+      return Promise.resolve({
+        items: [
+          makeSession({
+            id: "s1",
+            completed_at: "2026-06-02T15:00:00Z",
+            display_name: "Ada",
+            hidden_at: hidden ? "2026-06-02T15:01:00Z" : undefined,
+            on_leaderboard: !hidden,
+          }),
+        ],
+        total: 1,
+      });
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const user = userEvent.setup();
     renderCrossword();
 
     await screen.findByText("Ada");
-    await user.click(screen.getByRole("button", { name: "Delete Ada's time" }));
+    await user.click(screen.getByRole("button", { name: "Hide Ada's time" }));
 
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "Hide Ada's time? They will still see it, but it will no longer appear for other users.",
+    );
     await waitFor(() => {
-      expect(adminRequest).toHaveBeenCalledWith("/admin/games/sessions/s1", {
-        method: "DELETE",
-      });
+      expect(adminRequest).toHaveBeenCalledWith(
+        "/admin/games/sessions/s1/hide",
+        { method: "POST" },
+      );
     });
-    // The success invalidation refetches the now-empty list, so the row goes.
-    await waitFor(() => {
-      expect(screen.queryByText("Ada")).not.toBeInTheDocument();
-    });
-    expect(screen.getByText(/No solve times yet/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Hidden")).toBeInTheDocument());
+    expect(screen.getByText("Ada")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Hide Ada's time" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("does nothing when the delete is not confirmed", async () => {
+  it("does nothing when hiding is not confirmed", async () => {
     adminRequest.mockResolvedValue({
-      items: [makeSession({ id: "s1", display_name: "Ada" })],
+      items: [
+        makeSession({
+          id: "s1",
+          completed_at: "2026-06-02T15:00:00Z",
+          display_name: "Ada",
+          on_leaderboard: true,
+        }),
+      ],
       total: 1,
     });
     vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -286,25 +331,31 @@ describe("AdminCrossword delete", () => {
     renderCrossword();
 
     await screen.findByText("Ada");
-    await user.click(screen.getByRole("button", { name: "Delete Ada's time" }));
+    await user.click(screen.getByRole("button", { name: "Hide Ada's time" }));
 
-    // The list read happened, but no DELETE was ever issued.
     expect(adminRequest).not.toHaveBeenCalledWith(
-      "/admin/games/sessions/s1",
-      expect.objectContaining({ method: "DELETE" }),
+      "/admin/games/sessions/s1/hide",
+      expect.objectContaining({ method: "POST" }),
     );
   });
 
-  it("surfaces a toast when the delete fails", async () => {
+  it("surfaces a toast when hiding fails", async () => {
     adminRequest.mockImplementation((path: string, options?: object) => {
       if (
-        path === "/admin/games/sessions/s1" &&
-        (options as { method?: string } | undefined)?.method === "DELETE"
+        path === "/admin/games/sessions/s1/hide" &&
+        (options as { method?: string } | undefined)?.method === "POST"
       ) {
-        return Promise.reject(new Error("Delete failed"));
+        return Promise.reject(new Error("Hide failed"));
       }
       return Promise.resolve({
-        items: [makeSession({ id: "s1", display_name: "Ada" })],
+        items: [
+          makeSession({
+            id: "s1",
+            completed_at: "2026-06-02T15:00:00Z",
+            display_name: "Ada",
+            on_leaderboard: true,
+          }),
+        ],
         total: 1,
       });
     });
@@ -315,10 +366,130 @@ describe("AdminCrossword delete", () => {
     renderCrossword();
 
     await screen.findByText("Ada");
-    await user.click(screen.getByRole("button", { name: "Delete Ada's time" }));
+    await user.click(screen.getByRole("button", { name: "Hide Ada's time" }));
 
     await waitFor(() => {
-      expect(errorSpy).toHaveBeenCalledWith("Delete failed");
+      expect(errorSpy).toHaveBeenCalledWith("Hide failed");
+    });
+    errorSpy.mockRestore();
+  });
+
+  it("restores a hidden session and refetches it onto the leaderboard", async () => {
+    let hidden = true;
+    adminRequest.mockImplementation((path: string, options?: object) => {
+      if (
+        path === "/admin/games/sessions/s1/unhide" &&
+        (options as { method?: string } | undefined)?.method === "POST"
+      ) {
+        hidden = false;
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve({
+        items: [
+          makeSession({
+            id: "s1",
+            completed_at: "2026-06-02T15:00:00Z",
+            display_name: "Ada",
+            hidden_at: hidden ? "2026-06-02T15:01:00Z" : undefined,
+            on_leaderboard: !hidden,
+          }),
+        ],
+        total: 1,
+      });
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Hidden");
+    await user.click(
+      screen.getByRole("button", { name: "Restore Ada's time" }),
+    );
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "Restore Ada's time to the public leaderboard?",
+    );
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith(
+        "/admin/games/sessions/s1/unhide",
+        { method: "POST" },
+      );
+    });
+    await waitFor(() =>
+      expect(screen.getByText("On leaderboard")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Restore Ada's time" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Hide Ada's time" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does nothing when restoring is not confirmed", async () => {
+    adminRequest.mockResolvedValue({
+      items: [
+        makeSession({
+          id: "s1",
+          completed_at: "2026-06-02T15:00:00Z",
+          display_name: "Ada",
+          hidden_at: "2026-06-02T15:01:00Z",
+          on_leaderboard: false,
+        }),
+      ],
+      total: 1,
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Hidden");
+    await user.click(
+      screen.getByRole("button", { name: "Restore Ada's time" }),
+    );
+
+    expect(adminRequest).not.toHaveBeenCalledWith(
+      "/admin/games/sessions/s1/unhide",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("surfaces a toast when restoring fails", async () => {
+    adminRequest.mockImplementation((path: string, options?: object) => {
+      if (
+        path === "/admin/games/sessions/s1/unhide" &&
+        (options as { method?: string } | undefined)?.method === "POST"
+      ) {
+        return Promise.reject(new Error("Restore failed"));
+      }
+      return Promise.resolve({
+        items: [
+          makeSession({
+            id: "s1",
+            completed_at: "2026-06-02T15:00:00Z",
+            display_name: "Ada",
+            hidden_at: "2026-06-02T15:01:00Z",
+            on_leaderboard: false,
+          }),
+        ],
+        total: 1,
+      });
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const errorSpy = vi.spyOn(toast, "error");
+
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Hidden");
+    await user.click(
+      screen.getByRole("button", { name: "Restore Ada's time" }),
+    );
+
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith("Restore failed");
     });
     errorSpy.mockRestore();
   });

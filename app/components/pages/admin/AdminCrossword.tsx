@@ -1,4 +1,4 @@
-import { Trash2 } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
 import { DIFFICULTY_LABELS } from "@/components/library/crossword/puzzle";
@@ -15,7 +15,8 @@ import {
 } from "@/components/ui/table";
 import {
   useAdminGameSessions,
-  useDeleteGameSession,
+  useHideGameSession,
+  useUnhideGameSession,
 } from "@/hooks/queries/games";
 import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { formatDateTime, formatDuration } from "@/libraries/format";
@@ -25,15 +26,18 @@ import type { AdminGameSessionResponse } from "@/types/generated/games";
  * Admin crossword solve times: every tracked solve session, newest first,
  * regardless of whether it was posted to the leaderboard or ever finished.
  * Unlike the guest-facing leaderboard this surfaces in-progress and abandoned
- * solves, opted-out completions, and the admin-only captured IP, so a bad
- * actor's rows can be found and deleted without touching the database. The
- * backend already sorts newest-first and the data is wedding-bounded, so v1 is
- * a plain table with row delete and no paging, search, or sort.
+ * solves, opted-out completions, and the admin-only captured client details,
+ * so a bad actor's public row can be hidden while retaining the solve for that
+ * solver.
+ * The backend already sorts newest-first and the data is wedding-bounded, so
+ * v1 is a plain table with reversible leaderboard moderation and no paging,
+ * search, or sort.
  */
 export default function AdminCrossword() {
   useAdminPageTitle("Crossword");
   const sessionsQuery = useAdminGameSessions();
-  const deleteSession = useDeleteGameSession();
+  const hideSession = useHideGameSession();
+  const unhideSession = useUnhideGameSession();
 
   const sessions = sessionsQuery.data?.items ?? [];
 
@@ -42,19 +46,36 @@ export default function AdminCrossword() {
   const solverName = (session: AdminGameSessionResponse) =>
     session.display_name ?? "Anonymous";
 
-  const handleDelete = async (session: AdminGameSessionResponse) => {
+  const handleHide = async (session: AdminGameSessionResponse) => {
     if (
       !window.confirm(
-        `Delete ${solverName(session)}'s time? This removes the solve session for good.`,
+        `Hide ${solverName(session)}'s time? They will still see it, but it will no longer appear for other users.`,
       )
     )
       return;
     try {
-      await deleteSession.mutateAsync({ sessionId: session.id });
-      toast.success("Time deleted");
+      await hideSession.mutateAsync({ sessionId: session.id });
+      toast.success("Time hidden");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to delete time",
+        error instanceof Error ? error.message : "Failed to hide time",
+      );
+    }
+  };
+
+  const handleUnhide = async (session: AdminGameSessionResponse) => {
+    if (
+      !window.confirm(
+        `Restore ${solverName(session)}'s time to the public leaderboard?`,
+      )
+    )
+      return;
+    try {
+      await unhideSession.mutateAsync({ sessionId: session.id });
+      toast.success("Time restored");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to restore time",
       );
     }
   };
@@ -92,7 +113,7 @@ export default function AdminCrossword() {
                 <TableHead>Time</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Date</TableHead>
-                <TableHead>IP address</TableHead>
+                <TableHead>Client</TableHead>
                 <TableHead className="w-12" />
               </TableRow>
             </TableHeader>
@@ -127,6 +148,8 @@ export default function AdminCrossword() {
                   <TableCell>
                     {session.on_leaderboard ? (
                       <Badge variant="success">On leaderboard</Badge>
+                    ) : session.hidden_at ? (
+                      <Badge variant="outline">Hidden</Badge>
                     ) : session.completed_at ? (
                       <Badge variant="secondary">Completed</Badge>
                     ) : (
@@ -136,20 +159,42 @@ export default function AdminCrossword() {
                   <TableCell className="whitespace-nowrap text-muted-foreground">
                     {formatDateTime(session.completed_at ?? session.created_at)}
                   </TableCell>
-                  <TableCell className="tabular-nums text-muted-foreground">
-                    {session.ip_address || (
-                      <span className="text-muted-foreground">-</span>
-                    )}
+                  <TableCell className="text-muted-foreground">
+                    <div className="max-w-64 space-y-1">
+                      <div className="tabular-nums">
+                        {session.ip_address || "-"}
+                      </div>
+                      <div
+                        className="truncate text-xs"
+                        title={session.user_agent || "No user agent captured."}
+                      >
+                        {session.user_agent || "-"}
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end">
-                      <TooltipIconButton
-                        disabled={deleteSession.isPending}
-                        label={`Delete ${solverName(session)}'s time`}
-                        onClick={() => handleDelete(session)}
-                      >
-                        <Trash2 />
-                      </TooltipIconButton>
+                      {session.on_leaderboard ? (
+                        <TooltipIconButton
+                          disabled={
+                            hideSession.isPending || unhideSession.isPending
+                          }
+                          label={`Hide ${solverName(session)}'s time`}
+                          onClick={() => handleHide(session)}
+                        >
+                          <EyeOff />
+                        </TooltipIconButton>
+                      ) : session.hidden_at ? (
+                        <TooltipIconButton
+                          disabled={
+                            hideSession.isPending || unhideSession.isPending
+                          }
+                          label={`Restore ${solverName(session)}'s time`}
+                          onClick={() => handleUnhide(session)}
+                        >
+                          <Eye />
+                        </TooltipIconButton>
+                      ) : null}
                     </div>
                   </TableCell>
                 </TableRow>
