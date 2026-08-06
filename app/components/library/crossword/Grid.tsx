@@ -142,22 +142,31 @@ const Grid = forwardRef<GridHandle, Props>(
         if (prev.length > 0) {
           return prev;
         }
-        // Find the first non-block square for initial selection
-        const firstSquare = grid.squares.find(
-          (square) => square.type !== "block",
-        );
+        // Resume at the earliest unfinished square. A fresh grid naturally
+        // selects its first playable square; a completed grid keeps the
+        // historical first-playable fallback if it receives focus.
+        const firstSquare =
+          grid.squares.find(
+            (square) =>
+              square.type !== "block" && square.solution === undefined,
+          ) ?? grid.squares.find((square) => square.type !== "block");
         if (!firstSquare) {
           return prev;
         }
+        const direction = grid.wordMap[
+          `${firstSquare.row}:${firstSquare.col}:across`
+        ]
+          ? "across"
+          : "down";
         return [
           {
             row: firstSquare.row,
             col: firstSquare.col,
-            direction: "across",
+            direction,
           },
         ];
       });
-    }, [grid.squares]);
+    }, [grid.squares, grid.wordMap]);
 
     const keepSelectionVisible = useCallback(() => {
       const input = hiddenInputRef.current;

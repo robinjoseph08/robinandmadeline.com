@@ -31,6 +31,7 @@ vi.mock("@/libraries/api", async () => {
 const PROGRESS_KEY = "crossword:wedding-mini-v1:progress";
 const SOLUTION = ".KISSDANCEAPNEASPENTHARE.";
 const EMPTY_ENTRIES = SOLUTION.replace(/[A-Z]/g, "?");
+const PARTIAL_ENTRIES = `${SOLUTION.slice(0, 4)}${EMPTY_ENTRIES.slice(4)}`;
 
 /** The solution with every letter filled in except the last one (row 4, col 3). */
 const ALL_BUT_LAST = `${SOLUTION.slice(0, 23)}?.`;
@@ -368,6 +369,20 @@ describe("Crossword", () => {
       expect(hiddenInput()).toHaveFocus();
       await user.keyboard("k");
       expect(square(0, 1)).toHaveTextContent("K");
+    });
+
+    it("selects the first incomplete square when resuming restored progress", async () => {
+      localStorage.setItem(
+        PROGRESS_KEY,
+        JSON.stringify({ entries: PARTIAL_ENTRIES, difficulty: "easy" }),
+      );
+
+      renderCrossword();
+      await resumeGame();
+
+      expect(square(0, 4)).toHaveClass("bg-secondary");
+      expect(square(0, 1)).not.toHaveClass("bg-secondary");
+      expect(hiddenInput()).toHaveFocus();
     });
 
     it("keeps the prior selection when resuming a paused solve", async () => {

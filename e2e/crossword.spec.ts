@@ -231,11 +231,17 @@ test("proposal crossword restores the mobile scroll position after reload", asyn
   const readyDialog = page.getByRole("dialog", { name: "Ready to solve?" });
   await readyDialog.getByRole("button", { name: "Start solving" }).click();
   await expect(readyDialog).toBeHidden();
-  await page.waitForFunction(() =>
-    Object.keys(localStorage).some(
-      (key) => key.startsWith("crossword:") && key.endsWith(":progress"),
-    ),
-  );
+  const keyboard = page.getByRole("group", { name: "Crossword keyboard" });
+  await keyboard.getByRole("button", { name: "Enter F", exact: true }).click();
+  await expect(page.getByTestId("crossword-square-0-0")).toContainText("F");
+  await page.waitForFunction(() => {
+    const raw = localStorage.getItem("crossword:proposal-v1:progress");
+    if (!raw) {
+      return false;
+    }
+    const progress = JSON.parse(raw) as { entries?: string };
+    return progress.entries?.startsWith("F") === true;
+  });
 
   await page.reload();
   const pauseDialog = page.getByTestId("crossword-pause-dialog");
@@ -247,6 +253,12 @@ test("proposal crossword restores the mobile scroll position after reload", asyn
   await expect
     .poll(async () => (await requiredBox(toolbar)).y)
     .toBeCloseTo(0, 0);
+  await expect(page.getByTestId("crossword-square-0-1")).toHaveClass(
+    /bg-secondary(?:\s|$)/,
+  );
+  await expect(page.getByTestId("crossword-square-0-0")).not.toHaveClass(
+    /bg-secondary(?:\s|$)/,
+  );
 });
 
 test("proposal crossword grid clears the solve dock on a short mobile viewport", async ({
