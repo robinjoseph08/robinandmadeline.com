@@ -99,8 +99,7 @@ const ClueList = memo(function ClueList({
                 aria-current={selectedNumber === number ? "true" : undefined}
                 className={cn(
                   "w-full whitespace-pre-line rounded px-2 py-1 text-left text-sm transition-colors hover:bg-secondary/30",
-                  referencedNumbers?.has(number) &&
-                    "bg-rose-soft text-foreground ring-1 ring-rose/60",
+                  referencedNumbers?.has(number) && "bg-rose-soft",
                   selectedNumber === number && "bg-secondary/50",
                   // The crossing word's clue gets the reference's accent
                   // border (pl-1 keeps the text aligned with its siblings).

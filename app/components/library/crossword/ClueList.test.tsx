@@ -136,7 +136,7 @@ describe("ClueList", () => {
 
     const referenced = screen.getByRole("button", { name: "5. Fifth clue" });
     expect(referenced).toHaveClass("bg-rose-soft");
-    expect(referenced).toHaveClass("ring-rose/60");
+    expect(referenced.className).not.toMatch(/ring-|text-foreground/);
     expect(referenced).not.toHaveClass("bg-secondary/50");
   });
 

@@ -158,9 +158,9 @@ describe("AllCluesView", () => {
     expect(screen.getByTestId("crossword-clue-across-4")).toHaveClass(
       "text-muted-foreground",
     );
-    expect(screen.getByTestId("crossword-clue-across-5")).toHaveClass(
-      "bg-rose-soft",
-    );
+    const referenced = screen.getByTestId("crossword-clue-across-5");
+    expect(referenced).toHaveClass("bg-rose-soft");
+    expect(referenced.className).not.toMatch(/ring-/);
   });
 
   it("keeps all 15 answer squares in one responsive row", () => {

@@ -236,8 +236,7 @@ const AllCluesView = memo(
                       className={cn(
                         "px-3 py-3 transition-colors",
                         selectedClue && "bg-secondary/20",
-                        referenced &&
-                          "bg-rose-soft ring-1 ring-inset ring-rose/60",
+                        referenced && "bg-rose-soft",
                         completed && !referenced && "text-muted-foreground",
                       )}
                       data-clue-direction={direction}

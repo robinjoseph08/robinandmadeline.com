@@ -737,7 +737,8 @@ describe("Crossword", () => {
       const referenced = screen.getByRole("button", {
         name: `43. ${proposal.clues.easy!.across["43"]}`,
       });
-      expect(referenced).toHaveClass("bg-rose-soft", "ring-rose/60");
+      expect(referenced).toHaveClass("bg-rose-soft");
+      expect(referenced.className).not.toMatch(/ring-|text-foreground/);
       for (const col of [5, 6, 7]) {
         expect(square(8, col)).toHaveClass("bg-rose-soft");
       }
