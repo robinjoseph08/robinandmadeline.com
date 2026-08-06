@@ -4,7 +4,6 @@ import {
   memo,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
 } from "react";
@@ -126,68 +125,6 @@ const AllCluesView = memo(
       [selection],
     );
 
-    useLayoutEffect(() => {
-      const surface = surfaceRef.current;
-      if (!surface) {
-        return;
-      }
-
-      let frame: number | undefined;
-      let dock: HTMLElement | null = null;
-      let dockObserver: ResizeObserver | null = null;
-      const observeCurrentDock = () => {
-        const nextDock = document.querySelector<HTMLElement>(
-          '[data-testid="crossword-mobile-solve-dock"]',
-        );
-        if (nextDock === dock) {
-          return nextDock;
-        }
-        dockObserver?.disconnect();
-        dock = nextDock;
-        if (dock) {
-          dockObserver = new ResizeObserver(updateHeight);
-          dockObserver.observe(dock);
-        } else {
-          dockObserver = null;
-        }
-        return dock;
-      };
-      const updateHeight = () => {
-        if (frame !== undefined) {
-          cancelAnimationFrame(frame);
-        }
-        frame = requestAnimationFrame(() => {
-          const currentDock = observeCurrentDock();
-          if (!currentDock) {
-            return;
-          }
-          const surfaceTop = surface.getBoundingClientRect().top;
-          const dockTop = currentDock.getBoundingClientRect().top;
-          surface.style.height = `${Math.max(0, dockTop - surfaceTop - 8)}px`;
-        });
-      };
-
-      updateHeight();
-      const surfaceObserver = new ResizeObserver(updateHeight);
-      surfaceObserver.observe(surface);
-      const bodyObserver = new MutationObserver(updateHeight);
-      bodyObserver.observe(document.body, { childList: true, subtree: true });
-      window.addEventListener("resize", updateHeight);
-      window.addEventListener("scroll", updateHeight, { passive: true });
-      window.visualViewport?.addEventListener("resize", updateHeight);
-      return () => {
-        surfaceObserver.disconnect();
-        dockObserver?.disconnect();
-        bodyObserver.disconnect();
-        window.removeEventListener("resize", updateHeight);
-        window.removeEventListener("scroll", updateHeight);
-        window.visualViewport?.removeEventListener("resize", updateHeight);
-        if (frame !== undefined) {
-          cancelAnimationFrame(frame);
-        }
-      };
-    }, []);
-
     useEffect(() => {
       if (!selection || selectedNumber === undefined) {
         return;
@@ -202,19 +139,30 @@ const AllCluesView = memo(
           return;
         }
 
-        const surfaceRect = surface.getBoundingClientRect();
+        const dock = document.querySelector<HTMLElement>(
+          '[data-testid="crossword-mobile-solve-dock"]',
+        );
+        const controls = document.querySelector<HTMLElement>(
+          '[aria-label="Crossword controls"]',
+        );
+        const directionHeading = row
+          .closest("section")
+          ?.querySelector<HTMLElement>("h2");
         const rowRect = row.getBoundingClientRect();
+        const visibleTop = Math.max(
+          controls?.getBoundingClientRect().bottom ?? 0,
+          directionHeading?.getBoundingClientRect().bottom ?? 0,
+        );
+        const visibleBottom =
+          dock?.getBoundingClientRect().top ?? window.innerHeight;
         let delta = 0;
-        if (rowRect.top < surfaceRect.top) {
-          delta = rowRect.top - surfaceRect.top;
-        } else if (rowRect.bottom > surfaceRect.bottom) {
-          delta = rowRect.bottom - surfaceRect.bottom;
+        if (rowRect.top < visibleTop) {
+          delta = rowRect.top - visibleTop;
+        } else if (rowRect.bottom > visibleBottom) {
+          delta = rowRect.bottom - visibleBottom;
         }
         if (delta !== 0) {
-          surface.scrollTo({
-            behavior: "smooth",
-            top: surface.scrollTop + delta,
-          });
+          window.scrollBy({ behavior: "smooth", top: delta });
         }
       });
 
@@ -248,7 +196,7 @@ const AllCluesView = memo(
     return (
       <div
         aria-label="Crossword clue list"
-        className="overflow-y-auto overscroll-contain rounded-md border border-line bg-background outline-none focus-visible:ring-2 focus-visible:ring-secondary"
+        className="bg-background pb-[var(--crossword-mobile-dock-height)] outline-none focus-visible:ring-2 focus-visible:ring-secondary"
         data-testid="crossword-all-clues"
         onKeyDown={handleKeyDown}
         ref={surfaceRef}
@@ -264,7 +212,7 @@ const AllCluesView = memo(
             key={direction}
           >
             <h2
-              className="sticky top-0 z-10 border-b border-line bg-background px-4 py-2 text-lg font-bold capitalize"
+              className="sticky top-[46px] z-10 border-b border-line bg-background px-4 py-2 text-lg font-bold capitalize"
               id={`crossword-all-clues-${direction}`}
             >
               {DIRECTION_LABELS[direction]}
@@ -305,7 +253,7 @@ const AllCluesView = memo(
                       >
                         <span
                           aria-hidden="true"
-                          className="w-6 shrink-0 text-right font-bold"
+                          className="w-6 shrink-0 text-left font-bold"
                         >
                           {number}
                         </span>

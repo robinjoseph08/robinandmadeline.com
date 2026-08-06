@@ -1,11 +1,4 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { ComponentProps, createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -77,7 +70,10 @@ describe("AllCluesView", () => {
     const host = screen.getByTestId("inline-host");
     const surface = within(host).getByTestId("crossword-all-clues");
     expect(surface).toBeInTheDocument();
-    expect(surface.className).not.toContain("max-h-");
+    expect(surface).toHaveClass("pb-[var(--crossword-mobile-dock-height)]");
+    expect(surface.className).not.toMatch(
+      /overflow-y-auto|overscroll-contain|rounded|border/,
+    );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /close clue list/i }),
@@ -91,6 +87,10 @@ describe("AllCluesView", () => {
     );
     expect(across).toHaveClass("sticky", "bg-background");
     expect(down).toHaveClass("sticky", "bg-background");
+    expect(across).not.toHaveClass("rounded-md");
+    expect(
+      within(screen.getByTestId("crossword-clue-across-1")).getByText("1"),
+    ).toHaveClass("text-left");
   });
 
   it("shows only live entered values and reports clue and exact square selections", () => {
@@ -218,75 +218,36 @@ describe("AllCluesView", () => {
     expect(screen.getByRole("button", { current: true })).toHaveFocus();
   });
 
-  it("scrolls only its inline scrollport when the selected clue leaves view", () => {
+  it("scrolls the page, not a nested clue container, when selection leaves view", () => {
     let frame: FrameRequestCallback | undefined;
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       frame = callback;
       return 1;
     });
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
-
-    const view = render(
-      <AllCluesView {...allCluesProps({ selection: undefined })} />,
-    );
-    const surface = screen.getByTestId("crossword-all-clues");
-    const row = screen.getByTestId("crossword-clue-across-1");
-    const scrollTo = vi.fn();
-    Object.assign(surface, { scrollTo, scrollTop: 20 });
-    surface.getBoundingClientRect = () => rect(0, 100);
-    row.getBoundingClientRect = () => rect(150, 180);
-
-    view.rerender(<AllCluesView {...allCluesProps()} />);
-    act(() => frame?.(0));
-
-    expect(scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 100 });
-  });
-
-  it("reconnects its height measurement when the mobile dock remounts", async () => {
-    const frames: FrameRequestCallback[] = [];
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-      frames.push(callback);
-      return frames.length;
-    });
-    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const scrollBy = vi.fn();
+    vi.stubGlobal("scrollBy", scrollBy);
 
     const view = render(
       <>
-        <div
-          data-testid="crossword-mobile-solve-dock"
-          data-version="first"
-          key="first"
-        />
-        <AllCluesView {...allCluesProps()} />
+        <div data-testid="crossword-mobile-solve-dock" />
+        <AllCluesView {...allCluesProps({ selection: undefined })} />
       </>,
     );
-    const surface = screen.getByTestId("crossword-all-clues");
-    surface.getBoundingClientRect = () => rect(100, 500);
-    const firstDock = screen.getByTestId("crossword-mobile-solve-dock");
-    firstDock.getBoundingClientRect = () => rect(300, 500);
-    act(() => frames.shift()?.(0));
-    expect(surface.style.height).toBe("192px");
+    const row = screen.getByTestId("crossword-clue-across-1");
+    const dock = screen.getByTestId("crossword-mobile-solve-dock");
+    row.getBoundingClientRect = () => rect(150, 180);
+    dock.getBoundingClientRect = () => rect(100, 300);
 
     view.rerender(
       <>
-        <div
-          data-testid="crossword-mobile-solve-dock"
-          data-version="second"
-          key="second"
-        />
+        <div data-testid="crossword-mobile-solve-dock" />
         <AllCluesView {...allCluesProps()} />
       </>,
     );
-    const secondDock = screen.getByTestId("crossword-mobile-solve-dock");
-    secondDock.getBoundingClientRect = () => rect(220, 420);
+    act(() => frame?.(0));
 
-    await waitFor(() => expect(frames.length).toBeGreaterThan(0));
-    act(() => {
-      for (const callback of frames.splice(0)) {
-        callback(0);
-      }
-    });
-    expect(surface.style.height).toBe("112px");
+    expect(scrollBy).toHaveBeenCalledWith({ behavior: "smooth", top: 80 });
   });
 
   it("stays memoized around its forwarded ref surface", () => {

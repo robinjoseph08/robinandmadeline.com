@@ -692,7 +692,8 @@ function CrosswordGame({
   return (
     <section
       className={cn(
-        "mx-auto py-4 md:py-8",
+        "mx-auto pt-4 md:py-8",
+        allCluesOpen ? "pb-0" : "pb-4",
         isLargePuzzle
           ? "relative left-1/2 w-screen max-w-7xl -translate-x-1/2 bg-background md:w-[calc(100vw-2rem)]"
           : "max-w-4xl",
@@ -712,9 +713,12 @@ function CrosswordGame({
         leaderboard.
       </p>
 
-      {import.meta.env.DEV && !allCluesOpen && (
+      {import.meta.env.DEV && (
         <div
-          className="mt-3 flex flex-wrap gap-2 rounded-md border border-dashed border-green/40 bg-complementary-1/20 p-2"
+          className={cn(
+            "mt-3 flex flex-wrap gap-2 rounded-md border border-dashed border-green/40 bg-complementary-1/20 p-2",
+            isLargePuzzle && "mx-4 md:mx-0",
+          )}
           data-testid="crossword-dev-controls"
         >
           <Button
@@ -740,7 +744,7 @@ function CrosswordGame({
       <div
         aria-label="Crossword controls"
         className={cn(
-          "mt-3 flex min-h-11 items-center justify-between gap-2 border-y border-line bg-surface/80 md:mt-6 md:min-h-0 md:border-0 md:bg-transparent md:px-0",
+          "sticky top-0 z-30 mt-3 flex min-h-11 items-center justify-between gap-2 border-y border-line bg-surface/95 md:static md:z-auto md:mt-6 md:min-h-0 md:border-0 md:bg-transparent md:px-0",
           isLargePuzzle ? "px-4" : "px-1",
         )}
         ref={controlsRef}
@@ -854,7 +858,7 @@ function CrosswordGame({
       </div>
 
       {solved ? (
-        <div className="mt-4">
+        <div className={cn("mt-4", isLargePuzzle && "px-4 md:px-0")}>
           <p className="font-medium text-ink" role="status">
             You solved it
             {session.elapsedMs > 0
@@ -909,7 +913,9 @@ function CrosswordGame({
         className={cn(
           "relative md:mt-6",
           allCluesOpen ? "mt-0" : "mt-3",
-          mobileDockVisible && !allCluesOpen && "mb-[17rem]",
+          mobileDockVisible &&
+            !allCluesOpen &&
+            "mb-[var(--crossword-mobile-dock-height)]",
         )}
       >
         <div

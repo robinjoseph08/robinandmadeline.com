@@ -36,6 +36,7 @@ describe("router", () => {
     expect(
       screen.getByRole("dialog", { name: /ready to solve/i }),
     ).toBeInTheDocument();
+    expect(document.querySelector("footer")).toBeNull();
   });
 
   it.each(["mini", "crossword", "does-not-exist"])(
@@ -50,6 +51,7 @@ describe("router", () => {
         "href",
         "/games",
       );
+      expect(document.querySelector("footer")).not.toBeNull();
     },
   );
 
@@ -60,6 +62,7 @@ describe("router", () => {
     expect(
       screen.getByRole("link", { name: /proposal crossword/i }),
     ).toHaveAttribute("href", "/games/proposal");
+    expect(document.querySelector("footer")).not.toBeNull();
   });
 
   it("renders the Travel page at /travel", () => {

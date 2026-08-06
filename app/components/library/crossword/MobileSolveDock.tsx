@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
 import MobileClueBar from "./MobileClueBar";
@@ -33,7 +34,34 @@ export default function MobileSolveDock({
   visible,
 }: MobileSolveDockProps) {
   const customKeyboard = useCustomKeyboard();
-  if (!visible || !customKeyboard) {
+  const dockRef = useRef<HTMLDivElement>(null);
+  const shown = visible && customKeyboard;
+
+  useLayoutEffect(() => {
+    if (!shown) {
+      return;
+    }
+    const dock = dockRef.current;
+    if (!dock) {
+      return;
+    }
+    const root = document.documentElement;
+    const updateInset = () => {
+      root.style.setProperty(
+        "--crossword-mobile-dock-height",
+        `${dock.getBoundingClientRect().height}px`,
+      );
+    };
+    updateInset();
+    const observer = new ResizeObserver(updateInset);
+    observer.observe(dock);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--crossword-mobile-dock-height");
+    };
+  }, [shown]);
+
+  if (!shown) {
     return null;
   }
 
@@ -41,6 +69,7 @@ export default function MobileSolveDock({
     <div
       className="fixed inset-x-0 bottom-0 z-40"
       data-testid="crossword-mobile-solve-dock"
+      ref={dockRef}
     >
       <MobileClueBar
         clue={clue}

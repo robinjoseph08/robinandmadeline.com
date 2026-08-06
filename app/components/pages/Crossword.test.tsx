@@ -801,6 +801,8 @@ describe("Crossword", () => {
       expect(playArea).toHaveClass("block", "md:grid");
       expect(playArea.parentElement).toHaveClass("mt-0");
       expect(playArea.parentElement).not.toHaveClass("mt-3", "mb-[17rem]");
+      expect(allClues).not.toHaveClass("overflow-y-auto", "rounded-md");
+      expect(screen.getByTestId("crossword-dev-controls")).toBeInTheDocument();
       expect(
         within(allClues)
           .getAllByRole("heading")
@@ -1233,7 +1235,13 @@ describe("Crossword", () => {
         within(dialog).getByRole("button", { name: "No thanks" }),
       );
 
-      expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
+      const solvedStatus = screen.getByRole("status");
+      expect(solvedStatus).toHaveTextContent(/you solved it/i);
+      expect(
+        within(solvedStatus.parentElement!).getByRole("button", {
+          name: "Leaderboard",
+        }),
+      ).toBeInTheDocument();
 
       // Stray keystrokes after the win must not corrupt the solved grid.
       fireEvent.keyDown(gridEl(), { key: "X" });
@@ -1241,6 +1249,39 @@ describe("Crossword", () => {
 
       expect(square(4, 3)).toHaveTextContent("E");
       expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
+    });
+
+    it("pads the proposal solve summary and its actions on mobile", () => {
+      localStorage.setItem(
+        "crossword:proposal-v1:progress",
+        JSON.stringify({
+          entries: proposal.solution,
+          difficulty: "easy",
+          celebrationAcknowledged: true,
+        }),
+      );
+      localStorage.setItem(
+        "crossword:proposal-v1:session",
+        JSON.stringify({
+          id: "sess-proposal-solved",
+          elapsedMs: 442_000,
+          completed: true,
+          difficulty: "easy",
+        }),
+      );
+
+      renderCrossword("proposal");
+
+      const solvedSummary = screen.getByRole("status").parentElement!;
+      expect(solvedSummary).toHaveClass("px-4", "md:px-0");
+      expect(
+        within(solvedSummary).getByRole("button", { name: "Leaderboard" }),
+      ).toBeInTheDocument();
+      expect(
+        within(solvedSummary).getByRole("button", {
+          name: "Replay animation",
+        }),
+      ).toBeInTheDocument();
     });
 
     it("nudges the guest when the grid is full but incorrect, and recovers", async () => {

@@ -95,6 +95,8 @@
  */
 :root {
   --radius: 0.625rem;
+  /* Replaced at runtime with the measured clue bar + custom keyboard height. */
+  --crossword-mobile-dock-height: 17rem;
 
   --background: #f5f5f5; /* page */
   --foreground: #2a2622; /* ink */

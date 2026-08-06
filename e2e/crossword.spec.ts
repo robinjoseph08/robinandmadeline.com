@@ -40,6 +40,11 @@ test("proposal crossword clue list keeps its mobile controls and keyboard usable
     toolbar.getByRole("button", { name: "Pause timer" }),
   ).toBeVisible();
   await expect(toolbar.getByRole("button", { name: "Settings" })).toBeVisible();
+  const devControls = page.getByTestId("crossword-dev-controls");
+  await expect(devControls).toBeVisible();
+  await expect(
+    devControls.getByRole("button", { name: "Fill all but final square" }),
+  ).toBeVisible();
 
   const clueList = page.getByRole("region", { name: "Crossword clue list" });
   await expect(clueList).toBeVisible();
@@ -142,10 +147,10 @@ test("proposal crossword clue list keeps its mobile controls and keyboard usable
   const clueBarBox = await requiredBox(clueBar);
   expect
     .soft(
-      clueListBox.y + clueListBox.height,
-      "the clue-list scrollport should end above the fixed solve dock",
+      clueListBox.y,
+      "the clue list should participate in normal page layout",
     )
-    .toBeLessThanOrEqual(clueBarBox.y + 1);
+    .toBeGreaterThanOrEqual(toolbarBox.y + toolbarBox.height - 1);
 
   await toolbar.getByRole("button", { name: "Pause timer" }).click();
   const pauseDialog = page.getByTestId("crossword-pause-dialog");
@@ -157,42 +162,42 @@ test("proposal crossword clue list keeps its mobile controls and keyboard usable
     toolbar.getByRole("button", { name: "Show crossword grid" }),
   ).toHaveAttribute("aria-pressed", "true");
 
-  const toolbarBoxBeforeScroll = await requiredBox(toolbar);
-  await clueList.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
-  await expect
-    .poll(() => clueList.evaluate((element) => element.scrollTop))
-    .toBeGreaterThan(0);
-
-  const scrolledClueListBox = await requiredBox(clueList);
-  const downHeadingBox = await requiredBox(downHeading);
-  expect(downHeadingBox.y).toBeGreaterThanOrEqual(scrolledClueListBox.y - 1);
-  expect(downHeadingBox.y).toBeLessThanOrEqual(scrolledClueListBox.y + 2);
-  expect(downHeadingBox.y + downHeadingBox.height).toBeLessThanOrEqual(
-    scrolledClueListBox.y + scrolledClueListBox.height + 1,
+  expect(await clueList.evaluate((element) => element.scrollTop)).toBe(0);
+  const downHeadingPageY = await downHeading.evaluate(
+    (element) => element.getBoundingClientRect().top + window.scrollY,
   );
-  const lastClueBox = await requiredBox(clueList.getByRole("listitem").last());
-  expect
-    .soft(
-      scrolledClueListBox.y +
-        scrolledClueListBox.height -
-        lastClueBox.y -
-        lastClueBox.height,
-      "scrolling to the end should not leave blank content below the last clue",
-    )
-    .toBeLessThanOrEqual(2);
+  await page.evaluate(
+    (top) => window.scrollTo({ top }),
+    downHeadingPageY + 200,
+  );
+  await expect(downHeading).toBeVisible();
+  expect(await clueList.evaluate((element) => element.scrollTop)).toBe(0);
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
 
   await expect(toolbar).toBeVisible();
   await expect(gridToggle).toBeVisible();
-  const toolbarBoxAfterScroll = await requiredBox(toolbar);
-  expect(toolbarBoxAfterScroll.y).toBeCloseTo(toolbarBoxBeforeScroll.y, 0);
+  const stickyToolbarBox = await requiredBox(toolbar);
+  const stickyDownHeadingBox = await requiredBox(downHeading);
+  expect(stickyToolbarBox.y).toBeCloseTo(0, 0);
+  expect(stickyDownHeadingBox.y).toBeCloseTo(
+    stickyToolbarBox.y + stickyToolbarBox.height,
+    0,
+  );
+
+  const lastClue = clueList.getByRole("listitem").last();
+  await lastClue.scrollIntoViewIfNeeded();
+  const lastClueBox = await requiredBox(lastClue);
+  const dockBox = await requiredBox(
+    page.getByTestId("crossword-mobile-solve-dock"),
+  );
+  expect(lastClueBox.y + lastClueBox.height).toBeLessThanOrEqual(dockBox.y + 1);
 
   const keyboardBoxAfterScroll = await requiredBox(keyboard);
   expect(keyboardBoxAfterScroll.x).toBeCloseTo(keyboardBox.x, 0);
   expect(keyboardBoxAfterScroll.y).toBeCloseTo(keyboardBox.y, 0);
   expect(keyboardBoxAfterScroll.width).toBeCloseTo(keyboardBox.width, 0);
   expect(keyboardBoxAfterScroll.height).toBeCloseTo(keyboardBox.height, 0);
+  expect(clueBarBox.y).toBeLessThan(keyboardBoxAfterScroll.y);
 
   const firstDownSquare = downAnswer.getByRole("button").first();
   await firstDownSquare.click();
