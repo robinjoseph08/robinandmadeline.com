@@ -37,12 +37,13 @@ func TestListSessions_NewestFirst(t *testing.T) {
 	assert.Equal(t, first.ID, items[2].ID)
 }
 
-func TestListSessions_IncludesEveryStateAndExposesIP(t *testing.T) {
+func TestListSessions_IncludesEveryStateAndExposesClientDetails(t *testing.T) {
 	svc, _, _ := newServices(t)
 
 	// One of each state the admin must see: an in-progress (no completed_at)
 	// solve, a completed-but-never-posted solve (on_leaderboard false), and a
-	// posted solve. All three must appear, with ip_address surfaced.
+	// posted solve. All three must appear, with the captured client details
+	// surfaced.
 	inProgress := startSessionT(t, svc, models.GameDifficultyMedium)
 	completedUnposted := completeSessionT(t, svc, models.GameDifficultyMedium, 42000)
 	posted := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
@@ -55,8 +56,9 @@ func TestListSessions_IncludesEveryStateAndExposesIP(t *testing.T) {
 	byID := make(map[string]games.AdminGameSessionResponse, len(items))
 	for _, it := range items {
 		byID[it.ID] = it
-		// Every session carries the captured IP (startSessionT seeds 203.0.113.7).
+		// startSessionT seeds both captured client fields.
 		assert.Equal(t, "203.0.113.7", it.IPAddress, "the admin view exposes ip_address")
+		assert.Equal(t, "games-service-test", it.UserAgent, "the admin view exposes user_agent")
 	}
 
 	// The in-progress solve: no completed_at, not on the board, no name.
@@ -85,10 +87,15 @@ func TestListSessions_PartyNameForAffiliatedAndNullForAnonymous(t *testing.T) {
 	// An affiliated solve (a signed-in guest's token rode it) carries the
 	// party's id and name; an anonymous solve carries neither.
 	p := createPartyT(t, partySvc, "The Smiths")
-	affiliated, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
-		PuzzleID:   "wedding-mini-v1",
-		Difficulty: models.GameDifficultyEasy,
-	}, p.ID, "203.0.113.7")
+	affiliated, err := svc.CreateSession(ctx(), games.CreateGameSessionInput{
+		Payload: games.CreateGameSessionPayload{
+			PuzzleID:   "wedding-mini-v1",
+			Difficulty: models.GameDifficultyEasy,
+		},
+		PartyID:   p.ID,
+		IPAddress: "203.0.113.7",
+		UserAgent: "games-service-test",
+	})
 	require.NoError(t, err)
 	require.NotNil(t, sessionRow(t, db, affiliated.ID).PartyID, "fixture precondition: the solve is affiliated")
 
@@ -122,21 +129,36 @@ func TestListSessions_EmptySerializesAsEmptyList(t *testing.T) {
 	assert.Empty(t, items)
 }
 
-func TestDeleteSession_RemovesTheRow(t *testing.T) {
+func TestHideSession_RetainsTheSolveAndRemovesItFromTheBoard(t *testing.T) {
+	svc, _, db := newServices(t)
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+
+	require.NoError(t, svc.HideSession(ctx(), session.ID))
+
+	row := sessionRow(t, db, session.ID)
+	assert.False(t, row.OnLeaderboard)
+	require.NotNil(t, row.HiddenAt)
+	require.NotNil(t, row.DisplayName)
+	assert.Equal(t, "Alice", *row.DisplayName)
+	assert.EqualValues(t, 30000, row.ElapsedMS)
+	require.NotNil(t, row.CompletedAt)
+}
+
+func TestHideSession_LeavesAnUnpostedSolveUnmoderated(t *testing.T) {
 	svc, _, db := newServices(t)
 	session := completeSessionT(t, svc, models.GameDifficultyEasy, 30000)
 
-	require.NoError(t, svc.DeleteSession(ctx(), session.ID))
+	require.NoError(t, svc.HideSession(ctx(), session.ID))
 
-	exists, err := db.NewSelect().Model((*models.GameSession)(nil)).
-		Where("id = ?", session.ID).Exists(ctx())
-	require.NoError(t, err)
-	assert.False(t, exists, "the session row is hard-deleted")
+	row := sessionRow(t, db, session.ID)
+	assert.False(t, row.OnLeaderboard)
+	assert.Nil(t, row.HiddenAt)
+	assert.Nil(t, row.DisplayName)
 }
 
-func TestDeleteSession_UnknownSessionIs404(t *testing.T) {
+func TestHideSession_UnknownSessionIs404(t *testing.T) {
 	svc, _, _ := newServices(t)
 
-	err := svc.DeleteSession(ctx(), "00000000-0000-0000-0000-000000000000")
+	err := svc.HideSession(ctx(), "00000000-0000-0000-0000-000000000000")
 	assertErrCode(t, err, errcodes.CodeNotFound)
 }

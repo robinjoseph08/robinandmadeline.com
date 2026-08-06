@@ -16,6 +16,7 @@ import {
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { proposal } from "@/components/library/crossword/puzzle-data-proposal";
 import type { SolveSessionRecord } from "@/components/library/crossword/session";
 import Crossword from "@/components/pages/Crossword";
 import { ApiError } from "@/libraries/api";
@@ -24,6 +25,9 @@ import type { UpdateGameSessionPayload } from "@/types/generated/games";
 import type { GameSession } from "@/types/generated/models";
 
 const apiRequest = vi.fn();
+vi.mock("react-confetti", () => ({
+  default: () => <canvas data-testid="confetti-canvas" />,
+}));
 vi.mock("@/libraries/api", async () => {
   const actual = await vi.importActual<object>("@/libraries/api");
   return {
@@ -239,6 +243,12 @@ describe("Crossword solve sessions", () => {
     localStorage.clear();
     apiRequest.mockReset();
     mockApiRoutes();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
   });
 
   afterEach(() => {
@@ -432,6 +442,27 @@ describe("Crossword solve sessions", () => {
       expect(timer()).toHaveTextContent("0:07");
     });
 
+    it("collapses the pause dialog when the timer readout is hidden", async () => {
+      localStorage.setItem(
+        "crossword:settings",
+        JSON.stringify({ showTimer: false }),
+      );
+      renderCrossword();
+      await startGame();
+
+      fireEvent.click(screen.getByRole("button", { name: "Pause timer" }));
+      await flushAsync();
+
+      const dialog = screen.getByTestId("crossword-pause-dialog");
+      expect(dialog).toHaveTextContent(/clock is stopped/i);
+      expect(
+        within(dialog).queryByTestId("crossword-pause-time"),
+      ).not.toBeInTheDocument();
+      expect(
+        within(dialog).getByRole("button", { name: "Resume" }),
+      ).toBeInTheDocument();
+    });
+
     it("resumes from every pause dialog close path, not just the Resume button", async () => {
       useFakeClock();
       renderCrossword();
@@ -467,6 +498,79 @@ describe("Crossword solve sessions", () => {
       ).not.toBeInTheDocument();
       await advance(2_000);
       expect(timer()).toHaveTextContent("0:07");
+    });
+
+    it("pauses on the first incorrect full grid and retriggers only after a blank", async () => {
+      seedProgress(ALL_BUT_LAST);
+      seedSession({ id: "sess-1", elapsedMs: 10_000 });
+      useFakeClock();
+
+      renderCrossword();
+      await resumeGame();
+      await advance(2_000);
+
+      fireEvent.mouseDown(square(4, 3));
+      fireEvent.keyDown(gridEl(), { key: "X" });
+      await flushAsync();
+
+      const first = screen.getByTestId("crossword-incorrect-dialog");
+      expect(screen.getByTestId("crossword-play-area")).toHaveAttribute(
+        "inert",
+      );
+      expect(lastPatchBody()).toMatchObject({
+        elapsed_ms: 12_000,
+        completed: false,
+      });
+      await advance(5_000);
+      expect(timer()).toHaveTextContent("0:12");
+
+      fireEvent.click(
+        within(first).getByRole("button", { name: "Keep trying" }),
+      );
+      await flushDialogClose();
+      await flushAsync();
+      await advance(1_000);
+      expect(timer()).toHaveTextContent("0:13");
+
+      // Overwriting a wrong letter while the grid stays full does not reopen.
+      fireEvent.keyDown(gridEl(), { key: "Y" });
+      await flushAsync();
+      expect(
+        screen.queryByTestId("crossword-incorrect-dialog"),
+      ).not.toBeInTheDocument();
+
+      // A real incomplete transition resets the latch, so the next wrong fill
+      // interrupts once more.
+      fireEvent.keyDown(gridEl(), { key: "Backspace" });
+      fireEvent.keyDown(gridEl(), { key: "Z" });
+      await flushAsync();
+      expect(
+        screen.getByTestId("crossword-incorrect-dialog"),
+      ).toBeInTheDocument();
+    });
+
+    it("does not stack incorrect feedback on a restored full wrong grid", async () => {
+      seedProgress(`${SOLUTION.slice(0, 23)}X.`);
+      seedSession({ id: "sess-1", elapsedMs: 10_000 });
+
+      renderCrossword();
+
+      expect(screen.getByTestId("crossword-pause-dialog")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("crossword-incorrect-dialog"),
+      ).not.toBeInTheDocument();
+      await resumeGame();
+      expect(
+        screen.queryByTestId("crossword-incorrect-dialog"),
+      ).not.toBeInTheDocument();
+
+      fireEvent.mouseDown(square(4, 3));
+      fireEvent.keyDown(gridEl(), { key: "Backspace" });
+      fireEvent.keyDown(gridEl(), { key: "X" });
+      await flushAsync();
+      expect(
+        screen.getByTestId("crossword-incorrect-dialog"),
+      ).toBeInTheDocument();
     });
 
     it("pauses while the settings dialog is open and flushes on opening", async () => {
@@ -701,6 +805,270 @@ describe("Crossword solve sessions", () => {
   });
 
   describe("completion and leaderboard", () => {
+    it("runs the proposal celebration before the existing completion and leaderboard flow", async () => {
+      const progressKey = `crossword:${proposal.id}:progress`;
+      const sessionKey = `crossword:${proposal.id}:session`;
+      localStorage.setItem(
+        progressKey,
+        JSON.stringify({
+          entries: `${proposal.solution.slice(0, -1)}?`,
+          difficulty: "easy",
+        }),
+      );
+      localStorage.setItem(
+        sessionKey,
+        JSON.stringify({
+          id: "sess-1",
+          elapsedMs: 60_000,
+          completed: false,
+          difficulty: "easy",
+        }),
+      );
+      const base = apiRequest.getMockImplementation()!;
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string; body?: unknown }) => {
+          if (path === "/games/sessions/sess-1/leaderboard") {
+            return Promise.resolve(makeSession({ display_name: "Robin" }));
+          }
+          return base(path, options);
+        },
+      );
+
+      renderCrossword("proposal");
+      await resumeGame();
+      fireEvent.mouseDown(square(14, 14));
+      fireEvent.keyDown(gridEl(), { key: "G" });
+      await flushAsync();
+
+      expect(patchBodies().some((body) => body.completed)).toBe(true);
+      expect(
+        await screen.findByTestId("crossword-proposal-celebration"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Continue to results" }),
+      );
+      const completion = await screen.findByTestId(
+        "crossword-completion-dialog",
+      );
+      expect(
+        screen.queryByTestId("crossword-proposal-celebration"),
+      ).not.toBeInTheDocument();
+      expect(completion).toHaveTextContent(/in 1:00 with the easy clues/i);
+
+      fireEvent.change(screen.getByLabelText("Display name"), {
+        target: { value: "Robin" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByTestId("crossword-leaderboard-dialog"),
+        ).toBeInTheDocument(),
+      );
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/games/leaderboard?puzzle_id=proposal-v1&difficulty=easy&session_id=sess-1",
+      );
+      const difficultyPicker = within(
+        screen.getByTestId("crossword-leaderboard-dialog"),
+      ).getByRole("group", { name: "Leaderboard difficulty" });
+      expect(
+        within(difficultyPicker).getByRole("button", { name: "Easy" }),
+      ).toBeInTheDocument();
+      expect(
+        within(difficultyPicker).queryByRole("button", { name: "Medium" }),
+      ).not.toBeInTheDocument();
+      expect(
+        within(difficultyPicker).getByRole("button", { name: "Hard" }),
+      ).toBeInTheDocument();
+    });
+
+    it("reopens an unacknowledged proposal celebration after a refresh", async () => {
+      localStorage.setItem(
+        `crossword:${proposal.id}:progress`,
+        JSON.stringify({
+          entries: proposal.solution,
+          difficulty: "easy",
+          celebrationAcknowledged: false,
+        }),
+      );
+      localStorage.setItem(
+        `crossword:${proposal.id}:session`,
+        JSON.stringify({
+          id: "sess-1",
+          elapsedMs: 60_000,
+          completed: true,
+          difficulty: "easy",
+        }),
+      );
+
+      renderCrossword("proposal");
+
+      expect(
+        await screen.findByTestId("crossword-proposal-celebration"),
+      ).toBeInTheDocument();
+      expect(patchBodies()).toHaveLength(0);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Continue to results" }),
+      );
+      const saved = JSON.parse(
+        localStorage.getItem(`crossword:${proposal.id}:progress`)!,
+      ) as { celebrationAcknowledged: boolean };
+      expect(saved.celebrationAcknowledged).toBe(true);
+    });
+
+    it("replays an acknowledged proposal animation without reopening or reposting results", async () => {
+      const progressKey = `crossword:${proposal.id}:progress`;
+      const sessionKey = `crossword:${proposal.id}:session`;
+      localStorage.setItem(
+        progressKey,
+        JSON.stringify({
+          entries: proposal.solution,
+          difficulty: "easy",
+          celebrationAcknowledged: true,
+        }),
+      );
+      localStorage.setItem(
+        sessionKey,
+        JSON.stringify({
+          id: "sess-1",
+          elapsedMs: 60_000,
+          completed: true,
+          difficulty: "easy",
+        }),
+      );
+
+      renderCrossword("proposal");
+      await flushAsync();
+      const patchesBefore = patchBodies().length;
+      const savedSessionBefore = localStorage.getItem(sessionKey);
+
+      expect(
+        screen.queryByTestId("crossword-proposal-celebration"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Replay animation" }));
+      expect(
+        await screen.findByTestId("crossword-proposal-celebration"),
+      ).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Continue to results" }),
+      );
+
+      expect(
+        screen.queryByTestId("crossword-proposal-celebration"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
+      expect(patchBodies()).toHaveLength(patchesBefore);
+      expect(localStorage.getItem(sessionKey)).toBe(savedSessionBefore);
+      expect(JSON.parse(localStorage.getItem(progressKey)!)).toMatchObject({
+        celebrationAcknowledged: true,
+      });
+    });
+
+    it("continues past an unpostable legacy proposal celebration without opening the posting dialog", async () => {
+      localStorage.setItem(
+        `crossword:${proposal.id}:progress`,
+        JSON.stringify({
+          entries: proposal.solution,
+          difficulty: "medium",
+          celebrationAcknowledged: false,
+        }),
+      );
+      localStorage.setItem(
+        `crossword:${proposal.id}:session`,
+        JSON.stringify({
+          id: "sess-legacy",
+          elapsedMs: 90_000,
+          completed: true,
+          difficulty: "medium",
+        }),
+      );
+
+      renderCrossword("proposal");
+
+      expect(
+        await screen.findByTestId("crossword-proposal-celebration"),
+      ).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Continue to results" }),
+      );
+
+      expect(
+        screen.queryByTestId("crossword-proposal-celebration"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Post your time" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("preserves a completed proposal session while hiding an unavailable legacy difficulty", async () => {
+      localStorage.setItem(
+        `crossword:${proposal.id}:progress`,
+        JSON.stringify({
+          entries: proposal.solution,
+          difficulty: "medium",
+          celebrationAcknowledged: true,
+        }),
+      );
+      localStorage.setItem(
+        `crossword:${proposal.id}:session`,
+        JSON.stringify({
+          id: "sess-legacy",
+          elapsedMs: 90_000,
+          completed: true,
+          difficulty: "medium",
+        }),
+      );
+      apiRequest.mockImplementation((path: string) => {
+        if (path.startsWith("/games/leaderboard")) {
+          return Promise.resolve({ items: [], total: 0, viewer: null });
+        }
+        return Promise.resolve(makeSession());
+      });
+
+      renderCrossword("proposal");
+      await flushAsync();
+
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /you solved it in 1:30 with the easy clues/i,
+      );
+      expect(
+        screen.queryByRole("button", { name: "Post your time" }),
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /leaderboard/i }));
+      const dialog = await screen.findByTestId("crossword-leaderboard-dialog");
+      const picker = within(dialog).getByRole("group", {
+        name: "Leaderboard difficulty",
+      });
+      expect(
+        within(picker).getByRole("button", { pressed: true }),
+      ).toHaveTextContent("Easy");
+      expect(
+        within(picker).queryByRole("button", { name: "Medium" }),
+      ).not.toBeInTheDocument();
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/games/leaderboard?puzzle_id=proposal-v1&difficulty=easy&session_id=sess-legacy",
+      );
+      expect(
+        apiRequest.mock.calls.some(([path]) =>
+          String(path).includes("difficulty=medium"),
+        ),
+      ).toBe(false);
+    });
+
     it("reports completion and shows the server-recorded difficulty and time", async () => {
       // The guest solved on hard, but the server's record says easy was used
       // at some point; the dialog must show the server's value.
@@ -1000,6 +1368,7 @@ describe("Crossword solve sessions", () => {
               total: 2,
               viewer: {
                 rank: 2,
+                in_items: true,
                 entry: {
                   display_name: "Robin",
                   difficulty: "medium",

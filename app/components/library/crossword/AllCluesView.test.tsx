@@ -1,0 +1,297 @@
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { ComponentProps, createRef } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import AllCluesView, { type AllCluesViewHandle } from "./AllCluesView";
+import { generateGridModel } from "./helpers";
+
+const CLUES = {
+  across: {
+    "1": "First across",
+    "4": "Second across",
+    "5": "Third across",
+  },
+  down: {
+    "1": "First down",
+    "2": "Second down",
+    "3": "Third down",
+  },
+};
+
+function allCluesProps(
+  overrides: Partial<ComponentProps<typeof AllCluesView>> = {},
+): ComponentProps<typeof AllCluesView> {
+  return {
+    clues: CLUES,
+    completedWords: new Set<string>(),
+    grid: generateGridModel(3, 3, "X??Y??Z??"),
+    onBackspace: vi.fn(),
+    onLetter: vi.fn(),
+    onNext: vi.fn(),
+    onPrevious: vi.fn(),
+    onSelectClue: vi.fn(),
+    onSelectSquare: vi.fn(),
+    referencedNumbers: { across: new Set<string>(), down: new Set<string>() },
+    selection: { row: 0, col: 1, direction: "across" },
+    solvingStatus: "1 Across, square 2 of 3, empty",
+    ...overrides,
+  };
+}
+
+function rect(top: number, bottom: number): DOMRect {
+  return {
+    top,
+    bottom,
+    left: 0,
+    right: 0,
+    width: 0,
+    height: bottom - top,
+    x: 0,
+    y: top,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+afterEach(() => {
+  document.body.style.overflow = "";
+  vi.unstubAllGlobals();
+});
+
+describe("AllCluesView", () => {
+  it("renders inline with opaque sticky Across and Down headers", () => {
+    document.body.style.overflow = "clip";
+
+    render(
+      <div data-testid="inline-host">
+        <AllCluesView {...allCluesProps()} />
+      </div>,
+    );
+
+    const host = screen.getByTestId("inline-host");
+    const surface = within(host).getByTestId("crossword-all-clues");
+    expect(surface).toBeInTheDocument();
+    expect(surface.className).not.toContain("max-h-");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /close clue list/i }),
+    ).toBeNull();
+    expect(document.body.style.overflow).toBe("clip");
+
+    const across = screen.getByRole("heading", { name: "Across" });
+    const down = screen.getByRole("heading", { name: "Down" });
+    expect(across.compareDocumentPosition(down)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(across).toHaveClass("sticky", "bg-background");
+    expect(down).toHaveClass("sticky", "bg-background");
+  });
+
+  it("shows only live entered values and reports clue and exact square selections", () => {
+    const onSelectClue = vi.fn();
+    const onSelectSquare = vi.fn();
+    render(
+      <AllCluesView {...allCluesProps({ onSelectClue, onSelectSquare })} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "1. First across" }));
+    expect(onSelectClue).toHaveBeenCalledWith("1", "across");
+
+    const entered = screen.getByRole("button", {
+      name: "1 Across answer, square 1 of 3, X",
+    });
+    const empty = screen.getByRole("button", {
+      name: "1 Across answer, square 2 of 3, empty, selected",
+    });
+    expect(entered).toHaveTextContent("X");
+    expect(empty).toHaveTextContent("");
+
+    fireEvent.click(empty);
+    expect(onSelectSquare).toHaveBeenCalledWith({
+      row: 0,
+      col: 1,
+      direction: "across",
+    });
+  });
+
+  it("marks the current answer square and applies completion and reference state", () => {
+    render(
+      <AllCluesView
+        {...allCluesProps({
+          completedWords: new Set(["4:across"]),
+          referencedNumbers: {
+            across: new Set(["5"]),
+            down: new Set<string>(),
+          },
+        })}
+      />,
+    );
+
+    const selected = screen.getByRole("button", {
+      name: "1 Across answer, square 2 of 3, empty, selected",
+    });
+    expect(selected).toHaveAttribute("aria-current", "true");
+    expect(selected).toHaveClass("ring-2");
+    expect(screen.getByTestId("crossword-clue-across-4")).toHaveClass(
+      "text-muted-foreground",
+    );
+    expect(screen.getByTestId("crossword-clue-across-5")).toHaveClass(
+      "bg-rose-soft",
+    );
+  });
+
+  it("keeps all 15 answer squares in one responsive row", () => {
+    render(
+      <AllCluesView
+        {...allCluesProps({
+          clues: {
+            across: { "1": "Fifteen-letter answer" },
+            down: {},
+          },
+          grid: generateGridModel(15, 1),
+          selection: { row: 0, col: 0, direction: "across" },
+        })}
+      />,
+    );
+
+    const answer = screen.getByRole("group", { name: "1 Across answer" });
+    expect(answer).toHaveClass("grid", "w-full", "max-w-[22rem]", "gap-px");
+    expect(answer).toHaveStyle({
+      gridTemplateColumns: "repeat(15, minmax(0, 1fr))",
+    });
+    const squares = within(answer).getAllByRole("button");
+    expect(squares).toHaveLength(15);
+    for (const square of squares) {
+      expect(square).toHaveClass("aspect-square", "w-full", "min-w-0");
+    }
+  });
+
+  it("uses the same 15-column square sizing for short answers", () => {
+    render(<AllCluesView {...allCluesProps()} />);
+
+    const answer = screen.getByRole("group", { name: "1 Across answer" });
+    expect(answer).toHaveStyle({
+      gridTemplateColumns: "repeat(15, minmax(0, 1fr))",
+    });
+    expect(within(answer).getAllByRole("button")).toHaveLength(3);
+  });
+
+  it("supports physical solving keys and announces live solving status", () => {
+    const callbacks = {
+      onBackspace: vi.fn(),
+      onLetter: vi.fn(),
+      onNext: vi.fn(),
+      onPrevious: vi.fn(),
+    };
+    render(<AllCluesView {...allCluesProps(callbacks)} />);
+
+    const surface = screen.getByTestId("crossword-all-clues");
+    fireEvent.keyDown(surface, { key: "q" });
+    fireEvent.keyDown(surface, { key: "Backspace" });
+    fireEvent.keyDown(surface, { key: "ArrowLeft" });
+    fireEvent.keyDown(surface, { key: "ArrowRight" });
+    fireEvent.keyDown(surface, { key: "x", metaKey: true });
+
+    expect(callbacks.onLetter).toHaveBeenCalledWith("q");
+    expect(callbacks.onLetter).toHaveBeenCalledTimes(1);
+    expect(callbacks.onBackspace).toHaveBeenCalledTimes(1);
+    expect(callbacks.onPrevious).toHaveBeenCalledTimes(1);
+    expect(callbacks.onNext).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("1 Across, square 2 of 3, empty")).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
+  });
+
+  it("exposes focusSelected for dialog focus restoration", () => {
+    const ref = createRef<AllCluesViewHandle>();
+    render(<AllCluesView {...allCluesProps()} ref={ref} />);
+
+    act(() => ref.current?.focusSelected());
+
+    expect(screen.getByRole("button", { current: true })).toHaveFocus();
+  });
+
+  it("scrolls only its inline scrollport when the selected clue leaves view", () => {
+    let frame: FrameRequestCallback | undefined;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frame = callback;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+
+    const view = render(
+      <AllCluesView {...allCluesProps({ selection: undefined })} />,
+    );
+    const surface = screen.getByTestId("crossword-all-clues");
+    const row = screen.getByTestId("crossword-clue-across-1");
+    const scrollTo = vi.fn();
+    Object.assign(surface, { scrollTo, scrollTop: 20 });
+    surface.getBoundingClientRect = () => rect(0, 100);
+    row.getBoundingClientRect = () => rect(150, 180);
+
+    view.rerender(<AllCluesView {...allCluesProps()} />);
+    act(() => frame?.(0));
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 100 });
+  });
+
+  it("reconnects its height measurement when the mobile dock remounts", async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+
+    const view = render(
+      <>
+        <div
+          data-testid="crossword-mobile-solve-dock"
+          data-version="first"
+          key="first"
+        />
+        <AllCluesView {...allCluesProps()} />
+      </>,
+    );
+    const surface = screen.getByTestId("crossword-all-clues");
+    surface.getBoundingClientRect = () => rect(100, 500);
+    const firstDock = screen.getByTestId("crossword-mobile-solve-dock");
+    firstDock.getBoundingClientRect = () => rect(300, 500);
+    act(() => frames.shift()?.(0));
+    expect(surface.style.height).toBe("192px");
+
+    view.rerender(
+      <>
+        <div
+          data-testid="crossword-mobile-solve-dock"
+          data-version="second"
+          key="second"
+        />
+        <AllCluesView {...allCluesProps()} />
+      </>,
+    );
+    const secondDock = screen.getByTestId("crossword-mobile-solve-dock");
+    secondDock.getBoundingClientRect = () => rect(220, 420);
+
+    await waitFor(() => expect(frames.length).toBeGreaterThan(0));
+    act(() => {
+      for (const callback of frames.splice(0)) {
+        callback(0);
+      }
+    });
+    expect(surface.style.height).toBe("112px");
+  });
+
+  it("stays memoized around its forwarded ref surface", () => {
+    expect((AllCluesView as { $$typeof?: symbol }).$$typeof).toBe(
+      Symbol.for("react.memo"),
+    );
+  });
+});

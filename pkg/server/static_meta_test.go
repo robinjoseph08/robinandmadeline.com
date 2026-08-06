@@ -275,31 +275,24 @@ func TestShellMeta_NoindexTitledRoutesGetGenericTitle(t *testing.T) {
 	}
 }
 
-func TestShellMeta_PuzzleRoutesGetTitleButStayNoindexWhileGated(t *testing.T) {
+func TestShellMeta_ProposalPuzzleIsKnownAndIndexable(t *testing.T) {
 	srv := newMetaServer(t)
-	// Each /games/:slug puzzle gets its own title (mirroring the puzzle registry).
-	// The pages are gated client-side by RequireGamesAccess, so for now they are
-	// also noindex; when that gate is removed they should become indexable. Mixed
-	// case confirms the slug match is case-insensitive.
-	for _, tc := range []struct{ path, title, ogURL string }{
-		{"/games/mini", "The Wedding Mini · Robin &amp; Madeline", "https://www.robinandmadeline.com/games/mini"},
-		{"/games/crossword", "The Wedding Crossword · Robin &amp; Madeline", "https://www.robinandmadeline.com/games/crossword"},
-		{"/Games/Mini", "The Wedding Mini · Robin &amp; Madeline", "https://www.robinandmadeline.com/games/mini"},
+	// The only public puzzle gets its registry title and canonical URL with no
+	// noindex tag. The route prefix remains case-insensitive like React Router.
+	for _, tc := range []struct{ path, ogURL string }{
+		{"/games/proposal", "https://www.robinandmadeline.com/games/proposal"},
+		{"/Games/proposal", "https://www.robinandmadeline.com/games/proposal"},
 	} {
 		rec := getCanonical(srv, tc.path)
 		require.Equal(t, http.StatusOK, rec.Code, tc.path)
 		body := rec.Body.String()
+		title := "The Proposal Crossword · Robin &amp; Madeline"
 
-		assert.Contains(t, body, "<title>"+tc.title+"</title>", tc.path)
+		assert.Contains(t, body, "<title>"+title+"</title>", tc.path)
 		assert.Equal(t, 1, strings.Count(body, "<title>"), tc.path)
-		assert.Contains(t, body, `<meta property="og:title" content="`+tc.title+`" />`, tc.path)
-		assert.Contains(t, body, `<meta name="twitter:title" content="`+tc.title+`" />`, tc.path)
-		// Gated content stays out of the index, inside <head>.
-		assert.Contains(t, body, noindexTag, tc.path)
-		assert.Less(t, strings.Index(body, noindexTag), strings.Index(body, "</head>"), tc.path)
-
-		// The preview card links back to the puzzle page itself, not the home
-		// default; a mixed-case request normalizes to the canonical lowercase URL.
+		assert.Contains(t, body, `<meta property="og:title" content="`+title+`" />`, tc.path)
+		assert.Contains(t, body, `<meta name="twitter:title" content="`+title+`" />`, tc.path)
+		assert.NotContains(t, body, noindexTag, tc.path)
 		assert.Contains(t, body, `<meta property="og:url" content="`+tc.ogURL+`" />`, tc.path)
 	}
 }
@@ -311,14 +304,16 @@ func TestShellMeta_UnknownDocumentRouteIs404(t *testing.T) {
 	assert.NotEqual(t, metaShell, rec.Body.String())
 }
 
-func TestShellMeta_UnknownPuzzleSlugGetsShellButStaysNoindex(t *testing.T) {
+func TestShellMeta_UnknownAndRetiredPuzzleSlugsStayNoindex(t *testing.T) {
 	srv := newMetaServer(t)
 	// Any safe slug matches the frontend route shape, where the page owns its
-	// friendly not-found treatment. The whole gated shape remains noindex.
-	rec := getCanonical(srv, "/games/does-not-exist")
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Contains(t, rec.Body.String(), noindexTag)
-	assert.Contains(t, rec.Body.String(), "<title>Robin &amp; Madeline</title>")
+	// friendly not-found treatment. Unknown and retired puzzles remain noindex.
+	for _, path := range []string{"/games/does-not-exist", "/games/mini", "/games/crossword", "/games/Proposal"} {
+		rec := getCanonical(srv, path)
+		require.Equal(t, http.StatusOK, rec.Code, path)
+		assert.Contains(t, rec.Body.String(), noindexTag, path)
+		assert.Contains(t, rec.Body.String(), "<title>Robin &amp; Madeline</title>", path)
+	}
 }
 
 func TestShellMeta_PublicRoutesAreIndexableAndCaseInsensitive(t *testing.T) {
@@ -351,18 +346,25 @@ func TestShellMeta_TrailingSlashIsNormalized(t *testing.T) {
 	srv := newMetaServer(t)
 	// The static handler strips one trailing slash before injectMeta sees the
 	// request path, so a route is classified the same with or without one,
-	// matching React Router, which ignores trailing slashes. A
-	// gated puzzle and an RSVP step therefore keep their noindex + title at the
-	// slashed URL rather than falling through to an untreated shell.
-	for _, tc := range []struct{ path, title string }{
-		{"/games/mini/", "The Wedding Mini · Robin &amp; Madeline"},
-		{"/rsvp/form/", "RSVP · Robin &amp; Madeline"},
+	// matching React Router, which ignores trailing slashes. Public and noindex
+	// routes therefore keep their classification at the slashed URL.
+	for _, tc := range []struct {
+		path, title string
+		noindex     bool
+	}{
+		{"/games/proposal/", "The Proposal Crossword · Robin &amp; Madeline", false},
+		{"/games/mini/", "Robin &amp; Madeline", true},
+		{"/rsvp/form/", "RSVP · Robin &amp; Madeline", true},
 	} {
 		rec := getCanonical(srv, tc.path)
 		require.Equal(t, http.StatusOK, rec.Code, tc.path)
 		body := rec.Body.String()
 		assert.Contains(t, body, "<title>"+tc.title+"</title>", tc.path)
-		assert.Contains(t, body, noindexTag, tc.path)
+		if tc.noindex {
+			assert.Contains(t, body, noindexTag, tc.path)
+		} else {
+			assert.NotContains(t, body, noindexTag, tc.path)
+		}
 	}
 }
 

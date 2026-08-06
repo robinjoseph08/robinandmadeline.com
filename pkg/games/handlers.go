@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -52,10 +53,29 @@ func clientIP(c echo.Context) string {
 	return ""
 }
 
+// maxUserAgentBytes limits persisted User-Agent values to 512 UTF-8 bytes.
+const maxUserAgentBytes = 512
+
+// userAgentForStorage normalizes the server-observed User-Agent before it is
+// persisted. It trims surrounding whitespace, removes invalid UTF-8 bytes, and
+// truncates at a rune boundary so the result never exceeds maxUserAgentBytes.
+func userAgentForStorage(userAgent string) string {
+	userAgent = strings.TrimSpace(strings.ToValidUTF8(userAgent, ""))
+	if len(userAgent) <= maxUserAgentBytes {
+		return userAgent
+	}
+
+	userAgent = userAgent[:maxUserAgentBytes]
+	for !utf8.ValidString(userAgent) {
+		userAgent = userAgent[:len(userAgent)-1]
+	}
+	return strings.TrimSpace(userAgent)
+}
+
 // createSession handles POST /api/games/sessions: a guest starting a puzzle.
-// It captures the puzzle, the starting difficulty, the client IP, and (behind
-// OptionalGuest) the party when a valid guest token rode the request. The
-// returned session's id is the bearer token for every later report.
+// It captures the puzzle, starting difficulty, client IP, user agent, and
+// (behind OptionalGuest) the party when a valid guest token rode the request.
+// The returned session's id is the bearer token for every later report.
 func (h *handler) createSession(c echo.Context) error {
 	var body CreateGameSessionPayload
 	if err := c.Bind(&body); err != nil {
@@ -63,7 +83,12 @@ func (h *handler) createSession(c echo.Context) error {
 		return errors.WithStack(err)
 	}
 
-	session, err := h.service.CreateSession(c.Request().Context(), body, auth.GuestPartyID(c), clientIP(c))
+	session, err := h.service.CreateSession(c.Request().Context(), CreateGameSessionInput{
+		Payload:   body,
+		PartyID:   auth.GuestPartyID(c),
+		IPAddress: clientIP(c),
+		UserAgent: userAgentForStorage(c.Request().UserAgent()),
+	})
 	if err != nil {
 		return err
 	}
@@ -134,8 +159,9 @@ func (h *handler) getLeaderboard(c echo.Context) error {
 // adminListSessions handles GET /api/admin/games/sessions: every solve session
 // in the admin {items, total} envelope, newest first. Unlike the public
 // leaderboard it includes in-progress and completed-but-unposted solves and
-// exposes ip_address, so an admin can see and clean up every recorded time. The
-// route is mounted on the admin group, so a valid admin token is required.
+// exposes ip_address and user_agent, so an admin can inspect every recorded
+// time. The route is mounted on the admin group, so a valid admin token is
+// required.
 func (h *handler) adminListSessions(c echo.Context) error {
 	items, total, err := h.service.ListSessions(c.Request().Context())
 	if err != nil {
@@ -144,16 +170,16 @@ func (h *handler) adminListSessions(c echo.Context) error {
 	return c.JSON(http.StatusOK, ListAdminGameSessionsResponse{Items: items, Total: total})
 }
 
-// adminDeleteSession handles DELETE /api/admin/games/sessions/:id, returning
+// adminHideSession handles POST /api/admin/games/sessions/:id/hide, returning
 // 204 on success. A malformed id is a 404 before any query (pathID), and an
-// unknown but well-formed id is a 404 from the delete. This hard-deletes the
-// row so a bad-actor or junk solve can be removed without touching the database.
-func (h *handler) adminDeleteSession(c echo.Context) error {
+// unknown but well-formed id is a 404 from the update. Hiding retains the solve
+// and its name but removes it from public leaderboard reads.
+func (h *handler) adminHideSession(c echo.Context) error {
 	id, err := pathID(c)
 	if err != nil {
 		return err
 	}
-	if err := h.service.DeleteSession(c.Request().Context(), id); err != nil {
+	if err := h.service.HideSession(c.Request().Context(), id); err != nil {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)

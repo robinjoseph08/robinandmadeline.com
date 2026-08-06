@@ -7,7 +7,6 @@
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
-  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -48,16 +47,16 @@ export default function PauseDialog({
             The clock is stopped and your letters are saved.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody className="py-4">
-          {elapsed !== null && (
+        {elapsed !== null && (
+          <div className="px-6 py-4" data-testid="crossword-pause-time">
             <p
               className="text-center text-3xl font-semibold tabular-nums"
               data-testid="crossword-pause-elapsed"
             >
               {elapsed}
             </p>
-          )}
-        </DialogBody>
+          </div>
+        )}
         <DialogFooter>
           <Button onClick={onResume} type="button">
             Resume

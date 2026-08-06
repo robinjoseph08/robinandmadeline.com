@@ -18,7 +18,7 @@ import (
 
 // newAdminGamesEcho wires the games admin routes onto a bare Echo group with the
 // shared error handler and the custom binder, but WITHOUT the admin auth
-// middleware: these tests exercise the handlers, the list/delete behavior, and
+// middleware: these tests exercise the handlers, the list/hide behavior, and
 // the response shapes, while auth enforcement on the admin group is covered in
 // pkg/server. It uses the package's isolated Postgres test database.
 func newAdminGamesEcho(t *testing.T, svc *games.Service) *echo.Echo {
@@ -33,7 +33,7 @@ func newAdminGamesEcho(t *testing.T, svc *games.Service) *echo.Echo {
 }
 
 // doAdmin issues a request against the admin games surface and returns the
-// recorder. The list and delete endpoints take no body.
+// recorder. The list and hide endpoints take no body.
 func doAdmin(t *testing.T, e *echo.Echo, method, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequestWithContext(context.Background(), method, target, http.NoBody)
@@ -42,7 +42,7 @@ func doAdmin(t *testing.T, e *echo.Echo, method, target string) *httptest.Respon
 	return rec
 }
 
-func TestAdminListSessionsHandler_ReturnsEveryStateWithIPAndParty(t *testing.T) {
+func TestAdminListSessionsHandler_ReturnsEveryStateWithClientAndParty(t *testing.T) {
 	svc, partySvc, _ := newServices(t)
 	e := newAdminGamesEcho(t, svc)
 
@@ -52,10 +52,15 @@ func TestAdminListSessionsHandler_ReturnsEveryStateWithIPAndParty(t *testing.T) 
 	completeSessionT(t, svc, models.GameDifficultyMedium, 42000)    // completed, unposted
 	postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000) // posted
 	p := createPartyT(t, partySvc, "The Smiths")
-	_, err := svc.CreateSession(ctx(), games.CreateGameSessionPayload{
-		PuzzleID:   "wedding-mini-v1",
-		Difficulty: models.GameDifficultyEasy,
-	}, p.ID, "203.0.113.7") // affiliated, in-progress
+	_, err := svc.CreateSession(ctx(), games.CreateGameSessionInput{
+		Payload: games.CreateGameSessionPayload{
+			PuzzleID:   "wedding-mini-v1",
+			Difficulty: models.GameDifficultyEasy,
+		},
+		PartyID:   p.ID,
+		IPAddress: "203.0.113.7",
+		UserAgent: "games-service-test",
+	}) // affiliated, in-progress
 	require.NoError(t, err)
 
 	rec := doAdmin(t, e, http.MethodGet, "/api/admin/games/sessions")
@@ -69,6 +74,7 @@ func TestAdminListSessionsHandler_ReturnsEveryStateWithIPAndParty(t *testing.T) 
 	var sawInProgress, sawCompletedUnposted, sawPosted, sawAffiliated bool
 	for _, it := range resp.Items {
 		assert.Equal(t, "203.0.113.7", it.IPAddress, "the admin response exposes ip_address")
+		assert.Equal(t, "games-service-test", it.UserAgent, "the admin response exposes user_agent")
 		switch {
 		case it.PartyName != nil:
 			sawAffiliated = true
@@ -95,7 +101,7 @@ func TestAdminListSessionsHandler_ReturnsEveryStateWithIPAndParty(t *testing.T) 
 	assert.True(t, sawAffiliated, "the affiliated solve is listed with its party name")
 }
 
-func TestAdminListSessionsHandler_ExposesIPAddressKeyUnlikePublicResponse(t *testing.T) {
+func TestAdminListSessionsHandler_ExposesClientKeysUnlikePublicResponse(t *testing.T) {
 	svc, _, _ := newServices(t)
 	e := newAdminGamesEcho(t, svc)
 	startSessionT(t, svc, models.GameDifficultyEasy)
@@ -103,16 +109,18 @@ func TestAdminListSessionsHandler_ExposesIPAddressKeyUnlikePublicResponse(t *tes
 	rec := doAdmin(t, e, http.MethodGet, "/api/admin/games/sessions")
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	// The admin item carries an ip_address key (the public GameSessionResponse
-	// hides it). Decode the raw item to assert the key is present, not just the
-	// typed value.
+	// The admin item carries ip_address and user_agent keys (the public
+	// GameSessionResponse hides them). Decode the raw item to assert the keys are
+	// present, not just the typed values.
 	var resp struct {
 		Items []map[string]json.RawMessage `json:"items"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.Len(t, resp.Items, 1)
 	assert.Contains(t, resp.Items[0], "ip_address", "the admin view intentionally exposes ip_address")
+	assert.Contains(t, resp.Items[0], "user_agent", "the admin view intentionally exposes user_agent")
 	assert.Contains(t, resp.Items[0], "on_leaderboard")
+	assert.Contains(t, resp.Items[0], "hidden_at")
 	assert.Contains(t, resp.Items[0], "party_name")
 	assert.Contains(t, resp.Items[0], "completed_at")
 }
@@ -126,38 +134,39 @@ func TestAdminListSessionsHandler_EmptySerializesItemsAsEmptyArray(t *testing.T)
 	assert.JSONEq(t, `{"items":[],"total":0}`, rec.Body.String())
 }
 
-func TestAdminDeleteSessionHandler_Returns204AndRemovesRow(t *testing.T) {
+func TestAdminHideSessionHandler_Returns204AndRetainsRow(t *testing.T) {
 	svc, _, db := newServices(t)
 	e := newAdminGamesEcho(t, svc)
-	session := completeSessionT(t, svc, models.GameDifficultyEasy, 30000)
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
 
-	rec := doAdmin(t, e, http.MethodDelete, "/api/admin/games/sessions/"+session.ID)
+	rec := doAdmin(t, e, http.MethodPost, "/api/admin/games/sessions/"+session.ID+"/hide")
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.Empty(t, rec.Body.Bytes(), "a 204 carries no body")
 
-	exists, err := db.NewSelect().Model((*models.GameSession)(nil)).
-		Where("id = ?", session.ID).Exists(ctx())
-	require.NoError(t, err)
-	assert.False(t, exists, "the delete actually removes the row")
+	row := sessionRow(t, db, session.ID)
+	assert.False(t, row.OnLeaderboard)
+	require.NotNil(t, row.HiddenAt)
+	require.NotNil(t, row.DisplayName)
+	assert.Equal(t, "Alice", *row.DisplayName)
 }
 
-func TestAdminDeleteSessionHandler_UnknownIDIs404(t *testing.T) {
+func TestAdminHideSessionHandler_UnknownIDIs404(t *testing.T) {
 	svc, _, _ := newServices(t)
 	e := newAdminGamesEcho(t, svc)
 
-	// A well-formed but unknown id is a 404 from the delete (0 rows affected).
-	rec := doAdmin(t, e, http.MethodDelete, "/api/admin/games/sessions/00000000-0000-0000-0000-000000000000")
+	// A well-formed but unknown id is a 404 from the update (0 rows affected).
+	rec := doAdmin(t, e, http.MethodPost, "/api/admin/games/sessions/00000000-0000-0000-0000-000000000000/hide")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, string(errcodes.CodeNotFound), errCodeOf(t, rec))
 }
 
-func TestAdminDeleteSessionHandler_MalformedIDIs404(t *testing.T) {
+func TestAdminHideSessionHandler_MalformedIDIs404(t *testing.T) {
 	svc, _, _ := newServices(t)
 	e := newAdminGamesEcho(t, svc)
 
 	// A malformed id can never name a row, so pathID makes it a 404 before any
 	// query rather than a 500 from a failing uuid cast.
-	rec := doAdmin(t, e, http.MethodDelete, "/api/admin/games/sessions/not-a-uuid")
+	rec := doAdmin(t, e, http.MethodPost, "/api/admin/games/sessions/not-a-uuid/hide")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, string(errcodes.CodeNotFound), errCodeOf(t, rec))
 }

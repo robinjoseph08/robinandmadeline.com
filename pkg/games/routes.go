@@ -36,18 +36,19 @@ func RegisterRoutes(api *echo.Group, mw *auth.Middleware, service *Service) {
 // which is expected to be the already-protected admin group (behind the admin
 // JWT middleware), so every route here requires an admin token. These are the
 // admin's window onto the raw solve data: every session regardless of state,
-// and the ability to delete a junk or bad-actor solve.
+// and the ability to hide a published solve from other users.
 //
 // Route shape (relative to the admin group, i.e. /api/admin):
 //
-//	GET    /games/sessions       list every solve (newest first; in-progress,
-//	                             completed-but-unposted, and posted alike; with
-//	                             ip_address and the affiliated party's name)
-//	DELETE /games/sessions/:id   hard-delete one solve (404 on an unknown id)
+//	GET  /games/sessions          list every solve (newest first; in-progress,
+//	                              completed-but-unposted, and posted alike; with
+//	                              ip_address, user_agent, and the affiliated
+//	                              party's name)
+//	POST /games/sessions/:id/hide hide one published solve (404 on an unknown id)
 func RegisterAdminRoutes(admin *echo.Group, service *Service) {
 	h := &handler{service: service}
 
 	g := admin.Group("/games")
 	g.GET("/sessions", h.adminListSessions)
-	g.DELETE("/sessions/:id", h.adminDeleteSession)
+	g.POST("/sessions/:id/hide", h.adminHideSession)
 }

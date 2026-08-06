@@ -71,24 +71,26 @@ type LeaderboardQuery struct {
 }
 
 // GameSessionResponse is the body every session endpoint returns: the solver's
-// own session. The model's ip_address is json:"-" (a server-side abuse-tracing
-// concern), so it never appears here or in the generated TypeScript.
+// own session. The model's ip_address, user_agent, and hidden_at are json:"-"
+// server-side concerns, so none appears here or in the generated TypeScript.
 type GameSessionResponse struct {
 	models.GameSession `tstype:",extends"`
 }
 
 // AdminGameSessionResponse is one solve in the admin sessions list. Unlike
 // GameSessionResponse it does NOT embed models.GameSession: the model's
-// ip_address is json:"-" so embedding would hide it, but the admin view exists
-// precisely to surface every captured field, ip_address included, for abuse
-// tracing and cleanup. Every field is therefore declared explicitly here. This
-// is the admin view and intentionally exposes ip_address; it must never be used
-// for a public response.
+// ip_address and user_agent are json:"-" so embedding would hide them, but the
+// admin view exists precisely to surface the captured request metadata for
+// abuse tracing and cleanup. Every field is therefore declared explicitly
+// here. This admin view intentionally exposes both fields; it must never be
+// used for a public response.
 //
 // It carries every session regardless of state: CompletedAt is null for an
-// in-progress or abandoned solve, OnLeaderboard is false for a completed solve
-// the solver never posted, and DisplayName is null until they opt in. PartyID
-// and PartyName are the affiliated party when a signed-in guest's token rode
+// in-progress or abandoned solve. OnLeaderboard is false for both a completed
+// solve the solver never posted and an admin-hidden solve; HiddenAt explicitly
+// distinguishes those states, while a hidden solve also retains DisplayName so
+// its owner can still see the named time. PartyID and PartyName are the
+// affiliated party when a signed-in guest's token rode
 // the solve, both null for an anonymous one; PartyName is the party's name
 // (parties.name), the same human label the rest of the admin UI shows, filled
 // via a LEFT JOIN so it is null exactly when PartyID is.
@@ -100,9 +102,11 @@ type AdminGameSessionResponse struct {
 	CompletedAt   *time.Time `json:"completed_at"`
 	OnLeaderboard bool       `json:"on_leaderboard"`
 	DisplayName   *string    `json:"display_name"`
+	HiddenAt      *time.Time `json:"hidden_at"`
 	PartyID       *string    `json:"party_id"`
 	PartyName     *string    `json:"party_name"`
 	IPAddress     string     `json:"ip_address"`
+	UserAgent     string     `json:"user_agent"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 }
@@ -130,27 +134,33 @@ type LeaderboardEntry struct {
 
 // LeaderboardViewer is the requesting solver's own ranked entry, returned
 // when the leaderboard read carries that solver's session_id and the
-// session is an opted-in, completed solve on the board being read (the same
-// puzzle and, when filtered, the same difficulty). Rank is its 1-based
+// session is a previously posted, completed solve on the board being read
+// (the same puzzle and, when filtered, the same difficulty). Rank is its 1-based
 // position in the full ordering, which may exceed the returned items when
 // the solver is slower than the displayed entries (the cap is a defensive
 // ceiling well above any real board, so this overflow only arises under
 // abuse). It lets the client always show the solver their own row with the
-// correct number, even off the visible list. It is omitted (null) when no
-// eligible session_id was given.
+// correct number, even off the visible list. InItems says whether the viewer
+// is one of this personalized response's Items; it becomes false only when the
+// defensive item cap excludes the viewer. An admin-hidden solve is added only
+// to the response carrying its exact session bearer. The viewer is null when
+// no eligible session_id was given.
 type LeaderboardViewer struct {
-	Rank  int              `json:"rank"`
-	Entry LeaderboardEntry `json:"entry"`
+	Rank    int              `json:"rank"`
+	Entry   LeaderboardEntry `json:"entry"`
+	InItems bool             `json:"in_items"`
 }
 
 // ListLeaderboardEntriesResponse is the uniform list envelope for a puzzle's
 // leaderboard: the fastest entries first, capped at leaderboardLimit items.
-// Total counts every opted-in entry the query matched (the whole puzzle, or
-// just one difficulty when filtered), beyond the cap, so a client can say
-// "showing N of M" without a second request. The cap is a defensive ceiling
-// well above any real board, so at wedding scale Items holds every opted-in
-// entry and Total equals len(Items). Viewer is an additive, nullable field:
-// when the read carries an eligible session_id it carries that solver's own
+// Total counts every visible entry the query matched (the whole puzzle, or
+// just one difficulty when filtered), plus the requesting solver's own hidden
+// entry when that exact session bearer is supplied, beyond the cap, so a client
+// can say "showing N of M" without a second request. The cap is a defensive ceiling
+// well above any real board, so at wedding scale Items holds every entry in
+// that public or personalized response and Total equals len(Items). Viewer is
+// an additive, nullable field: when the read carries an eligible session_id it
+// carries that solver's own
 // ranked entry (see LeaderboardViewer), so the client can always show the
 // solver their own row with the correct rank, highlighting it when it is
 // already in items and appending it when it falls off the visible list. Items

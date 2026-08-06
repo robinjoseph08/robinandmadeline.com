@@ -7,14 +7,14 @@ import {
 } from "@/components/library/crossword/puzzles";
 
 describe("getPuzzleBySlug", () => {
-  it("resolves the mini and crossword slugs to distinct puzzles", () => {
-    const mini = getPuzzleBySlug("mini");
-    const full = getPuzzleBySlug("crossword");
+  it("registers only the publicly playable proposal crossword", () => {
+    const proposal = getPuzzleBySlug("proposal");
 
-    expect(mini?.id).toBe("wedding-mini-v1");
-    expect(mini?.width).toBe(5);
-    expect(full?.id).toBe("wedding-full-v1");
-    expect(full?.width).toBe(15);
+    expect(Object.keys(PUZZLES_BY_SLUG)).toEqual(["proposal"]);
+    expect(proposal?.id).toBe("proposal-v1");
+    expect(proposal?.width).toBe(15);
+    expect(proposal?.difficulties).toEqual(["easy", "hard"]);
+    expect(proposal?.celebration?.kind).toBe("proposal");
   });
 
   it("gives every registered puzzle a unique id, keeping saved progress per puzzle", () => {
@@ -30,9 +30,10 @@ describe("getPuzzleBySlug", () => {
 });
 
 describe("getPuzzleTitle", () => {
-  it("maps a stored puzzle id to its friendly title", () => {
+  it("preserves friendly titles for public and retired puzzle records", () => {
     expect(getPuzzleTitle("wedding-mini-v1")).toBe("The Wedding Mini");
     expect(getPuzzleTitle("wedding-full-v1")).toBe("The Wedding Crossword");
+    expect(getPuzzleTitle("proposal-v1")).toBe("The Proposal Crossword");
   });
 
   it("falls back to the raw id for an unknown puzzle, including inherited keys", () => {

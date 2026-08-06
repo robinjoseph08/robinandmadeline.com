@@ -36,6 +36,7 @@ import {
 } from "./navigationSettings";
 import Square from "./Square";
 import { GridModel, inverseDirection, Selection, SquareModel } from "./types";
+import useCustomKeyboard from "./useCustomKeyboard";
 import { isPuzzleComplete, validateSolution } from "./validation";
 
 interface Props {
@@ -44,15 +45,29 @@ interface Props {
   isSolved?: boolean;
   onGridChange?: (grid: GridModel) => void;
   onSelectionChange?: (selections: Selection[]) => void;
+  /** Answers referenced by the selected clue, highlighted independently. */
+  referencedSelections?: Selection[];
   /** Cursor-behavior preferences; defaults to the original vendored behavior. */
   settings?: NavigationSettings;
   /** The answer string ("." for blocks), used to stop cursor advancement on a correct fill. */
   solution: string;
 }
 
+export interface GridCellRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 export interface GridHandle {
-  setSelection: (selection: Selection) => void;
+  setSelection: (selection: Selection, options?: { focus?: boolean }) => void;
+  replaceGrid: (grid: GridModel, selection: Selection) => void;
+  enterCharacter: (letter: string) => void;
+  backspace: () => void;
   focus: () => void;
+  /** Viewport geometry for selected cells, used by solve celebrations. */
+  getCellRects: (cells: Array<{ row: number; col: number }>) => GridCellRect[];
 }
 
 // The hidden input always holds this sentinel so mobile keyboards produce an
@@ -81,6 +96,7 @@ const Grid = forwardRef<GridHandle, Props>(
       isSolved,
       onGridChange,
       onSelectionChange,
+      referencedSelections = [],
       settings = DEFAULT_NAVIGATION_SETTINGS,
       solution,
     },
@@ -88,6 +104,7 @@ const Grid = forwardRef<GridHandle, Props>(
   ) => {
     const [grid, setGrid] = useState<GridModel>(initialGrid);
     const [selections, setSelections] = useState<Selection[]>([]);
+    const customKeyboard = useCustomKeyboard();
 
     // Edits lock once the grid is correct. Computed from local grid state
     // rather than relying only on the isSolved prop, which arrives a render
@@ -97,8 +114,24 @@ const Grid = forwardRef<GridHandle, Props>(
       isSolved || (isPuzzleComplete(grid) && validateSolution(grid, solution));
 
     const gridContainerRef = useRef<HTMLDivElement>(null);
-    // The hidden input that receives focus so touch devices show a keyboard.
+    // The hidden input keeps physical-keyboard focus inside the grid. Mobile
+    // uses inputMode="none" and the styled keyboard instead of the OS keyboard.
     const hiddenInputRef = useRef<HTMLInputElement>(null);
+    const visibilityFrameRef = useRef<number | undefined>(undefined);
+    const focusAnswerInput = useCallback(
+      (selection?: Pick<Selection, "row" | "col">) => {
+        const input = hiddenInputRef.current;
+        if (!input) {
+          return;
+        }
+        if (selection) {
+          input.style.left = `${(selection.col / grid.width) * 100}%`;
+          input.style.top = `${(selection.row / grid.height) * 100}%`;
+        }
+        input.focus({ preventScroll: true });
+      },
+      [grid.height, grid.width],
+    );
 
     // Handle focus to set initial selection if none exists. The functional
     // update matters: clicking a square focuses the hidden input, whose focus
@@ -126,21 +159,34 @@ const Grid = forwardRef<GridHandle, Props>(
       });
     }, [grid.squares]);
 
-    // Expose imperative handle for parent to set selection
-    useImperativeHandle(
-      ref,
-      () => ({
-        setSelection: (selection: Selection) => {
-          setSelections([selection]);
-          hiddenInputRef.current?.focus();
-        },
-        focus: () => {
-          hiddenInputRef.current?.focus();
-          handleFocus();
-        },
-      }),
-      [handleFocus],
-    );
+    const keepSelectionVisible = useCallback(() => {
+      const input = hiddenInputRef.current;
+      if (!input || document.activeElement !== input || !customKeyboard) {
+        return;
+      }
+      if (visibilityFrameRef.current !== undefined) {
+        cancelAnimationFrame(visibilityFrameRef.current);
+      }
+      visibilityFrameRef.current = requestAnimationFrame(() => {
+        visibilityFrameRef.current = undefined;
+        input.scrollIntoView({ block: "nearest", inline: "nearest" });
+      });
+    }, [customKeyboard]);
+
+    // The custom keyboard is fixed over the bottom of the mobile viewport.
+    // Keep cursor movement above that dock without involving visualViewport or
+    // relying on the operating system keyboard's resize behavior.
+    useEffect(() => {
+      if (selections.length === 1) {
+        keepSelectionVisible();
+      }
+      return () => {
+        if (visibilityFrameRef.current !== undefined) {
+          cancelAnimationFrame(visibilityFrameRef.current);
+          visibilityFrameRef.current = undefined;
+        }
+      };
+    }, [keepSelectionVisible, selections]);
 
     // Notify parent component when selection changes
     useEffect(() => {
@@ -177,12 +223,13 @@ const Grid = forwardRef<GridHandle, Props>(
           ];
         });
 
-        // Focus the hidden input so typing works and mobile keyboards appear.
-        // This runs after the selection update is queued, so the bubbled focus
+        // Focus the hidden input so physical-keyboard typing works. On mobile
+        // inputMode="none" keeps the operating-system keyboard closed. This
+        // runs after the selection update is queued, so the bubbled focus
         // handler above sees a selection and leaves it alone.
-        hiddenInputRef.current?.focus();
+        focusAnswerInput(square);
       },
-      [],
+      [focusAnswerInput],
     );
 
     // Enter a single character into the selected square and advance the cursor.
@@ -318,6 +365,53 @@ const Grid = forwardRef<GridHandle, Props>(
       }
       // If we couldn't find a previous square, do nothing
     }, [grid, selections, isLocked, settings]);
+
+    // Expose the same editing operations used by physical keyboards so the
+    // themed mobile keyboard has one source of crossword behavior.
+    useImperativeHandle(
+      ref,
+      () => ({
+        setSelection: (selection: Selection, options?: { focus?: boolean }) => {
+          setSelections([selection]);
+          if (options?.focus !== false) {
+            focusAnswerInput(selection);
+          }
+        },
+        replaceGrid: (nextGrid: GridModel, selection: Selection) => {
+          setGrid(nextGrid);
+          setSelections([selection]);
+          focusAnswerInput(selection);
+        },
+        enterCharacter,
+        backspace: handleBackspace,
+        focus: () => {
+          focusAnswerInput();
+          handleFocus();
+        },
+        getCellRects: (cells) => {
+          const gridRect = gridContainerRef.current?.getBoundingClientRect();
+          if (!gridRect) {
+            return [];
+          }
+          const width = gridRect.width / grid.width;
+          const height = gridRect.height / grid.height;
+          return cells.map(({ row, col }) => ({
+            left: gridRect.left + col * width,
+            top: gridRect.top + row * height,
+            width,
+            height,
+          }));
+        },
+      }),
+      [
+        enterCharacter,
+        focusAnswerInput,
+        grid.height,
+        grid.width,
+        handleBackspace,
+        handleFocus,
+      ],
+    );
 
     const handleKeyDown = useCallback(
       (e: KeyboardEvent) => {
@@ -512,12 +606,10 @@ const Grid = forwardRef<GridHandle, Props>(
       [grid, selections, enterCharacter, handleBackspace, isLocked, settings],
     );
 
-    // Some mobile keyboards don't emit usable keydown events; they only
-    // mutate the input. Recover what happened from the mutation: a value
-    // shorter than the sentinel means backspace deleted it, and any letter in
-    // the value was typed (the sentinel is a space, so it never matches).
-    // Desktop keydowns never reach here: handled keys are preventDefaulted
-    // before they can mutate the input.
+    // Retain input-mutation handling as a compatibility fallback for browsers
+    // or assistive tools that synthesize text input instead of keydown events.
+    // The primary mobile path uses the themed keyboard and calls the editing
+    // operations above directly.
     const handleHiddenInputChange = (e: ChangeEvent<HTMLInputElement>) => {
       const value = e.target.value;
       if (value.length < HIDDEN_INPUT_SENTINEL.length) {
@@ -534,9 +626,16 @@ const Grid = forwardRef<GridHandle, Props>(
     // lookup, and the memoized squares receive plain booleans they can
     // shallow-compare.
     const selectedWord = getSelectedWord(grid, selections);
+    const selectedCell = selections[0];
     const selectedWordKeys = new Set(
       (selectedWord ?? []).map((square) => `${square.row}:${square.col}`),
     );
+    const referencedWordKeys = new Set<string>();
+    for (const selection of referencedSelections) {
+      for (const square of getSelectedWord(grid, [selection]) ?? []) {
+        referencedWordKeys.add(`${square.row}:${square.col}`);
+      }
+    }
 
     return (
       <div
@@ -557,7 +656,8 @@ const Grid = forwardRef<GridHandle, Props>(
           autoCapitalize="characters"
           autoComplete="off"
           autoCorrect="off"
-          className="absolute left-0 top-0 h-px w-px opacity-0"
+          className="pointer-events-none absolute h-px w-px opacity-0 caret-transparent [font-size:16px] [scroll-margin-block-end:17rem]"
+          inputMode={customKeyboard ? "none" : "text"}
           onChange={handleHiddenInputChange}
           // Keep the caret after the sentinel so backspace has something to
           // delete; focus can otherwise land at position 0.
@@ -567,8 +667,17 @@ const Grid = forwardRef<GridHandle, Props>(
               HIDDEN_INPUT_SENTINEL.length,
             )
           }
+          readOnly={customKeyboard}
           ref={hiddenInputRef}
           spellCheck={false}
+          style={{
+            left: selectedCell
+              ? `${(selectedCell.col / grid.width) * 100}%`
+              : 0,
+            top: selectedCell
+              ? `${(selectedCell.row / grid.height) * 100}%`
+              : 0,
+          }}
           // Only ever focused programmatically (square clicks, the imperative
           // handle); keep it out of the tab order so keyboard users cannot
           // tab into an invisible second stop after leaving the grid.
@@ -578,6 +687,9 @@ const Grid = forwardRef<GridHandle, Props>(
         />
         {grid.squares.map((square) => (
           <Square
+            isInReferencedWord={referencedWordKeys.has(
+              `${square.row}:${square.col}`,
+            )}
             isInSelectedWord={
               !isSelectedSquare(selections, square) &&
               selectedWordKeys.has(`${square.row}:${square.col}`)

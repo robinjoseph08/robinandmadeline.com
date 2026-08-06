@@ -194,7 +194,7 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.C
 		emailService.WithTestSend(cfg.EmailTestRecipients)
 	}
 	emails.RegisterRoutes(admin, emailService)
-	// The games admin surface (list every solve, delete a junk/bad-actor solve)
+	// The games admin surface (list every solve, hide a public solve)
 	// hangs off the same protected group; the public games routes stay on the
 	// open /api group, registered in New.
 	games.RegisterAdminRoutes(admin, games.NewService(db))

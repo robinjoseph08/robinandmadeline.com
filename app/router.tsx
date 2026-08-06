@@ -16,13 +16,12 @@ import AdminPartyDetail from "@/components/pages/admin/AdminPartyDetail";
 import AdminPhotoGroups from "@/components/pages/admin/AdminPhotoGroups";
 import AdminSettings from "@/components/pages/admin/AdminSettings";
 import RequireAdmin from "@/components/pages/admin/RequireAdmin";
-import Crossword from "@/components/pages/Crossword";
+import CrosswordRoute from "@/components/pages/CrosswordRoute";
 import FAQ from "@/components/pages/FAQ";
 import Games from "@/components/pages/Games";
 import Home from "@/components/pages/Home";
 import InfoCollection from "@/components/pages/InfoCollection";
 import Photos from "@/components/pages/Photos";
-import RequireGamesAccess from "@/components/pages/RequireGamesAccess";
 import Root from "@/components/pages/Root";
 import RSVP from "@/components/pages/RSVP";
 import RSVPConfirmation from "@/components/pages/RSVPConfirmation";
@@ -44,16 +43,9 @@ export const routes = [
       { path: "schedule", Component: Schedule },
       { path: "travel", Component: Travel },
       { path: "games", Component: Games },
-      // Each puzzle lives at its own short path (/games/mini is the 5x5,
-      // /games/crossword the full 15x15). The slug resolves against the
-      // crossword puzzle registry, and unknown slugs get the page's friendly
-      // not-found treatment. RequireGamesAccess gates these so guests can't
-      // reach an unreleased game by direct link; they're redirected to the
-      // /games landing and its "coming soon" note.
-      {
-        Component: RequireGamesAccess,
-        children: [{ path: "games/:puzzleSlug", Component: Crossword }],
-      },
+      // Public puzzle slugs resolve against the crossword puzzle registry.
+      // Unknown and retired slugs get the page's friendly not-found treatment.
+      { path: "games/:puzzleSlug", Component: CrosswordRoute },
       { path: "photos", Component: Photos },
       { path: "faq", Component: FAQ },
       { path: "rsvp", Component: RSVP },

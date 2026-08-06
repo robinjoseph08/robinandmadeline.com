@@ -1,30 +1,46 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  Grid3X3,
+  List,
   MoreHorizontal,
   Pause,
+  RotateCcw,
   Settings as SettingsIcon,
   Trophy,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import AllCluesView, {
+  AllCluesViewHandle,
+} from "@/components/library/crossword/AllCluesView";
 import ClueList from "@/components/library/crossword/ClueList";
+import {
+  parseClueReferences,
+  type ClueReference,
+} from "@/components/library/crossword/clueReferences";
 import CompletionDialog from "@/components/library/crossword/CompletionDialog";
 import Grid, { GridHandle } from "@/components/library/crossword/Grid";
 import {
   findWordByClueNumber,
   getCompletedWords,
+  getFirstBlankInWord,
+  getNextWord,
+  getPreviousWord,
   getSelectedWord,
 } from "@/components/library/crossword/helpers";
+import IncorrectGridDialog from "@/components/library/crossword/IncorrectGridDialog";
 import LeaderboardDialog from "@/components/library/crossword/LeaderboardDialog";
+import MobileSolveDock from "@/components/library/crossword/MobileSolveDock";
 import PauseDialog from "@/components/library/crossword/PauseDialog";
 import {
+  clearProgress,
   loadProgress,
   saveProgress,
 } from "@/components/library/crossword/progress";
+import ProposalCelebrationDialog from "@/components/library/crossword/ProposalCelebrationDialog";
 import {
   CrosswordPuzzle,
-  DIFFICULTIES,
   Difficulty,
   DIFFICULTY_LABELS,
   entriesFromGrid,
@@ -45,6 +61,7 @@ import {
   inverseDirection,
   Selection,
 } from "@/components/library/crossword/types";
+import useCustomKeyboard from "@/components/library/crossword/useCustomKeyboard";
 import { useSolveSession } from "@/components/library/crossword/useSolveSession";
 import {
   isPuzzleComplete,
@@ -74,6 +91,7 @@ import { cn } from "@/libraries/utils";
 export default function Crossword() {
   const { puzzleSlug = "" } = useParams();
   const puzzle = getPuzzleBySlug(puzzleSlug);
+  const [resetGeneration, setResetGeneration] = useState(0);
   usePageTitle(puzzle?.title);
 
   if (!puzzle) {
@@ -91,7 +109,13 @@ export default function Crossword() {
     );
   }
 
-  return <CrosswordGame key={puzzle.id} puzzle={puzzle} />;
+  return (
+    <CrosswordGame
+      key={`${puzzle.id}:${resetGeneration}`}
+      onLocalReset={() => setResetGeneration((value) => value + 1)}
+      puzzle={puzzle}
+    />
+  );
 }
 
 /**
@@ -106,7 +130,13 @@ export default function Crossword() {
  * refresh or come back later and resume; the solve clock and its best-effort
  * backend session live in useSolveSession.
  */
-function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
+function CrosswordGame({
+  onLocalReset,
+  puzzle,
+}: {
+  onLocalReset: () => void;
+  puzzle: CrosswordPuzzle;
+}) {
   // Restore any saved progress once, at mount. After this, the grid and the
   // difficulty live in component state and are written back on every change.
   const [initial] = useState(() => {
@@ -114,9 +144,14 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     const grid = gridFromEntries(puzzle, saved?.entries);
     const solved =
       isPuzzleComplete(grid) && validateSolution(grid, puzzle.solution);
+    const savedDifficulty =
+      saved && puzzle.difficulties.includes(saved.difficulty)
+        ? saved.difficulty
+        : undefined;
     return {
       grid,
-      difficulty: saved?.difficulty ?? ("easy" as Difficulty),
+      difficulty: savedDifficulty ?? puzzle.difficulties[0],
+      celebrationAcknowledged: saved?.celebrationAcknowledged ?? false,
       hasProgress: saved !== null,
       solved,
       // A solve that predates session tracking (or whose session record was
@@ -130,13 +165,47 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   const [selections, setSelections] = useState<Selection[]>([]);
   const [startOpen, setStartOpen] = useState(!initial.hasProgress);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [allCluesOpen, setAllCluesOpen] = useState(false);
+  const [incorrectOpen, setIncorrectOpen] = useState(false);
   const [completionOpen, setCompletionOpen] = useState(false);
+  const [celebrationAcknowledged, setCelebrationAcknowledged] = useState(
+    initial.celebrationAcknowledged,
+  );
+  const [celebrationRun, setCelebrationRun] = useState<
+    "initial" | "replay" | null
+  >(
+    initial.solved &&
+      !initial.unreportable &&
+      puzzle.celebration !== undefined &&
+      !initial.celebrationAcknowledged
+      ? "initial"
+      : null,
+  );
+  const [celebrationGeneration, setCelebrationGeneration] = useState(0);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [difficultyMenuOpen, setDifficultyMenuOpen] = useState(false);
   const gridRef = useRef<GridHandle>(null);
+  const allCluesRef = useRef<AllCluesViewHandle>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
+  const mobileInitialScrollDoneRef = useRef(false);
+  const customKeyboard = useCustomKeyboard();
+  const effectiveSettings = useMemo<CrosswordSettings>(
+    () => ({
+      ...settings,
+      jumpToNextClue: settings.jumpToNextClueExplicit
+        ? settings.jumpToNextClue
+        : customKeyboard,
+    }),
+    [customKeyboard, settings],
+  );
+  const incorrectFullRef = useRef(
+    isPuzzleComplete(initial.grid) &&
+      !validateSolution(initial.grid, puzzle.solution),
+  );
 
   const session = useSolveSession({
     puzzleId: puzzle.id,
+    availableDifficulties: puzzle.difficulties,
     initiallyStarted: initial.hasProgress,
     initialDifficulty: initial.difficulty,
     // An unreportable solve mounts finished so the clock never runs and the
@@ -167,13 +236,19 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     if (!sessionStarted) {
       return;
     }
-    saveProgress(puzzle.id, { entries: entriesFromGrid(grid), difficulty });
-  }, [puzzle.id, grid, difficulty, sessionStarted]);
+    saveProgress(puzzle.id, {
+      entries: entriesFromGrid(grid),
+      difficulty,
+      celebrationAcknowledged,
+    });
+  }, [puzzle.id, grid, difficulty, celebrationAcknowledged, sessionStarted]);
 
-  // Completion: report it once, and celebrate only a solve that happened in
-  // this visit (a returning guest whose grid was already solved gets the
-  // inline summary, not the dialog again).
-  const completionCelebratedRef = useRef(initial.solved);
+  // Completion: report it once. A puzzle-specific reveal stays pending until
+  // the guest explicitly advances, so a refresh during the animation reopens
+  // it instead of losing the one-time message.
+  const completionCelebratedRef = useRef(
+    initial.solved && (!puzzle.celebration || initial.celebrationAcknowledged),
+  );
   useEffect(() => {
     if (!solved || !sessionStarted) {
       return;
@@ -187,9 +262,22 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     completeSession();
     if (!completionCelebratedRef.current) {
       completionCelebratedRef.current = true;
-      setCompletionOpen(true);
+      const frame = requestAnimationFrame(() => {
+        if (puzzle.celebration) {
+          setCelebrationRun("initial");
+        } else {
+          setCompletionOpen(true);
+        }
+      });
+      return () => cancelAnimationFrame(frame);
     }
-  }, [solved, sessionStarted, completeSession, initial.unreportable]);
+  }, [
+    solved,
+    sessionStarted,
+    completeSession,
+    initial.unreportable,
+    puzzle.celebration,
+  ]);
 
   const updateSettings = useCallback((patch: Partial<CrosswordSettings>) => {
     setSettings((prev) => {
@@ -202,6 +290,14 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   const focusGrid = useCallback(() => {
     gridRef.current?.focus();
   }, []);
+
+  const focusSolveSurface = useCallback(() => {
+    if (allCluesOpen) {
+      allCluesRef.current?.focusSelected();
+    } else {
+      focusGrid();
+    }
+  }, [allCluesOpen, focusGrid]);
 
   const handleStart = (chosen: Difficulty) => {
     setDifficulty(chosen);
@@ -220,12 +316,21 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     }
   };
 
-  // Resuming from the pause dialog always returns focus to the grid; the
-  // prior selection (if any) is still in the grid's state, so typing picks
-  // up exactly where the guest left off.
+  // Resuming from the pause dialog returns focus to the active solving
+  // surface, preserving the current selection in either grid or clue view.
   const handlePauseCloseAutoFocus = (event: Event) => {
     event.preventDefault();
-    focusGrid();
+    focusSolveSurface();
+  };
+
+  const handleIncorrectOpenChange = (open: boolean) => {
+    setIncorrectOpen(open);
+    setUiPaused(open);
+  };
+
+  const handleIncorrectCloseAutoFocus = (event: Event) => {
+    event.preventDefault();
+    focusSolveSurface();
   };
 
   const handleSettingsOpenChange = (open: boolean) => {
@@ -233,13 +338,12 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     setUiPaused(open);
   };
 
-  // Closing the settings dialog returns focus to the grid so typing works
-  // immediately, unless the play area is inert (pre-start, or paused behind
-  // the pause dialog), where focus must stay out.
+  // Closing the settings dialog returns focus to the active solving surface
+  // unless the play area is inert, where focus must stay out.
   const handleSettingsCloseAutoFocus = (event: Event) => {
     if (session.started && !session.paused) {
       event.preventDefault();
-      focusGrid();
+      focusSolveSurface();
     }
   };
 
@@ -276,7 +380,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   useLeaderboard(
     puzzle.id,
     session.recordedDifficulty,
-    { enabled: completionOpen },
+    { enabled: completionOpen && session.postable },
     session.sessionId ?? undefined,
   );
 
@@ -296,7 +400,29 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
     setLeaderboardOpen(true);
   };
 
-  const clues = puzzle.clues[difficulty];
+  const handleCelebrationContinue = () => {
+    if (celebrationRun === "replay") {
+      setCelebrationRun(null);
+      return;
+    }
+
+    setCelebrationAcknowledged(true);
+    setCelebrationRun(null);
+    if (session.postable) {
+      setCompletionOpen(true);
+    }
+  };
+
+  const handleCelebrationReplay = () => {
+    setCelebrationGeneration((generation) => generation + 1);
+    setCelebrationRun("replay");
+  };
+
+  const handleCelebrationCloseAutoFocus = (event: Event) => {
+    event.preventDefault();
+  };
+
+  const clues = puzzle.clues[difficulty]!;
   // Two-step memo so the Set's identity only changes when its CONTENTS do:
   // the selected direction's memoized clue list then skips re-rendering on
   // keystrokes that didn't complete or un-complete a word (the other
@@ -316,6 +442,40 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   const selectedClueNumber = selectedWord?.[0].number?.toString();
   const selectedDirection =
     selections.length === 1 ? selections[0].direction : undefined;
+  const clueReferences = useMemo<ClueReference[]>(() => {
+    if (!selectedDirection || !selectedClueNumber) {
+      return [];
+    }
+    const selectedClue = clues[selectedDirection][selectedClueNumber];
+    return selectedClue ? parseClueReferences(selectedClue) : [];
+  }, [clues, selectedClueNumber, selectedDirection]);
+  const referencedSelections = useMemo(
+    () =>
+      clueReferences.flatMap((reference) => {
+        const selection = findWordByClueNumber(
+          initial.grid,
+          reference.number,
+          reference.direction,
+        );
+        return selection ? [selection] : [];
+      }),
+    [clueReferences, initial.grid],
+  );
+  const referencedNumbers = useMemo<Record<Direction, Set<string>>>(
+    () => ({
+      across: new Set(
+        clueReferences
+          .filter(({ direction }) => direction === "across")
+          .map(({ number }) => number),
+      ),
+      down: new Set(
+        clueReferences
+          .filter(({ direction }) => direction === "down")
+          .map(({ number }) => number),
+      ),
+    }),
+    [clueReferences],
+  );
   // The clue crossing the cursor square in the other direction; it gets an
   // accent in its list and is kept scrolled into view, like the reference
   // solver (crisscrosscx/solve) does.
@@ -328,6 +488,40 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
       grid.wordMap[`${row}:${col}:${inverseDirection[direction]}`];
     return crossing?.[0].number?.toString();
   }, [grid, selections]);
+  const selectedClue =
+    selectedDirection && selectedClueNumber
+      ? clues[selectedDirection][selectedClueNumber]
+      : undefined;
+  const selectedSquare =
+    selections.length === 1
+      ? grid.squares.find(
+          ({ row, col }) =>
+            row === selections[0].row && col === selections[0].col,
+        )
+      : undefined;
+  const solvingStatus =
+    selectedDirection && selectedClueNumber && selectedClue && selectedSquare
+      ? `${selectedClueNumber} ${selectedDirection}: ${selectedClue}. Row ${selectedSquare.row + 1}, column ${selectedSquare.col + 1}, ${selectedSquare.solution ? `letter ${selectedSquare.solution}` : "blank"}.`
+      : "Select a clue, then use the keyboard to enter letters.";
+
+  const selectAdjacentClue = useCallback(
+    (movement: "previous" | "next") => {
+      if (selections.length !== 1) {
+        focusSolveSurface();
+        return;
+      }
+      const nextSelection =
+        movement === "next"
+          ? getNextWord(grid, selections[0])
+          : getPreviousWord(grid, selections[0]);
+      if (nextSelection) {
+        gridRef.current?.setSelection(nextSelection, {
+          focus: !allCluesOpen,
+        });
+      }
+    },
+    [allCluesOpen, focusSolveSurface, grid, selections],
+  );
 
   // Reads the live grid through a ref (synced in an effect) so the callback
   // stays referentially stable and never forces the memoized clue lists to
@@ -336,19 +530,100 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   useEffect(() => {
     liveGridRef.current = grid;
   }, [grid]);
+  const handleGridChange = useCallback(
+    (nextGrid: GridModel) => {
+      const incorrectFull =
+        isPuzzleComplete(nextGrid) &&
+        !validateSolution(nextGrid, puzzle.solution);
+      if (!incorrectFull) {
+        incorrectFullRef.current = false;
+      } else if (!incorrectFullRef.current) {
+        incorrectFullRef.current = true;
+        setIncorrectOpen(true);
+        setUiPaused(true);
+      }
+      if (isPuzzleComplete(nextGrid)) {
+        // Clue View can solve the final square itself. Return to the grid before
+        // incorrect or completion dialogs appear.
+        setAllCluesOpen(false);
+      }
+      setGrid(nextGrid);
+    },
+    [puzzle.solution, setUiPaused],
+  );
   const handleClueClick = useCallback(
     (number: string, direction: Direction) => {
-      const wordSelection = findWordByClueNumber(
-        liveGridRef.current,
-        number,
-        direction,
-      );
+      const liveGrid = liveGridRef.current;
+      const wordSelection = findWordByClueNumber(liveGrid, number, direction);
       if (wordSelection) {
-        gridRef.current?.setSelection(wordSelection);
+        gridRef.current?.setSelection(
+          getFirstBlankInWord(liveGrid, wordSelection) ?? wordSelection,
+          { focus: !allCluesOpen },
+        );
       }
     },
-    [],
+    [allCluesOpen],
   );
+  const handleAllCluesSquareClick = useCallback((selection: Selection) => {
+    gridRef.current?.setSelection(selection, { focus: false });
+  }, []);
+  const toggleSelectedDirection = useCallback(() => {
+    if (selections.length !== 1) {
+      return;
+    }
+    const selection = selections[0];
+    const direction = inverseDirection[selection.direction];
+    if (!grid.wordMap[`${selection.row}:${selection.col}:${direction}`]) {
+      return;
+    }
+    gridRef.current?.setSelection(
+      { ...selection, direction },
+      { focus: false },
+    );
+  }, [grid.wordMap, selections]);
+  const enterMobileLetter = useCallback((letter: string) => {
+    gridRef.current?.enterCharacter(letter);
+  }, []);
+  const mobileBackspace = useCallback(() => {
+    gridRef.current?.backspace();
+  }, []);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") {
+      return;
+    }
+    const desktopQuery = window.matchMedia("(min-width: 768px)");
+    const handleDesktopTransition = () => {
+      if (!desktopQuery.matches) {
+        return;
+      }
+      setAllCluesOpen(false);
+      if (
+        session.started &&
+        !session.paused &&
+        !startOpen &&
+        !settingsOpen &&
+        !incorrectOpen &&
+        !completionOpen &&
+        !leaderboardOpen &&
+        celebrationRun === null
+      ) {
+        focusGrid();
+      }
+    };
+    desktopQuery.addEventListener("change", handleDesktopTransition);
+    return () =>
+      desktopQuery.removeEventListener("change", handleDesktopTransition);
+  }, [
+    celebrationRun,
+    completionOpen,
+    focusGrid,
+    incorrectOpen,
+    leaderboardOpen,
+    session.paused,
+    session.started,
+    settingsOpen,
+    startOpen,
+  ]);
 
   // The 15x15 needs more horizontal room than the mini, both for the page
   // and for the grid itself, so its squares stay comfortably tappable.
@@ -358,19 +633,119 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
   // explicitly paused, NYT-style, so the clock can't be beaten by reading
   // the puzzle off the clock. The whole play area (grid AND clues) blurs,
   // and `inert` keeps keyboard focus out too.
-  const obscured = !session.started || session.paused;
+  const obscured = !session.started || session.paused || incorrectOpen;
+  const mobileDockVisible =
+    customKeyboard && session.started && !solved && !obscured && !settingsOpen;
+
+  // On mobile, align the controls bar with the top of the viewport once the
+  // guest can actually solve. Waiting until the start/pause dialog closes
+  // avoids the dialog's scroll lock restoring the old page position. The
+  // one-shot guard prevents later dialog closes from moving the page again.
+  useEffect(() => {
+    if (
+      !customKeyboard ||
+      (typeof window.matchMedia === "function" &&
+        !window.matchMedia("(max-width: 767px)").matches) ||
+      !session.started ||
+      session.paused ||
+      startOpen ||
+      mobileInitialScrollDoneRef.current
+    ) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      controlsRef.current?.scrollIntoView({ block: "start" });
+      mobileInitialScrollDoneRef.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [customKeyboard, session.paused, session.started, startOpen]);
+
+  const handleDevFill = () => {
+    let finalIndex = puzzle.solution.length - 1;
+    while (finalIndex >= 0 && puzzle.solution[finalIndex] === ".") {
+      finalIndex--;
+    }
+    if (finalIndex < 0) {
+      return;
+    }
+    const entries = `${puzzle.solution.slice(0, finalIndex)}?${puzzle.solution.slice(finalIndex + 1)}`;
+    const nextGrid = gridFromEntries(puzzle, entries);
+    const finalSquare = nextGrid.squares[finalIndex];
+    const direction: Direction = nextGrid.wordMap[
+      `${finalSquare.row}:${finalSquare.col}:across`
+    ]
+      ? "across"
+      : "down";
+    gridRef.current?.replaceGrid(nextGrid, {
+      row: finalSquare.row,
+      col: finalSquare.col,
+      direction,
+    });
+  };
+
+  const handleDevClear = () => {
+    session.discardLocalRecord();
+    clearProgress(puzzle.id);
+    onLocalReset();
+  };
 
   return (
     <section
-      className={cn("mx-auto py-8", isLargePuzzle ? "max-w-5xl" : "max-w-4xl")}
+      className={cn(
+        "mx-auto py-4 md:py-8",
+        isLargePuzzle
+          ? "relative left-1/2 w-screen max-w-7xl -translate-x-1/2 bg-background md:w-[calc(100vw-2rem)]"
+          : "max-w-4xl",
+      )}
     >
-      <h1 className="text-3xl font-bold">{puzzle.title}</h1>
-      <p className="mt-3 text-muted-foreground">
-        Same answers, three flavors of clues. Your progress saves automatically
-        in this browser, and the fastest solvers make the leaderboard.
+      <h1
+        className={cn(
+          "text-2xl font-bold md:text-3xl",
+          isLargePuzzle && "px-4 md:px-0",
+        )}
+      >
+        {puzzle.title}
+      </h1>
+      <p className="mt-3 hidden text-muted-foreground md:block">
+        Same answers, different clue difficulties. Your progress saves
+        automatically in this browser, and the fastest solvers make the
+        leaderboard.
       </p>
 
-      <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
+      {import.meta.env.DEV && !allCluesOpen && (
+        <div
+          className="mt-3 flex flex-wrap gap-2 rounded-md border border-dashed border-green/40 bg-complementary-1/20 p-2"
+          data-testid="crossword-dev-controls"
+        >
+          <Button
+            disabled={!session.started || solved}
+            onClick={handleDevFill}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Fill all but final square
+          </Button>
+          <Button
+            onClick={handleDevClear}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Clear this puzzle's saved state
+          </Button>
+        </div>
+      )}
+
+      <div
+        aria-label="Crossword controls"
+        className={cn(
+          "mt-3 flex min-h-11 items-center justify-between gap-2 border-y border-line bg-surface/80 md:mt-6 md:min-h-0 md:border-0 md:bg-transparent md:px-0",
+          isLargePuzzle ? "px-4" : "px-1",
+        )}
+        ref={controlsRef}
+        role="group"
+      >
         <div className="flex items-center gap-1">
           {/* A finished solve with no accumulated time (an unreportable
               restore) has nothing honest to show, so the readout hides
@@ -389,6 +764,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
           {session.started && !solved && (
             <Button
               aria-label="Pause timer"
+              className="size-11 md:size-9"
               onClick={session.pause}
               size="icon"
               type="button"
@@ -399,8 +775,24 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
           )}
         </div>
         <div className="flex items-center gap-1">
+          {session.started && !solved && (
+            <Button
+              aria-label={
+                allCluesOpen ? "Show crossword grid" : "List all clues"
+              }
+              aria-pressed={allCluesOpen}
+              className="size-11 md:hidden"
+              onClick={() => setAllCluesOpen((open) => !open)}
+              size="icon"
+              type="button"
+              variant="ghost"
+            >
+              {allCluesOpen ? <Grid3X3 /> : <List />}
+            </Button>
+          )}
           <Button
             aria-label="Settings"
+            className="size-11 md:size-9"
             onClick={() => handleSettingsOpenChange(true)}
             size="icon"
             type="button"
@@ -413,7 +805,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
               reachable after the solve too: a finished guest can re-read the
               puzzle with other clues for fun. Mid-solve it reports the switch;
               afterward it only changes the displayed clues. */}
-          {session.started && (
+          {session.started && puzzle.difficulties.length > 1 && (
             <Popover
               onOpenChange={setDifficultyMenuOpen}
               open={difficultyMenuOpen}
@@ -421,6 +813,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
               <PopoverTrigger asChild>
                 <Button
                   aria-label="More options"
+                  className="size-11 md:size-9"
                   size="icon"
                   type="button"
                   variant="ghost"
@@ -435,7 +828,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
                   className="mt-2 flex flex-col gap-1"
                   role="group"
                 >
-                  {DIFFICULTIES.map((level) => (
+                  {puzzle.difficulties.map((level) => (
                     <Button
                       aria-pressed={difficulty === level}
                       className="justify-start"
@@ -472,7 +865,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
           <div className="mt-2 flex flex-wrap gap-2">
             {/* An unreportable solve has no honest time to post (see
                 initial.unreportable). */}
-            {!session.posted && !initial.unreportable && (
+            {!session.posted && session.postable && !initial.unreportable && (
               <Button
                 onClick={() => setCompletionOpen(true)}
                 size="sm"
@@ -493,20 +886,38 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
               <Trophy />
               Leaderboard
             </Button>
+            {puzzle.celebration && (
+              <Button
+                onClick={handleCelebrationReplay}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <RotateCcw />
+                Replay animation
+              </Button>
+            )}
           </div>
         </div>
       ) : gridFull ? (
-        <p className="mt-4 text-muted-foreground" role="status">
+        <p className="mt-4 px-4 text-muted-foreground md:px-0" role="status">
           The grid is full, but something is not quite right yet. Keep tweaking!
         </p>
       ) : null}
 
-      <div className="relative mt-6">
+      <div
+        className={cn(
+          "relative md:mt-6",
+          allCluesOpen ? "mt-0" : "mt-3",
+          mobileDockVisible && !allCluesOpen && "mb-[17rem]",
+        )}
+      >
         <div
           className={cn(
-            "grid gap-8",
+            allCluesOpen ? "block md:grid" : "grid",
+            "gap-8",
             isLargePuzzle
-              ? "md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
+              ? "md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[minmax(0,36rem)_minmax(0,1fr)]"
               : "md:grid-cols-2",
             // While obscured, the entire play area (grid AND clues) blurs:
             // no sliver of puzzle peeks out at any viewport size, nothing is
@@ -516,21 +927,29 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
           data-testid="crossword-play-area"
           inert={obscured || undefined}
         >
-          <Grid
+          <div
             className={cn(
-              "mx-auto h-fit w-full",
-              isLargePuzzle ? "max-w-xl" : "max-w-md",
+              "relative left-1/2 mx-auto h-fit w-screen -translate-x-1/2 md:left-auto md:w-full md:translate-x-0",
+              isLargePuzzle ? "md:max-w-xl" : "md:max-w-md",
+              solved && "puzzle-solved-container",
+              allCluesOpen &&
+                "invisible h-0 overflow-hidden md:visible md:h-fit md:overflow-visible",
             )}
-            initialGrid={initial.grid}
-            isSolved={solved}
-            onGridChange={setGrid}
-            onSelectionChange={setSelections}
-            ref={gridRef}
-            settings={settings}
-            solution={puzzle.solution}
-          />
+          >
+            <Grid
+              className="w-full"
+              initialGrid={initial.grid}
+              isSolved={solved}
+              onGridChange={handleGridChange}
+              onSelectionChange={setSelections}
+              ref={gridRef}
+              referencedSelections={referencedSelections}
+              settings={effectiveSettings}
+              solution={puzzle.solution}
+            />
+          </div>
 
-          <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-1 lg:grid-cols-2">
+          <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-2">
             {(["across", "down"] as const).map((direction) => (
               <ClueList
                 clues={clues[direction]}
@@ -543,6 +962,7 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
                 direction={direction}
                 key={direction}
                 onClueClick={handleClueClick}
+                referencedNumbers={referencedNumbers[direction]}
                 selectedNumber={
                   selectedDirection === direction
                     ? selectedClueNumber
@@ -551,6 +971,26 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
               />
             ))}
           </div>
+
+          {allCluesOpen && (
+            <div className="md:hidden">
+              <AllCluesView
+                clues={clues}
+                completedWords={completedWords}
+                grid={grid}
+                onBackspace={mobileBackspace}
+                onLetter={enterMobileLetter}
+                onNext={() => selectAdjacentClue("next")}
+                onPrevious={() => selectAdjacentClue("previous")}
+                onSelectClue={handleClueClick}
+                onSelectSquare={handleAllCluesSquareClick}
+                ref={allCluesRef}
+                referencedNumbers={referencedNumbers}
+                selection={selections.length === 1 ? selections[0] : undefined}
+                solvingStatus={solvingStatus}
+              />
+            </div>
+          )}
         </div>
         {/* When the start dialog was dismissed without starting, the blurred
             play area keeps a centered way back in. */}
@@ -566,12 +1006,35 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
         )}
       </div>
 
+      {session.started && !allCluesOpen && (
+        <p
+          aria-atomic="true"
+          aria-live="polite"
+          className="sr-only"
+          data-testid="crossword-solving-status"
+        >
+          {solvingStatus}
+        </p>
+      )}
+      <MobileSolveDock
+        clue={selectedClue}
+        direction={selectedDirection}
+        onBackspace={mobileBackspace}
+        onLetter={enterMobileLetter}
+        onNext={() => selectAdjacentClue("next")}
+        onPrevious={() => selectAdjacentClue("previous")}
+        onToggleDirection={toggleSelectedDirection}
+        visible={mobileDockVisible}
+      />
+
       <StartDialog
+        difficulties={puzzle.difficulties}
         onCloseAutoFocus={handleStartCloseAutoFocus}
         onOpenChange={setStartOpen}
         onShowTimerChange={(showTimer) => updateSettings({ showTimer })}
         onStart={handleStart}
         open={startOpen}
+        showDesktopRecommendation={isLargePuzzle && customKeyboard}
         showTimer={settings.showTimer}
       />
       <PauseDialog
@@ -580,25 +1043,44 @@ function CrosswordGame({ puzzle }: { puzzle: CrosswordPuzzle }) {
         onResume={session.resume}
         open={session.paused}
       />
+      <IncorrectGridDialog
+        onCloseAutoFocus={handleIncorrectCloseAutoFocus}
+        onOpenChange={handleIncorrectOpenChange}
+        open={incorrectOpen}
+      />
       <SettingsDialog
         onCloseAutoFocus={handleSettingsCloseAutoFocus}
         onOpenChange={handleSettingsOpenChange}
         onSettingsChange={updateSettings}
         open={settingsOpen}
-        settings={settings}
+        settings={effectiveSettings}
       />
-      <CompletionDialog
-        difficulty={session.recordedDifficulty}
-        elapsedMs={session.elapsedMs}
-        isSignedIn={isSignedIn}
-        onOpenChange={setCompletionOpen}
-        onPost={handlePost}
-        open={completionOpen}
-        prefillName={prefillName}
-        puzzleTitle={puzzle.title}
-      />
+      {puzzle.celebration && (
+        <ProposalCelebrationDialog
+          celebration={puzzle.celebration}
+          gridRef={gridRef}
+          key={celebrationGeneration}
+          onCloseAutoFocus={handleCelebrationCloseAutoFocus}
+          onContinue={handleCelebrationContinue}
+          open={celebrationRun !== null}
+          puzzle={puzzle}
+        />
+      )}
+      {session.postable && (
+        <CompletionDialog
+          difficulty={session.recordedDifficulty}
+          elapsedMs={session.elapsedMs}
+          isSignedIn={isSignedIn}
+          onOpenChange={setCompletionOpen}
+          onPost={handlePost}
+          open={completionOpen}
+          prefillName={prefillName}
+          puzzleTitle={puzzle.title}
+        />
+      )}
       <LeaderboardDialog
         defaultDifficulty={session.recordedDifficulty}
+        difficulties={puzzle.difficulties}
         onOpenChange={setLeaderboardOpen}
         open={leaderboardOpen}
         puzzleId={puzzle.id}

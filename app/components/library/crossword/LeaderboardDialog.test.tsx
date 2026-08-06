@@ -35,10 +35,12 @@ vi.mock("@/libraries/api", async () => {
 
 function renderDialog({
   defaultDifficulty,
+  difficulties = ["easy", "medium", "hard"],
   open = true,
   sessionId,
 }: {
   defaultDifficulty?: Difficulty;
+  difficulties?: [Difficulty, ...Difficulty[]];
   open?: boolean;
   sessionId?: string;
 } = {}) {
@@ -49,6 +51,7 @@ function renderDialog({
     <QueryClientProvider client={queryClient}>
       <LeaderboardDialog
         defaultDifficulty={defaultDifficulty}
+        difficulties={difficulties}
         onOpenChange={() => {}}
         open={open}
         puzzleId="wedding-mini-v1"
@@ -65,6 +68,7 @@ function renderDialog({
         <QueryClientProvider client={queryClient}>
           <LeaderboardDialog
             defaultDifficulty={defaultDifficulty}
+            difficulties={difficulties}
             onOpenChange={() => {}}
             open={value}
             puzzleId="wedding-mini-v1"
@@ -169,6 +173,46 @@ describe("LeaderboardDialog", () => {
     ).toBeInTheDocument();
   });
 
+  it("fits the keyboard-reduced visual viewport and follows its resize", async () => {
+    apiRequest.mockImplementation(() => new Promise(() => {}));
+    const viewport = Object.assign(new EventTarget(), {
+      height: 500,
+      offsetTop: 40,
+      width: 390,
+      offsetLeft: 12,
+      pageLeft: 0,
+      pageTop: 40,
+      scale: 1,
+      onresize: null,
+      onscroll: null,
+    }) as unknown as VisualViewport;
+    vi.stubGlobal("visualViewport", viewport);
+
+    renderDialog();
+
+    const dialog = screen.getByTestId("crossword-leaderboard-dialog");
+    expect(dialog.style.left).toBe("207px");
+    expect(dialog.style.maxHeight).toBe("calc(500px - 1rem)");
+    expect(dialog.style.maxWidth).toBe("min(32rem, calc(390px - 1rem))");
+    expect(dialog.style.top).toBe("290px");
+
+    Object.assign(viewport, {
+      height: 320,
+      offsetLeft: 30,
+      offsetTop: 80,
+      pageTop: 80,
+      width: 280,
+    });
+    viewport.dispatchEvent(new Event("resize"));
+
+    await waitFor(() => {
+      expect(dialog.style.left).toBe("170px");
+      expect(dialog.style.maxHeight).toBe("calc(320px - 1rem)");
+      expect(dialog.style.maxWidth).toBe("min(32rem, calc(280px - 1rem))");
+      expect(dialog.style.top).toBe("240px");
+    });
+  });
+
   it("shows the error copy when the fetch fails", async () => {
     apiRequest.mockRejectedValue(new Error("network down"));
 
@@ -204,6 +248,18 @@ describe("LeaderboardDialog", () => {
     );
   });
 
+  it("renders only the difficulties available for this puzzle", async () => {
+    apiRequest.mockResolvedValue({ items: [], total: 0 });
+
+    renderDialog({ difficulties: ["easy", "hard"] });
+
+    expect(screen.getByRole("button", { name: "Easy" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Medium" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hard" })).toBeInTheDocument();
+  });
+
   it("fetches the clicked tab's difficulty", async () => {
     apiRequest.mockResolvedValue({ items: [], total: 0 });
 
@@ -219,6 +275,27 @@ describe("LeaderboardDialog", () => {
         "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=medium",
       ),
     );
+  });
+
+  it("falls back when the default difficulty is unavailable", async () => {
+    apiRequest.mockResolvedValue({ items: [], total: 0 });
+
+    renderDialog({
+      defaultDifficulty: "medium",
+      difficulties: ["easy", "hard"],
+    });
+
+    expect(screen.getByRole("button", { pressed: true })).toHaveTextContent(
+      "Easy",
+    );
+    await waitFor(() =>
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=easy",
+      ),
+    );
+    expect(
+      apiRequest.mock.calls.some(([path]) => String(path).includes("medium")),
+    ).toBe(false);
   });
 
   it("opens on the provided default difficulty and re-anchors on reopen", async () => {
@@ -299,6 +376,7 @@ describe("LeaderboardDialog", () => {
       total: 2,
       viewer: {
         rank: 2,
+        in_items: true,
         entry: {
           display_name: "Robin",
           difficulty: "easy",
@@ -337,6 +415,7 @@ describe("LeaderboardDialog", () => {
       total: 137,
       viewer: {
         rank: 42,
+        in_items: true,
         entry: {
           display_name: "Robin",
           difficulty: "easy",
@@ -359,6 +438,30 @@ describe("LeaderboardDialog", () => {
     expect(
       screen.getByText(/showing the fastest 2 of 137/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows a hidden solve only to its own viewer-aware read", async () => {
+    apiRequest.mockResolvedValue({
+      items: [],
+      total: 0,
+      viewer: {
+        rank: 1,
+        in_items: false,
+        entry: {
+          display_name: "Robin",
+          difficulty: "easy",
+          elapsed_ms: 90_000,
+          completed_at: "2026-06-11T00:00:00Z",
+        },
+      },
+    });
+
+    renderDialog({ sessionId: "sess-hidden" });
+
+    const row = (await screen.findAllByRole("listitem"))[0];
+    expect(row).toHaveTextContent("Robin");
+    expect(within(row).getByText("You")).toBeInTheDocument();
+    expect(screen.queryByText(/be the first/i)).not.toBeInTheDocument();
   });
 
   it("renders no viewer marker when the read returns no viewer", async () => {
@@ -575,6 +678,7 @@ describe("LeaderboardDialog", () => {
       total: 3,
       viewer: {
         rank: 2,
+        in_items: true,
         entry: entry({ display_name: "Robin", elapsed_ms: 61_000 }),
       },
     });
@@ -612,6 +716,7 @@ describe("LeaderboardDialog", () => {
       total: 4,
       viewer: {
         rank: 4,
+        in_items: true,
         entry: entry({ display_name: "Robin", elapsed_ms: 63_000 }),
       },
     });
@@ -651,6 +756,7 @@ describe("LeaderboardDialog", () => {
       total: 5,
       viewer: {
         rank: 5,
+        in_items: true,
         entry: entry({ display_name: "Robin", elapsed_ms: 65_000 }),
       },
     });
@@ -702,7 +808,11 @@ describe("LeaderboardDialog", () => {
     // middle (50), i.e. scrollTop 760.
     queryClient.setQueryData(
       [QueryKey.GameLeaderboard, "wedding-mini-v1", "easy", "sess-7"],
-      { items, total: 100, viewer: { rank: 80, entry: items[79] } },
+      {
+        items,
+        total: 100,
+        viewer: { rank: 80, in_items: true, entry: items[79] },
+      },
     );
 
     await waitFor(() => expect(scrollTo).toHaveBeenCalled());
@@ -733,7 +843,11 @@ describe("LeaderboardDialog", () => {
 
     queryClient.setQueryData(
       [QueryKey.GameLeaderboard, "wedding-mini-v1", "easy", "sess-7"],
-      { items, total: 100, viewer: { rank: 80, entry: items[79] } },
+      {
+        items,
+        total: 100,
+        viewer: { rank: 80, in_items: true, entry: items[79] },
+      },
     );
 
     // A frame was requested, but nothing scrolled until it runs.
@@ -774,6 +888,7 @@ describe("LeaderboardDialog", () => {
       total: 2,
       viewer: {
         rank: 1,
+        in_items: true,
         entry: entry({ display_name: "Robin", elapsed_ms: 60_000 }),
       },
     });

@@ -21,8 +21,12 @@ import {
 } from "@/libraries/games-api";
 import type { UpdateGameSessionPayload } from "@/types/generated/games";
 
-import { Difficulty, easierDifficulty } from "./puzzle";
-import { loadSessionRecord, saveSessionRecord } from "./session";
+import { Difficulty, easierDifficulty, PuzzleDifficulties } from "./puzzle";
+import {
+  clearSessionRecord,
+  loadSessionRecord,
+  saveSessionRecord,
+} from "./session";
 
 /** How often elapsed time is reported while actively solving. */
 export const HEARTBEAT_MS = 30_000;
@@ -32,6 +36,8 @@ const MAX_ELAPSED_MS = 86_400_000;
 
 interface UseSolveSessionOptions {
   puzzleId: string;
+  /** Ordered difficulty subset currently offered by this puzzle. */
+  availableDifficulties: PuzzleDifficulties;
   /** Whether saved progress exists, i.e. the guest started in an earlier visit. */
   initiallyStarted: boolean;
   /** The difficulty in play at mount (from saved progress, or the default). */
@@ -78,10 +84,16 @@ export interface SolveSession {
   recordedDifficulty: Difficulty;
   /** Whether this solve has been posted to the leaderboard. */
   posted: boolean;
+  /**
+   * Whether this session can be posted. A legacy record whose stored
+   * difficulty is missing or no longer offered stays blocked until a
+   * successful report reconciles the live server row to a current difficulty.
+   */
+  postable: boolean;
   start: (difficulty: Difficulty) => void;
   pause: () => void;
   resume: () => void;
-  /** Pause/resume around UI that interrupts solving (the settings dialog). */
+  /** Pause/resume around UI that interrupts solving, such as settings or incorrect-grid feedback. */
   setUiPaused: (paused: boolean) => void;
   /**
    * Record a mid-solve difficulty switch and flush it to the backend. A no-op
@@ -91,6 +103,8 @@ export interface SolveSession {
   reportDifficulty: (difficulty: Difficulty) => void;
   /** Stop the clock for good and report the solve as completed. */
   complete: () => void;
+  /** Discard this browser's session record without touching the backend row. */
+  discardLocalRecord: () => void;
   /**
    * Publish the solve to the leaderboard. Unlike the telemetry, this is a
    * user-initiated action, so failures throw (with an ApiError for server
@@ -101,6 +115,7 @@ export interface SolveSession {
 
 export function useSolveSession({
   puzzleId,
+  availableDifficulties,
   initiallyStarted,
   initialDifficulty,
   initiallyFinished = false,
@@ -108,7 +123,36 @@ export function useSolveSession({
 }: UseSolveSessionOptions): SolveSession {
   // The persisted record is read once; from then on the refs are the source
   // of truth and persist() writes them back at every meaningful moment.
-  const [initialRecord] = useState(() => loadSessionRecord(puzzleId));
+  const [{ record: initialRecord, difficultyNeedsReconciliation }] = useState(
+    () => {
+      const record = loadSessionRecord(puzzleId);
+      const difficultyUnavailable = Boolean(
+        record &&
+        (record.difficultyUnverified ||
+          !record.difficulty ||
+          !availableDifficulties.includes(record.difficulty)),
+      );
+      if (!record || !difficultyUnavailable) {
+        return { record, difficultyNeedsReconciliation: false };
+      }
+      return {
+        record: {
+          ...record,
+          difficultyUnverified: true,
+          // Keep the existing session bearer id, elapsed time, completion
+          // state, and posting state if a saved record omits its difficulty or
+          // names one this puzzle no longer offers. Falling back to the easiest
+          // current level is conservative and lets an in-progress report
+          // reconcile the server row without minting an artificially fast
+          // replacement session. Published changes to a puzzle's difficulty
+          // set should
+          // still use a new puzzle id.
+          difficulty: availableDifficulties[0],
+        },
+        difficultyNeedsReconciliation: true,
+      };
+    },
+  );
 
   const sessionIdRef = useRef<string | null>(initialRecord?.id ?? null);
   const baseElapsedRef = useRef(initialRecord?.elapsedMs ?? 0);
@@ -123,6 +167,7 @@ export function useSolveSession({
     initialRecord?.difficulty ?? initialDifficulty,
   );
   const postedNameRef = useRef(initialRecord?.postedName);
+  const discardedRef = useRef(false);
   // Reports are serialized so a heartbeat can never overtake a completion.
   const queueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -149,6 +194,16 @@ export function useSolveSession({
     initialRecord?.difficulty ?? initialDifficulty,
   );
   const [posted, setPosted] = useState(Boolean(initialRecord?.postedName));
+  // A legacy record with a missing or removed difficulty cannot be posted
+  // until a successful server response confirms the live row was reconciled
+  // to one of this puzzle's current difficulties. This also covers a stale
+  // local record that says in-progress when the server row is already completed.
+  const postableRef = useRef(!difficultyNeedsReconciliation);
+  const [postable, setPostable] = useState(!difficultyNeedsReconciliation);
+  const setPostingCompatibility = useCallback((value: boolean) => {
+    postableRef.current = value;
+    setPostable(value);
+  }, []);
   // The id mirrors sessionIdRef as reactive state, so consumers (the
   // leaderboard read) re-render when a session is minted or recreated. The
   // ref stays the source of truth for the synchronous report path.
@@ -170,11 +225,15 @@ export function useSolveSession({
   }, []);
 
   const persist = useCallback(() => {
+    if (discardedRef.current) {
+      return;
+    }
     saveSessionRecord(puzzleId, {
       id: sessionIdRef.current,
       elapsedMs: totalElapsed(),
       completed: completedRef.current,
       difficulty: easiestRef.current,
+      difficultyUnverified: postableRef.current ? undefined : true,
       postedName: postedNameRef.current,
     });
   }, [puzzleId, totalElapsed]);
@@ -182,12 +241,27 @@ export function useSolveSession({
   // The server records the easiest difficulty seen across DELIVERED reports;
   // locally we also fold in switches that may not have reached it yet, so
   // the recorded difficulty is the min of both views.
-  const applyServerDifficulty = useCallback((difficulty: Difficulty) => {
-    easiestRef.current = easierDifficulty(easiestRef.current, difficulty);
-    setRecordedDifficulty(easiestRef.current);
-  }, []);
+  const applyServerDifficulty = useCallback(
+    (difficulty: Difficulty) => {
+      // A stale server row can still name a globally valid difficulty this
+      // puzzle no longer exposes. Never let that value become the displayed
+      // difficulty or leaderboard query anchor, and keep posting blocked until
+      // a later response confirms a current difficulty.
+      if (!availableDifficulties.includes(difficulty)) {
+        setPostingCompatibility(false);
+        return;
+      }
+      easiestRef.current = easierDifficulty(easiestRef.current, difficulty);
+      setRecordedDifficulty(easiestRef.current);
+      setPostingCompatibility(true);
+    },
+    [availableDifficulties, setPostingCompatibility],
+  );
 
   const ensureSessionId = useCallback(async (): Promise<string | null> => {
+    if (discardedRef.current) {
+      return null;
+    }
     if (sessionIdRef.current) {
       return sessionIdRef.current;
     }
@@ -196,6 +270,9 @@ export function useSolveSession({
         puzzle_id: puzzleId,
         difficulty: easiestRef.current,
       });
+      if (discardedRef.current) {
+        return null;
+      }
       setSessionId(session.id);
       applyServerDifficulty(session.difficulty);
       persist();
@@ -214,11 +291,11 @@ export function useSolveSession({
    */
   const sendReport = useCallback(
     async (options: { completed?: boolean } = {}): Promise<void> => {
-      if (!startedRef.current || completedRef.current) {
+      if (discardedRef.current || !startedRef.current || completedRef.current) {
         return;
       }
       const id = await ensureSessionId();
-      if (!id) {
+      if (!id || discardedRef.current) {
         return;
       }
       // Elapsed may only grow server-side; clamp to the last accepted value
@@ -237,6 +314,9 @@ export function useSolveSession({
         completed: options.completed === true,
       };
       const applyResponse = (session: { difficulty: Difficulty }) => {
+        if (discardedRef.current) {
+          return;
+        }
         lastSentElapsedRef.current = elapsed;
         applyServerDifficulty(session.difficulty);
         if (payload.completed) {
@@ -247,11 +327,14 @@ export function useSolveSession({
       try {
         applyResponse(await updateGameSession(id, payload));
       } catch (err) {
+        if (discardedRef.current) {
+          return;
+        }
         if (err instanceof ApiError && err.status === 404) {
           // The stored session is gone server-side; recreate and retry once.
           setSessionId(null);
           const newId = await ensureSessionId();
-          if (newId) {
+          if (newId && !discardedRef.current) {
             try {
               applyResponse(await updateGameSession(newId, payload));
             } catch {
@@ -260,7 +343,12 @@ export function useSolveSession({
           }
         } else if (err instanceof ApiError && err.status === 409) {
           // The server already considers this session final: stop reporting.
+          // Without the final row in the response, a stale local record cannot
+          // prove which difficulty the immutable server row actually holds.
           completedRef.current = true;
+          finishedRef.current = true;
+          setFinished(true);
+          setPostingCompatibility(false);
           persist();
         }
         // Anything else (network trouble, an elapsed race) is dropped
@@ -272,6 +360,7 @@ export function useSolveSession({
       totalElapsed,
       applyServerDifficulty,
       persist,
+      setPostingCompatibility,
       setSessionId,
     ],
   );
@@ -320,7 +409,12 @@ export function useSolveSession({
   // Flush for the page going away. A keepalive fetch survives navigation
   // where the queued reports would be aborted.
   const flushOnHide = useCallback(() => {
-    if (!startedRef.current || finishedRef.current || completedRef.current) {
+    if (
+      discardedRef.current ||
+      !startedRef.current ||
+      finishedRef.current ||
+      completedRef.current
+    ) {
       return;
     }
     // Persist only live solves. A finished solve already persisted its final
@@ -435,11 +529,24 @@ export function useSolveSession({
     enqueue(() => sendReport({ completed: true }));
   }, [enqueue, sendReport]);
 
+  const discardLocalRecord = useCallback(() => {
+    discardedRef.current = true;
+    clearSessionRecord(puzzleId);
+  }, [puzzleId]);
+
   const postToLeaderboard = useCallback(
     async (displayName: string) => {
-      // Let in-flight reports settle, then make sure the completion actually
-      // landed: posting is the one moment the guest cares about a report.
+      // Let in-flight reports settle before checking compatibility: an
+      // in-progress legacy session may reconcile successfully in that queue,
+      // while a stale server response may discover an unavailable difficulty.
       await queueRef.current;
+      if (!postableRef.current) {
+        throw new Error(
+          "We can't verify this saved solve's clue difficulty, so it can't be posted.",
+        );
+      }
+      // Make sure the completion actually landed: posting is the one moment
+      // the guest cares about a report.
       if (!completedRef.current) {
         await sendReport({ completed: true });
       }
@@ -466,12 +573,14 @@ export function useSolveSession({
     finished,
     recordedDifficulty,
     posted,
+    postable,
     start,
     pause,
     resume,
     setUiPaused,
     reportDifficulty,
     complete,
+    discardLocalRecord,
     postToLeaderboard,
   };
 }

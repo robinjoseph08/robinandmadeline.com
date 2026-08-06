@@ -1,7 +1,6 @@
 # Crawl guidance only. These rules are not access controls.
 User-agent: *
 Disallow: /admin
-Disallow: /games/
 Disallow: /i/
 Disallow: /u/
 Disallow: /rsvp/form

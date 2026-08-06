@@ -16,6 +16,10 @@ interface ClueListProps {
   crossingNumber?: string;
   direction: Direction;
   onClueClick: (number: string, direction: Direction) => void;
+  /** Clues referenced by the selected clue in this direction. */
+  referencedNumbers?: Set<string>;
+  /** Desktop lists scroll independently; the mobile all-clues view owns scrolling. */
+  scrollMode?: "bounded" | "page";
   selectedNumber?: string;
 }
 
@@ -32,6 +36,8 @@ const ClueList = memo(function ClueList({
   crossingNumber,
   direction,
   onClueClick,
+  referencedNumbers,
+  scrollMode = "bounded",
   selectedNumber,
 }: ClueListProps) {
   const listRef = useRef<HTMLOListElement>(null);
@@ -73,23 +79,35 @@ const ClueList = memo(function ClueList({
     <section>
       <h2 className="text-lg font-semibold capitalize">{direction}</h2>
       <ol
-        className="mt-2 max-h-64 space-y-1 overflow-y-auto overscroll-contain pr-1 md:max-h-[32rem]"
+        className={cn(
+          "mt-2 space-y-1 pr-1",
+          scrollMode === "bounded" &&
+            "max-h-64 overflow-y-auto overscroll-contain md:max-h-[32rem]",
+        )}
         data-testid={`crossword-clues-${direction}`}
         ref={listRef}
       >
         {Object.entries(clues)
           .sort(([a], [b]) => parseInt(a, 10) - parseInt(b, 10))
           .map(([number, clue]) => (
-            <li data-clue-number={number} key={number}>
+            <li
+              data-clue-direction={direction}
+              data-clue-number={number}
+              key={number}
+            >
               <button
+                aria-current={selectedNumber === number ? "true" : undefined}
                 className={cn(
                   "w-full rounded px-2 py-1 text-left text-sm transition-colors hover:bg-secondary/30",
+                  referencedNumbers?.has(number) &&
+                    "bg-rose-soft text-foreground ring-1 ring-rose/60",
                   selectedNumber === number && "bg-secondary/50",
                   // The crossing word's clue gets the reference's accent
                   // border (pl-1 keeps the text aligned with its siblings).
                   crossingNumber === number &&
                     "rounded-l-none border-l-4 border-secondary pl-1",
                   completedWords.has(`${number}:${direction}`) &&
+                    !referencedNumbers?.has(number) &&
                     "text-muted-foreground/70",
                 )}
                 onClick={() => onClueClick(number, direction)}

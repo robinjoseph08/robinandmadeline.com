@@ -193,6 +193,124 @@
 }
 
 /*
+ * Every correct solve gets the green border treatment from the reference
+ * solver. The four gradients grow clockwise, one side per quarter second.
+ */
+.puzzle-solved-container {
+  position: relative;
+}
+
+.puzzle-solved-container::before {
+  position: absolute;
+  z-index: 5;
+  inset: -3px;
+  pointer-events: none;
+  content: "";
+  background:
+    linear-gradient(90deg, #22c55e 0%, #22c55e 100%) top left,
+    linear-gradient(180deg, #22c55e 0%, #22c55e 100%) top right,
+    linear-gradient(270deg, #22c55e 0%, #22c55e 100%) bottom right,
+    linear-gradient(0deg, #22c55e 0%, #22c55e 100%) bottom left;
+  background-repeat: no-repeat;
+  background-size:
+    0% 3px,
+    3px 0%,
+    0% 3px,
+    3px 0%;
+  animation: draw-solved-border 1s ease-in-out forwards;
+}
+
+@keyframes draw-solved-border {
+  25% {
+    background-size:
+      100% 3px,
+      3px 0%,
+      0% 3px,
+      3px 0%;
+  }
+  50% {
+    background-size:
+      100% 3px,
+      3px 100%,
+      0% 3px,
+      3px 0%;
+  }
+  75% {
+    background-size:
+      100% 3px,
+      3px 100%,
+      100% 3px,
+      3px 0%;
+  }
+  100% {
+    background-size:
+      100% 3px,
+      3px 100%,
+      100% 3px,
+      3px 100%;
+  }
+}
+
+/*
+ * Proposal solve treatment. The overlay eases in while selected solved cells
+ * travel from their measured grid positions into the proposal message. The
+ * workflow itself never depends on these animations: reduced-motion users see
+ * the final arrangement immediately and everyone advances with the explicit
+ * results button.
+ */
+.proposal-celebration-overlay[data-state="open"] {
+  animation-duration: 2s !important;
+}
+
+.proposal-celebration-cell {
+  position: fixed;
+  z-index: 1;
+  overflow: hidden;
+  border: 1px solid var(--color-ink);
+  box-shadow: 0 0 20px rgb(255 255 255 / 60%);
+  transform: none;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.proposal-celebration-cell--revealing {
+  transition: transform 1.5s ease-out;
+}
+
+.proposal-celebration-cell--final {
+  transform: var(--proposal-cell-transform);
+}
+
+@media (max-height: 360px) {
+  .proposal-results-card {
+    inset-block-end: 4px;
+    flex-direction: row;
+    justify-content: center;
+    gap: 12px;
+    padding: 8px 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .puzzle-solved-container::before,
+  .proposal-celebration-overlay {
+    animation: none !important;
+  }
+
+  .puzzle-solved-container::before {
+    background-size:
+      100% 3px,
+      3px 100%,
+      100% 3px,
+      3px 100%;
+  }
+
+  .proposal-celebration-cell--revealing {
+    transition: none;
+  }
+}
+
+/*
  * Every heading uses the Magics Flavor display serif; the couple's names opt out
  * via their own font-script utility on an inner span. It is a single-weight face,
  * so force 400 to avoid synthesized bold.
