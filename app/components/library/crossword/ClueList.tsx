@@ -98,7 +98,7 @@ const ClueList = memo(function ClueList({
               <button
                 aria-current={selectedNumber === number ? "true" : undefined}
                 className={cn(
-                  "w-full rounded px-2 py-1 text-left text-sm transition-colors hover:bg-secondary/30",
+                  "w-full whitespace-pre-line rounded px-2 py-1 text-left text-sm transition-colors hover:bg-secondary/30",
                   referencedNumbers?.has(number) &&
                     "bg-rose-soft text-foreground ring-1 ring-rose/60",
                   selectedNumber === number && "bg-secondary/50",

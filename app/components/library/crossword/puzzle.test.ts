@@ -26,24 +26,25 @@ describe("validatePuzzle", () => {
   );
 
   it.each(
-    [weddingMini, weddingFull, proposal].map(
-      (puzzle) => [puzzle.id, puzzle] as const,
-    ),
-  )(
-    "%s provides clue sets for every difficulty with distinct text",
-    (_id, puzzle) => {
-      // The same answers get different clue text per difficulty, so switching
-      // difficulty must actually change what guests read.
-      for (const direction of ["across", "down"] as const) {
-        for (const number of Object.keys(puzzle.clues.easy![direction])) {
-          const texts = puzzle.difficulties.map(
-            (difficulty) => puzzle.clues[difficulty]![direction][number],
-          );
-          expect(new Set(texts).size).toBe(puzzle.difficulties.length);
-        }
+    [weddingMini, weddingFull].map((puzzle) => [puzzle.id, puzzle] as const),
+  )("%s provides distinct text for every clue difficulty", (_id, puzzle) => {
+    for (const direction of ["across", "down"] as const) {
+      for (const number of Object.keys(puzzle.clues.easy![direction])) {
+        const texts = puzzle.difficulties.map(
+          (difficulty) => puzzle.clues[difficulty]![direction][number],
+        );
+        expect(new Set(texts).size).toBe(puzzle.difficulties.length);
       }
-    },
-  );
+    }
+  });
+
+  it("proposal-v1 provides distinct authored clue sets", () => {
+    // The source CSV intentionally repeats some individual clues between Easy
+    // and Hard, but switching difficulty must still change the set overall.
+    expect(JSON.stringify(proposal.clues.easy)).not.toBe(
+      JSON.stringify(proposal.clues.hard),
+    );
+  });
 
   it("lets each puzzle choose its available difficulties", () => {
     expect(weddingMini.difficulties).toEqual(["easy", "medium", "hard"]);

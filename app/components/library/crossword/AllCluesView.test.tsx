@@ -93,6 +93,23 @@ describe("AllCluesView", () => {
     ).toHaveClass("text-left");
   });
 
+  it("preserves authored clue line breaks", () => {
+    render(
+      <AllCluesView
+        {...allCluesProps({
+          clues: {
+            ...CLUES,
+            across: { ...CLUES.across, "1": "First line\n\nAuthor note" },
+          },
+        })}
+      />,
+    );
+
+    const clue = screen.getByText(/First line/);
+    expect(clue).toHaveClass("whitespace-pre-line");
+    expect(clue.textContent).toBe("First line\n\nAuthor note");
+  });
+
   it("shows only live entered values and reports clue and exact square selections", () => {
     const onSelectClue = vi.fn();
     const onSelectSquare = vi.fn();

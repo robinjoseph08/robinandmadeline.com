@@ -490,7 +490,7 @@ describe("Crossword", () => {
       expect(screen.getAllByTestId(/^crossword-square-/)).toHaveLength(225);
       expect(
         screen.getByRole("button", {
-          name: `1. ${proposal.clues.easy!.across["1"]}`,
+          name: /1\. ___-flop\s+\(also known as a chappal in India\)/,
         }),
       ).toBeInTheDocument();
     });
@@ -730,28 +730,28 @@ describe("Crossword", () => {
       await startGame();
 
       const source = screen.getByRole("button", {
-        name: `44. ${proposal.clues.easy!.across["44"]}`,
+        name: `45. ${proposal.clues.easy!.across["45"]}`,
       });
       fireEvent.click(source);
 
       const referenced = screen.getByRole("button", {
-        name: `1. ${proposal.clues.easy!.across["1"]}`,
+        name: `43. ${proposal.clues.easy!.across["43"]}`,
       });
       expect(referenced).toHaveClass("bg-rose-soft", "ring-rose/60");
-      for (const col of [0, 1, 2, 3]) {
-        expect(square(0, col)).toHaveClass("bg-rose-soft");
+      for (const col of [5, 6, 7]) {
+        expect(square(8, col)).toHaveClass("bg-rose-soft");
       }
       expect(source).toHaveClass("bg-secondary/50");
       expect(referenced).not.toHaveClass("bg-secondary/50");
 
       fireEvent.click(
         screen.getByRole("button", {
-          name: `45. ${proposal.clues.easy!.across["45"]}`,
+          name: `44. ${proposal.clues.easy!.across["44"]}`,
         }),
       );
       expect(referenced).not.toHaveClass("bg-rose-soft");
-      for (const col of [0, 1, 2, 3]) {
-        expect(square(0, col)).not.toHaveClass("bg-rose-soft");
+      for (const col of [5, 6, 7]) {
+        expect(square(8, col)).not.toHaveClass("bg-rose-soft");
       }
     });
 

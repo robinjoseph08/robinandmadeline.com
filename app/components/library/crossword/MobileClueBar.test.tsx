@@ -29,6 +29,24 @@ describe("MobileClueBar", () => {
     expect(onToggleDirection).toHaveBeenCalledOnce();
   });
 
+  it("preserves authored line breaks without clipping a multiline clue", () => {
+    render(
+      <MobileClueBar
+        clue={"First line\n\nMadeline note"}
+        direction="down"
+        onNext={() => {}}
+        onPrevious={() => {}}
+        onToggleDirection={() => {}}
+        visible
+      />,
+    );
+
+    const clue = screen.getByText(/First line/);
+    expect(clue).toHaveClass("whitespace-pre-line");
+    expect(clue.className).not.toContain("line-clamp-");
+    expect(clue.textContent).toBe("First line\n\nMadeline note");
+  });
+
   it("announces switching back to across clues from a down clue", () => {
     render(
       <MobileClueBar

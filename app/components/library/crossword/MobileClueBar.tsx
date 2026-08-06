@@ -49,7 +49,7 @@ export default function MobileClueBar({
           onClick={onToggleDirection}
           type="button"
         >
-          <span aria-live="polite" className="line-clamp-2 leading-snug">
+          <span aria-live="polite" className="whitespace-pre-line leading-snug">
             {clue}
           </span>
         </button>

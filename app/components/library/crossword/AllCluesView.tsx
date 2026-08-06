@@ -257,7 +257,7 @@ const AllCluesView = memo(
                         >
                           {number}
                         </span>
-                        <span>{clue}</span>
+                        <span className="whitespace-pre-line">{clue}</span>
                       </button>
                       {word.length > 0 && (
                         <div

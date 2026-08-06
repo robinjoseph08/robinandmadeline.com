@@ -117,6 +117,18 @@ describe("ClueList", () => {
     expect(scrollTo).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves authored clue line breaks", () => {
+    render(
+      <ClueList
+        {...clueListProps({ clues: { "1": "First line\n\nAuthor note" } })}
+      />,
+    );
+
+    const clue = screen.getByRole("button", { name: /1\. First line/ });
+    expect(clue).toHaveClass("whitespace-pre-line");
+    expect(clue.textContent).toBe("1. First line\n\nAuthor note");
+  });
+
   it("gives referenced clues a distinct pink treatment", () => {
     render(
       <ClueList {...clueListProps({ referencedNumbers: new Set(["5"]) })} />,
