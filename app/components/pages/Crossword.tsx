@@ -911,11 +911,15 @@ function CrosswordGame({
 
       <div
         className={cn(
+          // Grid view needs enough document height to align the 46px toolbar
+          // after its 12px gap, plus measured clearance for the fixed dock.
           "relative md:mt-6",
           allCluesOpen ? "mt-0" : "mt-3",
-          mobileDockVisible &&
+          customKeyboard &&
+            session.started &&
+            !solved &&
             !allCluesOpen &&
-            "mb-[var(--crossword-mobile-dock-height)]",
+            "min-h-[calc(100dvh-3.625rem)] pb-[var(--crossword-mobile-dock-height)]",
         )}
       >
         <div

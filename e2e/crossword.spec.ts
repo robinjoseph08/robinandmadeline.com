@@ -23,10 +23,27 @@ test("proposal crossword clue list keeps its mobile controls and keyboard usable
 
   const toolbar = page.getByRole("group", { name: "Crossword controls" });
   await expect(toolbar).toBeVisible();
-  await expect(
-    toolbar.getByRole("button", { name: "Pause timer" }),
-  ).toBeVisible();
-  await expect(toolbar.getByRole("button", { name: "Settings" })).toBeVisible();
+  await expect
+    .poll(async () => (await requiredBox(toolbar)).y)
+    .toBeCloseTo(0, 0);
+  const pauseButton = toolbar.getByRole("button", { name: "Pause timer" });
+  const settingsButton = toolbar.getByRole("button", { name: "Settings" });
+  await expect(pauseButton).toBeVisible();
+  await expect(settingsButton).toBeVisible();
+
+  await pauseButton.click();
+  const initialPauseDialog = page.getByTestId("crossword-pause-dialog");
+  await expect(initialPauseDialog).toBeVisible();
+  await initialPauseDialog.getByRole("button", { name: "Resume" }).click();
+  await expect(initialPauseDialog).toBeHidden();
+  expect((await requiredBox(toolbar)).y).toBeCloseTo(0, 0);
+
+  await settingsButton.click();
+  const settingsDialog = page.getByTestId("crossword-settings-dialog");
+  await expect(settingsDialog).toBeVisible();
+  await settingsDialog.getByRole("button", { name: "Close" }).click();
+  await expect(settingsDialog).toBeHidden();
+  expect((await requiredBox(toolbar)).y).toBeCloseTo(0, 0);
 
   await toolbar.getByRole("button", { name: "List all clues" }).click();
 
@@ -204,4 +221,56 @@ test("proposal crossword clue list keeps its mobile controls and keyboard usable
   await keyboard.getByRole("button", { name: "Enter Q", exact: true }).click();
   await expect(firstDownSquare).toHaveText("Q");
   await expect(firstDownSquare).toHaveAccessibleName(/, Q(?:,|$)/);
+});
+
+test("proposal crossword restores the mobile scroll position after reload", async ({
+  page,
+}) => {
+  await page.goto("/games/proposal");
+
+  const readyDialog = page.getByRole("dialog", { name: "Ready to solve?" });
+  await readyDialog.getByRole("button", { name: "Start solving" }).click();
+  await expect(readyDialog).toBeHidden();
+  await page.waitForFunction(() =>
+    Object.keys(localStorage).some(
+      (key) => key.startsWith("crossword:") && key.endsWith(":progress"),
+    ),
+  );
+
+  await page.reload();
+  const pauseDialog = page.getByTestId("crossword-pause-dialog");
+  await expect(pauseDialog).toBeVisible();
+  await pauseDialog.getByRole("button", { name: "Resume" }).click();
+  await expect(pauseDialog).toBeHidden();
+
+  const toolbar = page.getByRole("group", { name: "Crossword controls" });
+  await expect
+    .poll(async () => (await requiredBox(toolbar)).y)
+    .toBeCloseTo(0, 0);
+});
+
+test("proposal crossword grid clears the solve dock on a short mobile viewport", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 568 });
+  await page.goto("/games/proposal");
+
+  const readyDialog = page.getByRole("dialog", { name: "Ready to solve?" });
+  await readyDialog.getByRole("button", { name: "Start solving" }).click();
+  await expect(readyDialog).toBeHidden();
+
+  const toolbar = page.getByRole("group", { name: "Crossword controls" });
+  await expect
+    .poll(async () => (await requiredBox(toolbar)).y)
+    .toBeCloseTo(0, 0);
+
+  const grid = page.getByRole("application", { name: "Crossword grid" });
+  const dock = page.getByTestId("crossword-mobile-solve-dock");
+  await page.evaluate(() =>
+    window.scrollTo({ top: document.body.scrollHeight }),
+  );
+
+  const gridBox = await requiredBox(grid);
+  const dockBox = await requiredBox(dock);
+  expect(gridBox.y + gridBox.height).toBeLessThanOrEqual(dockBox.y + 1);
 });

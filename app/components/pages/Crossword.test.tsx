@@ -800,7 +800,12 @@ describe("Crossword", () => {
       const playArea = screen.getByTestId("crossword-play-area");
       expect(playArea).toHaveClass("block", "md:grid");
       expect(playArea.parentElement).toHaveClass("mt-0");
-      expect(playArea.parentElement).not.toHaveClass("mt-3", "mb-[17rem]");
+      expect(playArea.parentElement).not.toHaveClass(
+        "mt-3",
+        "mb-[17rem]",
+        "min-h-[calc(100dvh-3.625rem)]",
+        "pb-[var(--crossword-mobile-dock-height)]",
+      );
       expect(allClues).not.toHaveClass("overflow-y-auto", "rounded-md");
       expect(screen.getByTestId("crossword-dev-controls")).toBeInTheDocument();
       expect(
@@ -959,6 +964,12 @@ describe("Crossword", () => {
         '[aria-label="Crossword controls"]',
       );
       expect(controls).not.toBeNull();
+      expect(
+        screen.getByTestId("crossword-play-area").parentElement,
+      ).toHaveClass(
+        "min-h-[calc(100dvh-3.625rem)]",
+        "pb-[var(--crossword-mobile-dock-height)]",
+      );
       await vi.waitFor(() =>
         expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" }),
       );
