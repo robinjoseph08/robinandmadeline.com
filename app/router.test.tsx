@@ -27,17 +27,20 @@ describe("router", () => {
     localStorage.clear();
   });
 
-  it("publicly renders the proposal crossword at /games/proposal", () => {
-    renderAt("/games/proposal");
+  it.each(["/games/proposal", "/Games/proposal", "/Games/propo%73al"])(
+    "publicly renders the proposal crossword without the footer at %s",
+    (path) => {
+      renderAt(path);
 
-    // getByText rather than a role query: the first visit opens the modal start
-    // dialog, which marks the page behind it aria-hidden.
-    expect(screen.getByText(proposal.title)).toBeInTheDocument();
-    expect(
-      screen.getByRole("dialog", { name: /ready to solve/i }),
-    ).toBeInTheDocument();
-    expect(document.querySelector("footer")).toBeNull();
-  });
+      // getByText rather than a role query: the first visit opens the modal
+      // start dialog, which marks the page behind it aria-hidden.
+      expect(screen.getByText(proposal.title)).toBeInTheDocument();
+      expect(
+        screen.getByRole("dialog", { name: /ready to solve/i }),
+      ).toBeInTheDocument();
+      expect(document.querySelector("footer")).toBeNull();
+    },
+  );
 
   it.each(["mini", "crossword", "does-not-exist"])(
     "shows the friendly not-found treatment for retired or unknown slug %s",

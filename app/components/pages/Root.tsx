@@ -12,7 +12,15 @@ import SiteHeader from "@/components/library/SiteHeader";
  */
 export default function Root() {
   const { pathname } = useLocation();
-  const puzzleSlug = pathname.match(/^\/games\/([^/]+)\/?$/)?.[1];
+  const encodedPuzzleSlug = pathname.match(/^\/games\/([^/]+)\/?$/i)?.[1];
+  let puzzleSlug = encodedPuzzleSlug;
+  if (encodedPuzzleSlug) {
+    try {
+      puzzleSlug = decodeURIComponent(encodedPuzzleSlug);
+    } catch {
+      // Keep malformed path segments unrecognized so they retain the footer.
+    }
+  }
   const isPuzzlePage = Boolean(
     puzzleSlug &&
     Object.prototype.hasOwnProperty.call(PUZZLES_BY_SLUG, puzzleSlug),

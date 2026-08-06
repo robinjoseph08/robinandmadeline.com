@@ -259,8 +259,30 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 // when the id names no row, or when the named session was never posted or does
 // not belong to the board being read.
 func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]LeaderboardEntry, int, *LeaderboardViewer, error) {
+	var entries []LeaderboardEntry
+	var total int
+	var viewer *LeaderboardViewer
+	err := s.db.RunInTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	}, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		entries, total, viewer, err = leaderboard(ctx, tx, in)
+		return err
+	})
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	return entries, total, viewer, nil
+}
+
+// leaderboard performs the list and viewer-rank reads against one database
+// handle. Leaderboard passes a repeatable-read transaction so both halves of
+// the response describe the same board snapshot even while solves are posted,
+// hidden, or restored concurrently.
+func leaderboard(ctx context.Context, db bun.IDB, in LeaderboardQuery) ([]LeaderboardEntry, int, *LeaderboardViewer, error) {
 	var sessions []*models.GameSession
-	q := s.db.NewSelect().Model(&sessions).
+	q := db.NewSelect().Model(&sessions).
 		Where("gs.puzzle_id = ?", in.PuzzleID).
 		Where("gs.completed_at IS NOT NULL")
 	if in.SessionID == nil {
@@ -300,7 +322,7 @@ func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]Leade
 		})
 	}
 
-	viewer, err := s.leaderboardViewer(ctx, in)
+	viewer, err := leaderboardViewer(ctx, db, in)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -316,20 +338,20 @@ func (s *Service) Leaderboard(ctx context.Context, in LeaderboardQuery) ([]Leade
 // read is filtered, so a solver only appears on their own difficulty tab). An
 // admin-hidden row remains eligible because its retained display_name proves it
 // was posted; only its bearer-aware list includes it. The lookup is a plain
-// read with no row lock: this is read-only and outside any
-// transaction. When the session is eligible, the rank is one more than the
+// read with no row lock inside the leaderboard's repeatable-read transaction.
+// When the session is eligible, the rank is one more than the
 // count of opted-in entries that sort strictly before it in the list's
 // (elapsed_ms ASC, completed_at ASC, id ASC) ordering, counted within the same
 // scope as the list, so the rank stays correct even past the returned cap. That
 // count rides the same partial (puzzle_id, elapsed_ms) index the list uses; no
 // new index is needed at wedding scale.
-func (s *Service) leaderboardViewer(ctx context.Context, in LeaderboardQuery) (*LeaderboardViewer, error) {
+func leaderboardViewer(ctx context.Context, db bun.IDB, in LeaderboardQuery) (*LeaderboardViewer, error) {
 	if in.SessionID == nil {
 		return nil, nil
 	}
 
 	session := new(models.GameSession)
-	err := s.db.NewSelect().Model(session).Where("gs.id = ?", *in.SessionID).Scan(ctx)
+	err := db.NewSelect().Model(session).Where("gs.id = ?", *in.SessionID).Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -352,7 +374,7 @@ func (s *Service) leaderboardViewer(ctx context.Context, in LeaderboardQuery) (*
 	// (elapsed_ms, completed_at, id) tuple binds once each and is reused across
 	// the three OR branches. The id comparison is the uuid column against the
 	// session's id string, exactly like the existing gs.id = ? reads.
-	q := s.db.NewSelect().Model((*models.GameSession)(nil)).
+	q := db.NewSelect().Model((*models.GameSession)(nil)).
 		Where("gs.puzzle_id = ?", in.PuzzleID).
 		Where("gs.on_leaderboard = ?", true).
 		Where("gs.completed_at IS NOT NULL").
