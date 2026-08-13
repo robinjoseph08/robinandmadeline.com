@@ -14,6 +14,15 @@ import type {
 
 import AdminGuests from "./AdminGuests";
 
+const { downloadGuestsCsv, toastSuccess } = vi.hoisted(() => ({
+  downloadGuestsCsv: vi.fn(),
+  toastSuccess: vi.fn(),
+}));
+vi.mock("@/libraries/guestsCsv", () => ({ downloadGuestsCsv }));
+vi.mock("sonner", () => ({
+  toast: { success: toastSuccess, error: vi.fn() },
+}));
+
 const adminRequest = vi.fn();
 vi.mock("@/libraries/admin-api", async () => {
   const actual = await vi.importActual<object>("@/libraries/admin-api");
@@ -161,6 +170,8 @@ function renderGuests(path = "/admin/guests") {
 
 beforeEach(() => {
   adminRequest.mockReset();
+  downloadGuestsCsv.mockReset();
+  toastSuccess.mockReset();
   localStorage.clear();
 });
 
@@ -507,6 +518,34 @@ describe("AdminGuests flat list", () => {
     ).toHaveAttribute("placeholder", "e.g. (415) 555-2671");
   });
 
+  it("filters guests by their party info status", async () => {
+    setMock({ guests: [makeGuestItem({ full_name: "Ada" })] });
+    const user = userEvent.setup();
+    renderGuests();
+    await screen.findByDisplayValue("Ada");
+
+    await user.click(screen.getByRole("button", { name: /Filters/ }));
+    const sheet = await screen.findByRole("dialog");
+    await user.click(
+      within(sheet).getByRole("combobox", { name: "Info status" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "Incomplete" }));
+
+    await waitFor(() => {
+      const calls = adminRequest.mock.calls.filter(
+        (call) => call[0] === "/admin/guests",
+      );
+      expect(
+        calls.some(
+          (call) => call[1]?.query?.info_collection_status === "incomplete",
+        ),
+      ).toBe(true);
+    });
+    expect(screen.getByTestId("location-search")).toHaveTextContent(
+      "info_collection_status=incomplete",
+    );
+  });
+
   it("applies a party filter from the URL, so a filtered view is shareable", async () => {
     setMock({ guests: [] });
     // Loading a URL that already carries the filter must apply it on the first
@@ -557,6 +596,48 @@ describe("AdminGuests flat list", () => {
     expect(screen.getByTestId("location-search")).toHaveTextContent(
       "utm_source=share",
     );
+  });
+
+  it("exports the in-view guests with all party records", async () => {
+    const guests = [
+      makeGuestItem({ id: "alice", full_name: "Alice", party_id: "p7" }),
+      makeGuestItem({ id: "bob", full_name: "Bob", party_id: "p8" }),
+    ];
+    setMock({ guests });
+    const user = userEvent.setup();
+    renderGuests();
+
+    await screen.findByDisplayValue("Alice");
+    await user.click(screen.getByRole("button", { name: "Export CSV" }));
+
+    expect(downloadGuestsCsv).toHaveBeenCalledTimes(1);
+    const [exportedGuests, exportedParties, date] =
+      downloadGuestsCsv.mock.calls[0];
+    expect(
+      (exportedGuests as GuestListItem[]).map((guest) => guest.id),
+    ).toEqual(["alice", "bob"]);
+    expect(
+      (exportedParties as PartyResponse[]).map((party) => party.id),
+    ).toEqual(["p7", "p8"]);
+    expect(date).toBeInstanceOf(Date);
+    expect(toastSuccess).toHaveBeenCalledWith("Exported 2 guests to CSV");
+  });
+
+  it("uses the singular noun for one exported guest", async () => {
+    setMock({ guests: [makeGuestItem({ full_name: "Ada" })] });
+    const user = userEvent.setup();
+    renderGuests();
+
+    await screen.findByDisplayValue("Ada");
+    await user.click(screen.getByRole("button", { name: "Export CSV" }));
+    expect(toastSuccess).toHaveBeenCalledWith("Exported 1 guest to CSV");
+  });
+
+  it("disables CSV export when no guests are in view", async () => {
+    setMock({ guests: [] });
+    renderGuests();
+    await screen.findByText(/No guests match these filters/i);
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
   });
 
   it("rolls the cell back, tints it, and toasts when the PATCH fails", async () => {
