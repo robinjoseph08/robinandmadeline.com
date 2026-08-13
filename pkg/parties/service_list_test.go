@@ -399,6 +399,46 @@ func TestListGuests_SearchEscapesLikeWildcards(t *testing.T) {
 // TestListGuests_LoadsOwningParty proves the flat guest list eager-loads each
 // guest's owning party so the response can surface the party name (a guest has
 // no detail page; it is edited in its party's context).
+func TestListGuests_FilterByPartyInfoStatus(t *testing.T) {
+	svc, _ := newService(t)
+
+	// A digital party is complete without address fields; a physical party with
+	// no address is incomplete. Every guest inherits the owning party's status.
+	complete := createPartyT(t, svc, digitalPartyInput())
+	completePrimary := addGuestT(t, svc, complete.ID, parties.CreateGuestPayload{
+		FullName: "Complete Primary", IsPrimary: true, IsDrinking: true,
+	})
+	completeSecond := addGuestT(t, svc, complete.ID, parties.CreateGuestPayload{FullName: "Complete Second"})
+	incomplete := createPartyT(t, svc, physicalPartyInput())
+	incompletePrimary := addGuestT(t, svc, incomplete.ID, parties.CreateGuestPayload{
+		FullName: "Incomplete Primary", IsPrimary: true, IsDrinking: true,
+	})
+	incompleteSecond := addGuestT(t, svc, incomplete.ID, parties.CreateGuestPayload{FullName: "Incomplete Second"})
+
+	t.Run("complete returns every guest in complete parties and recounts", func(t *testing.T) {
+		got, total, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{
+			InfoCollectionStatus: pointerutil.String(models.StatusComplete),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, total)
+		ids := guestIDs(got)
+		assert.True(t, ids[completePrimary.ID])
+		assert.True(t, ids[completeSecond.ID])
+		assert.False(t, ids[incompletePrimary.ID])
+		assert.False(t, ids[incompleteSecond.ID])
+	})
+
+	t.Run("incomplete composes with a guest filter", func(t *testing.T) {
+		got, total, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{
+			InfoCollectionStatus: pointerutil.String(models.StatusIncomplete),
+			IsDrinking:           pointerutil.Bool(true),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 1, total)
+		assert.Equal(t, map[string]bool{incompletePrimary.ID: true}, guestIDs(got))
+	})
+}
+
 func TestListGuests_LoadsOwningParty(t *testing.T) {
 	svc, _ := newService(t)
 

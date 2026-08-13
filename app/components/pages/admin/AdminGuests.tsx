@@ -1,5 +1,5 @@
-import { keepPreviousData } from "@tanstack/react-query";
-import { Loader2, Search } from "lucide-react";
+import { keepPreviousData, useIsMutating } from "@tanstack/react-query";
+import { Download, Loader2, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigationType } from "react-router-dom";
 import { toast } from "sonner";
@@ -18,12 +18,14 @@ import {
   GUEST_SORT_FIELD_SET,
   GUEST_SORT_FIELDS,
   GUEST_SORT_STORAGE_KEY,
+  INFO_STATUS_OPTIONS,
   RELATION_OPTIONS,
   RSVP_STATUS_OPTIONS,
   SIDE_OPTIONS,
   type Option,
 } from "@/components/pages/admin/parties/options";
 import { SortSheet } from "@/components/pages/admin/parties/SortSheet";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useEvents } from "@/hooks/queries/events";
 import { useGuests, useUpdateGuest } from "@/hooks/queries/guests";
@@ -32,6 +34,7 @@ import { useAllGuestTags } from "@/hooks/queries/tags";
 import { useFilterParams } from "@/hooks/useFilterParams";
 import { useAdminPageTitle } from "@/hooks/usePageTitle";
 import { useSortDefault } from "@/hooks/useSortDefault";
+import { downloadGuestsCsv } from "@/libraries/guestsCsv";
 import {
   parseSortSpec,
   serializeSortSpec,
@@ -41,6 +44,7 @@ import {
 import type {
   Circle,
   EventRSVPStatus,
+  InfoCollectionStatus,
   Relation,
   Side,
 } from "@/types/generated/models";
@@ -54,6 +58,7 @@ import type {
 // Stable empty list so the parties prop keeps the same reference while the
 // parties query is still loading (a fresh [] each render would needlessly
 // recompute the grid's party lookups).
+const EMPTY_GUESTS: GuestListItem[] = [];
 const EMPTY_PARTIES: PartyResponse[] = [];
 
 // Boolean guest filters, listed so useFilterParams parses them back from the URL.
@@ -69,6 +74,7 @@ const FILTER_KEYS = [
   "side",
   "relation",
   "circle",
+  "info_collection_status",
   "is_drinking",
   "is_child",
   "is_placeholder",
@@ -179,8 +185,11 @@ export default function AdminGuests() {
     { ...filters, sort: serializeSortSpec(effectiveSort) || undefined },
     { placeholderData: keepPreviousData },
   );
-  const guests = guestsQuery.data?.items ?? [];
+  const guests = guestsQuery.data?.items ?? EMPTY_GUESTS;
   const updateGuest = useUpdateGuest();
+  // Grid edits keep their draft in the cell until the write succeeds. Prevent a
+  // CSV snapshot from capturing the older query-cache value during that gap.
+  const pendingMutationCount = useIsMutating();
 
   // Every party (the full response), for the Party filter, the editable Party
   // combobox, the add row's party picker, and the read-only party-attribute
@@ -193,6 +202,30 @@ export default function AdminGuests() {
     () => parties.map((party) => ({ value: party.id, label: party.name })),
     [parties],
   );
+  // CSV rows repeat the owning party's columns, so wait until every in-view
+  // guest can be joined to the complete party query before enabling export.
+  const canExport = useMemo(() => {
+    if (
+      guests.length === 0 ||
+      guestsQuery.isFetching ||
+      !guestsQuery.isSuccess ||
+      partiesQuery.isFetching ||
+      !partiesQuery.isSuccess ||
+      pendingMutationCount > 0
+    ) {
+      return false;
+    }
+    const partyIds = new Set(parties.map((party) => party.id));
+    return guests.every((guest) => partyIds.has(guest.party_id));
+  }, [
+    guests,
+    guestsQuery.isFetching,
+    guestsQuery.isSuccess,
+    parties,
+    pendingMutationCount,
+    partiesQuery.isFetching,
+    partiesQuery.isSuccess,
+  ]);
 
   // Events as filter options (by id), for the Event filter: picking one narrows
   // the list to that event's invited guests; adding an RSVP status narrows it
@@ -234,6 +267,13 @@ export default function AdminGuests() {
         error instanceof Error ? error.message : "Failed to update guest",
       );
     }
+  };
+
+  const handleExportCsv = () => {
+    downloadGuestsCsv(guests, parties, new Date());
+    toast.success(
+      `Exported ${guests.length} guest${guests.length === 1 ? "" : "s"} to CSV`,
+    );
   };
 
   return (
@@ -293,6 +333,12 @@ export default function AdminGuests() {
             options={CIRCLE_OPTIONS}
             value={filters.circle as Circle | undefined}
           />
+          <FilterSelect<InfoCollectionStatus>
+            label="Info status"
+            onChange={(v) => setFilter("info_collection_status", v)}
+            options={INFO_STATUS_OPTIONS}
+            value={filters.info_collection_status}
+          />
           <BoolFilterSelect
             label="Drinking"
             onChange={(v) => setFilter("is_drinking", v)}
@@ -338,6 +384,15 @@ export default function AdminGuests() {
           onResetDefault={resetSort}
           onSaveDefault={saveSortAsDefault}
         />
+        <Button
+          className="ml-auto"
+          disabled={!canExport}
+          onClick={handleExportCsv}
+          variant="outline"
+        >
+          <Download />
+          Export CSV
+        </Button>
       </div>
 
       {guestsQuery.isLoading ? (

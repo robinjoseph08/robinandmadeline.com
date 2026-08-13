@@ -237,6 +237,39 @@ func TestListPartiesHandler_InvalidSortValueIs422(t *testing.T) {
 	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
 }
 
+func TestListGuestsHandler_InfoStatusFilter(t *testing.T) {
+	t.Run("rejects an invalid value", func(t *testing.T) {
+		e := newAPI(t)
+		rec := do(t, e, http.MethodGet, "/api/admin/guests?info_collection_status=bogus", nil)
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+	})
+
+	t.Run("returns guests whose party has the requested status", func(t *testing.T) {
+		e := newAPI(t)
+		// Digital is derived complete. Physical without an address is incomplete.
+		require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
+			"name": "Complete", "side": "robin", "relation": "friend", "invitation_type": "digital",
+		})).Code)
+		require.Equal(t, http.StatusCreated, do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
+			"name": "Incomplete", "side": "madeline", "relation": "family", "invitation_type": "physical",
+		})).Code)
+
+		rec := do(t, e, http.MethodGet, "/api/admin/guests?info_collection_status=incomplete", nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var resp struct {
+			Items []struct {
+				PartyName string `json:"party_name"`
+			} `json:"items"`
+			Total int `json:"total"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Equal(t, 1, resp.Total)
+		require.Len(t, resp.Items, 1)
+		assert.Equal(t, "Incomplete", resp.Items[0].PartyName)
+	})
+}
+
 func TestListGuestsHandler_SortFieldIsScopedToEntity(t *testing.T) {
 	e := newAPI(t)
 	// "invitation" is a party-only sort field; the guest list's sortspec=guests

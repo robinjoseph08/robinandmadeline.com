@@ -96,8 +96,10 @@ func (s *Service) ListParties(ctx context.Context, f ListPartiesQuery) ([]*model
 // (default: creation order, oldest first) and the total count. Each guest's
 // owning party is eager-loaded so the flat list can show the party name (a guest
 // has no detail page of its own; it is edited in the context of its party).
-// Party-level filters (side/relation/circle) are applied via a correlated EXISTS
-// against the guest's party, keeping the result a flat guest list.
+// SQL-expressible party-level filters (side/relation/circle) are applied via a
+// correlated EXISTS against the guest's party, keeping the result flat. The
+// derived info-collection status is filtered in Go from the eager-loaded party,
+// just as it is for ListParties.
 func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.Guest, int, error) {
 	var guests []*models.Guest
 	q := s.db.NewSelect().Model(&guests).Relation("Party")
@@ -171,11 +173,27 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 		q = q.Where("EXISTS (?)", sub)
 	}
 
-	total, err := q.ScanAndCount(ctx)
-	if err != nil {
+	// Avoid the extra COUNT when status is active because the derived predicate
+	// must be evaluated in Go and the filtered slice determines the total.
+	if f.InfoCollectionStatus == nil {
+		total, err := q.ScanAndCount(ctx)
+		if err != nil {
+			return nil, 0, errors.Wrap(err, "list guests")
+		}
+		return guests, total, nil
+	}
+
+	if err := q.Scan(ctx); err != nil {
 		return nil, 0, errors.Wrap(err, "list guests")
 	}
-	return guests, total, nil
+
+	filtered := guests[:0]
+	for _, g := range guests {
+		if g.Party != nil && g.Party.InfoCollectionStatus() == *f.InfoCollectionStatus {
+			filtered = append(filtered, g)
+		}
+	}
+	return filtered, len(filtered), nil
 }
 
 // ListTags returns the distinct guest tags in use across every party, the open
