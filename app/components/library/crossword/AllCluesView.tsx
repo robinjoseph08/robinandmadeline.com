@@ -66,12 +66,18 @@ function answerSquareLabel(
   wordLength: number,
   value: string | undefined,
   selected: boolean,
+  checkState: SquareModel["checkState"],
 ) {
   const parts = [
     `${number} ${DIRECTION_LABELS[direction]} answer`,
     `square ${index + 1} of ${wordLength}`,
     value ?? "empty",
   ];
+  if (checkState === "correct") {
+    parts.push("correct", "locked");
+  } else if (checkState === "incorrect") {
+    parts.push("incorrect");
+  }
   if (selected) {
     parts.push("selected");
   }
@@ -289,13 +295,19 @@ const AllCluesView = memo(
                                   word.length,
                                   square.solution,
                                   selected,
+                                  square.checkState,
                                 )}
                                 className={cn(
                                   "flex aspect-square w-full min-w-0 items-center justify-center border border-foreground/50 bg-background text-xs font-semibold uppercase outline-none focus-visible:ring-2 focus-visible:ring-secondary",
                                   selected &&
                                     "border-secondary bg-secondary/25 ring-2 ring-secondary ring-offset-1 ring-offset-background",
                                   completed && "text-muted-foreground",
+                                  square.checkState === "correct" &&
+                                    "text-blue/80",
+                                  square.checkState === "incorrect" &&
+                                    "text-destructive",
                                 )}
+                                data-check-state={square.checkState}
                                 key={`${square.row}:${square.col}`}
                                 onClick={() => onSelectSquare(squareSelection)}
                                 ref={(node) => {

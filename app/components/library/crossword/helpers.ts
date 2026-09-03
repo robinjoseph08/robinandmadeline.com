@@ -223,10 +223,10 @@ export function nextSelections(
 export function updateSquare(
   grid: GridModel,
   squareToUpdate: SquareModel,
-  // Deliberately narrowed to the entered letter: numbering derives from the
+  // Deliberately narrowed to mutable solve state: numbering derives from the
   // block layout, so as long as updates can't change `type`, the identity
   // preservation below stays sound by construction.
-  update: Partial<Pick<SquareModel, "solution">>,
+  update: Partial<Pick<SquareModel, "solution" | "checkState">>,
 ): GridModel {
   // Only the changed square gets a new object. Untouched squares keep their
   // identity so the memoized Square components can skip re-rendering them;
@@ -237,11 +237,32 @@ export function updateSquare(
   // already holds.
   const newGrid = {
     ...grid,
-    squares: grid.squares.map((square) =>
-      areSquaresEqual(square, squareToUpdate)
-        ? { ...square, ...update }
-        : square,
-    ),
+    squares: grid.squares.map((square) => {
+      if (!areSquaresEqual(square, squareToUpdate)) {
+        return square;
+      }
+      const updatesSolution = Object.prototype.hasOwnProperty.call(
+        update,
+        "solution",
+      );
+      if (
+        updatesSolution &&
+        square.checkState === "correct" &&
+        update.solution !== square.solution
+      ) {
+        return square;
+      }
+      const next = { ...square, ...update };
+      if (
+        updatesSolution &&
+        update.solution !== square.solution &&
+        square.checkState === "incorrect" &&
+        !Object.prototype.hasOwnProperty.call(update, "checkState")
+      ) {
+        next.checkState = undefined;
+      }
+      return next;
+    }),
   };
   recalculateNumbers(newGrid);
   return newGrid;
@@ -434,8 +455,10 @@ export function getNextInWordSkippingFilled(
   for (let i = currentIndex + 1; i < word.length; i++) {
     const square = word[i];
 
-    // If we're skipping filled squares, continue to next if this one is filled
-    if (skipFilled && square.solution) {
+    // Correct checked squares are locked regardless of the general
+    // skip-filled preference. Other filled squares are skipped only when the
+    // preference asks for it.
+    if (square.checkState === "correct" || (skipFilled && square.solution)) {
       continue;
     }
 

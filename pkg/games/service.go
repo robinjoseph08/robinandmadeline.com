@@ -112,11 +112,11 @@ func (s *Service) CreateSession(ctx context.Context, in CreateGameSessionInput) 
 }
 
 // UpdateSession applies one progress report to a session: the accumulated
-// elapsed time (which may only grow; a decrease is a 422), an optional
+// elapsed time and explicit check counts (which may only grow), an optional
 // difficulty switch (the session keeps the easiest level seen), and an
 // optional completion, which sets completed_at server-side exactly once. A
-// completed session accepts only an exact no-op resend of its final state (a
-// client retry); any update that would change it is a 409. The row is locked
+// completed session accepts a no-op resend whose cumulative totals do not
+// exceed the frozen state; any update that would change it is a 409. The row is locked
 // for the duration so concurrent reports cannot interleave between the read
 // and the write. A party is attached opportunistically when partyID is
 // non-blank and the session has none yet (e.g. the guest signed in mid-solve);
@@ -137,12 +137,9 @@ func (s *Service) UpdateSession(ctx context.Context, id string, in UpdateGameSes
 			return nil
 		}
 
-		if int64(*in.ElapsedMS) < loaded.ElapsedMS {
-			return errcodes.ValidationError("elapsed_ms cannot decrease; send the total accumulated time.")
-		}
-
 		now := dbNow()
-		loaded.ElapsedMS = int64(*in.ElapsedMS)
+		loaded.ElapsedMS = max(loaded.ElapsedMS, int64(*in.ElapsedMS))
+		applyCheckCounts(loaded, in)
 		if in.Difficulty != nil {
 			loaded.Difficulty = models.EasierDifficulty(loaded.Difficulty, *in.Difficulty)
 		}
@@ -155,7 +152,16 @@ func (s *Service) UpdateSession(ctx context.Context, id string, in UpdateGameSes
 		loaded.UpdatedAt = now
 
 		_, err = tx.NewUpdate().Model(loaded).
-			Column("elapsed_ms", "difficulty", "completed_at", "party_id", "updated_at").
+			Column(
+				"elapsed_ms",
+				"square_checks",
+				"word_checks",
+				"grid_checks",
+				"difficulty",
+				"completed_at",
+				"party_id",
+				"updated_at",
+			).
 			WherePK().Exec(ctx)
 		if err != nil {
 			return errors.Wrap(err, "update game session")
@@ -171,14 +177,36 @@ func (s *Service) UpdateSession(ctx context.Context, id string, in UpdateGameSes
 
 // isCompletedNoop reports whether an update to an already-completed session
 // would change nothing: it re-asserts completion, carries the exact final
-// elapsed time, and names no difficulty that would lower the recorded one.
-// Such a resend (a client retrying its final report) succeeds idempotently;
-// anything else is a conflict.
+// elapsed time no greater than the frozen total, does not advance any check
+// count, and names no difficulty that would lower the recorded one. A stale
+// client may resend lower cumulative totals; accepting that retry preserves
+// the frozen server values.
 func isCompletedNoop(session *models.GameSession, in UpdateGameSessionPayload) bool {
-	if !in.Completed || int64(*in.ElapsedMS) != session.ElapsedMS {
+	if !in.Completed || int64(*in.ElapsedMS) > session.ElapsedMS || checkCountsAdvance(session, in) {
 		return false
 	}
 	return in.Difficulty == nil || models.EasierDifficulty(session.Difficulty, *in.Difficulty) == session.Difficulty
+}
+
+// applyCheckCounts keeps each server total monotonic. Stale reports are common
+// after retries or another browser tab reports first, so lower values are
+// accepted but never overwrite the larger stored total.
+func applyCheckCounts(session *models.GameSession, in UpdateGameSessionPayload) {
+	if in.SquareChecks != nil && int64(*in.SquareChecks) > session.SquareChecks {
+		session.SquareChecks = int64(*in.SquareChecks)
+	}
+	if in.WordChecks != nil && int64(*in.WordChecks) > session.WordChecks {
+		session.WordChecks = int64(*in.WordChecks)
+	}
+	if in.GridChecks != nil && int64(*in.GridChecks) > session.GridChecks {
+		session.GridChecks = int64(*in.GridChecks)
+	}
+}
+
+func checkCountsAdvance(session *models.GameSession, in UpdateGameSessionPayload) bool {
+	return (in.SquareChecks != nil && int64(*in.SquareChecks) > session.SquareChecks) ||
+		(in.WordChecks != nil && int64(*in.WordChecks) > session.WordChecks) ||
+		(in.GridChecks != nil && int64(*in.GridChecks) > session.GridChecks)
 }
 
 // PostToLeaderboard publishes a completed solve under the given display name:
@@ -314,12 +342,7 @@ func leaderboard(ctx context.Context, db bun.IDB, in LeaderboardQuery) ([]Leader
 		if session.DisplayName == nil {
 			return nil, 0, nil, errcodes.Internal("leaderboard session is missing display_name")
 		}
-		entries = append(entries, LeaderboardEntry{
-			DisplayName: *session.DisplayName,
-			Difficulty:  session.Difficulty,
-			ElapsedMS:   session.ElapsedMS,
-			CompletedAt: *session.CompletedAt,
-		})
+		entries = append(entries, leaderboardEntry(session))
 	}
 
 	viewer, err := leaderboardViewer(ctx, db, in)
@@ -395,13 +418,18 @@ func leaderboardViewer(ctx context.Context, db bun.IDB, in LeaderboardQuery) (*L
 	return &LeaderboardViewer{
 		Rank:    ahead + 1,
 		InItems: ahead < leaderboardLimit,
-		Entry: LeaderboardEntry{
-			DisplayName: *session.DisplayName,
-			Difficulty:  session.Difficulty,
-			ElapsedMS:   session.ElapsedMS,
-			CompletedAt: *session.CompletedAt,
-		},
+		Entry:   leaderboardEntry(session),
 	}, nil
+}
+
+func leaderboardEntry(session *models.GameSession) LeaderboardEntry {
+	return LeaderboardEntry{
+		DisplayName: *session.DisplayName,
+		Difficulty:  session.Difficulty,
+		ElapsedMS:   session.ElapsedMS,
+		CompletedAt: *session.CompletedAt,
+		UsedChecks:  session.HasUsedChecks(),
+	}
 }
 
 // adminSessionRow is the scan target for ListSessions: the full session row
@@ -450,6 +478,9 @@ func (s *Service) ListSessions(ctx context.Context) ([]AdminGameSessionResponse,
 			PuzzleID:      row.PuzzleID,
 			Difficulty:    row.Difficulty,
 			ElapsedMS:     row.ElapsedMS,
+			SquareChecks:  row.SquareChecks,
+			WordChecks:    row.WordChecks,
+			GridChecks:    row.GridChecks,
 			CompletedAt:   row.CompletedAt,
 			OnLeaderboard: row.OnLeaderboard,
 			DisplayName:   row.DisplayName,

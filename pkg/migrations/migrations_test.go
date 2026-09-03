@@ -282,6 +282,87 @@ func TestGameSessionUserAgentMigration_BackfillsAndDropsColumn(t *testing.T) {
 	assert.False(t, columnExists(t, db, "user_agent"))
 }
 
+func TestGameSessionCheckCountsMigration_DefaultsConstraintsAndRollback(t *testing.T) {
+	db := scratchDB(t)
+	ctx := context.Background()
+
+	before := migrate.NewMigrations()
+	withTarget := migrate.NewMigrations()
+	var found bool
+	for _, m := range migrations.Migrations.Sorted() {
+		withTarget.Add(m)
+		if m.Name == "20260622000002" {
+			found = true
+			break
+		}
+		before.Add(m)
+	}
+	require.True(t, found, "the check-count migration must be registered")
+
+	beforeMigrator := migrate.NewMigrator(db, before, migrate.WithMarkAppliedOnSuccess(true))
+	require.NoError(t, beforeMigrator.Init(ctx))
+	_, err := beforeMigrator.Migrate(ctx)
+	require.NoError(t, err, "apply migrations before check counts")
+	require.False(t, columnExists(t, db, "square_checks"))
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO game_sessions (
+			id, puzzle_id, ip_address, difficulty, elapsed_ms, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, now(), now())
+	`,
+		"00000000-0000-4000-8000-0000000000dd",
+		"wedding-mini-v1",
+		"203.0.113.7",
+		"easy",
+		5000,
+	)
+	require.NoError(t, err)
+
+	targetMigrator := migrate.NewMigrator(db, withTarget, migrate.WithMarkAppliedOnSuccess(true))
+	require.NoError(t, targetMigrator.Init(ctx))
+	_, err = targetMigrator.Migrate(ctx)
+	require.NoError(t, err, "apply check-count migration")
+	for _, column := range []string{"square_checks", "word_checks", "grid_checks"} {
+		assert.True(t, columnExists(t, db, column), "%s is added", column)
+	}
+
+	var square, word, grid int64
+	require.NoError(t, db.NewRaw(`
+		SELECT square_checks, word_checks, grid_checks
+		FROM game_sessions WHERE id = ?
+	`, "00000000-0000-4000-8000-0000000000dd").Scan(ctx, &square, &word, &grid))
+	assert.Zero(t, square)
+	assert.Zero(t, word)
+	assert.Zero(t, grid)
+
+	// Older writers can omit all three columns during a rolling deployment.
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO game_sessions (
+			id, puzzle_id, ip_address, difficulty, elapsed_ms, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, now(), now())
+	`,
+		"00000000-0000-4000-8000-0000000000ee",
+		"wedding-mini-v1",
+		"203.0.113.8",
+		"medium",
+		7000,
+	)
+	require.NoError(t, err, "an old writer can omit check counts")
+
+	for _, column := range []string{"square_checks", "word_checks", "grid_checks"} {
+		_, err = db.ExecContext(ctx, fmt.Sprintf(
+			`UPDATE game_sessions SET %s = -1 WHERE id = ?`, column,
+		), "00000000-0000-4000-8000-0000000000ee")
+		require.Error(t, err, "%s rejects a negative total", column)
+	}
+
+	_, err = targetMigrator.Rollback(ctx)
+	require.NoError(t, err, "roll the check-count migration back")
+	for _, column := range []string{"square_checks", "word_checks", "grid_checks"} {
+		assert.False(t, columnExists(t, db, column), "%s is dropped", column)
+	}
+}
+
 func TestOnLeaderboardMigration_BackfillsAndDropsColumn(t *testing.T) {
 	db := scratchDB(t)
 	ctx := context.Background()

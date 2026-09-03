@@ -20,6 +20,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QueryKey } from "@/hooks/queries/games";
+import type { LeaderboardEntry } from "@/types/generated/games";
 
 import LeaderboardDialog from "./LeaderboardDialog";
 import type { Difficulty } from "./puzzle";
@@ -81,20 +82,14 @@ function renderDialog({
   };
 }
 
-type Entry = {
-  display_name: string;
-  difficulty: Difficulty;
-  elapsed_ms: number;
-  completed_at: string;
-};
-
 /** One leaderboard entry; the fields the dialog reads, with sane defaults. */
-function entry(overrides: Partial<Entry> = {}): Entry {
+function entry(overrides: Partial<LeaderboardEntry> = {}): LeaderboardEntry {
   return {
     display_name: "Solver",
     difficulty: "easy",
     elapsed_ms: 60_000,
     completed_at: "2026-06-10T00:00:00Z",
+    used_checks: false,
     ...overrides,
   };
 }
@@ -231,6 +226,29 @@ describe("LeaderboardDialog", () => {
     expect(
       await screen.findByText(/no easy times posted yet/i),
     ).toBeInTheDocument();
+  });
+
+  it("marks leaderboard entries that used checks", async () => {
+    apiRequest.mockResolvedValue({
+      items: [
+        entry({ display_name: "Checked", used_checks: true }),
+        entry({ display_name: "Unchecked", elapsed_ms: 70_000 }),
+      ],
+      total: 2,
+      viewer: null,
+    });
+
+    renderDialog();
+
+    const checkedRow = (await screen.findByText("Checked")).closest("li");
+    const uncheckedRow = screen.getByText("Unchecked").closest("li");
+    const checkMarker = within(checkedRow!).getByLabelText("Used checks");
+    expect(checkMarker).toBeInTheDocument();
+    expect(checkMarker.parentElement).toHaveClass("items-center");
+    expect(checkMarker.parentElement).not.toHaveClass("items-baseline");
+    expect(
+      within(uncheckedRow!).queryByLabelText("Used checks"),
+    ).not.toBeInTheDocument();
   });
 
   it("defaults to easy and fetches with the difficulty param", async () => {

@@ -8,6 +8,8 @@ export interface CrosswordProgress {
   /** Entries string in the entriesFromGrid format ("." block, "?" empty). */
   entries: string;
   difficulty: Difficulty;
+  /** Compact per-square explicit check state, validated against the puzzle on restore. */
+  checkStates?: string;
   /** True after the guest advances past this puzzle's one-time solve reveal. */
   celebrationAcknowledged?: boolean;
 }
@@ -42,10 +44,8 @@ export function loadProgress(puzzleId: string): CrosswordProgress | null {
     return null;
   }
 
-  const { entries, difficulty, celebrationAcknowledged } = parsed as Record<
-    string,
-    unknown
-  >;
+  const { entries, difficulty, checkStates, celebrationAcknowledged } =
+    parsed as Record<string, unknown>;
   if (typeof entries !== "string") {
     return null;
   }
@@ -56,6 +56,7 @@ export function loadProgress(puzzleId: string): CrosswordProgress | null {
   return {
     entries,
     difficulty: difficulty as Difficulty,
+    checkStates: typeof checkStates === "string" ? checkStates : undefined,
     celebrationAcknowledged: celebrationAcknowledged === true,
   };
 }

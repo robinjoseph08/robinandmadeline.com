@@ -49,6 +49,9 @@ function makeSession(overrides: Partial<GameSession> = {}): GameSession {
     party_id: undefined,
     difficulty: "easy",
     elapsed_ms: 0,
+    square_checks: 0,
+    word_checks: 0,
+    grid_checks: 0,
     completed_at: undefined,
     on_leaderboard: false,
     display_name: undefined,
@@ -68,14 +71,14 @@ function mockApiRoutes() {
         return Promise.resolve(makeSession({ difficulty: body.difficulty }));
       }
       if (path.startsWith("/games/sessions/") && method === "PATCH") {
-        const body = options?.body as {
-          difficulty?: GameSession["difficulty"];
-          elapsed_ms?: number;
-        };
+        const body = options?.body as UpdateGameSessionPayload;
         return Promise.resolve(
           makeSession({
             difficulty: body.difficulty ?? "easy",
             elapsed_ms: body.elapsed_ms ?? 0,
+            square_checks: body.square_checks ?? 0,
+            word_checks: body.word_checks ?? 0,
+            grid_checks: body.grid_checks ?? 0,
           }),
         );
       }

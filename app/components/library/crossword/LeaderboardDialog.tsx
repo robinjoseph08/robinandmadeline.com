@@ -30,7 +30,7 @@
 // The viewer comes back only on the solver's own recorded-difficulty tab, so
 // no per-tab special-casing is needed here.
 
-import { Trophy } from "lucide-react";
+import { LifeBuoy, Trophy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -421,10 +421,19 @@ function Row({
           rows have none. aria-label (not just text) keeps it reachable as an
           accessible name, the same hook the tests assert against. */}
       {podium && <span aria-label={podium.label} className="sr-only" />}
-      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+      <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="min-w-0 truncate font-medium">
           {entry.display_name}
         </span>
+        {entry.used_checks && (
+          <span
+            aria-label="Used checks"
+            className="flex shrink-0 items-center text-blue"
+            title="Used checks"
+          >
+            <LifeBuoy aria-hidden className="size-3.5" />
+          </span>
+        )}
         {isViewer && (
           <span
             className={cn(

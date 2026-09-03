@@ -71,13 +71,16 @@ func EasierDifficulty(a, b string) string {
 type GameSession struct {
 	bun.BaseModel `bun:"table:game_sessions,alias:gs" tstype:"-"`
 
-	ID         string  `bun:"id,pk" json:"id"`
-	PuzzleID   string  `bun:"puzzle_id" json:"puzzle_id"`
-	PartyID    *string `bun:"party_id" json:"party_id"`
-	IPAddress  string  `bun:"ip_address" json:"-"`
-	UserAgent  string  `bun:"user_agent" json:"-" tstype:"-"`
-	Difficulty string  `bun:"difficulty" json:"difficulty" tstype:"GameDifficulty"`
-	ElapsedMS  int64   `bun:"elapsed_ms" json:"elapsed_ms"`
+	ID           string  `bun:"id,pk" json:"id"`
+	PuzzleID     string  `bun:"puzzle_id" json:"puzzle_id"`
+	PartyID      *string `bun:"party_id" json:"party_id"`
+	IPAddress    string  `bun:"ip_address" json:"-"`
+	UserAgent    string  `bun:"user_agent" json:"-" tstype:"-"`
+	Difficulty   string  `bun:"difficulty" json:"difficulty" tstype:"GameDifficulty"`
+	ElapsedMS    int64   `bun:"elapsed_ms" json:"elapsed_ms"`
+	SquareChecks int64   `bun:"square_checks" json:"square_checks"`
+	WordChecks   int64   `bun:"word_checks" json:"word_checks"`
+	GridChecks   int64   `bun:"grid_checks" json:"grid_checks"`
 
 	CompletedAt   *time.Time `bun:"completed_at" json:"completed_at"`
 	OnLeaderboard bool       `bun:"on_leaderboard" json:"on_leaderboard"`
@@ -86,4 +89,10 @@ type GameSession struct {
 
 	CreatedAt time.Time `bun:"created_at,nullzero" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero" json:"updated_at"`
+}
+
+// HasUsedChecks reports whether the solver checked at least one square, word,
+// or grid during this session.
+func (s GameSession) HasUsedChecks() bool {
+	return s.SquareChecks > 0 || s.WordChecks > 0 || s.GridChecks > 0
 }

@@ -14,10 +14,14 @@ export const inverseDirection: Record<Direction, Direction> = {
   down: "across",
 };
 
+export type CheckState = "correct" | "incorrect";
+
 export interface SquareModel {
   number?: number;
   /** The letter the solver has entered in this square (not the answer). */
   solution?: string;
+  /** Result of the most recent explicit check for this entered letter. */
+  checkState?: CheckState;
   type?: "block";
   col: number;
   row: number;

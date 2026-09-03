@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/games"
@@ -48,11 +49,20 @@ func TestAdminListSessionsHandler_ReturnsEveryStateWithClientAndParty(t *testing
 
 	// One solve of each state the admin must see, plus an affiliated one so
 	// party_name is exercised over HTTP.
-	startSessionT(t, svc, models.GameDifficultyMedium)              // in-progress
-	completeSessionT(t, svc, models.GameDifficultyMedium, 42000)    // completed, unposted
-	postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000) // posted
+	startSessionT(t, svc, models.GameDifficultyMedium)           // in-progress
+	completeSessionT(t, svc, models.GameDifficultyMedium, 42000) // completed, unposted
+	checked := startSessionT(t, svc, models.GameDifficultyEasy)
+	_, err := svc.UpdateSession(ctx(), checked.ID, games.UpdateGameSessionPayload{
+		ElapsedMS:    pointerutil.Int(30000),
+		Completed:    true,
+		SquareChecks: pointerutil.Int(2),
+		WordChecks:   pointerutil.Int(1),
+	}, "")
+	require.NoError(t, err)
+	_, err = svc.PostToLeaderboard(ctx(), checked.ID, games.PostLeaderboardPayload{DisplayName: "Alice"}, "")
+	require.NoError(t, err)
 	p := createPartyT(t, partySvc, "The Smiths")
-	_, err := svc.CreateSession(ctx(), games.CreateGameSessionInput{
+	_, err = svc.CreateSession(ctx(), games.CreateGameSessionInput{
 		Payload: games.CreateGameSessionPayload{
 			PuzzleID:   "wedding-mini-v1",
 			Difficulty: models.GameDifficultyEasy,
@@ -86,6 +96,9 @@ func TestAdminListSessionsHandler_ReturnsEveryStateWithClientAndParty(t *testing
 			require.NotNil(t, it.DisplayName)
 			assert.Equal(t, "Alice", *it.DisplayName)
 			assert.NotNil(t, it.CompletedAt)
+			assert.EqualValues(t, 2, it.SquareChecks)
+			assert.EqualValues(t, 1, it.WordChecks)
+			assert.Zero(t, it.GridChecks)
 		case it.CompletedAt != nil:
 			sawCompletedUnposted = true
 			assert.False(t, it.OnLeaderboard, "a completed-but-unposted solve is included and off the board")

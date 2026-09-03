@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Grid3X3,
+  LifeBuoy,
   List,
   MoreHorizontal,
   Pause,
@@ -14,6 +15,12 @@ import { Link, useParams } from "react-router-dom";
 import AllCluesView, {
   AllCluesViewHandle,
 } from "@/components/library/crossword/AllCluesView";
+import {
+  checkSquares,
+  checkStatesFromGrid,
+  restoreCheckStates,
+  type CheckScope,
+} from "@/components/library/crossword/checking";
 import ClueList from "@/components/library/crossword/ClueList";
 import {
   parseClueReferences,
@@ -73,6 +80,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { QueryKey, useLeaderboard } from "@/hooks/queries/games";
 import { usePartyRSVPs } from "@/hooks/queries/rsvp";
 import { usePageTitle } from "@/hooks/usePageTitle";
@@ -141,7 +154,12 @@ function CrosswordGame({
   // difficulty live in component state and are written back on every change.
   const [initial] = useState(() => {
     const saved = loadProgress(puzzle.id);
-    const grid = gridFromEntries(puzzle, saved?.entries);
+    const entriesGrid = gridFromEntries(puzzle, saved?.entries);
+    const grid = restoreCheckStates(
+      entriesGrid,
+      puzzle.solution,
+      saved?.checkStates,
+    );
     const solved =
       isPuzzleComplete(grid) && validateSolution(grid, puzzle.solution);
     const savedDifficulty =
@@ -183,6 +201,7 @@ function CrosswordGame({
   );
   const [celebrationGeneration, setCelebrationGeneration] = useState(0);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [checkMenuOpen, setCheckMenuOpen] = useState(false);
   const [difficultyMenuOpen, setDifficultyMenuOpen] = useState(false);
   const gridRef = useRef<GridHandle>(null);
   const allCluesRef = useRef<AllCluesViewHandle>(null);
@@ -239,6 +258,7 @@ function CrosswordGame({
     saveProgress(puzzle.id, {
       entries: entriesFromGrid(grid),
       difficulty,
+      checkStates: checkStatesFromGrid(grid),
       celebrationAcknowledged,
     });
   }, [puzzle.id, grid, difficulty, celebrationAcknowledged, sessionStarted]);
@@ -499,9 +519,40 @@ function CrosswordGame({
             row === selections[0].row && col === selections[0].col,
         )
       : undefined;
+  const canCheckSquare = selectedSquare?.solution !== undefined;
+  const canCheckWord =
+    selectedWord?.some((square) => square.solution !== undefined) ?? false;
+  const canCheckGrid = grid.squares.some(
+    (square) => square.type !== "block" && square.solution !== undefined,
+  );
+  const handleCheck = (scope: CheckScope) => {
+    const targets =
+      scope === "square"
+        ? selectedSquare
+          ? [selectedSquare]
+          : []
+        : scope === "word"
+          ? (selectedWord ?? [])
+          : grid.squares;
+    const result = checkSquares(grid, puzzle.solution, targets);
+    setCheckMenuOpen(false);
+    if (result.evaluated === 0) {
+      return;
+    }
+    gridRef.current?.replaceGrid(result.grid, selections[0], {
+      focus: !allCluesOpen,
+    });
+    session.recordCheck(scope);
+  };
+  const selectedCheckStatus =
+    selectedSquare?.checkState === "correct"
+      ? " Correct and locked."
+      : selectedSquare?.checkState === "incorrect"
+        ? " Incorrect."
+        : "";
   const solvingStatus =
     selectedDirection && selectedClueNumber && selectedClue && selectedSquare
-      ? `${selectedClueNumber} ${selectedDirection}: ${selectedClue}. Row ${selectedSquare.row + 1}, column ${selectedSquare.col + 1}, ${selectedSquare.solution ? `letter ${selectedSquare.solution}` : "blank"}.`
+      ? `${selectedClueNumber} ${selectedDirection}: ${selectedClue}. Row ${selectedSquare.row + 1}, column ${selectedSquare.col + 1}, ${selectedSquare.solution ? `letter ${selectedSquare.solution}` : "blank"}.${selectedCheckStatus}`
       : "Select a clue, then use the keyboard to enter letters.";
 
   const selectAdjacentClue = useCallback(
@@ -741,121 +792,197 @@ function CrosswordGame({
         </div>
       )}
 
-      <div
-        aria-label="Crossword controls"
-        className={cn(
-          "sticky top-0 z-30 mt-3 flex min-h-11 items-center justify-between gap-2 border-y border-line bg-surface/95 md:static md:z-auto md:mt-6 md:min-h-0 md:border-0 md:bg-transparent md:px-0",
-          isLargePuzzle ? "px-4" : "px-1",
-        )}
-        ref={controlsRef}
-        role="group"
-      >
-        <div className="flex items-center gap-1">
-          {/* A finished solve with no accumulated time (an unreportable
+      <TooltipProvider delayDuration={100} disableHoverableContent>
+        <div
+          aria-label="Crossword controls"
+          className={cn(
+            "sticky top-0 z-30 mt-3 flex min-h-11 items-center justify-between gap-2 border-y border-line bg-surface/95 md:static md:z-auto md:mt-6 md:min-h-0 md:border-0 md:bg-transparent md:px-0",
+            isLargePuzzle ? "px-4" : "px-1",
+          )}
+          ref={controlsRef}
+          role="group"
+        >
+          <div className="flex items-center gap-1">
+            {/* A finished solve with no accumulated time (an unreportable
               restore) has nothing honest to show, so the readout hides
               rather than presenting a frozen 0:00. */}
-          {settings.showTimer &&
-            session.started &&
-            !(session.finished && session.elapsedMs === 0) && (
-              <span
-                aria-label="Solve time"
-                className="font-medium tabular-nums"
-                data-testid="crossword-timer"
-              >
-                {formatDuration(session.elapsedMs)}
-              </span>
+            {settings.showTimer &&
+              session.started &&
+              !(session.finished && session.elapsedMs === 0) && (
+                <span
+                  aria-label="Solve time"
+                  className="inline-block w-[8ch] shrink-0 text-right font-medium tabular-nums"
+                  data-testid="crossword-timer"
+                >
+                  {formatDuration(session.elapsedMs)}
+                </span>
+              )}
+            {session.started && !solved && (
+              <>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      aria-label="Pause timer"
+                      className="size-11 md:size-9"
+                      onClick={session.pause}
+                      size="icon"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <Pause />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Pause</TooltipContent>
+                </Tooltip>
+                <Popover onOpenChange={setCheckMenuOpen} open={checkMenuOpen}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <PopoverTrigger asChild>
+                        <Button
+                          aria-label="Check answers"
+                          className="size-11 md:size-9"
+                          size="icon"
+                          type="button"
+                          variant="ghost"
+                        >
+                          <LifeBuoy />
+                        </Button>
+                      </PopoverTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Check</TooltipContent>
+                  </Tooltip>
+                  <PopoverContent
+                    align="start"
+                    className="w-52"
+                    onCloseAutoFocus={(event) => {
+                      event.preventDefault();
+                      focusSolveSurface();
+                    }}
+                  >
+                    <p className="text-sm font-medium">Check answers</p>
+                    <div
+                      aria-label="Check scope"
+                      className="mt-2 flex flex-col gap-1"
+                      role="group"
+                    >
+                      <Button
+                        className="justify-start"
+                        disabled={!canCheckSquare}
+                        onClick={() => handleCheck("square")}
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        Check square
+                      </Button>
+                      <Button
+                        className="justify-start"
+                        disabled={!canCheckWord}
+                        onClick={() => handleCheck("word")}
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        Check word
+                      </Button>
+                      <Button
+                        className="justify-start"
+                        disabled={!canCheckGrid}
+                        onClick={() => handleCheck("grid")}
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        Check grid
+                      </Button>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Correct letters turn blue and lock in place.
+                    </p>
+                  </PopoverContent>
+                </Popover>
+              </>
             )}
-          {session.started && !solved && (
+          </div>
+          <div className="flex items-center gap-1">
+            {session.started && !solved && (
+              <Button
+                aria-label={
+                  allCluesOpen ? "Show crossword grid" : "List all clues"
+                }
+                aria-pressed={allCluesOpen}
+                className="size-11 md:hidden"
+                onClick={() => setAllCluesOpen((open) => !open)}
+                size="icon"
+                type="button"
+                variant="ghost"
+              >
+                {allCluesOpen ? <Grid3X3 /> : <List />}
+              </Button>
+            )}
             <Button
-              aria-label="Pause timer"
+              aria-label="Settings"
               className="size-11 md:size-9"
-              onClick={session.pause}
+              onClick={() => handleSettingsOpenChange(true)}
               size="icon"
               type="button"
               variant="ghost"
             >
-              <Pause />
+              <SettingsIcon />
             </Button>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
-          {session.started && !solved && (
-            <Button
-              aria-label={
-                allCluesOpen ? "Show crossword grid" : "List all clues"
-              }
-              aria-pressed={allCluesOpen}
-              className="size-11 md:hidden"
-              onClick={() => setAllCluesOpen((open) => !open)}
-              size="icon"
-              type="button"
-              variant="ghost"
-            >
-              {allCluesOpen ? <Grid3X3 /> : <List />}
-            </Button>
-          )}
-          <Button
-            aria-label="Settings"
-            className="size-11 md:size-9"
-            onClick={() => handleSettingsOpenChange(true)}
-            size="icon"
-            type="button"
-            variant="ghost"
-          >
-            <SettingsIcon />
-          </Button>
-          {/* The clue-difficulty switcher stays tucked behind the "more" menu
+            {/* The clue-difficulty switcher stays tucked behind the "more" menu
               (the easy clues aren't a standing temptation), and stays
               reachable after the solve too: a finished guest can re-read the
               puzzle with other clues for fun. Mid-solve it reports the switch;
               afterward it only changes the displayed clues. */}
-          {session.started && puzzle.difficulties.length > 1 && (
-            <Popover
-              onOpenChange={setDifficultyMenuOpen}
-              open={difficultyMenuOpen}
-            >
-              <PopoverTrigger asChild>
-                <Button
-                  aria-label="More options"
-                  className="size-11 md:size-9"
-                  size="icon"
-                  type="button"
-                  variant="ghost"
-                >
-                  <MoreHorizontal />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-60">
-                <p className="text-sm font-medium">Clue difficulty</p>
-                <div
-                  aria-label="Difficulty"
-                  className="mt-2 flex flex-col gap-1"
-                  role="group"
-                >
-                  {puzzle.difficulties.map((level) => (
-                    <Button
-                      aria-pressed={difficulty === level}
-                      className="justify-start"
-                      key={level}
-                      onClick={() => handleDifficultySwitch(level)}
-                      size="sm"
-                      type="button"
-                      variant={difficulty === level ? "secondary" : "ghost"}
-                    >
-                      {DIFFICULTY_LABELS[level]}
-                    </Button>
-                  ))}
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {solved
-                    ? "Re-read the puzzle with other clues. Your recorded time stays as it is."
-                    : "Switch any time; your letters stay put. Your time is recorded at the easiest difficulty you use."}
-                </p>
-              </PopoverContent>
-            </Popover>
-          )}
+            {session.started && puzzle.difficulties.length > 1 && (
+              <Popover
+                onOpenChange={setDifficultyMenuOpen}
+                open={difficultyMenuOpen}
+              >
+                <PopoverTrigger asChild>
+                  <Button
+                    aria-label="More options"
+                    className="size-11 md:size-9"
+                    size="icon"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <MoreHorizontal />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-60">
+                  <p className="text-sm font-medium">Clue difficulty</p>
+                  <div
+                    aria-label="Difficulty"
+                    className="mt-2 flex flex-col gap-1"
+                    role="group"
+                  >
+                    {puzzle.difficulties.map((level) => (
+                      <Button
+                        aria-pressed={difficulty === level}
+                        className="justify-start"
+                        key={level}
+                        onClick={() => handleDifficultySwitch(level)}
+                        size="sm"
+                        type="button"
+                        variant={difficulty === level ? "secondary" : "ghost"}
+                      >
+                        {DIFFICULTY_LABELS[level]}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {solved
+                      ? "Re-read the puzzle with other clues. Your recorded time stays as it is."
+                      : "Switch any time; your letters stay put. Your time is recorded at the easiest difficulty you use."}
+                  </p>
+                </PopoverContent>
+              </Popover>
+            )}
+          </div>
         </div>
-      </div>
+      </TooltipProvider>
 
       {solved ? (
         <div className={cn("mt-4", isLargePuzzle && "px-4 md:px-0")}>

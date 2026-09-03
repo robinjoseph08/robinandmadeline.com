@@ -5,6 +5,9 @@
 
 import { DIFFICULTIES, Difficulty } from "./puzzle";
 
+/** Matches the backend's per-scope check-count ceiling. */
+export const MAX_CHECK_COUNT = 1_000_000;
+
 export interface SolveSessionRecord {
   /** Backend session UUID; null while creation hasn't succeeded yet. */
   id: string | null;
@@ -12,6 +15,10 @@ export interface SolveSessionRecord {
   elapsedMs: number;
   /** True once the backend considers the solve final (acked or 409'd). */
   completed: boolean;
+  /** Cumulative explicit checks, kept separately by scope. */
+  squareChecks: number;
+  wordChecks: number;
+  gridChecks: number;
   /**
    * The easiest difficulty used during the solve, as last reported by the
    * server (authoritative) or tracked locally while offline.
@@ -64,6 +71,9 @@ export function loadSessionRecord(puzzleId: string): SolveSessionRecord | null {
     difficulty,
     difficultyUnverified,
     postedName,
+    squareChecks,
+    wordChecks,
+    gridChecks,
   } = parsed as Record<string, unknown>;
   if (typeof id !== "string" && id !== null) {
     return null;
@@ -76,12 +86,21 @@ export function loadSessionRecord(puzzleId: string): SolveSessionRecord | null {
     id: id ?? null,
     elapsedMs: Math.max(0, elapsedMs),
     completed: completed === true,
+    squareChecks: storedCheckCount(squareChecks),
+    wordChecks: storedCheckCount(wordChecks),
+    gridChecks: storedCheckCount(gridChecks),
     difficulty: DIFFICULTIES.includes(difficulty as Difficulty)
       ? (difficulty as Difficulty)
       : undefined,
     ...(difficultyUnverified === true ? { difficultyUnverified: true } : {}),
     postedName: typeof postedName === "string" ? postedName : undefined,
   };
+}
+
+function storedCheckCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.min(Math.floor(value), MAX_CHECK_COUNT)
+    : 0;
 }
 
 export function clearSessionRecord(puzzleId: string): void {

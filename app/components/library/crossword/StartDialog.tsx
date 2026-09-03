@@ -3,6 +3,7 @@
 // a centered "Start solving" button (the page reopens this dialog from
 // there), so the clock always starts exactly when the guest commits.
 
+import { Heart } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -63,36 +64,29 @@ export default function StartDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4 py-4">
-          <div
-            aria-label="Difficulty"
-            className="flex flex-wrap gap-2"
-            role="group"
-          >
-            {difficulties.map((level) => (
-              <Button
-                aria-pressed={difficulty === level}
-                key={level}
-                onClick={() => setDifficulty(level)}
-                size="sm"
-                type="button"
-                variant={difficulty === level ? "default" : "outline"}
-              >
-                {DIFFICULTY_LABELS[level]}
-              </Button>
-            ))}
+          <div className="space-y-2">
+            <p className="text-sm font-medium" id="start-difficulty-label">
+              Difficulty
+            </p>
+            <div
+              aria-labelledby="start-difficulty-label"
+              className="flex flex-wrap gap-2"
+              role="group"
+            >
+              {difficulties.map((level) => (
+                <Button
+                  aria-pressed={difficulty === level}
+                  key={level}
+                  onClick={() => setDifficulty(level)}
+                  size="sm"
+                  type="button"
+                  variant={difficulty === level ? "default" : "outline"}
+                >
+                  {DIFFICULTY_LABELS[level]}
+                </Button>
+              ))}
+            </div>
           </div>
-          {difficulties.length > 1 && (
-            <p className="text-sm text-muted-foreground">
-              You can switch difficulty mid-solve, but your time is recorded at
-              the easiest difficulty you use at any point.
-            </p>
-          )}
-          {showDesktopRecommendation && (
-            <p className="rounded-md border border-secondary/30 bg-secondary/10 p-3 text-sm text-muted-foreground">
-              This puzzle is doable on mobile, but the best and most accurate
-              experience is on desktop.
-            </p>
-          )}
           <div className="flex items-center gap-2">
             <Checkbox
               checked={showTimer}
@@ -103,6 +97,34 @@ export default function StartDialog({
               Show the timer while I solve
             </Label>
           </div>
+          {difficulties.length > 1 && (
+            <p className="text-sm text-muted-foreground">
+              You can switch difficulty mid-solve, but your time is recorded at
+              the easiest difficulty you use at any point.
+            </p>
+          )}
+          <div className="flex gap-2 rounded-md border border-ink/10 bg-primary p-3 text-sm text-muted-foreground">
+            <span aria-hidden="true" className="shrink-0 self-center p-1">
+              🎉
+            </span>
+            <p>
+              The goal of this is to have fun! If you're having trouble with a
+              clue, use the "Check" button near the timer to check your work. If
+              you're still stuck, feel free to Google the answer. Don't let a
+              few hard ones prevent you from completing the puzzle. I want you
+              to see the actual proposal at the end!{" "}
+              <Heart
+                aria-hidden
+                className="relative -top-px inline size-3.5 fill-blue align-middle text-blue"
+              />
+            </p>
+          </div>
+          {showDesktopRecommendation && (
+            <p className="rounded-md border border-secondary/30 bg-secondary/10 p-3 text-sm text-muted-foreground">
+              This puzzle is doable on mobile, but the best and most accurate
+              experience is on desktop.
+            </p>
+          )}
         </DialogBody>
         <DialogFooter>
           <Button onClick={() => onStart(difficulty)} type="button">

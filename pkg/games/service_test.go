@@ -198,14 +198,59 @@ func TestUpdateSession_ElapsedAccumulatesAndDecreasesAreRejected(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 12000, updated.ElapsedMS)
 
-	// elapsed_ms is the accumulated total, so it may only grow.
-	_, err = update(svc, session.ID, 11999, nil, false)
-	assertErrCode(t, err, errcodes.CodeValidationError)
-	assert.EqualValues(t, 12000, sessionRow(t, db, session.ID).ElapsedMS, "a rejected report persists nothing")
+	// A stale total is accepted but cannot lower the stored elapsed time.
+	stale, err := update(svc, session.ID, 11999, nil, false)
+	require.NoError(t, err)
+	assert.EqualValues(t, 12000, stale.ElapsedMS)
+	assert.EqualValues(t, 12000, sessionRow(t, db, session.ID).ElapsedMS)
 
 	// Resending the same total is fine (the client may not have advanced).
 	_, err = update(svc, session.ID, 12000, nil, false)
 	require.NoError(t, err)
+}
+
+func TestUpdateSession_CheckCountsAccumulateMonotonically(t *testing.T) {
+	svc, _, db := newServices(t)
+	session := startSessionT(t, svc, models.GameDifficultyMedium)
+
+	updated, err := svc.UpdateSession(ctx(), session.ID, games.UpdateGameSessionPayload{
+		ElapsedMS:    pointerutil.Int(1000),
+		SquareChecks: pointerutil.Int(1),
+		WordChecks:   pointerutil.Int(2),
+		GridChecks:   pointerutil.Int(3),
+	}, "")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, updated.SquareChecks)
+	assert.EqualValues(t, 2, updated.WordChecks)
+	assert.EqualValues(t, 3, updated.GridChecks)
+
+	// Omitted counters retain their totals while a supplied counter may grow.
+	updated, err = svc.UpdateSession(ctx(), session.ID, games.UpdateGameSessionPayload{
+		ElapsedMS:    pointerutil.Int(2000),
+		SquareChecks: pointerutil.Int(4),
+	}, "")
+	require.NoError(t, err)
+	assert.EqualValues(t, 4, updated.SquareChecks)
+	assert.EqualValues(t, 2, updated.WordChecks)
+	assert.EqualValues(t, 3, updated.GridChecks)
+
+	// A stale counter is accepted but cannot overwrite the larger stored total;
+	// fresh fields in the same report still advance.
+	updated, err = svc.UpdateSession(ctx(), session.ID, games.UpdateGameSessionPayload{
+		ElapsedMS:    pointerutil.Int(3000),
+		SquareChecks: pointerutil.Int(3),
+		GridChecks:   pointerutil.Int(5),
+	}, "")
+	require.NoError(t, err)
+	assert.EqualValues(t, 3000, updated.ElapsedMS)
+	assert.EqualValues(t, 4, updated.SquareChecks)
+	assert.EqualValues(t, 2, updated.WordChecks)
+	assert.EqualValues(t, 5, updated.GridChecks)
+	row := sessionRow(t, db, session.ID)
+	assert.EqualValues(t, 3000, row.ElapsedMS)
+	assert.EqualValues(t, 4, row.SquareChecks)
+	assert.EqualValues(t, 2, row.WordChecks)
+	assert.EqualValues(t, 5, row.GridChecks)
 }
 
 func TestUpdateSession_RecordsTheEasiestDifficultySeen(t *testing.T) {
@@ -233,8 +278,10 @@ func TestUpdateSession_CompletionStampsCompletedAtOnce(t *testing.T) {
 	require.NotNil(t, completed.CompletedAt, "completion is stamped server-side")
 	stamp := *completed.CompletedAt
 
-	// An exact resend of the final report (a client retry) is an idempotent
-	// no-op: same 200-path, same stamp, nothing rewritten.
+	// Exact and stale resends of the final report are idempotent no-ops.
+	stale, err := update(svc, session.ID, 85000, nil, true)
+	require.NoError(t, err)
+	assert.EqualValues(t, 90000, stale.ElapsedMS)
 	again, err := update(svc, session.ID, 90000, nil, true)
 	require.NoError(t, err)
 	require.NotNil(t, again.CompletedAt)
@@ -253,6 +300,49 @@ func TestUpdateSession_CompletionStampsCompletedAtOnce(t *testing.T) {
 	assert.True(t, stamp.Equal(*row.CompletedAt))
 	assert.EqualValues(t, 90000, row.ElapsedMS)
 	assert.Equal(t, models.GameDifficultyHard, row.Difficulty)
+}
+
+func TestUpdateSession_CompletionFreezesCheckCounts(t *testing.T) {
+	svc, _, db := newServices(t)
+	session := startSessionT(t, svc, models.GameDifficultyEasy)
+
+	final := games.UpdateGameSessionPayload{
+		ElapsedMS:    pointerutil.Int(1000),
+		Completed:    true,
+		SquareChecks: pointerutil.Int(2),
+		WordChecks:   pointerutil.Int(1),
+		GridChecks:   pointerutil.Int(0),
+	}
+	_, err := svc.UpdateSession(ctx(), session.ID, final, "")
+	require.NoError(t, err)
+
+	// Exact and stale final retries are idempotent. A stale browser tab cannot
+	// lower the frozen server totals or block its completion acknowledgment.
+	_, err = svc.UpdateSession(ctx(), session.ID, final, "")
+	require.NoError(t, err)
+	stale, err := svc.UpdateSession(ctx(), session.ID, games.UpdateGameSessionPayload{
+		ElapsedMS:    pointerutil.Int(1000),
+		Completed:    true,
+		SquareChecks: pointerutil.Int(1),
+		WordChecks:   pointerutil.Int(0),
+		GridChecks:   pointerutil.Int(0),
+	}, "")
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, stale.SquareChecks)
+	assert.EqualValues(t, 1, stale.WordChecks)
+
+	_, err = svc.UpdateSession(ctx(), session.ID, games.UpdateGameSessionPayload{
+		ElapsedMS:    pointerutil.Int(1000),
+		Completed:    true,
+		SquareChecks: pointerutil.Int(3),
+		WordChecks:   pointerutil.Int(1),
+		GridChecks:   pointerutil.Int(0),
+	}, "")
+	assertErrCode(t, err, errcodes.CodeConflict)
+	row := sessionRow(t, db, session.ID)
+	assert.EqualValues(t, 2, row.SquareChecks)
+	assert.EqualValues(t, 1, row.WordChecks)
+	assert.EqualValues(t, 0, row.GridChecks)
 }
 
 func TestUpdateSession_NoopResendMayNameANonLoweringDifficulty(t *testing.T) {
@@ -407,6 +497,33 @@ func TestLeaderboard_ReturnsOnlyPostedEntriesFastestFirst(t *testing.T) {
 	assert.EqualValues(t, 30000, entries[0].ElapsedMS)
 	assert.False(t, entries[0].CompletedAt.IsZero())
 	assert.Nil(t, viewer, "a read with no session_id carries no viewer")
+}
+
+func TestLeaderboard_MarksCheckedSolvesWithoutChangingTimeOrder(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	checked := startSessionT(t, svc, models.GameDifficultyEasy)
+	_, err := svc.UpdateSession(ctx(), checked.ID, games.UpdateGameSessionPayload{
+		ElapsedMS:  pointerutil.Int(20000),
+		Completed:  true,
+		WordChecks: pointerutil.Int(1),
+	}, "")
+	require.NoError(t, err)
+	_, err = svc.PostToLeaderboard(ctx(), checked.ID, games.PostLeaderboardPayload{DisplayName: "Checked"}, "")
+	require.NoError(t, err)
+	postSessionT(t, svc, "Unchecked", models.GameDifficultyEasy, 30000)
+
+	entries, _, viewer, err := svc.Leaderboard(ctx(), games.LeaderboardQuery{
+		PuzzleID:  "wedding-mini-v1",
+		SessionID: pointerutil.String(checked.ID),
+	})
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "Checked", entries[0].DisplayName, "checks do not change elapsed-time ordering")
+	assert.True(t, entries[0].UsedChecks)
+	assert.False(t, entries[1].UsedChecks)
+	require.NotNil(t, viewer)
+	assert.True(t, viewer.Entry.UsedChecks)
 }
 
 func TestLeaderboard_CollectsCompletedTimesButOnlyShowsOptedIn(t *testing.T) {

@@ -47,6 +47,7 @@ const Square = memo(function Square({
         // This is a square that's in the same word as the selection.
         isInSelectedWord && "bg-secondary/40",
       )}
+      data-check-state={square.checkState}
       data-testid={`crossword-square-${square.row}-${square.col}`}
       onMouseDown={(e) => onMouseDown(e, square)}
       style={{
@@ -71,7 +72,13 @@ const Square = memo(function Square({
           </span>
         )}
         {square.solution !== undefined && (
-          <span className="absolute inset-0 flex items-end justify-center pb-[16cqw] text-[60cqw] font-bold leading-none">
+          <span
+            className={cn(
+              "absolute inset-0 flex items-end justify-center pb-[16cqw] text-[60cqw] font-bold leading-none",
+              square.checkState === "correct" && "text-blue/80",
+              square.checkState === "incorrect" && "text-destructive",
+            )}
+          >
             {square.solution}
           </span>
         )}
