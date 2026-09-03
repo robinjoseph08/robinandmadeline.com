@@ -62,7 +62,11 @@ export interface GridCellRect {
 
 export interface GridHandle {
   setSelection: (selection: Selection, options?: { focus?: boolean }) => void;
-  replaceGrid: (grid: GridModel, selection: Selection) => void;
+  replaceGrid: (
+    grid: GridModel,
+    selection: Selection,
+    options?: { focus?: boolean },
+  ) => void;
   enterCharacter: (letter: string) => void;
   backspace: () => void;
   focus: () => void;
@@ -339,40 +343,50 @@ const Grid = forwardRef<GridHandle, Props>(
         return;
       }
 
-      if (currentSquare.solution) {
-        // Current square is filled: clear it and stay at current position
+      if (currentSquare.solution && currentSquare.checkState !== "correct") {
+        // Current editable square is filled: clear it and stay in place.
         setGrid(updateSquare(grid, currentSquare, { solution: undefined }));
         return;
       }
 
-      // Current square is empty: check if we should move backward.
-      // If we're at the first letter of a word and backspacing into the
-      // previous word is disabled, don't move.
-      const isFirstLetter = isFirstLetterOfWord(grid, selections[0]);
-      if (isFirstLetter && !settings.backspaceIntoPreviousWord) {
-        return;
-      }
+      // An empty or locked square moves backward. Skip checked-correct squares
+      // so repeated delete presses cannot strand the cursor on an uneditable
+      // cell. Respect the word-boundary setting at every step while skipping.
+      let cursor = selections;
+      for (let attempts = 0; attempts < grid.squares.length; attempts++) {
+        if (
+          !settings.backspaceIntoPreviousWord &&
+          isFirstLetterOfWord(grid, cursor[0])
+        ) {
+          return;
+        }
 
-      // Move backward and clear that square
-      const previousSelections = nextSelections(grid, selections, "backward");
+        const previousSelections = nextSelections(grid, cursor, "backward");
+        if (
+          previousSelections.length === 0 ||
+          (previousSelections[0].row === cursor[0].row &&
+            previousSelections[0].col === cursor[0].col)
+        ) {
+          return;
+        }
 
-      if (
-        previousSelections.length > 0 &&
-        (previousSelections[0].row !== selections[0].row ||
-          previousSelections[0].col !== selections[0].col)
-      ) {
         const squareToClear = at(
           grid,
           previousSelections[0].row,
           previousSelections[0].col,
         );
-        if (squareToClear) {
-          setGrid(updateSquare(grid, squareToClear, { solution: undefined }));
+        if (!squareToClear) {
+          return;
         }
-        // Move selection to the previous square
+        if (squareToClear.checkState === "correct") {
+          cursor = previousSelections;
+          continue;
+        }
+
+        setGrid(updateSquare(grid, squareToClear, { solution: undefined }));
         setSelections(previousSelections);
+        return;
       }
-      // If we couldn't find a previous square, do nothing
     }, [grid, selections, isLocked, settings]);
 
     // Expose the same editing operations used by physical keyboards so the
@@ -386,10 +400,16 @@ const Grid = forwardRef<GridHandle, Props>(
             focusAnswerInput(selection);
           }
         },
-        replaceGrid: (nextGrid: GridModel, selection: Selection) => {
+        replaceGrid: (
+          nextGrid: GridModel,
+          selection: Selection,
+          options?: { focus?: boolean },
+        ) => {
           setGrid(nextGrid);
           setSelections([selection]);
-          focusAnswerInput(selection);
+          if (options?.focus !== false) {
+            focusAnswerInput(selection);
+          }
         },
         enterCharacter,
         backspace: handleBackspace,

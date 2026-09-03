@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/auth"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/binder"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
@@ -355,7 +356,18 @@ func TestPatchGameSession_UpdatesAndCompletes(t *testing.T) {
 	rec = doGamesRequest(t, e, gamesRequest{
 		method: http.MethodPatch,
 		path:   "/api/games/sessions/" + created.ID,
-		body:   `{"elapsed_ms":42000,"completed":true}`,
+		body:   `{"elapsed_ms":20000,"square_checks":1,"word_checks":2,"grid_checks":3}`,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.EqualValues(t, 1, resp.SquareChecks)
+	assert.EqualValues(t, 2, resp.WordChecks)
+	assert.EqualValues(t, 3, resp.GridChecks)
+
+	rec = doGamesRequest(t, e, gamesRequest{
+		method: http.MethodPatch,
+		path:   "/api/games/sessions/" + created.ID,
+		body:   `{"elapsed_ms":42000,"square_checks":1,"word_checks":2,"grid_checks":3,"completed":true}`,
 	})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -411,22 +423,28 @@ func TestPatchGameSession_BinderAndGuardFailures(t *testing.T) {
 	// Binder failures: elapsed_ms is required (omitted and null are 422, so an
 	// accidental zero can never read as a decrease), bounded, and typed.
 	for name, body := range map[string]string{
-		"missing elapsed_ms":  `{"difficulty":"easy"}`,
-		"null elapsed_ms":     `{"elapsed_ms":null}`,
-		"negative elapsed_ms": `{"elapsed_ms":-1}`,
-		"absurd elapsed_ms":   `{"elapsed_ms":86400001}`,
-		"bad difficulty":      `{"elapsed_ms":1000,"difficulty":"brutal"}`,
+		"missing elapsed_ms":     `{"difficulty":"easy"}`,
+		"null elapsed_ms":        `{"elapsed_ms":null}`,
+		"negative elapsed_ms":    `{"elapsed_ms":-1}`,
+		"absurd elapsed_ms":      `{"elapsed_ms":86400001}`,
+		"bad difficulty":         `{"elapsed_ms":1000,"difficulty":"brutal"}`,
+		"negative square checks": `{"elapsed_ms":1000,"square_checks":-1}`,
+		"negative word checks":   `{"elapsed_ms":1000,"word_checks":-1}`,
+		"negative grid checks":   `{"elapsed_ms":1000,"grid_checks":-1}`,
+		"absurd check count":     `{"elapsed_ms":1000,"grid_checks":1000001}`,
 	} {
 		rec := doGamesRequest(t, e, gamesRequest{method: http.MethodPatch, path: path, body: body})
 		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "%s: %s", name, rec.Body.String())
 	}
 
-	// A decreasing total is a 422 from the service guard.
+	// A stale cumulative total is accepted but cannot lower the stored value.
 	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodPatch, path: path, body: `{"elapsed_ms":5000}`})
 	require.Equal(t, http.StatusOK, rec.Code)
 	rec = doGamesRequest(t, e, gamesRequest{method: http.MethodPatch, path: path, body: `{"elapsed_ms":4000}`})
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	assert.Equal(t, string(errcodes.CodeValidationError), errCodeOf(t, rec))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var stale games.GameSessionResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &stale))
+	assert.EqualValues(t, 5000, stale.ElapsedMS)
 
 	// A malformed session id can never name a row: 404 before any query.
 	rec = doGamesRequest(t, e, gamesRequest{method: http.MethodPatch, path: "/api/games/sessions/not-a-uuid", body: `{"elapsed_ms":1}`})
@@ -598,6 +616,34 @@ func TestGetLeaderboard_FiltersByDifficulty(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &board))
 	assert.Equal(t, 2, board.Total)
 	assert.Len(t, board.Items, 2)
+}
+
+func TestGetLeaderboard_ReportsWhetherChecksWereUsed(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+
+	checked := startSessionT(t, svc, models.GameDifficultyEasy)
+	_, err := svc.UpdateSession(ctx(), checked.ID, games.UpdateGameSessionPayload{
+		ElapsedMS:    pointerutil.Int(20000),
+		Completed:    true,
+		SquareChecks: pointerutil.Int(1),
+	}, "")
+	require.NoError(t, err)
+	_, err = svc.PostToLeaderboard(ctx(), checked.ID, games.PostLeaderboardPayload{DisplayName: "Checked"}, "")
+	require.NoError(t, err)
+	postSessionT(t, svc, "Unchecked", models.GameDifficultyEasy, 30000)
+
+	rec := doGamesRequest(t, e, gamesRequest{
+		method: http.MethodGet,
+		path:   "/api/games/leaderboard?puzzle_id=wedding-mini-v1&difficulty=easy",
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var board games.ListLeaderboardEntriesResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &board))
+	require.Len(t, board.Items, 2)
+	assert.Equal(t, "Checked", board.Items[0].DisplayName)
+	assert.True(t, board.Items[0].UsedChecks)
+	assert.False(t, board.Items[1].UsedChecks)
 }
 
 func TestGetLeaderboard_RejectsUnknownDifficulty(t *testing.T) {

@@ -6,7 +6,14 @@
 // smoke test here.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +22,7 @@ import { weddingFull } from "@/components/library/crossword/puzzle-data-full";
 import { proposal } from "@/components/library/crossword/puzzle-data-proposal";
 import { SETTINGS_STORAGE_KEY } from "@/components/library/crossword/settings";
 import Crossword from "@/components/pages/Crossword";
+import type { UpdateGameSessionPayload } from "@/types/generated/games";
 import type { GameSession } from "@/types/generated/models";
 
 const apiRequest = vi.fn();
@@ -43,6 +51,9 @@ function makeSession(overrides: Partial<GameSession> = {}): GameSession {
     party_id: undefined,
     difficulty: "easy",
     elapsed_ms: 0,
+    square_checks: 0,
+    word_checks: 0,
+    grid_checks: 0,
     completed_at: undefined,
     on_leaderboard: false,
     display_name: undefined,
@@ -62,14 +73,14 @@ function mockApiRoutes() {
         return Promise.resolve(makeSession({ difficulty: body.difficulty }));
       }
       if (path.startsWith("/games/sessions/") && method === "PATCH") {
-        const body = options?.body as {
-          difficulty?: GameSession["difficulty"];
-          elapsed_ms?: number;
-        };
+        const body = options?.body as UpdateGameSessionPayload;
         return Promise.resolve(
           makeSession({
             difficulty: body.difficulty ?? "easy",
             elapsed_ms: body.elapsed_ms ?? 0,
+            square_checks: body.square_checks ?? 0,
+            word_checks: body.word_checks ?? 0,
+            grid_checks: body.grid_checks ?? 0,
           }),
         );
       }
@@ -148,6 +159,17 @@ function stubMatchMedia(customKeyboard: boolean) {
   }));
 }
 
+/** Check the selected scope from the life-preserver menu. */
+async function checkAnswers(scope: "square" | "word" | "grid") {
+  fireEvent.click(screen.getByRole("button", { name: "Check answers" }));
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: `Check ${scope}`,
+    }),
+  );
+  await flushDialogClose();
+}
+
 /** Open the "more" menu and switch to the given difficulty. */
 async function switchDifficulty(label: string) {
   fireEvent.click(screen.getByRole("button", { name: "More options" }));
@@ -172,14 +194,28 @@ describe("Crossword", () => {
       renderCrossword();
 
       const dialog = screen.getByRole("dialog", { name: /ready to solve/i });
-      // The leaderboard opportunity and the easiest-difficulty rule are both
-      // part of the pitch.
+      // The leaderboard opportunity, easiest-difficulty rule, and permission
+      // to look up tough answers are all part of the pitch.
       expect(dialog).toHaveTextContent(/post your time to the leaderboard/i);
       expect(dialog).toHaveTextContent(
         /recorded at the easiest difficulty you use/i,
       );
-      // Difficulty choices, with easy preselected.
+      expect(dialog).toHaveTextContent(
+        /use the "Check" button near the timer to check your work/i,
+      );
+      expect(dialog).toHaveTextContent(
+        /if you're still stuck, feel free to Google the answer/i,
+      );
+      expect(dialog).toHaveTextContent(
+        /I want you to see the actual proposal at the end/i,
+      );
+      // Difficulty choices have a visible label, with easy preselected.
+      const difficultyLabel = within(dialog).getByText("Difficulty");
       const group = within(dialog).getByRole("group", { name: "Difficulty" });
+      expect(
+        difficultyLabel.compareDocumentPosition(group) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
       expect(
         within(group).getByRole("button", { name: "Easy" }),
       ).toHaveAttribute("aria-pressed", "true");
@@ -187,9 +223,14 @@ describe("Crossword", () => {
         within(group).getByRole("button", { name: "Hard" }),
       ).toHaveAttribute("aria-pressed", "false");
       // The show-timer choice defaults to on.
+      const timerCheckbox = within(dialog).getByRole("checkbox", {
+        name: /show the timer/i,
+      });
+      expect(timerCheckbox).toHaveAttribute("data-state", "checked");
       expect(
-        within(dialog).getByRole("checkbox", { name: /show the timer/i }),
-      ).toHaveAttribute("data-state", "checked");
+        group.compareDocumentPosition(timerCheckbox) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
     });
 
     it("starts the puzzle at the chosen difficulty and creates a session", async () => {
@@ -1017,7 +1058,9 @@ describe("Crossword", () => {
       const controls = screen.getByRole("group", {
         name: "Crossword controls",
       });
-      expect(within(controls).getByLabelText("Solve time")).toBeInTheDocument();
+      const timer = within(controls).getByLabelText("Solve time");
+      expect(timer).toBeInTheDocument();
+      expect(timer).toHaveClass("w-[8ch]", "shrink-0", "text-right");
       expect(
         within(controls).getByRole("button", { name: "List all clues" }),
       ).toBeInTheDocument();
@@ -1073,6 +1116,167 @@ describe("Crossword", () => {
         expect(list.className).toContain("overflow-y-auto");
         expect(list.className).toContain("max-h-");
       }
+    });
+  });
+
+  describe("checks", () => {
+    it("puts the life-preserver check menu next to pause and ignores blanks", async () => {
+      renderCrossword();
+      await startGame();
+
+      const controls = screen.getByRole("group", {
+        name: "Crossword controls",
+      });
+      const pause = within(controls).getByRole("button", {
+        name: "Pause timer",
+      });
+      const check = within(controls).getByRole("button", {
+        name: "Check answers",
+      });
+      expect(
+        pause.compareDocumentPosition(check) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+
+      fireEvent.click(check);
+      expect(
+        await screen.findByRole("button", { name: "Check square" }),
+      ).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Check word" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Check grid" })).toBeDisabled();
+    });
+
+    it("shows tooltips for pause and check", async () => {
+      const user = userEvent.setup();
+      renderCrossword();
+      await startGame();
+
+      await user.hover(screen.getByRole("button", { name: "Pause timer" }));
+      expect(await screen.findByRole("tooltip")).toHaveTextContent("Pause");
+      await user.unhover(screen.getByRole("button", { name: "Pause timer" }));
+      await waitFor(() =>
+        expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+      );
+
+      await user.hover(screen.getByRole("button", { name: "Check answers" }));
+      expect(await screen.findByRole("tooltip")).toHaveTextContent("Check");
+    });
+
+    it("checks a square, locks a correct letter, and leaves a wrong letter editable", async () => {
+      renderCrossword();
+      await startGame();
+
+      fireEvent.keyDown(gridEl(), { key: "K" });
+      fireEvent.mouseDown(square(0, 1));
+      await checkAnswers("square");
+
+      expect(square(0, 1)).toHaveAttribute("data-check-state", "correct");
+      expect(within(square(0, 1)).getByText("K")).toHaveClass("text-blue/80");
+      fireEvent.keyDown(gridEl(), { key: "X" });
+      expect(square(0, 1)).toHaveTextContent("K");
+      expect(square(0, 1)).not.toHaveTextContent("X");
+
+      fireEvent.mouseDown(square(0, 2));
+      fireEvent.keyDown(gridEl(), { key: "X" });
+      fireEvent.mouseDown(square(0, 2));
+      await checkAnswers("square");
+      expect(square(0, 2)).toHaveAttribute("data-check-state", "incorrect");
+      expect(within(square(0, 2)).getByText("X")).toHaveClass(
+        "text-destructive",
+      );
+
+      fireEvent.keyDown(gridEl(), { key: "I" });
+      expect(square(0, 2)).toHaveTextContent("I");
+      expect(square(0, 2)).not.toHaveAttribute("data-check-state");
+    });
+
+    it("backspace skips locked correct squares", async () => {
+      renderCrossword();
+      await startGame();
+
+      fireEvent.mouseDown(square(0, 2));
+      fireEvent.keyDown(gridEl(), { key: "X" });
+      // Typing advanced the across cursor to (0,3).
+      fireEvent.keyDown(gridEl(), { key: "S" });
+      fireEvent.mouseDown(square(0, 3));
+      await checkAnswers("square");
+
+      fireEvent.mouseDown(square(0, 4));
+      fireEvent.keyDown(gridEl(), { key: "Backspace" });
+
+      expect(square(0, 3)).toHaveTextContent("S");
+      expect(square(0, 3)).toHaveAttribute("data-check-state", "correct");
+      expect(square(0, 2)).not.toHaveTextContent("X");
+    });
+
+    it("checks the selected word and the whole grid", async () => {
+      renderCrossword();
+      await startGame();
+
+      fireEvent.keyDown(gridEl(), { key: "K" });
+      fireEvent.keyDown(gridEl(), { key: "X" });
+      fireEvent.mouseDown(square(0, 2));
+      await checkAnswers("word");
+
+      expect(square(0, 1)).toHaveAttribute("data-check-state", "correct");
+      expect(square(0, 2)).toHaveAttribute("data-check-state", "incorrect");
+      expect(square(0, 3)).not.toHaveAttribute("data-check-state");
+
+      fireEvent.mouseDown(square(1, 0));
+      fireEvent.keyDown(gridEl(), { key: "D" });
+      fireEvent.mouseDown(square(2, 0));
+      fireEvent.keyDown(gridEl(), { key: "X" });
+      expect(square(1, 0)).toHaveTextContent("D");
+      expect(square(2, 0)).toHaveTextContent("X");
+      await checkAnswers("grid");
+
+      expect(square(1, 0)).toHaveAttribute("data-check-state", "correct");
+      expect(square(2, 0)).toHaveAttribute("data-check-state", "incorrect");
+    });
+
+    it("shows checked states in the mobile clue view", async () => {
+      stubMatchMedia(true);
+      renderCrossword();
+      await startGame();
+
+      fireEvent.keyDown(gridEl(), { key: "K" });
+      fireEvent.keyDown(gridEl(), { key: "X" });
+      fireEvent.mouseDown(square(0, 2));
+      await checkAnswers("word");
+      fireEvent.click(screen.getByRole("button", { name: "List all clues" }));
+
+      expect(
+        screen.getByRole("button", {
+          name: /1 Across answer, square 1 of 4, K, correct, locked/i,
+        }),
+      ).toHaveClass("text-blue/80");
+      expect(
+        screen.getByRole("button", {
+          name: /1 Across answer, square 2 of 4, X, incorrect/i,
+        }),
+      ).toHaveClass("text-destructive");
+      expect(
+        screen.getByRole("button", {
+          name: /2 Down answer, square 1 of 5, X, incorrect/i,
+        }),
+      ).toHaveClass("text-destructive");
+    });
+
+    it("restores checked square states after a reload", async () => {
+      const { unmount } = renderCrossword();
+      await startGame();
+      fireEvent.keyDown(gridEl(), { key: "K" });
+      fireEvent.mouseDown(square(0, 1));
+      await checkAnswers("square");
+      expect(square(0, 1)).toHaveAttribute("data-check-state", "correct");
+
+      unmount();
+      renderCrossword();
+
+      expect(square(0, 1)).toHaveAttribute("data-check-state", "correct");
+      await resumeGame();
+      fireEvent.mouseDown(square(0, 1));
+      fireEvent.keyDown(gridEl(), { key: "X" });
+      expect(square(0, 1)).toHaveTextContent("K");
     });
   });
 

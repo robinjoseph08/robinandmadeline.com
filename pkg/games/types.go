@@ -23,19 +23,24 @@ type CreateGameSessionPayload struct {
 
 // UpdateGameSessionPayload is the body of PATCH /api/games/sessions/:id, the
 // periodic progress report while solving. ElapsedMS is the total accumulated
-// active-solving milliseconds (not a delta) and may only grow; a value lower
-// than what the session already holds is a 422. Difficulty, when present, is
-// the level currently selected; the server keeps the easiest level seen.
-// Completed marks the solve finished, setting completed_at server-side; once
-// set, further updates are rejected except an exact no-op resend (so a client
-// retry of the final report is safe). ElapsedMS is a pointer so an omitted
-// value is a 422 instead of binding to a 0 that would read as a decrease; its
-// max (24 hours of accumulated active solving) is the sanity ceiling, beyond
-// any plausible legitimate solve.
+// active-solving milliseconds (not a delta); the server keeps the largest
+// total reported. Difficulty, when present, is the level currently selected;
+// the server keeps the easiest level seen. Completed marks the solve finished,
+// setting completed_at server-side. Once set, updates that would advance a
+// cumulative total are rejected, while stale or exact no-op retries are safe.
+// The optional check counts are cumulative totals for explicit square, word,
+// and grid checks; the server keeps the largest total for each scope. ElapsedMS
+// is a pointer so omission is a 422 rather than binding to zero; its max (24
+// hours of accumulated active solving)
+// is the sanity ceiling, beyond any plausible legitimate solve. Check counts
+// have a generous abuse ceiling while remaining optional for older clients.
 type UpdateGameSessionPayload struct {
-	ElapsedMS  *int    `json:"elapsed_ms" validate:"required,min=0,max=86400000"`
-	Difficulty *string `json:"difficulty" validate:"omitempty,oneof=easy medium hard" tstype:"models.GameDifficulty"`
-	Completed  bool    `json:"completed"`
+	ElapsedMS    *int    `json:"elapsed_ms" validate:"required,min=0,max=86400000"`
+	Difficulty   *string `json:"difficulty" validate:"omitempty,oneof=easy medium hard" tstype:"models.GameDifficulty"`
+	Completed    bool    `json:"completed"`
+	SquareChecks *int    `json:"square_checks" validate:"omitempty,min=0,max=1000000"`
+	WordChecks   *int    `json:"word_checks" validate:"omitempty,min=0,max=1000000"`
+	GridChecks   *int    `json:"grid_checks" validate:"omitempty,min=0,max=1000000"`
 }
 
 // PostLeaderboardPayload is the body of POST /api/games/sessions/:id/leaderboard,
@@ -99,6 +104,9 @@ type AdminGameSessionResponse struct {
 	PuzzleID      string     `json:"puzzle_id"`
 	Difficulty    string     `json:"difficulty" tstype:"models.GameDifficulty"`
 	ElapsedMS     int64      `json:"elapsed_ms"`
+	SquareChecks  int64      `json:"square_checks"`
+	WordChecks    int64      `json:"word_checks"`
+	GridChecks    int64      `json:"grid_checks"`
 	CompletedAt   *time.Time `json:"completed_at"`
 	OnLeaderboard bool       `json:"on_leaderboard"`
 	DisplayName   *string    `json:"display_name"`
@@ -130,6 +138,7 @@ type LeaderboardEntry struct {
 	Difficulty  string    `json:"difficulty" tstype:"models.GameDifficulty"`
 	ElapsedMS   int64     `json:"elapsed_ms"`
 	CompletedAt time.Time `json:"completed_at"`
+	UsedChecks  bool      `json:"used_checks"`
 }
 
 // LeaderboardViewer is the requesting solver's own ranked entry, returned

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { toast } from "sonner";
@@ -29,6 +29,9 @@ function makeSession(
     puzzle_id: "wedding-mini-v1",
     difficulty: "easy",
     elapsed_ms: 65000,
+    square_checks: 0,
+    word_checks: 0,
+    grid_checks: 0,
     completed_at: undefined,
     on_leaderboard: false,
     display_name: undefined,
@@ -79,6 +82,9 @@ describe("AdminCrossword list", () => {
           party_name: "The Lovelaces",
           ip_address: "203.0.113.10",
           user_agent: "Mozilla/5.0 Chrome/126.0",
+          square_checks: 2,
+          word_checks: 1,
+          grid_checks: 3,
         }),
         // Admin-hidden: name retained, but no longer publicly listed.
         makeSession({
@@ -153,6 +159,16 @@ describe("AdminCrossword list", () => {
     expect(screen.getByText("2:05")).toBeInTheDocument();
     expect(screen.getByText("0:05")).toBeInTheDocument();
 
+    // Check use is shown with the separate scope counts retained by the API.
+    expect(
+      screen.getByRole("columnheader", { name: "Checks" }),
+    ).toBeInTheDocument();
+    const postedRow = screen.getByText("Ada").closest("tr");
+    expect(postedRow).not.toBeNull();
+    expect(within(postedRow!).getByText("Square: 2")).toBeInTheDocument();
+    expect(within(postedRow!).getByText("Word: 1")).toBeInTheDocument();
+    expect(within(postedRow!).getByText("Grid: 3")).toBeInTheDocument();
+
     // The admin-only Client column pairs IP and user agent in one cell rather
     // than adding another wide table column.
     expect(
@@ -217,8 +233,8 @@ describe("AdminCrossword list", () => {
 
     await screen.findByText("The Wedding Mini");
     expect(document.body.textContent).not.toContain("—");
-    // Three dashes: the empty party, IP, and user-agent values.
-    expect(screen.getAllByText("-")).toHaveLength(3);
+    // Four dashes: the empty party, no checks, IP, and user-agent values.
+    expect(screen.getAllByText("-")).toHaveLength(4);
   });
 
   it("falls back to the raw puzzle id for an id not in the registry", async () => {
@@ -240,9 +256,10 @@ describe("AdminCrossword list", () => {
 
     renderCrossword();
 
-    // The party cell reads as a plain hyphen, never an em-dash.
-    const dash = await screen.findByText("-");
-    expect(dash).toBeInTheDocument();
+    // The party and check cells use plain hyphens, never em-dashes.
+    const row = (await screen.findByText("Anonymous")).closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row!).getAllByText("-")).toHaveLength(2);
     expect(document.body.textContent).not.toContain("—");
   });
 });

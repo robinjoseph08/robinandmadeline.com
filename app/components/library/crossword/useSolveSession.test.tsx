@@ -29,6 +29,9 @@ function makeSession(overrides: Partial<GameSession> = {}): GameSession {
     party_id: undefined,
     difficulty: "easy",
     elapsed_ms: 0,
+    square_checks: 0,
+    word_checks: 0,
+    grid_checks: 0,
     completed_at: undefined,
     on_leaderboard: false,
     display_name: undefined,
@@ -52,6 +55,9 @@ function mockApi() {
         return Promise.resolve(
           makeSession({
             difficulty: body.difficulty ?? "easy",
+            square_checks: body.square_checks ?? 0,
+            word_checks: body.word_checks ?? 0,
+            grid_checks: body.grid_checks ?? 0,
             completed_at: body.completed ? "2026-01-01T00:01:00Z" : undefined,
           }),
         );
@@ -311,6 +317,77 @@ describe("useSolveSession locking", () => {
     unmount();
 
     expect(localStorage.getItem(key)).toBeNull();
+  });
+
+  it("records cumulative check totals by scope", async () => {
+    const key = "crossword:wedding-mini-v1:session";
+    const { result } = renderHook(() =>
+      useSolveSession({
+        puzzleId: "wedding-mini-v1",
+        availableDifficulties: ["easy", "medium", "hard"],
+        initiallyStarted: false,
+        initialDifficulty: "easy",
+      }),
+    );
+
+    act(() => result.current.start("easy"));
+    await flush();
+    act(() => result.current.recordCheck("square"));
+    await flush();
+    act(() => {
+      result.current.recordCheck("word");
+      result.current.recordCheck("word");
+      result.current.recordCheck("grid");
+    });
+    await flush();
+
+    const reports = apiRequest.mock.calls
+      .filter(
+        ([path, options]) =>
+          typeof path === "string" &&
+          path.startsWith("/games/sessions/") &&
+          options?.method === "PATCH",
+      )
+      .map(([, options]) => options?.body as UpdateGameSessionPayload);
+    expect(reports[reports.length - 1]).toMatchObject({
+      square_checks: 1,
+      word_checks: 2,
+      grid_checks: 1,
+    });
+    expect(JSON.parse(localStorage.getItem(key) ?? "null")).toMatchObject({
+      squareChecks: 1,
+      wordChecks: 2,
+      gridChecks: 1,
+    });
+  });
+
+  it("ignores checks once the solve has completed", async () => {
+    const { result } = renderHook(() =>
+      useSolveSession({
+        puzzleId: "wedding-mini-v1",
+        availableDifficulties: ["easy", "medium", "hard"],
+        initiallyStarted: false,
+        initialDifficulty: "easy",
+      }),
+    );
+
+    act(() => result.current.start("easy"));
+    await flush();
+    act(() => result.current.recordCheck("square"));
+    await flush();
+    act(() => result.current.complete());
+    await flush();
+    const reportsBefore = apiRequest.mock.calls.length;
+
+    act(() => result.current.recordCheck("grid"));
+    await flush();
+
+    expect(apiRequest.mock.calls).toHaveLength(reportsBefore);
+    expect(
+      JSON.parse(
+        localStorage.getItem("crossword:wedding-mini-v1:session") ?? "null",
+      ),
+    ).toMatchObject({ squareChecks: 1, wordChecks: 0, gridChecks: 0 });
   });
 
   it("ignores reportDifficulty once the solve has completed", async () => {

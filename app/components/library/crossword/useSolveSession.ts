@@ -19,12 +19,17 @@ import {
   postLeaderboardEntry,
   updateGameSession,
 } from "@/libraries/games-api";
-import type { UpdateGameSessionPayload } from "@/types/generated/games";
+import type {
+  GameSessionResponse,
+  UpdateGameSessionPayload,
+} from "@/types/generated/games";
 
+import type { CheckScope } from "./checking";
 import { Difficulty, easierDifficulty, PuzzleDifficulties } from "./puzzle";
 import {
   clearSessionRecord,
   loadSessionRecord,
+  MAX_CHECK_COUNT,
   saveSessionRecord,
 } from "./session";
 
@@ -101,6 +106,8 @@ export interface SolveSession {
    * the page can call it unconditionally for cosmetic clue switches.
    */
   reportDifficulty: (difficulty: Difficulty) => void;
+  /** Record one explicit answer check and flush the cumulative totals. */
+  recordCheck: (scope: CheckScope) => void;
   /** Stop the clock for good and report the solve as completed. */
   complete: () => void;
   /** Discard this browser's session record without touching the backend row. */
@@ -167,6 +174,9 @@ export function useSolveSession({
     initialRecord?.difficulty ?? initialDifficulty,
   );
   const postedNameRef = useRef(initialRecord?.postedName);
+  const squareChecksRef = useRef(initialRecord?.squareChecks ?? 0);
+  const wordChecksRef = useRef(initialRecord?.wordChecks ?? 0);
+  const gridChecksRef = useRef(initialRecord?.gridChecks ?? 0);
   const discardedRef = useRef(false);
   // Reports are serialized so a heartbeat can never overtake a completion.
   const queueRef = useRef<Promise<void>>(Promise.resolve());
@@ -234,6 +244,9 @@ export function useSolveSession({
       completed: completedRef.current,
       difficulty: easiestRef.current,
       difficultyUnverified: postableRef.current ? undefined : true,
+      squareChecks: squareChecksRef.current,
+      wordChecks: wordChecksRef.current,
+      gridChecks: gridChecksRef.current,
       postedName: postedNameRef.current,
     });
   }, [puzzleId, totalElapsed]);
@@ -312,12 +325,27 @@ export function useSolveSession({
         elapsed_ms: elapsed,
         difficulty: easiestRef.current,
         completed: options.completed === true,
+        square_checks: squareChecksRef.current,
+        word_checks: wordChecksRef.current,
+        grid_checks: gridChecksRef.current,
       };
-      const applyResponse = (session: { difficulty: Difficulty }) => {
+      const applyResponse = (session: GameSessionResponse) => {
         if (discardedRef.current) {
           return;
         }
         lastSentElapsedRef.current = elapsed;
+        squareChecksRef.current = Math.max(
+          squareChecksRef.current,
+          session.square_checks,
+        );
+        wordChecksRef.current = Math.max(
+          wordChecksRef.current,
+          session.word_checks,
+        );
+        gridChecksRef.current = Math.max(
+          gridChecksRef.current,
+          session.grid_checks,
+        );
         applyServerDifficulty(session.difficulty);
         if (payload.completed) {
           completedRef.current = true;
@@ -436,6 +464,9 @@ export function useSolveSession({
       elapsed_ms: elapsed,
       difficulty: easiestRef.current,
       completed: false,
+      square_checks: squareChecksRef.current,
+      word_checks: wordChecksRef.current,
+      grid_checks: gridChecksRef.current,
     });
   }, [persist, totalElapsed]);
 
@@ -520,6 +551,57 @@ export function useSolveSession({
     [persist, enqueue, sendReport],
   );
 
+  const recordCheck = useCallback(
+    (scope: CheckScope) => {
+      if (!startedRef.current || finishedRef.current) {
+        return;
+      }
+
+      // Pick up a sibling tab's latest totals before incrementing. The backend
+      // still applies max() to every report, so stale tabs cannot lower them.
+      const stored = loadSessionRecord(puzzleId);
+      if (stored?.id === sessionIdRef.current) {
+        if (stored.completed) {
+          finishedRef.current = true;
+          setFinished(true);
+          return;
+        }
+        squareChecksRef.current = Math.max(
+          squareChecksRef.current,
+          stored.squareChecks,
+        );
+        wordChecksRef.current = Math.max(
+          wordChecksRef.current,
+          stored.wordChecks,
+        );
+        gridChecksRef.current = Math.max(
+          gridChecksRef.current,
+          stored.gridChecks,
+        );
+      }
+
+      if (scope === "square") {
+        squareChecksRef.current = Math.min(
+          squareChecksRef.current + 1,
+          MAX_CHECK_COUNT,
+        );
+      } else if (scope === "word") {
+        wordChecksRef.current = Math.min(
+          wordChecksRef.current + 1,
+          MAX_CHECK_COUNT,
+        );
+      } else {
+        gridChecksRef.current = Math.min(
+          gridChecksRef.current + 1,
+          MAX_CHECK_COUNT,
+        );
+      }
+      persist();
+      enqueue(() => sendReport());
+    },
+    [enqueue, persist, puzzleId, sendReport],
+  );
+
   const complete = useCallback(() => {
     if (finishedRef.current) {
       return;
@@ -579,6 +661,7 @@ export function useSolveSession({
     resume,
     setUiPaused,
     reportDifficulty,
+    recordCheck,
     complete,
     discardLocalRecord,
     postToLeaderboard,

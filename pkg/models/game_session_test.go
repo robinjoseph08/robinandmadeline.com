@@ -7,6 +7,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestGameSessionHasUsedChecks(t *testing.T) {
+	assert.False(t, (models.GameSession{}).HasUsedChecks())
+	assert.True(t, (models.GameSession{SquareChecks: 1}).HasUsedChecks())
+	assert.True(t, (models.GameSession{WordChecks: 1}).HasUsedChecks())
+	assert.True(t, (models.GameSession{GridChecks: 1}).HasUsedChecks())
+}
+
 func TestEasierDifficulty(t *testing.T) {
 	easy, medium, hard := models.GameDifficultyEasy, models.GameDifficultyMedium, models.GameDifficultyHard
 

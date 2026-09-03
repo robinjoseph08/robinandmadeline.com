@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearSessionRecord,
   loadSessionRecord,
+  MAX_CHECK_COUNT,
   saveSessionRecord,
 } from "./session";
 
@@ -22,12 +23,15 @@ describe("solve session record persistence", () => {
     expect(loadSessionRecord(PUZZLE_ID)).toBeNull();
   });
 
-  it("round-trips a record, including a not-yet-created session", () => {
+  it("round-trips a record, including check totals before session creation", () => {
     saveSessionRecord(PUZZLE_ID, {
       id: null,
       elapsedMs: 1234,
       completed: false,
       difficulty: "medium",
+      squareChecks: 1,
+      wordChecks: 2,
+      gridChecks: 3,
       postedName: undefined,
     });
     expect(loadSessionRecord(PUZZLE_ID)).toEqual({
@@ -35,6 +39,9 @@ describe("solve session record persistence", () => {
       elapsedMs: 1234,
       completed: false,
       difficulty: "medium",
+      squareChecks: 1,
+      wordChecks: 2,
+      gridChecks: 3,
       postedName: undefined,
     });
   });
@@ -46,6 +53,9 @@ describe("solve session record persistence", () => {
       completed: false,
       difficulty: "easy",
       difficultyUnverified: true,
+      squareChecks: 0,
+      wordChecks: 0,
+      gridChecks: 0,
     });
     expect(loadSessionRecord(PUZZLE_ID)).toEqual({
       id: "sess-legacy",
@@ -53,6 +63,9 @@ describe("solve session record persistence", () => {
       completed: false,
       difficulty: "easy",
       difficultyUnverified: true,
+      squareChecks: 0,
+      wordChecks: 0,
+      gridChecks: 0,
       postedName: undefined,
     });
   });
@@ -63,6 +76,9 @@ describe("solve session record persistence", () => {
       elapsedMs: 90000,
       completed: true,
       difficulty: "easy",
+      squareChecks: 0,
+      wordChecks: 0,
+      gridChecks: 0,
     });
 
     clearSessionRecord(PUZZLE_ID);
@@ -84,6 +100,9 @@ describe("solve session record persistence", () => {
       elapsedMs: 90000,
       completed: true,
       difficulty: "easy",
+      squareChecks: 0,
+      wordChecks: 0,
+      gridChecks: 0,
       postedName: "Alice",
     });
     expect(loadSessionRecord(PUZZLE_ID)).toEqual({
@@ -91,6 +110,9 @@ describe("solve session record persistence", () => {
       elapsedMs: 90000,
       completed: true,
       difficulty: "easy",
+      squareChecks: 0,
+      wordChecks: 0,
+      gridChecks: 0,
       postedName: "Alice",
     });
   });
@@ -104,6 +126,41 @@ describe("solve session record persistence", () => {
 
     localStorage.setItem(KEY, "{nope");
     expect(loadSessionRecord(PUZZLE_ID)).toBeNull();
+  });
+
+  it("defaults legacy check counts and clamps malformed totals", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        id: "sess-legacy",
+        elapsedMs: 100,
+        completed: false,
+        difficulty: "easy",
+      }),
+    );
+    expect(loadSessionRecord(PUZZLE_ID)).toMatchObject({
+      squareChecks: 0,
+      wordChecks: 0,
+      gridChecks: 0,
+    });
+
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        id: "sess-bad-counts",
+        elapsedMs: 100,
+        completed: false,
+        difficulty: "easy",
+        squareChecks: -4,
+        wordChecks: 2.8,
+        gridChecks: MAX_CHECK_COUNT + 50,
+      }),
+    );
+    expect(loadSessionRecord(PUZZLE_ID)).toMatchObject({
+      squareChecks: 0,
+      wordChecks: 2,
+      gridChecks: MAX_CHECK_COUNT,
+    });
   });
 
   it("degrades unknown difficulties and negative elapsed values", () => {
@@ -121,6 +178,9 @@ describe("solve session record persistence", () => {
       elapsedMs: 0,
       completed: false,
       difficulty: undefined,
+      squareChecks: 0,
+      wordChecks: 0,
+      gridChecks: 0,
       postedName: undefined,
     });
   });

@@ -20,8 +20,19 @@ describe("crossword progress", () => {
     expect(loadProgress("test-puzzle")).toEqual({
       entries: ".KISS????????????????????",
       difficulty: "medium",
+      checkStates: undefined,
       celebrationAcknowledged: false,
     });
+  });
+
+  it("round-trips compact square check states", () => {
+    saveProgress("test-puzzle", {
+      entries: ".KX??",
+      difficulty: "easy",
+      checkStates: ".ci??",
+    });
+
+    expect(loadProgress("test-puzzle")?.checkStates).toBe(".ci??");
   });
 
   it("round-trips a celebration acknowledgement", () => {

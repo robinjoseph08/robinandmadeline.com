@@ -111,6 +111,7 @@ export default function AdminCrossword() {
                 <TableHead>Puzzle</TableHead>
                 <TableHead>Difficulty</TableHead>
                 <TableHead>Time</TableHead>
+                <TableHead>Checks</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead>Client</TableHead>
@@ -144,6 +145,20 @@ export default function AdminCrossword() {
                   <TableCell>{DIFFICULTY_LABELS[session.difficulty]}</TableCell>
                   <TableCell className="tabular-nums">
                     {formatDuration(session.elapsed_ms)}
+                  </TableCell>
+                  <TableCell>
+                    {session.square_checks +
+                      session.word_checks +
+                      session.grid_checks ===
+                    0 ? (
+                      <span className="text-muted-foreground">-</span>
+                    ) : (
+                      <div className="space-y-0.5 whitespace-nowrap text-xs tabular-nums">
+                        <div>Square: {session.square_checks}</div>
+                        <div>Word: {session.word_checks}</div>
+                        <div>Grid: {session.grid_checks}</div>
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell>
                     {session.on_leaderboard ? (
