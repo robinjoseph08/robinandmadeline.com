@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApiError } from "@/libraries/admin-api";
-import type { GuestListItem } from "@/types/generated/parties";
+import type { GuestListItem, PartyResponse } from "@/types/generated/parties";
 import type {
   PhotoGroupGuest,
   PhotoGroupResponse,
@@ -47,8 +47,27 @@ function makeMember(overrides: Partial<PhotoGroupGuest>): PhotoGroupGuest {
   };
 }
 
+// The embedded party is irrelevant to photo groups (only party_name is shown);
+// it is here because the list item always carries one.
+const PARTY: PartyResponse = {
+  id: "p1",
+  name: "The Smiths",
+  side: "robin",
+  relation: "family",
+  circle: [],
+  invitation_type: "digital",
+  info_token: "tok",
+  info_collection_requested: false,
+  info_collection_confirmed: false,
+  info_collection_status: "complete",
+  missing_required_fields: [],
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+
 function makeGuest(overrides: Partial<GuestListItem>): GuestListItem {
   return {
+    party: PARTY,
     id: "g1",
     party_id: "p1",
     full_name: "Alice Smith",

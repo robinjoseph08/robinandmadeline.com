@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatDateTime,
+  formatDeadline,
   formatDuration,
   formatEventDate,
   formatEventTime,
@@ -159,5 +160,33 @@ describe("formatGuestFirstNames", () => {
 
   it("returns an empty string for no names", () => {
     expect(formatGuestFirstNames([])).toBe("");
+  });
+});
+
+describe("formatDeadline", () => {
+  // The settings page stores a picked day as its last UTC second.
+  const deadline = "2026-10-01T23:59:59Z";
+
+  it("labels the deadline with its UTC date in every time zone", () => {
+    // Formatting in local time would show Oct 2 east of UTC; the label must
+    // match the day picked on the settings page.
+    expect(formatDeadline(deadline, new Date("2026-09-24T12:00:00Z"))).toBe(
+      "Oct 1, 2026 (8 days left)",
+    );
+  });
+
+  it("counts a partial day as a day until the deadline passes", () => {
+    expect(formatDeadline(deadline, new Date("2026-10-01T18:00:00Z"))).toBe(
+      "Oct 1, 2026 (1 day left)",
+    );
+    expect(formatDeadline(deadline, new Date("2026-10-02T00:00:00Z"))).toBe(
+      "Oct 1, 2026 (passed)",
+    );
+  });
+
+  it("reads Not set without a deadline", () => {
+    const now = new Date("2026-09-24T12:00:00Z");
+    expect(formatDeadline(undefined, now)).toBe("Not set");
+    expect(formatDeadline(null, now)).toBe("Not set");
   });
 });

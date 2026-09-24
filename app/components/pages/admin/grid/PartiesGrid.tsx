@@ -44,7 +44,7 @@ import {
   GridTextCell,
 } from "./cells";
 import { Chip } from "./Chip";
-import { TooltipIconButton } from "./grid-buttons";
+import { OpenPartyLink, TooltipIconButton } from "./grid-buttons";
 
 const CIRCLE_VALUES = CIRCLE_OPTIONS.map((option) => option.value);
 
@@ -61,8 +61,8 @@ interface PartiesGridProps {
  * party is born with its first guest); this grid manages, edits, and deletes
  * existing parties. The mailing address and other long-tail fields stay behind
  * the edit dialog (onEditParty); the derived status and guest count are
- * read-only; copying the info link also requests info; and the RSVP code is
- * upper-cased as you type.
+ * read-only; the Name cell carries a link to the party's page; copying the
+ * info link also requests info; and the RSVP code is upper-cased as you type.
  */
 export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
   const patchParty = usePatchParty();
@@ -127,6 +127,9 @@ export function PartiesGrid({ parties, onEditParty }: PartiesGridProps) {
               ariaLabel="Name"
               cellClassName={FROZEN_FIRST_COL}
               onCommit={(value) => patchField(party.id, { name: value })}
+              trailing={
+                <OpenPartyLink partyId={party.id} partyName={party.name} />
+              }
               value={party.name}
             />
             <GridComboboxCell

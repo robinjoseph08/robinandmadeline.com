@@ -11,6 +11,8 @@ import {
 
 function makeGuest(overrides: Partial<GuestListItem> = {}): GuestListItem {
   return {
+    // The export joins against the parties list, not this embedded party.
+    party: makeParty(),
     id: "g1",
     party_id: "p1",
     party_name: "The Smiths",

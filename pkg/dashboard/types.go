@@ -26,12 +26,26 @@ type RelationBreakdown struct {
 	Friend int `json:"friend"`
 }
 
-// GuestBreakdown counts guests grouped by their party's side and relation. Each
-// guest is attributed to its party's values, so each sub-breakdown's counts sum
-// to the total guest count.
+// AgeBreakdown counts guests by the is_child flag.
+type AgeBreakdown struct {
+	Adults   int `json:"adults"`
+	Children int `json:"children"`
+}
+
+// DrinkingBreakdown counts guests by the is_drinking flag.
+type DrinkingBreakdown struct {
+	Drinking    int `json:"drinking"`
+	NotDrinking int `json:"not_drinking"`
+}
+
+// GuestBreakdown counts guests grouped by their party's side and relation and
+// by their own child and drinking flags. Each sub-breakdown's counts sum to the
+// total guest count.
 type GuestBreakdown struct {
 	BySide     SideBreakdown     `json:"by_side"`
 	ByRelation RelationBreakdown `json:"by_relation"`
+	ByAge      AgeBreakdown      `json:"by_age"`
+	ByDrinking DrinkingBreakdown `json:"by_drinking"`
 }
 
 // EventRSVPStats is one event's RSVP tally for the dashboard: the event facts
@@ -43,6 +57,29 @@ type GuestBreakdown struct {
 type EventRSVPStats struct {
 	models.Event  `tstype:",extends"`
 	RSVPBreakdown events.RSVPBreakdown `json:"rsvp_breakdown" tstype:"events.RSVPBreakdown"`
+}
+
+// GuestAttendanceCounts counts guests in each attendance bucket (see
+// models.GuestAttendanceCondition for the definitions), so the dashboard can
+// show the headcount shrinking as declines come in. Coming, Awaiting, and
+// Declined partition Total (every guest on the list); Expected is Coming +
+// Awaiting (equivalently Total - Declined).
+type GuestAttendanceCounts struct {
+	Total    int `json:"total"`
+	Expected int `json:"expected"`
+	Coming   int `json:"coming"`
+	Awaiting int `json:"awaiting"`
+	Declined int `json:"declined"`
+}
+
+// PartyRSVPProgressCounts counts parties in each RSVP progress bucket (see
+// models.PartyRSVPProgressCondition for the definitions). The three buckets
+// sum to Total, the party count.
+type PartyRSVPProgressCounts struct {
+	Total        int `json:"total"`
+	Responded    int `json:"responded"`
+	Partial      int `json:"partial"`
+	NotResponded int `json:"not_responded"`
 }
 
 // RSVPSummary is the site-wide RSVP rollup across every event's rows: the
@@ -88,10 +125,9 @@ type EmailStats struct {
 // always reflects the current data. RSVPDeadline is the current rsvp_deadline
 // app setting (an RFC3339 string), null when unset.
 type Response struct {
-	TotalParties int `json:"total_parties"`
-	TotalGuests  int `json:"total_guests"`
-
-	GuestBreakdown GuestBreakdown `json:"guest_breakdown"`
+	GuestBreakdown    GuestBreakdown          `json:"guest_breakdown"`
+	GuestAttendance   GuestAttendanceCounts   `json:"guest_attendance"`
+	PartyRSVPProgress PartyRSVPProgressCounts `json:"party_rsvp_progress"`
 
 	// Events is every event with its RSVP breakdown, in schedule order; an empty
 	// list serializes as [] (never null) so the page can map over it unguarded.

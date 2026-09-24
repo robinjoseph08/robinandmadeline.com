@@ -185,3 +185,100 @@ func TestPutGuestRSVP_Returns422ForInvalidStatus(t *testing.T) {
 	rec := doGuestRequest(t, e, http.MethodPut, token, body)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
+
+// newAdminEcho mirrors the production wiring of the admin surface: the rsvps
+// admin routes mounted behind the RequireAdmin middleware.
+func newAdminEcho(t *testing.T, svc *rsvps.Service) (*echo.Echo, *auth.Service) {
+	t.Helper()
+	authSvc := auth.NewService("test-secret", time.Hour, time.Hour, "admin", "password")
+
+	e := echo.New()
+	b, err := binder.New()
+	require.NoError(t, err)
+	e.Binder = b
+	e.HTTPErrorHandler = errcodes.NewHandler().Handle
+
+	admin := e.Group("/api/admin")
+	admin.Use(auth.NewMiddleware(authSvc).RequireAdmin)
+	rsvps.RegisterAdminRoutes(admin, svc)
+	return e, authSvc
+}
+
+func doAdminRequest(t *testing.T, e *echo.Echo, method, path, token, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	}
+	if token != "" {
+		req.Header.Set(echo.HeaderAuthorization, "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestAdminPartyRSVPEndpoints_RequireAdminToken(t *testing.T) {
+	e, authSvc := newAdminEcho(t, rsvps.NewService(nil))
+	path := "/api/admin/parties/00000000-0000-0000-0000-000000000000/rsvp"
+
+	rec := doAdminRequest(t, e, http.MethodGet, path, "", "")
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	// A guest token cannot record RSVPs for any party, its own included.
+	guestToken, err := authSvc.GenerateGuestToken("00000000-0000-0000-0000-000000000000")
+	require.NoError(t, err)
+	rec = doAdminRequest(t, e, http.MethodPut, path, guestToken, `{"guests":[]}`)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestAdminPartyRSVPEndpoints_MalformedPartyIDIs404(t *testing.T) {
+	e, authSvc := newAdminEcho(t, rsvps.NewService(nil))
+	token, err := authSvc.GenerateAdminToken()
+	require.NoError(t, err)
+
+	rec := doAdminRequest(t, e, http.MethodGet, "/api/admin/parties/not-a-uuid/rsvp", token, "")
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestGetAdminPartyRSVP_ReturnsThatPartysData(t *testing.T) {
+	svc, partySvc, eventSvc, _ := newServices(t)
+	e, authSvc := newAdminEcho(t, svc)
+
+	smiths := createPartyT(t, partySvc, "The Smiths")
+	alice := addGuestT(t, partySvc, smiths.ID, "Alice")
+	joneses := createPartyT(t, partySvc, "The Joneses")
+	addGuestT(t, partySvc, joneses.ID, "Carol")
+	createPublicEventT(t, eventSvc)
+
+	token, err := authSvc.GenerateAdminToken()
+	require.NoError(t, err)
+
+	rec := doAdminRequest(t, e, http.MethodGet, "/api/admin/parties/"+smiths.ID+"/rsvp", token, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp rsvps.PartyRSVPsResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Guests, 1)
+	assert.Equal(t, alice.ID, resp.Guests[0].ID)
+	require.Len(t, resp.Events, 1)
+}
+
+func TestPutAdminPartyRSVP_RecordsAfterDeadline(t *testing.T) {
+	svc, partySvc, eventSvc, db := newServices(t)
+	e, authSvc := newAdminEcho(t, svc)
+
+	p := createPartyT(t, partySvc, "The Smiths")
+	g := addGuestT(t, partySvc, p.ID, "Alice")
+	event := createPublicEventT(t, eventSvc)
+	setDeadline(t, db, -time.Hour)
+
+	token, err := authSvc.GenerateAdminToken()
+	require.NoError(t, err)
+
+	body := `{"guests":[{"guest_id":"` + g.ID + `","rsvps":[{"event_id":"` + event.ID + `","status":"attending"}]}]}`
+	rec := doAdminRequest(t, e, http.MethodPut, "/api/admin/parties/"+p.ID+"/rsvp", token, body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	assert.Equal(t, models.RSVPAttending, rsvpRow(t, db, event.ID, g.ID).Status)
+}

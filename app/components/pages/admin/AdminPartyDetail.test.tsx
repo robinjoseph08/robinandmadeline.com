@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { Guest } from "@/types/generated/models";
 import type { GuestResponse, PartyResponse } from "@/types/generated/parties";
+import type { PartyRSVPsResponse } from "@/types/generated/rsvps";
 
 import AdminPartyDetail from "./AdminPartyDetail";
 
@@ -80,8 +81,37 @@ const ALICE_PRIMARY = makeGuest({
 });
 const BOB = makeGuest({ id: "bob", full_name: "Bob", is_primary: false });
 
+function makeRSVPView(
+  overrides: Partial<PartyRSVPsResponse> = {},
+): PartyRSVPsResponse {
+  return {
+    guests: [],
+    events: [],
+    responded: false,
+    closed: false,
+    ...overrides,
+  };
+}
+
+// The detail page also loads the party's RSVP view. mockAdminRequest answers
+// that GET with rsvpView so tests that don't exercise the RSVP section keep
+// their catch-all mocks for everything else.
+let rsvpView: PartyRSVPsResponse;
+
+function mockAdminRequest<Options extends { method?: string }>(
+  impl: (path: string, options?: Options) => Promise<unknown>,
+) {
+  adminRequest.mockImplementation((path: string, options?: Options) => {
+    if (path === "/admin/parties/p1/rsvp" && !options?.method) {
+      return Promise.resolve(rsvpView);
+    }
+    return impl(path, options);
+  });
+}
+
 beforeEach(() => {
   adminRequest.mockReset();
+  rsvpView = makeRSVPView();
 });
 
 describe("AdminPartyDetail single-primary guest editing", () => {
@@ -91,29 +121,27 @@ describe("AdminPartyDetail single-primary guest editing", () => {
     // test models by flipping which guest the subsequent party GET returns.
     let bobIsPrimary = false;
 
-    adminRequest.mockImplementation(
-      (path: string, options?: { method?: string }) => {
-        const method = options?.method ?? "GET";
-        if (path === "/admin/parties/p1" && method === "GET") {
-          const guests = bobIsPrimary
-            ? [
-                makeGuest({ ...ALICE_PRIMARY, is_primary: false }),
-                makeGuest({ ...BOB, is_primary: true }),
-              ]
-            : [ALICE_PRIMARY, BOB];
-          return Promise.resolve(makeParty(guests));
-        }
-        if (path === "/admin/guests/bob" && method === "PATCH") {
-          bobIsPrimary = true;
-          const response: GuestResponse = makeGuest({
-            ...BOB,
-            is_primary: true,
-          });
-          return Promise.resolve(response);
-        }
-        return Promise.resolve(undefined);
-      },
-    );
+    mockAdminRequest((path: string, options?: { method?: string }) => {
+      const method = options?.method ?? "GET";
+      if (path === "/admin/parties/p1" && method === "GET") {
+        const guests = bobIsPrimary
+          ? [
+              makeGuest({ ...ALICE_PRIMARY, is_primary: false }),
+              makeGuest({ ...BOB, is_primary: true }),
+            ]
+          : [ALICE_PRIMARY, BOB];
+        return Promise.resolve(makeParty(guests));
+      }
+      if (path === "/admin/guests/bob" && method === "PATCH") {
+        bobIsPrimary = true;
+        const response: GuestResponse = makeGuest({
+          ...BOB,
+          is_primary: true,
+        });
+        return Promise.resolve(response);
+      }
+      return Promise.resolve(undefined);
+    });
 
     const user = userEvent.setup();
     renderDetail();
@@ -154,16 +182,14 @@ describe("AdminPartyDetail single-primary guest editing", () => {
 
 describe("AdminPartyDetail copy info link", () => {
   it("requests info first, then copies the link", async () => {
-    adminRequest.mockImplementation(
-      (path: string, options?: { method?: string }) => {
-        const method = options?.method ?? "GET";
-        if (path === "/admin/parties/p1" && method === "GET") {
-          return Promise.resolve(makeParty([ALICE_PRIMARY]));
-        }
-        // The request-info POST (and any refetch) resolve to the party.
+    mockAdminRequest((path: string, options?: { method?: string }) => {
+      const method = options?.method ?? "GET";
+      if (path === "/admin/parties/p1" && method === "GET") {
         return Promise.resolve(makeParty([ALICE_PRIMARY]));
-      },
-    );
+      }
+      // The request-info POST (and any refetch) resolve to the party.
+      return Promise.resolve(makeParty([ALICE_PRIMARY]));
+    });
 
     const user = userEvent.setup();
     // Override the clipboard AFTER userEvent.setup(), which installs its own
@@ -192,18 +218,16 @@ describe("AdminPartyDetail copy info link", () => {
   });
 
   it("aborts the copy when request-info fails", async () => {
-    adminRequest.mockImplementation(
-      (path: string, options?: { method?: string }) => {
-        const method = options?.method ?? "GET";
-        if (path === "/admin/parties/p1" && method === "GET") {
-          return Promise.resolve(makeParty([ALICE_PRIMARY]));
-        }
-        if (path === "/admin/parties/p1/request-info" && method === "POST") {
-          return Promise.reject(new Error("request-info failed"));
-        }
-        return Promise.resolve(undefined);
-      },
-    );
+    mockAdminRequest((path: string, options?: { method?: string }) => {
+      const method = options?.method ?? "GET";
+      if (path === "/admin/parties/p1" && method === "GET") {
+        return Promise.resolve(makeParty([ALICE_PRIMARY]));
+      }
+      if (path === "/admin/parties/p1/request-info" && method === "POST") {
+        return Promise.reject(new Error("request-info failed"));
+      }
+      return Promise.resolve(undefined);
+    });
 
     const user = userEvent.setup();
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -232,18 +256,16 @@ describe("AdminPartyDetail copy info link", () => {
 
 describe("AdminPartyDetail add guest", () => {
   it("creates a placeholder guest from the trailing add row", async () => {
-    adminRequest.mockImplementation(
-      (path: string, options?: { method?: string }) => {
-        const method = options?.method ?? "GET";
-        if (path === "/admin/parties/p1" && method === "GET") {
-          return Promise.resolve(makeParty([ALICE_PRIMARY]));
-        }
-        // The create POST (and any refetch) resolve to a guest.
-        return Promise.resolve(
-          makeGuest({ id: "new", placeholder_text: "Guest of Alice" }),
-        );
-      },
-    );
+    mockAdminRequest((path: string, options?: { method?: string }) => {
+      const method = options?.method ?? "GET";
+      if (path === "/admin/parties/p1" && method === "GET") {
+        return Promise.resolve(makeParty([ALICE_PRIMARY]));
+      }
+      // The create POST (and any refetch) resolve to a guest.
+      return Promise.resolve(
+        makeGuest({ id: "new", placeholder_text: "Guest of Alice" }),
+      );
+    });
 
     const user = userEvent.setup();
     renderDetail();
@@ -279,7 +301,7 @@ describe("AdminPartyDetail add guest", () => {
     // commit it, rather than being dropped as a phantom no-op against a stale
     // de-dup baseline. Both creates here should carry is_primary true.
     const created: Guest[] = [];
-    adminRequest.mockImplementation(
+    mockAdminRequest(
       (
         path: string,
         options?: {
@@ -357,20 +379,18 @@ describe("AdminPartyDetail add guest", () => {
     // not fire a duplicate create (the Add button disables itself, but the
     // Enter path needs its own guard).
     let resolveCreate: (guest: Guest) => void = () => {};
-    adminRequest.mockImplementation(
-      (path: string, options?: { method?: string }) => {
-        const method = options?.method ?? "GET";
-        if (path === "/admin/parties/p1" && method === "GET") {
-          return Promise.resolve(makeParty([ALICE_PRIMARY]));
-        }
-        if (path === "/admin/parties/p1/guests" && method === "POST") {
-          return new Promise<Guest>((resolve) => {
-            resolveCreate = resolve;
-          });
-        }
-        return Promise.resolve(undefined);
-      },
-    );
+    mockAdminRequest((path: string, options?: { method?: string }) => {
+      const method = options?.method ?? "GET";
+      if (path === "/admin/parties/p1" && method === "GET") {
+        return Promise.resolve(makeParty([ALICE_PRIMARY]));
+      }
+      if (path === "/admin/parties/p1/guests" && method === "POST") {
+        return new Promise<Guest>((resolve) => {
+          resolveCreate = resolve;
+        });
+      }
+      return Promise.resolve(undefined);
+    });
 
     const user = userEvent.setup();
     renderDetail();
@@ -406,20 +426,18 @@ describe("AdminPartyDetail tag suggestions", () => {
     // it.
     const alice = makeGuest({ id: "alice", full_name: "Alice", tags: [] });
 
-    adminRequest.mockImplementation(
-      (path: string, options?: { method?: string }) => {
-        const method = options?.method ?? "GET";
-        if (path === "/admin/parties/p1" && method === "GET") {
-          return Promise.resolve(makeParty([alice]));
-        }
-        // The detail page reads the tag vocabulary from its own endpoint, not
-        // from the party's guests.
-        if (path === "/admin/guests/tags" && method === "GET") {
-          return Promise.resolve({ items: ["Groomsman"], total: 1 });
-        }
-        return Promise.resolve(undefined);
-      },
-    );
+    mockAdminRequest((path: string, options?: { method?: string }) => {
+      const method = options?.method ?? "GET";
+      if (path === "/admin/parties/p1" && method === "GET") {
+        return Promise.resolve(makeParty([alice]));
+      }
+      // The detail page reads the tag vocabulary from its own endpoint, not
+      // from the party's guests.
+      if (path === "/admin/guests/tags" && method === "GET") {
+        return Promise.resolve({ items: ["Groomsman"], total: 1 });
+      }
+      return Promise.resolve(undefined);
+    });
 
     const user = userEvent.setup();
     renderDetail();
@@ -432,5 +450,197 @@ describe("AdminPartyDetail tag suggestions", () => {
     expect(
       await screen.findByRole("option", { name: /Groomsman/ }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("AdminPartyDetail RSVPs", () => {
+  const CEREMONY = {
+    id: "ceremony",
+    name: "Ceremony",
+    date: "2026-10-17",
+    is_public: true,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+  const REHEARSAL = { ...CEREMONY, id: "rehearsal", name: "Rehearsal Dinner" };
+
+  it("shows each guest's status per event, and who is not invited", async () => {
+    rsvpView = makeRSVPView({
+      guests: [
+        { id: "alice", full_name: "Alice" },
+        { id: "bob", full_name: "Bob" },
+      ],
+      events: [
+        {
+          ...REHEARSAL,
+          rsvps: [{ guest_id: "alice", status: "not_attending" }],
+        },
+        {
+          ...CEREMONY,
+          rsvps: [
+            { guest_id: "alice", status: "attending" },
+            { guest_id: "bob", status: "pending" },
+          ],
+        },
+      ],
+    });
+    mockAdminRequest((path) =>
+      path === "/admin/parties/p1"
+        ? Promise.resolve(makeParty([ALICE_PRIMARY, BOB]))
+        : Promise.resolve(undefined),
+    );
+
+    renderDetail();
+
+    const grid = (
+      await screen.findByRole("columnheader", { name: "Rehearsal Dinner" })
+    ).closest("table")!;
+    const aliceRow = within(grid).getByRole("cell", {
+      name: "Alice",
+    }).parentElement!;
+    const bobRow = within(grid).getByRole("cell", {
+      name: "Bob",
+    }).parentElement!;
+    expect(within(aliceRow).getByText("Not attending")).toBeInTheDocument();
+    expect(within(aliceRow).getByText("Attending")).toBeInTheDocument();
+    expect(within(bobRow).getByText("Not invited")).toBeInTheDocument();
+    expect(within(bobRow).getByText("Pending")).toBeInTheDocument();
+  });
+
+  it("records the whole party's response through the admin endpoint", async () => {
+    rsvpView = makeRSVPView({
+      closed: true,
+      guests: [
+        { id: "alice", full_name: "Alice" },
+        {
+          id: "plus-one",
+          full_name: "Guest of Alice",
+          placeholder_text: "Guest of Alice",
+        },
+      ],
+      events: [
+        {
+          ...CEREMONY,
+          rsvps: [
+            { guest_id: "alice", status: "pending" },
+            { guest_id: "plus-one", status: "pending" },
+          ],
+        },
+      ],
+    });
+    mockAdminRequest((path, options) => {
+      if (path === "/admin/parties/p1" && !options?.method) {
+        return Promise.resolve(makeParty([ALICE_PRIMARY]));
+      }
+      if (path === "/admin/parties/p1/rsvp" && options?.method === "PUT") {
+        return Promise.resolve(rsvpView);
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Record RSVP" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    // Past the deadline the couple can still record a response.
+    expect(
+      within(dialog).getByText(/deadline has passed, but you can still/),
+    ).toBeInTheDocument();
+
+    const alice = within(dialog).getByRole("region", { name: "Alice" });
+    await user.click(
+      within(alice).getByRole("button", { name: "Ceremony: attending" }),
+    );
+    await user.type(
+      within(alice).getByLabelText("Dietary restrictions"),
+      "vegetarian",
+    );
+    const plusOne = within(dialog).getByRole("region", {
+      name: "Guest of Alice",
+    });
+    await user.type(within(plusOne).getByLabelText("Name"), "Bob Jones");
+    await user.click(
+      within(plusOne).getByRole("button", { name: "Ceremony: not attending" }),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Save RSVP" }));
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/parties/p1/rsvp", {
+        method: "PUT",
+        body: {
+          guests: [
+            {
+              guest_id: "alice",
+              full_name: undefined,
+              dietary_restrictions: "vegetarian",
+              rsvps: [{ event_id: "ceremony", status: "attending" }],
+            },
+            {
+              guest_id: "plus-one",
+              full_name: "Bob Jones",
+              dietary_restrictions: undefined,
+              rsvps: [{ event_id: "ceremony", status: "not_attending" }],
+            },
+          ],
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+  });
+
+  it("seeds the dialog from a fresh read, not the page's cached view", async () => {
+    // The page loads while Alice is still pending; by the time the dialog
+    // opens she has answered online. The form must start from her answer so
+    // saving cannot silently revert it.
+    rsvpView = makeRSVPView({
+      guests: [{ id: "alice", full_name: "Alice" }],
+      events: [
+        { ...CEREMONY, rsvps: [{ guest_id: "alice", status: "pending" }] },
+      ],
+    });
+    mockAdminRequest((path) =>
+      path === "/admin/parties/p1"
+        ? Promise.resolve(makeParty([ALICE_PRIMARY]))
+        : Promise.resolve(undefined),
+    );
+
+    const user = userEvent.setup();
+    renderDetail();
+    await screen.findByRole("columnheader", { name: "Ceremony" });
+
+    rsvpView = makeRSVPView({
+      guests: [{ id: "alice", full_name: "Alice" }],
+      events: [
+        { ...CEREMONY, rsvps: [{ guest_id: "alice", status: "attending" }] },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Record RSVP" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByRole("button", {
+        name: "Ceremony: attending",
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("disables recording when the party is not invited to anything", async () => {
+    mockAdminRequest((path) =>
+      path === "/admin/parties/p1"
+        ? Promise.resolve(makeParty([ALICE_PRIMARY]))
+        : Promise.resolve(undefined),
+    );
+
+    renderDetail();
+
+    expect(
+      await screen.findByText("This party is not invited to any events yet."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Record RSVP" })).toBeDisabled();
   });
 });

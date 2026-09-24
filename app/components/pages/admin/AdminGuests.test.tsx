@@ -33,10 +33,13 @@ vi.mock("@/libraries/admin-api", async () => {
 });
 
 function makeGuestItem(overrides: Partial<GuestListItem>): GuestListItem {
+  const partyId = overrides.party_id ?? "p7";
+  const partyName = overrides.party_name ?? "The Smiths";
   return {
     id: "g1",
-    party_id: "p7",
-    party_name: "The Smiths",
+    party_id: partyId,
+    party_name: partyName,
+    party: makeParty(partyId, partyName),
     full_name: "Guest",
     tags: [],
     is_primary: false,
@@ -211,6 +214,36 @@ describe("AdminGuests sorting", () => {
 });
 
 describe("AdminGuests flat list", () => {
+  it("links each guest to its party without waiting for the parties list", async () => {
+    setMock({
+      guests: [
+        makeGuestItem({
+          id: "alice",
+          full_name: "Alice",
+          party_id: "p7",
+          party_name: "The Smiths",
+        }),
+      ],
+    });
+    // The parties list never arrives: the link and party columns come from
+    // the party embedded in the guest list response.
+    const answer = adminRequest.getMockImplementation()!;
+    adminRequest.mockImplementation(
+      (path: string, options?: { method?: string }) =>
+        path === "/admin/parties" && !options?.method
+          ? new Promise(() => {})
+          : answer(path, options),
+    );
+
+    renderGuests();
+
+    const row = (await screen.findByDisplayValue("Alice")).closest("tr")!;
+    expect(
+      within(row).getByRole("link", { name: "Open The Smiths" }),
+    ).toHaveAttribute("href", "/admin/parties/p7");
+    expect(within(row).getByText("Robin")).toBeInTheDocument();
+  });
+
   it("shows each guest's party and reassigns it via the combobox", async () => {
     setMock({
       guests: [

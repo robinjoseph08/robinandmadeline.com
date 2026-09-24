@@ -144,3 +144,29 @@ export function formatEventWhen(
 export function formatGuestFirstNames(names: string[]): string {
   return names.map((name) => name.split(" ")[0]).join(", ");
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The RSVP deadline with how long is left ("Jan 15, 2027 (113 days left)"), or
+ * "(passed)" / "Not set". The date label is the deadline's UTC calendar date,
+ * matching the settings page, which stores a picked day as the last second of
+ * that UTC day (see admin/settings/deadline.ts). Any part of a day left counts
+ * as a day, so the deadline's own day reads "1 day left" until it passes.
+ */
+export function formatDeadline(
+  deadline: string | null | undefined,
+  now: Date,
+): string {
+  if (!deadline) return "Not set";
+  const at = new Date(deadline);
+  const date = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(at);
+  const daysLeft = Math.ceil((at.getTime() - now.getTime()) / DAY_MS);
+  if (daysLeft <= 0) return `${date} (passed)`;
+  return `${date} (${daysLeft} ${daysLeft === 1 ? "day" : "days"} left)`;
+}
