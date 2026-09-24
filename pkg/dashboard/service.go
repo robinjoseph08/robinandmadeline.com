@@ -92,12 +92,12 @@ func (s *Service) Overview(ctx context.Context) (*Response, error) {
 	return resp, nil
 }
 
-// guestBreakdown tallies guests by their party's side and relation in two
-// grouped queries (a guest joins to its party), and by their own child and
-// drinking flags in a third. Each closed-enum value maps to
-// its explicit field; a value with no guests stays zero. An unexpected value
-// (would only arise if the CHECK constraint were bypassed) is ignored rather
-// than crashing the dashboard.
+// guestBreakdown tallies every guest by their party's side and relation in
+// two grouped queries (a guest joins to its party), and the expected guests
+// by their own child and drinking flags in a third. Each closed-enum value
+// maps to its explicit field; a value with no guests stays zero. An
+// unexpected value (would only arise if the CHECK constraint were bypassed)
+// is ignored rather than crashing the dashboard.
 func (s *Service) guestBreakdown(ctx context.Context) (GuestBreakdown, error) {
 	var breakdown GuestBreakdown
 
@@ -115,7 +115,11 @@ func (s *Service) guestBreakdown(ctx context.Context) (GuestBreakdown, error) {
 	breakdown.ByRelation.Family = byRelation[models.RelationFamily]
 	breakdown.ByRelation.Friend = byRelation[models.RelationFriend]
 
+	// Age and drinking plan catering and the bar, so they count only the
+	// guests who may still come (the expected attendance bucket, the same
+	// condition the linked guest list filters on), not those who declined.
 	err = s.db.NewSelect().Model((*models.Guest)(nil)).
+		Where(models.GuestAttendanceCondition(models.AttendanceExpected)).
 		ColumnExpr("count(*) FILTER (WHERE NOT g.is_child)").
 		ColumnExpr("count(*) FILTER (WHERE g.is_child)").
 		ColumnExpr("count(*) FILTER (WHERE g.is_drinking)").

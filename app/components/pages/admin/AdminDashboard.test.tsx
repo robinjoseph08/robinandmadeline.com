@@ -132,11 +132,14 @@ describe("AdminDashboard stats", () => {
     expect(screen.getByText("Friend")).toBeInTheDocument();
   });
 
-  it("shows the guest breakdown by age and drinking", async () => {
+  it("shows the expected guests' breakdown by age and drinking", async () => {
     stub({ dashboard: makeDashboard() });
     renderDashboard();
 
     await screen.findByText("Guest breakdown");
+    // Both cards name their population, since side and relation count
+    // everyone.
+    expect(screen.getAllByText(/· Expected guests/)).toHaveLength(2);
     expect(screen.getByText("Adults").nextElementSibling).toHaveTextContent(
       "2",
     );
@@ -167,10 +170,10 @@ describe("AdminDashboard stats", () => {
       "No response yet: 1": "/admin/parties?rsvp_progress=not_responded",
       "Robin: 2": "/admin/guests?side=robin",
       "Friend: 2": "/admin/guests?relation=friend",
-      "Adults: 2": "/admin/guests?is_child=false",
-      "Children: 1": "/admin/guests?is_child=true",
-      "Drinking: 1": "/admin/guests?is_drinking=true",
-      "Not drinking: 2": "/admin/guests?is_drinking=false",
+      "Adults: 2": "/admin/guests?attendance=expected&is_child=false",
+      "Children: 1": "/admin/guests?attendance=expected&is_child=true",
+      "Drinking: 1": "/admin/guests?attendance=expected&is_drinking=true",
+      "Not drinking: 2": "/admin/guests?attendance=expected&is_drinking=false",
     };
     for (const [name, href] of Object.entries(hrefs)) {
       expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);

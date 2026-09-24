@@ -26,21 +26,25 @@ type RelationBreakdown struct {
 	Friend int `json:"friend"`
 }
 
-// AgeBreakdown counts guests by the is_child flag.
+// AgeBreakdown counts expected guests (see models.AttendanceExpected) by the
+// is_child flag.
 type AgeBreakdown struct {
 	Adults   int `json:"adults"`
 	Children int `json:"children"`
 }
 
-// DrinkingBreakdown counts guests by the is_drinking flag.
+// DrinkingBreakdown counts expected guests (see models.AttendanceExpected) by
+// the is_drinking flag.
 type DrinkingBreakdown struct {
 	Drinking    int `json:"drinking"`
 	NotDrinking int `json:"not_drinking"`
 }
 
-// GuestBreakdown counts guests grouped by their party's side and relation and
-// by their own child and drinking flags. Each sub-breakdown's counts sum to the
-// total guest count.
+// GuestBreakdown counts every guest by their party's side and relation, and
+// the expected guests by their own child and drinking flags (the counts that
+// plan catering and the bar, so declines drop out). The side and relation
+// counts each sum to the total guest count; the age and drinking counts each
+// sum to the expected count.
 type GuestBreakdown struct {
 	BySide     SideBreakdown     `json:"by_side"`
 	ByRelation RelationBreakdown `json:"by_relation"`
