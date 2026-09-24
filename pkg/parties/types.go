@@ -151,7 +151,10 @@ type ListPartiesQuery struct {
 	InvitationType          *string `query:"invitation_type" json:"invitation_type" validate:"omitempty,oneof=physical digital"`
 	InfoCollectionRequested *bool   `query:"info_collection_requested" json:"info_collection_requested"`
 	InfoCollectionStatus    *string `query:"info_collection_status" json:"info_collection_status" validate:"omitempty,oneof=complete incomplete" tstype:"models.InfoCollectionStatus"`
-	Sort                    string  `query:"sort" json:"sort,omitempty" validate:"omitempty,max=200,sortspec=parties"`
+	// RSVPProgress matches parties in one RSVP progress bucket (see
+	// models.PartyRSVPProgressCondition), the same buckets the dashboard counts.
+	RSVPProgress *string `query:"rsvp_progress" json:"rsvp_progress" validate:"omitempty,oneof=responded partial not_responded" tstype:"models.PartyRSVPProgress"`
+	Sort         string  `query:"sort" json:"sort,omitempty" validate:"omitempty,max=200,sortspec=parties"`
 }
 
 // CreateGuestPayload is the body to add a guest to a party. The party comes from
@@ -280,6 +283,10 @@ type ListGuestsQuery struct {
 	IsPlaceholder *bool   `query:"is_placeholder" json:"is_placeholder"`
 	EventID       *string `query:"event_id" json:"event_id" validate:"omitempty,uuid"` // matches guests invited to this event
 	RSVPStatus    *string `query:"rsvp_status" json:"rsvp_status" validate:"omitempty,oneof=pending attending not_attending" tstype:"models.EventRSVPStatus"`
+	// Attendance matches guests in one attendance bucket across all their
+	// Event RSVPs (see models.GuestAttendanceCondition), the same buckets the
+	// dashboard counts.
+	Attendance *string `query:"attendance" json:"attendance" validate:"omitempty,oneof=expected coming awaiting declined" tstype:"models.GuestAttendance"`
 	// Sort is a multi-level sort spec ("party:asc,name:asc"); an empty Sort keeps
 	// the default (creation order). The "party" field sorts a guest by its owning
 	// party's name. Validated against the guest field whitelist by the sortspec
@@ -319,17 +326,20 @@ type GuestResponse struct {
 
 // GuestListItem is the API representation of a guest in the flat guest list. A
 // guest is a sub-entity of its party and has no detail page of its own, so the
-// list carries the owning party's name (alongside the model's party_id) to let
-// the UI link each guest back to its party and edit it in place. It embeds the
-// guest model by value (a plain `extends models.Guest`; see PartyResponse) and
-// adds only the derived party_name.
+// list carries the owning party (alongside the model's party_id) to let the UI
+// link each guest back to its party and show the party's attributes without
+// waiting on a second request for the parties list. It embeds the guest model
+// by value (a plain `extends models.Guest`; see PartyResponse) and adds the
+// party's name (kept as its own field for the many consumers that only need
+// the label) and the party itself, without its guests.
 type GuestListItem struct {
 	models.Guest `tstype:",extends"`
-	PartyName    string `json:"party_name"`
+	PartyName    string        `json:"party_name"`
+	Party        PartyResponse `json:"party"`
 }
 
 // ListGuestsResponse is the uniform list envelope for the flat guest list. Items
-// are GuestListItem (guest plus party_name), not GuestResponse, because the flat
+// are GuestListItem (guest plus its party), not GuestResponse, because the flat
 // list needs the party context the party-scoped endpoints already have.
 type ListGuestsResponse struct {
 	Items []GuestListItem `json:"items"`
@@ -373,6 +383,9 @@ func newGuestListItem(g *models.Guest) GuestListItem {
 	item := GuestListItem{Guest: *g}
 	if g.Party != nil {
 		item.PartyName = g.Party.Name
+		// The relation is loaded without its guests, so the embedded party
+		// carries none (guests is omitempty).
+		item.Party = newPartyResponse(g.Party)
 	}
 	return item
 }

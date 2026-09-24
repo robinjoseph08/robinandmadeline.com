@@ -1,5 +1,6 @@
-import { Info } from "lucide-react";
+import { ArrowRight, Info } from "lucide-react";
 import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
 
 import { Button, type ButtonProps } from "@/components/ui/button";
 import {
@@ -38,6 +39,44 @@ export function TooltipIconButton({
           variant={variant}
         >
           {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * A compact "open this party" link for a grid's frozen Name column, so the
+ * party page is one click away from any row without scrolling to the far-right
+ * columns. The accessible name doubles as its tooltip. It is left out of the
+ * Tab order so tabbing from Name still lands on the next column, as in a
+ * spreadsheet.
+ */
+export function OpenPartyLink({
+  partyId,
+  partyName,
+}: {
+  partyId: string;
+  partyName: string;
+}) {
+  const label = `Open ${partyName}`;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          asChild
+          className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+          size="icon"
+          variant="ghost"
+        >
+          <Link
+            aria-label={label}
+            tabIndex={-1}
+            to={`/admin/parties/${partyId}`}
+          >
+            <ArrowRight />
+          </Link>
         </Button>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>

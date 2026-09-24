@@ -14,6 +14,7 @@ import {
   SIDE_OPTIONS,
 } from "@/components/pages/admin/parties/options";
 import { PartyFormDialog } from "@/components/pages/admin/parties/PartyFormDialog";
+import { PartyRSVPs } from "@/components/pages/admin/parties/PartyRSVPs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useUpdateGuest } from "@/hooks/queries/guests";
@@ -43,7 +44,9 @@ import type {
  * guests as an editable spreadsheet with a trailing add row. Inline cell edits go
  * through PATCH; the guest edit dialog survives for dietary restrictions and
  * table/seat. The single-primary invariant is enforced by the API, so after a
- * write the refetched party shows exactly one primary.
+ * write the refetched party shows exactly one primary. Below the guests, the
+ * party's Event RSVPs, where the couple records a response given to them
+ * directly.
  */
 export default function AdminPartyDetail() {
   const { id } = useParams<{ id: string }>();
@@ -256,6 +259,8 @@ export default function AdminPartyDetail() {
           />
         </div>
       </section>
+
+      {id ? <PartyRSVPs partyId={id} partyName={party.name} /> : null}
 
       <PartyFormDialog
         isPending={updateParty.isPending}

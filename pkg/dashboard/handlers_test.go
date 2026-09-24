@@ -135,8 +135,8 @@ func TestDashboard_EmptyIsAllZeros(t *testing.T) {
 	f := newAPI(t)
 
 	resp := getDashboard(t, f)
-	assert.Equal(t, 0, resp.TotalParties)
-	assert.Equal(t, 0, resp.TotalGuests)
+	assert.Equal(t, dashboard.GuestAttendanceCounts{}, resp.GuestAttendance)
+	assert.Equal(t, dashboard.PartyRSVPProgressCounts{}, resp.PartyRSVPProgress)
 	assert.Equal(t, 0, resp.RSVPSummary.Total)
 	assert.InDelta(t, 0, resp.RSVPSummary.ResponseRate, 0.0001)
 	assert.Equal(t, 0, resp.InfoCollection.Total)
@@ -160,14 +160,33 @@ func TestDashboard_PartyAndGuestCounts(t *testing.T) {
 	createGuest(t, f, p2.ID, "Carol", true, emailOf("carol@example.com"))
 
 	resp := getDashboard(t, f)
-	assert.Equal(t, 2, resp.TotalParties)
-	assert.Equal(t, 3, resp.TotalGuests)
+	assert.Equal(t, 2, resp.PartyRSVPProgress.Total)
+	assert.Equal(t, 3, resp.GuestAttendance.Total)
 
 	// Guests are attributed to their party's side/relation.
 	assert.Equal(t, 2, resp.GuestBreakdown.BySide.Robin)
 	assert.Equal(t, 1, resp.GuestBreakdown.BySide.Madeline)
 	assert.Equal(t, 1, resp.GuestBreakdown.ByRelation.Family)
 	assert.Equal(t, 2, resp.GuestBreakdown.ByRelation.Friend)
+}
+
+func TestDashboard_GuestBreakdownByChildAndDrinking(t *testing.T) {
+	// Asymmetric on purpose (1 child of 3, 2 drinking of 3) so a swapped
+	// column shows up as a wrong count.
+	f := newAPI(t)
+	p := createParty(t, f, "Smiths", partyOpts{})
+	for _, g := range []parties.CreateGuestPayload{
+		{FullName: "Alice", IsPrimary: true, IsDrinking: true},
+		{FullName: "Bob", IsDrinking: true},
+		{FullName: "Cara", IsChild: true},
+	} {
+		_, err := f.parties.CreateGuest(ctx(), p.ID, g)
+		require.NoError(t, err)
+	}
+
+	resp := getDashboard(t, f)
+	assert.Equal(t, dashboard.AgeBreakdown{Adults: 2, Children: 1}, resp.GuestBreakdown.ByAge)
+	assert.Equal(t, dashboard.DrinkingBreakdown{Drinking: 2, NotDrinking: 1}, resp.GuestBreakdown.ByDrinking)
 }
 
 func TestDashboard_PerEventRSVPBreakdownAndSummary(t *testing.T) {
@@ -222,6 +241,106 @@ func TestDashboard_PerEventRSVPBreakdownAndSummary(t *testing.T) {
 	assert.Equal(t, 3, resp.RSVPSummary.Responded)
 	assert.Equal(t, 6, resp.RSVPSummary.Total)
 	assert.InDelta(t, 3.0/6.0, resp.RSVPSummary.ResponseRate, 0.0001)
+}
+
+func TestDashboard_GuestAttendanceBucketsEveryGuest(t *testing.T) {
+	// Two public events invite every guest; a private one invites nobody. Each
+	// guest lands in exactly one bucket:
+	//   Alice: attending one event, declined the other -> coming
+	//   Bob:   declined both events -> declined
+	//   Cara:  declined one, still pending the other -> awaiting
+	//   Dan:   pending both -> awaiting
+	f := newAPI(t)
+	p := createParty(t, f, "Smiths", partyOpts{})
+	alice := createGuest(t, f, p.ID, "Alice", true, emailOf("alice@example.com"))
+	bob := createGuest(t, f, p.ID, "Bob", false, nil)
+	cara := createGuest(t, f, p.ID, "Cara", false, nil)
+	createGuest(t, f, p.ID, "Dan", false, nil)
+
+	ceremony, err := f.events.CreateEvent(ctx(), events.CreateEventPayload{
+		Name: "Ceremony", Date: "2026-08-01", IsPublic: true,
+	})
+	require.NoError(t, err)
+	reception, err := f.events.CreateEvent(ctx(), events.CreateEventPayload{
+		Name: "Reception", Date: "2026-08-01", IsPublic: true,
+	})
+	require.NoError(t, err)
+	_, err = f.events.CreateEvent(ctx(), events.CreateEventPayload{
+		Name: "Rehearsal Dinner", Date: "2026-07-31",
+	})
+	require.NoError(t, err)
+
+	set := func(eventID, guestID, status string) {
+		t.Helper()
+		_, err := f.events.UpdateRSVPStatus(ctx(), eventID, guestID, events.UpdateEventRSVPPayload{Status: status})
+		require.NoError(t, err)
+	}
+	set(ceremony.ID, alice.ID, models.RSVPAttending)
+	set(reception.ID, alice.ID, models.RSVPNotAttending)
+	set(ceremony.ID, bob.ID, models.RSVPNotAttending)
+	set(reception.ID, bob.ID, models.RSVPNotAttending)
+	set(ceremony.ID, cara.ID, models.RSVPNotAttending)
+
+	resp := getDashboard(t, f)
+	assert.Equal(t, dashboard.GuestAttendanceCounts{
+		Total:    4,
+		Expected: 3,
+		Coming:   1,
+		Awaiting: 2,
+		Declined: 1,
+	}, resp.GuestAttendance)
+}
+
+func TestDashboard_GuestWithNoInvitationsIsAwaiting(t *testing.T) {
+	// Before any event exists nobody has an Event RSVP row. They are still on
+	// the list, so they count as expected, not declined.
+	f := newAPI(t)
+	p := createParty(t, f, "Smiths", partyOpts{})
+	createGuest(t, f, p.ID, "Alice", true, emailOf("alice@example.com"))
+
+	resp := getDashboard(t, f)
+	assert.Equal(t, dashboard.GuestAttendanceCounts{
+		Total:    1,
+		Expected: 1,
+		Awaiting: 1,
+	}, resp.GuestAttendance)
+}
+
+func TestDashboard_PartyRSVPProgressBucketsEveryParty(t *testing.T) {
+	// One public event invites every guest.
+	//   Smiths:  both guests answered -> responded
+	//   Joneses: one of two answered -> partial
+	//   Lees:    nobody answered -> not responded
+	f := newAPI(t)
+	smiths := createParty(t, f, "Smiths", partyOpts{})
+	alice := createGuest(t, f, smiths.ID, "Alice", true, emailOf("alice@example.com"))
+	bob := createGuest(t, f, smiths.ID, "Bob", false, nil)
+	joneses := createParty(t, f, "Joneses", partyOpts{})
+	carol := createGuest(t, f, joneses.ID, "Carol", true, emailOf("carol@example.com"))
+	createGuest(t, f, joneses.ID, "Dan", false, nil)
+	lees := createParty(t, f, "Lees", partyOpts{})
+	createGuest(t, f, lees.ID, "Erin", true, emailOf("erin@example.com"))
+
+	ceremony, err := f.events.CreateEvent(ctx(), events.CreateEventPayload{
+		Name: "Ceremony", Date: "2026-08-01", IsPublic: true,
+	})
+	require.NoError(t, err)
+	for guestID, status := range map[string]string{
+		alice.ID: models.RSVPAttending,
+		bob.ID:   models.RSVPNotAttending,
+		carol.ID: models.RSVPAttending,
+	} {
+		_, err := f.events.UpdateRSVPStatus(ctx(), ceremony.ID, guestID, events.UpdateEventRSVPPayload{Status: status})
+		require.NoError(t, err)
+	}
+
+	resp := getDashboard(t, f)
+	assert.Equal(t, dashboard.PartyRSVPProgressCounts{
+		Total:        3,
+		Responded:    1,
+		Partial:      1,
+		NotResponded: 1,
+	}, resp.PartyRSVPProgress)
 }
 
 func TestDashboard_InfoCollectionProgressUsesEffectiveStatus(t *testing.T) {

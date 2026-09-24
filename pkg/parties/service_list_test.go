@@ -548,6 +548,118 @@ func TestListGuests_EventAndRSVPStatusFilters(t *testing.T) {
 	})
 }
 
+func TestListGuests_AttendanceFilter(t *testing.T) {
+	svc, db := newService(t)
+	eventSvc := events.NewService(db)
+
+	// Two public events invite everyone who exists when they are created.
+	//   Alice: attending one, declined the other -> coming
+	//   Bob:   declined both -> declined
+	//   Cara:  declined one, pending the other -> awaiting
+	//   Dan:   invited to nothing at all -> awaiting
+	p := createPartyT(t, svc, digitalPartyInput())
+	alice := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Alice"})
+	bob := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Bob"})
+	cara := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Cara"})
+	ceremony, err := eventSvc.CreateEvent(ctx(), events.CreateEventPayload{Name: "Ceremony", Date: "2026-10-17", IsPublic: true})
+	require.NoError(t, err)
+	reception, err := eventSvc.CreateEvent(ctx(), events.CreateEventPayload{Name: "Reception", Date: "2026-10-17", IsPublic: true})
+	require.NoError(t, err)
+	// Adding a guest backfills every public event, so strip Dan's rows to
+	// model a guest with no invitations at all.
+	dan := addGuestT(t, svc, p.ID, parties.CreateGuestPayload{FullName: "Dan"})
+	_, err = db.NewDelete().Model((*models.EventRSVP)(nil)).Where("guest_id = ?", dan.ID).Exec(ctx())
+	require.NoError(t, err)
+	set := func(eventID, guestID, status string) {
+		t.Helper()
+		_, err := eventSvc.UpdateRSVPStatus(ctx(), eventID, guestID, events.UpdateEventRSVPPayload{Status: status})
+		require.NoError(t, err)
+	}
+	set(ceremony.ID, alice.ID, models.RSVPAttending)
+	set(reception.ID, alice.ID, models.RSVPNotAttending)
+	set(ceremony.ID, bob.ID, models.RSVPNotAttending)
+	set(reception.ID, bob.ID, models.RSVPNotAttending)
+	set(ceremony.ID, cara.ID, models.RSVPNotAttending)
+
+	for attendance, want := range map[string][]string{
+		models.AttendanceComing:   {alice.ID},
+		models.AttendanceDeclined: {bob.ID},
+		models.AttendanceAwaiting: {cara.ID, dan.ID},
+		models.AttendanceExpected: {alice.ID, cara.ID, dan.ID},
+	} {
+		t.Run(attendance, func(t *testing.T) {
+			got, total, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{Attendance: pointerutil.String(attendance)})
+			require.NoError(t, err)
+			assert.Equal(t, len(want), total)
+			wantIDs := make(map[string]bool, len(want))
+			for _, id := range want {
+				wantIDs[id] = true
+			}
+			assert.Equal(t, wantIDs, guestIDs(got))
+		})
+	}
+
+	t.Run("combines with the event and status filters", func(t *testing.T) {
+		// Declined the ceremony, but still awaiting overall: only Cara.
+		got, _, err := svc.ListGuests(ctx(), parties.ListGuestsQuery{
+			Attendance: pointerutil.String(models.AttendanceAwaiting),
+			EventID:    pointerutil.String(ceremony.ID),
+			RSVPStatus: pointerutil.String(models.RSVPNotAttending),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]bool{cara.ID: true}, guestIDs(got))
+	})
+}
+
+func TestListParties_RSVPProgressFilter(t *testing.T) {
+	svc, db := newService(t)
+	eventSvc := events.NewService(db)
+
+	// One public event invites everyone.
+	//   responded: both guests answered
+	//   partial:   one of two answered
+	//   none:      nobody answered
+	responded := createPartyT(t, svc, digitalPartyInput())
+	r1 := addGuestT(t, svc, responded.ID, parties.CreateGuestPayload{FullName: "R1"})
+	r2 := addGuestT(t, svc, responded.ID, parties.CreateGuestPayload{FullName: "R2"})
+	partial := createPartyT(t, svc, digitalPartyInput())
+	p1 := addGuestT(t, svc, partial.ID, parties.CreateGuestPayload{FullName: "P1"})
+	addGuestT(t, svc, partial.ID, parties.CreateGuestPayload{FullName: "P2"})
+	none := createPartyT(t, svc, digitalPartyInput())
+	addGuestT(t, svc, none.ID, parties.CreateGuestPayload{FullName: "N1"})
+	// A party with a guest but no invitations at all (its rows removed after
+	// the public event backfilled them) has nothing answered either.
+	uninvited := createPartyT(t, svc, digitalPartyInput())
+	u1 := addGuestT(t, svc, uninvited.ID, parties.CreateGuestPayload{FullName: "U1"})
+
+	event, err := eventSvc.CreateEvent(ctx(), events.CreateEventPayload{Name: "Ceremony", Date: "2026-10-17", IsPublic: true})
+	require.NoError(t, err)
+	for guestID, status := range map[string]string{
+		r1.ID: models.RSVPAttending,
+		r2.ID: models.RSVPNotAttending,
+		p1.ID: models.RSVPAttending,
+	} {
+		_, err := eventSvc.UpdateRSVPStatus(ctx(), event.ID, guestID, events.UpdateEventRSVPPayload{Status: status})
+		require.NoError(t, err)
+	}
+
+	_, err = db.NewDelete().Model((*models.EventRSVP)(nil)).Where("guest_id = ?", u1.ID).Exec(ctx())
+	require.NoError(t, err)
+
+	for progress, want := range map[string]map[string]bool{
+		models.ProgressResponded:    {responded.ID: true},
+		models.ProgressPartial:      {partial.ID: true},
+		models.ProgressNotResponded: {none.ID: true, uninvited.ID: true},
+	} {
+		t.Run(progress, func(t *testing.T) {
+			got, total, err := svc.ListParties(ctx(), parties.ListPartiesQuery{RSVPProgress: pointerutil.String(progress)})
+			require.NoError(t, err)
+			assert.Equal(t, len(want), total)
+			assert.Equal(t, want, partyIDs(got))
+		})
+	}
+}
+
 // TestListParties_Sort covers the multi-level party sort. Parties are created out
 // of alphabetical, side, and creation order so single-field and multi-level
 // sorts each produce a visibly distinct order; "alice" is lowercase so the

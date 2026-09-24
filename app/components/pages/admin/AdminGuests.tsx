@@ -13,6 +13,7 @@ import {
 import { FilterSheet } from "@/components/pages/admin/parties/FilterSheet";
 import { GuestFormDialog } from "@/components/pages/admin/parties/GuestFormDialog";
 import {
+  ATTENDANCE_OPTIONS,
   BUILTIN_GUEST_SORT,
   CIRCLE_OPTIONS,
   GUEST_SORT_FIELD_SET,
@@ -44,6 +45,7 @@ import {
 import type {
   Circle,
   EventRSVPStatus,
+  GuestAttendance,
   InfoCollectionStatus,
   Relation,
   Side,
@@ -81,6 +83,7 @@ const FILTER_KEYS = [
   "tags",
   "event_id",
   "rsvp_status",
+  "attendance",
 ] as const;
 
 // Every URL param forwarded to the list API: the sheet filters plus the search
@@ -375,6 +378,12 @@ export default function AdminGuests() {
             options={RSVP_STATUS_OPTIONS}
             value={filters.rsvp_status as EventRSVPStatus | undefined}
           />
+          <FilterSelect<GuestAttendance>
+            label="Attendance"
+            onChange={(v) => setFilter("attendance", v)}
+            options={ATTENDANCE_OPTIONS}
+            value={filters.attendance}
+          />
         </FilterSheet>
         <SortSheet
           fields={GUEST_SORT_FIELDS}
@@ -413,6 +422,7 @@ export default function AdminGuests() {
               guests={guests}
               onEditGuest={openEdit}
               parties={parties}
+              partyFor={(guest) => guest.party}
               partyIdFor={(guest) => guest.party_id}
               tagOptions={allTags}
             />

@@ -231,6 +231,12 @@ interface GridTextCellProps {
   phoneFormat?: boolean;
   /** Show the save-status tint (off for add-row draft cells, which do not save). */
   showStatus?: boolean;
+  /**
+   * Rendered after the input, inside the cell (the Name column's "open party"
+   * link). It comes after the input in DOM order, so Enter-to-move-down still
+   * lands on the input.
+   */
+  trailing?: ReactNode;
 }
 
 /** A text (or email) cell. Clearing it sends a blank value the API treats as "unset". */
@@ -249,6 +255,7 @@ export function GridTextCell({
   transform,
   phoneFormat = false,
   showStatus = true,
+  trailing,
 }: GridTextCellProps) {
   const cell = useCommittableValue(value, onCommit);
 
@@ -275,6 +282,69 @@ export function GridTextCell({
     40,
   );
 
+  const input = (
+    <Input
+      aria-label={ariaLabel}
+      // The add row is opened by an explicit user action, so focusing its first
+      // field is expected (not a surprise focus steal on page load).
+      autoFocus={autoFocus}
+      className={cn(
+        GRID_CONTROL_CLASS,
+        // Beside a trailing element the input shares the row instead of
+        // claiming the cell's full width.
+        trailing ? "min-w-0 flex-1" : undefined,
+        className,
+      )}
+      // A number field surfaces a stepper and a positive-integer validity hint;
+      // min only keeps the spinner from stepping below 1. It does not block
+      // typing or pasting other values (the backend's posintblank rule rejects
+      // those, and the cell rolls back). `size` is meaningless on a number
+      // input, so the width-to-content trick stays text/email only (see size).
+      min={type === "number" ? 1 : undefined}
+      onBlur={commitOnChange ? undefined : cell.commit}
+      onChange={
+        phoneFormat
+          ? phoneOnChange
+          : (e) =>
+              applyTyped(transform ? transform(e.target.value) : e.target.value)
+      }
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          // A held key auto-repeats Enter; one press means one commit (or
+          // one create via onEnter), not a burst.
+          if (e.repeat) return;
+          if (onEnter) {
+            onEnter();
+          } else {
+            cell.commit();
+            focusCellBelow(e.currentTarget);
+          }
+        } else if (e.key === "Escape") {
+          if (commitOnChange) {
+            // Add row: nothing to revert (every keystroke is already in the
+            // draft), so hand Escape to the parent, which exits add mode while
+            // the row is still empty. A text cell can never have a dropdown
+            // open at the same time, so this never competes with a popover's
+            // own Escape-to-close.
+            onEscape?.();
+          } else {
+            // Data rows: cancel the edit and keep the cell focused (like a
+            // spreadsheet). Not blurring here is deliberate: a blur would fire a
+            // commit with the not-yet-re-rendered value and undo the revert.
+            cell.revert();
+            e.currentTarget.select();
+          }
+        }
+      }}
+      placeholder={placeholder}
+      ref={phoneFormat ? inputRef : undefined}
+      size={type === "number" ? undefined : fieldSize}
+      type={type}
+      value={cell.value}
+    />
+  );
+
   return (
     <TableCell
       className={cn(
@@ -283,62 +353,14 @@ export function GridTextCell({
         statusBgClass(cell.status, showStatus),
       )}
     >
-      <Input
-        aria-label={ariaLabel}
-        // The add row is opened by an explicit user action, so focusing its first
-        // field is expected (not a surprise focus steal on page load).
-        autoFocus={autoFocus}
-        className={cn(GRID_CONTROL_CLASS, className)}
-        // A number field surfaces a stepper and a positive-integer validity hint;
-        // min only keeps the spinner from stepping below 1. It does not block
-        // typing or pasting other values (the backend's posintblank rule rejects
-        // those, and the cell rolls back). `size` is meaningless on a number
-        // input, so the width-to-content trick stays text/email only (see size).
-        min={type === "number" ? 1 : undefined}
-        onBlur={commitOnChange ? undefined : cell.commit}
-        onChange={
-          phoneFormat
-            ? phoneOnChange
-            : (e) =>
-                applyTyped(
-                  transform ? transform(e.target.value) : e.target.value,
-                )
-        }
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            // A held key auto-repeats Enter; one press means one commit (or
-            // one create via onEnter), not a burst.
-            if (e.repeat) return;
-            if (onEnter) {
-              onEnter();
-            } else {
-              cell.commit();
-              focusCellBelow(e.currentTarget);
-            }
-          } else if (e.key === "Escape") {
-            if (commitOnChange) {
-              // Add row: nothing to revert (every keystroke is already in the
-              // draft), so hand Escape to the parent, which exits add mode while
-              // the row is still empty. A text cell can never have a dropdown
-              // open at the same time, so this never competes with a popover's
-              // own Escape-to-close.
-              onEscape?.();
-            } else {
-              // Data rows: cancel the edit and keep the cell focused (like a
-              // spreadsheet). Not blurring here is deliberate: a blur would fire a
-              // commit with the not-yet-re-rendered value and undo the revert.
-              cell.revert();
-              e.currentTarget.select();
-            }
-          }
-        }}
-        placeholder={placeholder}
-        ref={phoneFormat ? inputRef : undefined}
-        size={type === "number" ? undefined : fieldSize}
-        type={type}
-        value={cell.value}
-      />
+      {trailing ? (
+        <div className="flex items-center gap-1 pr-1">
+          {input}
+          {trailing}
+        </div>
+      ) : (
+        input
+      )}
     </TableCell>
   );
 }

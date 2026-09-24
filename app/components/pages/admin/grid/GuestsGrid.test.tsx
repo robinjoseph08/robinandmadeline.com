@@ -311,3 +311,26 @@ describe("GuestsGrid flat list party columns", () => {
     expect(screen.getByText("Springfield")).toBeInTheDocument();
   });
 });
+
+describe("GuestsGrid party link", () => {
+  it("links each guest in the flat list to its party's page from the name cell", () => {
+    renderFlatGrid(
+      [makeGuest({ id: "g1", full_name: "Alice", party_id: "p7" })],
+      [makeParty({ id: "p7", name: "The Smiths" })],
+    );
+
+    const link = screen.getByRole("link", { name: "Open The Smiths" });
+    expect(link).toHaveAttribute("href", "/admin/parties/p7");
+    // It lives in the frozen name cell, so it stays visible while the wide
+    // list scrolls.
+    expect(link.closest("td")).toBe(
+      screen.getByRole("textbox", { name: "Name" }).closest("td"),
+    );
+  });
+
+  it("omits the link on the party's own page", () => {
+    renderGrid([makeGuest({ id: "g1", full_name: "Alice" })], () => "p7");
+
+    expect(screen.queryByRole("link", { name: /^Open / })).toBeNull();
+  });
+});

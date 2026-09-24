@@ -47,8 +47,9 @@ export const useGuests = (
 
 // Invalidates everything a guest write can affect: the flat guest list, the
 // parent party detail (its embedded guest list and single-primary set), the
-// parties list (its per-party guest count), and the tag vocabulary (a write can
-// add or drop a tag, which the comboboxes and the tag filter offer).
+// parties list (its per-party guest count), the tag vocabulary (a write can
+// add or drop a tag, which the comboboxes and the tag filter offer), and the
+// party's RSVP view.
 function invalidateForGuestWrite(
   queryClient: ReturnType<typeof useQueryClient>,
   partyId: string,
@@ -59,6 +60,11 @@ function invalidateForGuestWrite(
   });
   queryClient.invalidateQueries({ queryKey: [PartiesQueryKey.ListParties] });
   queryClient.invalidateQueries({ queryKey: [TagsQueryKey.ListTags] });
+  // Adding a guest backfills pending public-event RSVPs, and a rename or
+  // removal changes the party's RSVP view too.
+  queryClient.invalidateQueries({
+    queryKey: [PartiesQueryKey.RetrievePartyRSVPs, partyId],
+  });
 }
 
 export const useCreateGuest = () => {
@@ -150,11 +156,14 @@ export const usePatchGuest = () => {
       );
       invalidateForGuestWrite(queryClient, variables.partyId);
       // A party_id in the payload moved the guest between parties; the carried
-      // partyId only covers the source, so refresh every party detail to pick
-      // up the destination's new guest list too.
+      // partyId only covers the source, so refresh every party detail and RSVP
+      // view to pick up the destination's new guest list too.
       if (variables.payload.party_id !== undefined) {
         queryClient.invalidateQueries({
           queryKey: [PartiesQueryKey.RetrieveParty],
+        });
+        queryClient.invalidateQueries({
+          queryKey: [PartiesQueryKey.RetrievePartyRSVPs],
         });
       }
     },

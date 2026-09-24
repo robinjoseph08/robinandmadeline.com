@@ -1,0 +1,247 @@
+import { useState, type FormEvent, type ReactNode } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { formatEventWhen } from "@/libraries/format";
+import { isNamedPlaceholder, isPlaceholder } from "@/libraries/placeholders";
+import type { EventRSVPStatus } from "@/types/generated/models";
+import type {
+  PartyRSVPsResponse,
+  RSVPEventGroup,
+  RSVPGuest,
+  UpdatePartyRSVPsPayload,
+} from "@/types/generated/rsvps";
+
+/** A guest's invited events: the groups holding an Event RSVP row for them. */
+function invitedEvents(
+  data: PartyRSVPsResponse,
+  guest: RSVPGuest,
+): RSVPEventGroup[] {
+  return data.events.filter((event) =>
+    event.rsvps.some((entry) => entry.guest_id === guest.id),
+  );
+}
+
+/**
+ * The initial value of a placeholder's name input. An unnamed slot (full_name
+ * still equals the descriptor, which the heading already shows) starts blank;
+ * once the party has named it, the submitted name prefills so a return visit
+ * never looks like the site forgot it, while staying editable for corrections
+ * and swaps.
+ */
+function initialPlaceholderName(guest: RSVPGuest): string {
+  return isNamedPlaceholder(guest) ? guest.full_name : "";
+}
+
+/**
+ * The full_name one guest's submission carries. Only placeholders send one
+ * (real guests' names are admin-managed; the backend ignores them anyway). A
+ * non-blank input names or renames the slot. A cleared input on a named
+ * placeholder sends blank, which the backend reads as "revert to unnamed"
+ * (the name goes back to the descriptor); an untouched unnamed slot sends
+ * nothing, staying a no-op.
+ */
+function submittedName(guest: RSVPGuest, input: string): string | undefined {
+  if (!isPlaceholder(guest)) return undefined;
+  const trimmed = input.trim();
+  if (trimmed !== "") return trimmed;
+  return isNamedPlaceholder(guest) ? "" : undefined;
+}
+
+/** The composite key the form's status state is indexed by. */
+function entryKey(eventId: string, guestId: string): string {
+  return `${eventId}:${guestId}`;
+}
+
+interface PartyRSVPFormProps {
+  data: PartyRSVPsResponse;
+  /** Receives the whole form as the PUT payload. */
+  onSubmit: (payload: UpdatePartyRSVPsPayload) => void | Promise<void>;
+  /** Lets a submit button outside the form (a dialog footer) target it. */
+  id?: string;
+  /** Rendered after the guest sections, inside the form (errors, submit). */
+  children?: ReactNode;
+}
+
+/**
+ * One party's whole RSVP as a form: every guest, with an attending /
+ * not-attending toggle per event they are invited to, an editable name for
+ * placeholder guests, and a dietary restrictions field per guest. It is shared
+ * by the guest's own RSVP page and the admin's "Record RSVP" dialog (a
+ * response given to the couple directly), which submit the same payload to
+ * different endpoints. State seeds from `data` once at mount.
+ */
+export function PartyRSVPForm({
+  data,
+  onSubmit,
+  id,
+  children,
+}: PartyRSVPFormProps) {
+  // Statuses are keyed by (event, guest); names and dietary notes by guest.
+  const [statuses, setStatuses] = useState<Record<string, EventRSVPStatus>>(
+    () => {
+      const initial: Record<string, EventRSVPStatus> = {};
+      for (const event of data.events) {
+        for (const entry of event.rsvps) {
+          initial[entryKey(event.id, entry.guest_id)] = entry.status;
+        }
+      }
+      return initial;
+    },
+  );
+  const [names, setNames] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    for (const guest of data.guests) {
+      // An unnamed placeholder's name field starts blank ("Guest of Alice" is
+      // the slot's descriptor, not a prefill the party should have to erase);
+      // a named one prefills with the submitted name.
+      initial[guest.id] = isPlaceholder(guest)
+        ? initialPlaceholderName(guest)
+        : guest.full_name;
+    }
+    return initial;
+  });
+  const [dietary, setDietary] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    for (const guest of data.guests) {
+      initial[guest.id] = guest.dietary_restrictions ?? "";
+    }
+    return initial;
+  });
+
+  function toggleStatus(
+    eventId: string,
+    guestId: string,
+    next: EventRSVPStatus,
+  ) {
+    const key = entryKey(eventId, guestId);
+    setStatuses((prev) => ({
+      ...prev,
+      // Clicking the already-selected answer withdraws it (back to pending).
+      [key]: prev[key] === next ? "pending" : next,
+    }));
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await onSubmit({
+      guests: data.guests.map((guest) => ({
+        guest_id: guest.id,
+        full_name: submittedName(guest, names[guest.id] ?? ""),
+        dietary_restrictions: dietary[guest.id]?.trim() || undefined,
+        rsvps: invitedEvents(data, guest).map((eventGroup) => ({
+          event_id: eventGroup.id,
+          status: statuses[entryKey(eventGroup.id, guest.id)] ?? "pending",
+        })),
+      })),
+    });
+  }
+
+  return (
+    <form className="flex flex-col gap-6" id={id} onSubmit={handleSubmit}>
+      {data.guests.map((guest) => (
+        <section
+          aria-label={guest.full_name}
+          className="rounded-lg border border-ink/10 bg-cream p-5"
+          key={guest.id}
+        >
+          <h2 className="text-xl font-semibold">{guest.full_name}</h2>
+          {/* A named placeholder keeps its descriptor visible so a
+              returning party sees what the slot is for when changing or
+              clearing the name. An unnamed slot's heading already IS the
+              descriptor, so no subtitle. */}
+          {isNamedPlaceholder(guest) ? (
+            <p className="text-sm text-muted-foreground">
+              {guest.placeholder_text}
+            </p>
+          ) : null}
+
+          {isPlaceholder(guest) ? (
+            <div className="mt-3 flex flex-col gap-1.5">
+              <Label htmlFor={`name-${guest.id}`}>Name</Label>
+              <Input
+                id={`name-${guest.id}`}
+                onChange={(e) =>
+                  setNames((prev) => ({
+                    ...prev,
+                    [guest.id]: e.target.value,
+                  }))
+                }
+                placeholder="Their full name"
+                type="text"
+                value={names[guest.id] ?? ""}
+              />
+            </div>
+          ) : null}
+
+          <div className="mt-4 flex flex-col gap-3">
+            {invitedEvents(data, guest).map((eventGroup) => {
+              const current =
+                statuses[entryKey(eventGroup.id, guest.id)] ?? "pending";
+              return (
+                <div
+                  className="flex flex-wrap items-center justify-between gap-2"
+                  key={eventGroup.id}
+                >
+                  <div>
+                    <p className="font-medium">{eventGroup.name}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {formatEventWhen(eventGroup)}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      aria-label={`${eventGroup.name}: attending`}
+                      aria-pressed={current === "attending"}
+                      onClick={() =>
+                        toggleStatus(eventGroup.id, guest.id, "attending")
+                      }
+                      size="sm"
+                      type="button"
+                      variant={current === "attending" ? "default" : "outline"}
+                    >
+                      Attending
+                    </Button>
+                    <Button
+                      aria-label={`${eventGroup.name}: not attending`}
+                      aria-pressed={current === "not_attending"}
+                      onClick={() =>
+                        toggleStatus(eventGroup.id, guest.id, "not_attending")
+                      }
+                      size="sm"
+                      type="button"
+                      variant={
+                        current === "not_attending" ? "default" : "outline"
+                      }
+                    >
+                      Not attending
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 flex flex-col gap-1.5">
+            <Label htmlFor={`dietary-${guest.id}`}>Dietary restrictions</Label>
+            <Textarea
+              id={`dietary-${guest.id}`}
+              onChange={(e) =>
+                setDietary((prev) => ({
+                  ...prev,
+                  [guest.id]: e.target.value,
+                }))
+              }
+              placeholder="Allergies, restrictions, or anything we should know"
+              value={dietary[guest.id] ?? ""}
+            />
+          </div>
+        </section>
+      ))}
+
+      {children}
+    </form>
+  );
+}

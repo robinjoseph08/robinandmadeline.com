@@ -63,6 +63,14 @@ A traditional ceremony that the Rehearsal Dinner doubles as, drawing a larger gr
 A guest's response to a single event: pending, attending, or not_attending. The existence of an Event RSVP record is what marks a guest as invited to that event.
 _Avoid_: RSVP (the unqualified word; there is no single wedding-wide RSVP; attendance is always per-event)
 
+**Guest Attendance**:
+A guest's standing across all of their Event RSVPs: **Coming** (attending at least one event), **Declined** (invited to at least one event and declined every one), or **Awaiting** (neither: no yes yet, with an invitation still pending or no invitations at all). **Expected** guests are the Coming and Awaiting ones: the headcount that shrinks as declines arrive.
+_Avoid_: Invited guests (for everyone on the list; "invited" is per event, and a guest with no Event RSVP rows is on the list but invited to nothing)
+
+**Party RSVP Progress**:
+How much of a party's response is in, across every Event RSVP of its guests: **Responded** (every invitation answered), **Partially Responded** (some answered, some still pending), or **No Response** (nothing answered, including a party invited to nothing).
+_Avoid_: Complete (reserved for Info Collection Status)
+
 **Info Token**:
 A random, opaque per-party token embedded in the pre-invitation info-collection URL.
 _Avoid_: Code (guests never see this as a code)
@@ -109,7 +117,8 @@ _Avoid_: Photo shoot, album (the photo gallery is unrelated); per-event photo gr
 - A **Guest** has an **Email Subscription** (defaulting to Subscribed) that governs whether broadcast email reaches them; it is independent per guest even when guests share an inbox.
 - A **Party** becomes **Info Collection Requested** once its info link is sent; requesting resets its **Info Collection Status** to incomplete.
 - A **Party**'s **Info Collection Status** can be complete only when all required fields are present; until collection is requested it is derived from whether those fields are present.
-- Overall attendance is derived: a **Guest** is "coming" if they are attending at least one **Event**.
+- Overall attendance is derived: a **Guest** is "coming" if they are attending at least one **Event** (see **Guest Attendance**).
+- The couple can record a **Party**'s Event RSVPs on its behalf (an answer given by phone or in person) through the same form the party uses. Recording is not bound by the RSVP deadline, since a party answering after it is exactly who the "contact us" message sends to the couple.
 
 ## Example dialogue
 

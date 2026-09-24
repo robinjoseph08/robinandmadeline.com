@@ -36,7 +36,7 @@ test("admin views the dashboard overview", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Dashboard", level: 1 }),
   ).toBeVisible();
-  await expect(page.getByText("Total guests")).toBeVisible();
+  await expect(page.getByText("Expected guests")).toBeVisible();
   await expect(page.getByText("Total parties")).toBeVisible();
   await expect(page.getByText("RSVP response rate")).toBeVisible();
   // The info-collection progress bar is present.

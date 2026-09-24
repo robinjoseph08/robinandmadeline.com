@@ -98,6 +98,10 @@ function invalidateForEventWrite(
     });
   }
   queryClient.invalidateQueries({ queryKey: [QueryKey.ListGuests] });
+  // Any party's RSVP view may hold rows this write created or changed.
+  queryClient.invalidateQueries({
+    queryKey: [PartiesQueryKey.RetrievePartyRSVPs],
+  });
 }
 
 export const useCreateEvent = () => {
@@ -146,6 +150,9 @@ export const useDeleteEvent = () => {
         queryKey: [QueryKey.ListEventRSVPs, variables.eventId],
       });
       queryClient.invalidateQueries({ queryKey: [QueryKey.ListGuests] });
+      queryClient.invalidateQueries({
+        queryKey: [PartiesQueryKey.RetrievePartyRSVPs],
+      });
     },
   });
 };

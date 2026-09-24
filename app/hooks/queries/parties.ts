@@ -29,6 +29,10 @@ import type {
 export enum QueryKey {
   ListParties = "ListParties",
   RetrieveParty = "RetrieveParty",
+  // A party's RSVP form view (GET /admin/parties/:id/rsvp). Its hooks live in
+  // party-rsvps.ts; the key lives here so guest and event writes that change a
+  // party's Event RSVP rows can invalidate it without an import cycle.
+  RetrievePartyRSVPs = "RetrievePartyRSVPs",
   // Guest reads join through the party (side/relation/circle filters), so a party
   // write can change the flat guest list; mutations here invalidate it too.
   ListGuests = "ListGuests",

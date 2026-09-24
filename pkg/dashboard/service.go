@@ -46,23 +46,23 @@ func NewService(db *bun.DB) *Service {
 func (s *Service) Overview(ctx context.Context) (*Response, error) {
 	resp := new(Response)
 
-	totalParties, err := s.db.NewSelect().Model((*models.Party)(nil)).Count(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "count parties")
-	}
-	resp.TotalParties = totalParties
-
-	totalGuests, err := s.db.NewSelect().Model((*models.Guest)(nil)).Count(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "count guests")
-	}
-	resp.TotalGuests = totalGuests
-
 	breakdown, err := s.guestBreakdown(ctx)
 	if err != nil {
 		return nil, err
 	}
 	resp.GuestBreakdown = breakdown
+
+	attendance, err := s.guestAttendance(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp.GuestAttendance = attendance
+
+	partyProgress, err := s.partyRSVPProgress(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp.PartyRSVPProgress = partyProgress
 
 	eventStats, summary, err := s.eventRSVPStats(ctx)
 	if err != nil {
@@ -93,7 +93,8 @@ func (s *Service) Overview(ctx context.Context) (*Response, error) {
 }
 
 // guestBreakdown tallies guests by their party's side and relation in two
-// grouped queries (a guest joins to its party). Each closed-enum value maps to
+// grouped queries (a guest joins to its party), and by their own child and
+// drinking flags in a third. Each closed-enum value maps to
 // its explicit field; a value with no guests stays zero. An unexpected value
 // (would only arise if the CHECK constraint were bypassed) is ignored rather
 // than crashing the dashboard.
@@ -113,6 +114,18 @@ func (s *Service) guestBreakdown(ctx context.Context) (GuestBreakdown, error) {
 	}
 	breakdown.ByRelation.Family = byRelation[models.RelationFamily]
 	breakdown.ByRelation.Friend = byRelation[models.RelationFriend]
+
+	err = s.db.NewSelect().Model((*models.Guest)(nil)).
+		ColumnExpr("count(*) FILTER (WHERE NOT g.is_child)").
+		ColumnExpr("count(*) FILTER (WHERE g.is_child)").
+		ColumnExpr("count(*) FILTER (WHERE g.is_drinking)").
+		ColumnExpr("count(*) FILTER (WHERE NOT g.is_drinking)").
+		Scan(ctx,
+			&breakdown.ByAge.Adults, &breakdown.ByAge.Children,
+			&breakdown.ByDrinking.Drinking, &breakdown.ByDrinking.NotDrinking)
+	if err != nil {
+		return GuestBreakdown{}, errors.Wrap(err, "count guests by flags")
+	}
 
 	return breakdown, nil
 }
@@ -138,6 +151,41 @@ func (s *Service) countGuestsByPartyColumn(ctx context.Context, column string) (
 	for _, r := range rows {
 		out[r.Key] = r.Count
 	}
+	return out, nil
+}
+
+// guestAttendance counts guests per attendance bucket in one pass over the
+// guests table, using the same conditions the guest list's attendance filter
+// applies, so each count matches the list it links to.
+func (s *Service) guestAttendance(ctx context.Context) (GuestAttendanceCounts, error) {
+	var out GuestAttendanceCounts
+	err := s.db.NewSelect().Model((*models.Guest)(nil)).
+		ColumnExpr("count(*)").
+		ColumnExpr("count(*) FILTER (WHERE "+models.GuestAttendanceCondition(models.AttendanceComing)+")").
+		ColumnExpr("count(*) FILTER (WHERE "+models.GuestAttendanceCondition(models.AttendanceDeclined)+")").
+		Scan(ctx, &out.Total, &out.Coming, &out.Declined)
+	if err != nil {
+		return GuestAttendanceCounts{}, errors.Wrap(err, "count guest attendance")
+	}
+	out.Expected = out.Total - out.Declined
+	out.Awaiting = out.Expected - out.Coming
+	return out, nil
+}
+
+// partyRSVPProgress counts parties per RSVP progress bucket in one pass over
+// the parties table, using the same conditions the parties list's progress
+// filter applies, so each count matches the list it links to.
+func (s *Service) partyRSVPProgress(ctx context.Context) (PartyRSVPProgressCounts, error) {
+	var out PartyRSVPProgressCounts
+	err := s.db.NewSelect().Model((*models.Party)(nil)).
+		ColumnExpr("count(*)").
+		ColumnExpr("count(*) FILTER (WHERE "+models.PartyRSVPProgressCondition(models.ProgressResponded)+")").
+		ColumnExpr("count(*) FILTER (WHERE "+models.PartyRSVPProgressCondition(models.ProgressPartial)+")").
+		Scan(ctx, &out.Total, &out.Responded, &out.Partial)
+	if err != nil {
+		return PartyRSVPProgressCounts{}, errors.Wrap(err, "count party rsvp progress")
+	}
+	out.NotResponded = out.Total - out.Responded - out.Partial
 	return out, nil
 }
 

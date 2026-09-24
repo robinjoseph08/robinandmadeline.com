@@ -46,7 +46,7 @@ import {
   type FlagOption,
 } from "./cells";
 import { Chip } from "./Chip";
-import { InfoHint, TooltipIconButton } from "./grid-buttons";
+import { InfoHint, OpenPartyLink, TooltipIconButton } from "./grid-buttons";
 
 // Tooltip copy for the guest flags. Primary keeps its own header hint; the
 // other two are surfaced on the chips inside the Flags cell.
@@ -93,6 +93,14 @@ interface GuestsGridProps<TGuest extends Guest> {
    * exclusive with addPartyId.
    */
   parties?: PartyResponse[];
+  /**
+   * Flat-list mode: the guest's own party when the list response embeds it, so
+   * the party link and the read-only party columns render with the guest rows
+   * instead of waiting on the parties list. Used only while it matches the
+   * guest's party_id (a just-moved guest falls back to the parties list until
+   * the list refetches).
+   */
+  partyFor?: (guest: TGuest) => PartyResponse | undefined;
   /**
    * Detail-page mode: the add row creates a guest in this one party, and the
    * party-context columns are hidden (the party is implicit). Mutually exclusive
@@ -188,6 +196,7 @@ export function GuestsGrid<TGuest extends Guest>({
   partyIdFor,
   onEditGuest,
   parties,
+  partyFor,
   addPartyId,
   tagOptions,
 }: GuestsGridProps<TGuest>) {
@@ -326,7 +335,11 @@ export function GuestsGrid<TGuest extends Guest>({
       <TableBody>
         {guests.map((guest) => {
           const partyId = partyIdFor(guest);
-          const party = partyById.get(guest.party_id);
+          const embedded = partyFor?.(guest);
+          const party =
+            embedded?.id === guest.party_id
+              ? embedded
+              : partyById.get(guest.party_id);
           return (
             <TableRow className={FROZEN_ROW} key={guest.id}>
               <GridTextCell
@@ -334,6 +347,13 @@ export function GuestsGrid<TGuest extends Guest>({
                 cellClassName={FROZEN_FIRST_COL}
                 onCommit={(value) =>
                   patchField(guest.id, partyId, { full_name: value })
+                }
+                // The flat list links each guest to its party's page (the
+                // detail page is already there).
+                trailing={
+                  party ? (
+                    <OpenPartyLink partyId={party.id} partyName={party.name} />
+                  ) : undefined
                 }
                 value={guest.full_name}
               />

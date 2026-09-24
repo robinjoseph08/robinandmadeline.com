@@ -327,6 +327,36 @@ func TestUpdatePartyRSVPs_TransitionsStatusesAndStampsRSVPedAt(t *testing.T) {
 	assert.Nil(t, row.RSVPedAt)
 }
 
+func TestUpdatePartyRSVPs_ResubmittingKeepsUnchangedResponseTimes(t *testing.T) {
+	svc, partySvc, eventSvc, db := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths")
+	alice := addGuestT(t, partySvc, p.ID, "Alice")
+	bob := addGuestT(t, partySvc, p.ID, "Bob")
+	event := createPublicEventT(t, eventSvc)
+
+	_, err := svc.UpdatePartyRSVPs(ctx(), p.ID, statusUpdate(alice.ID, event.ID, models.RSVPAttending))
+	require.NoError(t, err)
+	answeredAt := rsvpRow(t, db, event.ID, alice.ID).RSVPedAt
+	require.NotNil(t, answeredAt)
+
+	// The whole form comes back later (the couple recording Bob's answer):
+	// Alice's unchanged answer keeps its original time, Bob's new one is
+	// stamped now.
+	_, err = svc.RecordPartyRSVPs(ctx(), p.ID, rsvps.UpdatePartyRSVPsPayload{Guests: []rsvps.GuestRSVPUpdate{
+		{GuestID: alice.ID, RSVPs: []rsvps.EventRSVPUpdate{{EventID: event.ID, Status: models.RSVPAttending}}},
+		{GuestID: bob.ID, RSVPs: []rsvps.EventRSVPUpdate{{EventID: event.ID, Status: models.RSVPNotAttending}}},
+	}})
+	require.NoError(t, err)
+
+	aliceRow := rsvpRow(t, db, event.ID, alice.ID)
+	require.NotNil(t, aliceRow.RSVPedAt)
+	assert.True(t, answeredAt.Equal(*aliceRow.RSVPedAt), "an unchanged answer keeps when it was given")
+	bobRow := rsvpRow(t, db, event.ID, bob.ID)
+	require.NotNil(t, bobRow.RSVPedAt)
+	assert.True(t, bobRow.RSVPedAt.After(*answeredAt), "a changed answer is stamped anew")
+}
+
 func TestUpdatePartyRSVPs_PersistsPlaceholderNameAndDietary(t *testing.T) {
 	svc, partySvc, eventSvc, db := newServices(t)
 
@@ -542,4 +572,55 @@ func TestUpdatePartyRSVPs_MissingPartyIs404(t *testing.T) {
 		Guests: []rsvps.GuestRSVPUpdate{{GuestID: "00000000-0000-0000-0000-000000000001"}},
 	})
 	assertErrCode(t, err, errcodes.CodeNotFound)
+}
+
+func TestRecordPartyRSVPs_IgnoresTheDeadline(t *testing.T) {
+	svc, partySvc, eventSvc, db := newServices(t)
+
+	p := createPartyT(t, partySvc, "The Smiths")
+	g := addGuestT(t, partySvc, p.ID, "Alice")
+	plusOne := addPlaceholderT(t, partySvc, p.ID, "Plus-one of Alice")
+	event := createPublicEventT(t, eventSvc)
+	setDeadline(t, db, -time.Hour)
+
+	// The party phoned in after the deadline: the couple records the whole
+	// answer (statuses, the plus-one's name, dietary) on its behalf.
+	resp, err := svc.RecordPartyRSVPs(ctx(), p.ID, rsvps.UpdatePartyRSVPsPayload{
+		Guests: []rsvps.GuestRSVPUpdate{
+			{
+				GuestID:             g.ID,
+				DietaryRestrictions: pointerutil.String("vegetarian"),
+				RSVPs:               []rsvps.EventRSVPUpdate{{EventID: event.ID, Status: models.RSVPAttending}},
+			},
+			{
+				GuestID:  plusOne.ID,
+				FullName: pointerutil.String("Bob Jones"),
+				RSVPs:    []rsvps.EventRSVPUpdate{{EventID: event.ID, Status: models.RSVPNotAttending}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.Closed, "the view still reports the guest-facing deadline state")
+	assert.True(t, resp.Responded)
+
+	row := rsvpRow(t, db, event.ID, g.ID)
+	assert.Equal(t, models.RSVPAttending, row.Status)
+	assert.NotNil(t, row.RSVPedAt)
+	assert.Equal(t, models.RSVPNotAttending, rsvpRow(t, db, event.ID, plusOne.ID).Status)
+	assert.Equal(t, "vegetarian", *guestRow(t, db, g.ID).DietaryRestrictions)
+	assert.Equal(t, "Bob Jones", guestRow(t, db, plusOne.ID).FullName)
+}
+
+func TestRecordPartyRSVPs_StillEnforcesThePartyBoundary(t *testing.T) {
+	svc, partySvc, eventSvc, db := newServices(t)
+
+	smiths := createPartyT(t, partySvc, "The Smiths")
+	addGuestT(t, partySvc, smiths.ID, "Alice")
+	joneses := createPartyT(t, partySvc, "The Joneses")
+	carol := addGuestT(t, partySvc, joneses.ID, "Carol")
+	event := createPublicEventT(t, eventSvc)
+
+	_, err := svc.RecordPartyRSVPs(ctx(), smiths.ID, statusUpdate(carol.ID, event.ID, models.RSVPAttending))
+	assertErrCode(t, err, errcodes.CodeValidationError)
+	assert.Equal(t, models.RSVPPending, rsvpRow(t, db, event.ID, carol.ID).Status)
 }

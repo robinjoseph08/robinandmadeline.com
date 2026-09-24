@@ -270,6 +270,40 @@ func TestListGuestsHandler_InfoStatusFilter(t *testing.T) {
 	})
 }
 
+func TestListGuestsHandler_EmbedsEachGuestsParty(t *testing.T) {
+	// The flat list carries each guest's party (with its derived status, but
+	// not its guests) so the admin grid can link to it and show its columns
+	// without waiting on a separate parties request.
+	e := newAPI(t)
+	created := do(t, e, http.MethodPost, "/api/admin/parties", withGuest(map[string]any{
+		"name": "The Smiths", "side": "madeline", "relation": "family", "invitation_type": "physical",
+	}))
+	require.Equal(t, http.StatusCreated, created.Code)
+	var party struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &party))
+
+	rec := do(t, e, http.MethodGet, "/api/admin/guests", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Items []struct {
+			PartyID string          `json:"party_id"`
+			Party   json.RawMessage `json:"party"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Items, 1)
+
+	var embedded map[string]any
+	require.NoError(t, json.Unmarshal(resp.Items[0].Party, &embedded))
+	assert.Equal(t, party.ID, embedded["id"])
+	assert.Equal(t, "The Smiths", embedded["name"])
+	assert.Equal(t, "madeline", embedded["side"])
+	assert.Equal(t, models.StatusIncomplete, embedded["info_collection_status"])
+	assert.NotContains(t, embedded, "guests", "the embedded party omits its guest list")
+}
+
 func TestListGuestsHandler_SortFieldIsScopedToEntity(t *testing.T) {
 	e := newAPI(t)
 	// "invitation" is a party-only sort field; the guest list's sortspec=guests

@@ -1,9 +1,11 @@
-// Package rsvps is the guest-facing RSVP flow: the API a logged-in party uses
+// Package rsvps is the party-level RSVP flow: the API a logged-in party uses
 // to read and submit its Event RSVPs. Reads return the party's guests and
 // rows grouped by event; writes bulk-update statuses, fill in placeholder
 // guest names, and store dietary restrictions, all gated by the rsvp_deadline
 // app setting (a past deadline closes the window and rejects writes with a
-// 403). The admin-facing event/RSVP management lives in pkg/events; the
+// 403). The admin surface exposes the same read and write for any party so
+// the couple can record a response given to them directly, without the
+// deadline gate. The per-event admin RSVP management lives in pkg/events; the
 // persistent models live in pkg/models.
 package rsvps
 
@@ -229,14 +231,31 @@ func timeOrDefault(t *string) string {
 // or an event the guest holds no row for, is a 422). On success it returns the
 // refreshed view, read inside the same transaction.
 func (s *Service) UpdatePartyRSVPs(ctx context.Context, partyID string, in UpdatePartyRSVPsPayload) (*PartyRSVPsResponse, error) {
+	return s.updatePartyRSVPs(ctx, partyID, in, true)
+}
+
+// RecordPartyRSVPs is the admin's version of UpdatePartyRSVPs: the couple
+// records a response the party gave them directly (over the phone, in
+// person). It applies the same submission with the same party boundary, but
+// ignores the RSVP deadline, since a party answering after the deadline is
+// exactly the case the "contact us" message sends to the couple.
+func (s *Service) RecordPartyRSVPs(ctx context.Context, partyID string, in UpdatePartyRSVPsPayload) (*PartyRSVPsResponse, error) {
+	return s.updatePartyRSVPs(ctx, partyID, in, false)
+}
+
+// updatePartyRSVPs is the shared body of UpdatePartyRSVPs and
+// RecordPartyRSVPs; enforceDeadline decides whether a past deadline is a 403.
+func (s *Service) updatePartyRSVPs(ctx context.Context, partyID string, in UpdatePartyRSVPsPayload, enforceDeadline bool) (*PartyRSVPsResponse, error) {
 	resp := new(PartyRSVPsResponse)
 	err := s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
-		cfg, err := loadSettings(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if cfg.closed(time.Now()) {
-			return errcodes.Forbidden("The RSVP deadline has passed, so responses can no longer be changed online.")
+		if enforceDeadline {
+			cfg, err := loadSettings(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if cfg.closed(time.Now()) {
+				return errcodes.Forbidden("The RSVP deadline has passed, so responses can no longer be changed online.")
+			}
 		}
 
 		exists, err := tx.NewSelect().Model((*models.Party)(nil)).Where("id = ?", partyID).Exists(ctx)
@@ -262,7 +281,7 @@ func (s *Service) UpdatePartyRSVPs(ctx context.Context, partyID string, in Updat
 			if !ok {
 				// Never reveal whether the id exists in some other party; either way
 				// it is not one of this party's guests.
-				return errcodes.ValidationError("One or more guests do not belong to your party.")
+				return errcodes.ValidationError("One or more guests do not belong to this party.")
 			}
 			if err := applyGuestUpdate(ctx, tx, guest, update, now); err != nil {
 				return err
@@ -327,17 +346,22 @@ func applyGuestUpdate(ctx context.Context, tx bun.Tx, guest *models.Guest, updat
 
 // applyStatus updates one existing Event RSVP row, stamping rsvped_at for a
 // response (attending / not_attending) and clearing it for pending, mirroring
-// the admin override in pkg/events. A pair with no row is a 422: the row is
-// the invitation (ADR 0002), so the guest API never creates one.
+// the admin override in pkg/events. The form resubmits every row, so a row
+// whose status is unchanged keeps its original rsvped_at: re-saving the form
+// (a dietary fix, the couple recording one guest's answer) must not rewrite
+// when everyone else answered. A pair with no row is a 422: the row is the
+// invitation (ADR 0002), so the guest API never creates one.
 func applyStatus(ctx context.Context, tx bun.Tx, guestID string, entry EventRSVPUpdate, now time.Time) error {
 	var rsvpedAt *time.Time
 	if entry.Status != models.RSVPPending {
 		rsvpedAt = pointerutil.Time(now)
 	}
 
+	// In an UPDATE's SET list, the bare column refers to the row's current
+	// (pre-update) value, so the CASE compares against the old status.
 	res, err := tx.NewUpdate().Model((*models.EventRSVP)(nil)).
+		Set("rsvped_at = CASE WHEN status = ? THEN COALESCE(rsvped_at, ?) ELSE ? END", entry.Status, rsvpedAt, rsvpedAt).
 		Set("status = ?", entry.Status).
-		Set("rsvped_at = ?", rsvpedAt).
 		Set("updated_at = ?", now).
 		Where("event_id = ?", entry.EventID).
 		Where("guest_id = ?", guestID).

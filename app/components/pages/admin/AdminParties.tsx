@@ -18,6 +18,7 @@ import {
   PARTY_SORT_FIELDS,
   PARTY_SORT_STORAGE_KEY,
   RELATION_OPTIONS,
+  RSVP_PROGRESS_OPTIONS,
   SIDE_OPTIONS,
 } from "@/components/pages/admin/parties/options";
 import { PartyFormDialog } from "@/components/pages/admin/parties/PartyFormDialog";
@@ -38,6 +39,7 @@ import type {
   Circle,
   InfoCollectionStatus,
   InvitationType,
+  PartyRSVPProgress,
   Relation,
   Side,
 } from "@/types/generated/models";
@@ -58,6 +60,7 @@ const FILTER_KEYS = [
   "invitation_type",
   "info_collection_status",
   "info_collection_requested",
+  "rsvp_progress",
 ] as const;
 
 // Every URL param forwarded to the list API: the filters plus the sort (which is
@@ -213,6 +216,12 @@ export default function AdminParties() {
             label="Info requested"
             onChange={(v) => setFilter("info_collection_requested", v)}
             value={filters.info_collection_requested}
+          />
+          <FilterSelect<PartyRSVPProgress>
+            label="RSVP progress"
+            onChange={(v) => setFilter("rsvp_progress", v)}
+            options={RSVP_PROGRESS_OPTIONS}
+            value={filters.rsvp_progress}
           />
         </FilterSheet>
         <SortSheet

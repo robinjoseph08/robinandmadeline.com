@@ -22,11 +22,24 @@ function makeDashboard(
   overrides: Partial<DashboardResponse> = {},
 ): DashboardResponse {
   return {
-    total_parties: 2,
-    total_guests: 3,
+    party_rsvp_progress: {
+      total: 2,
+      responded: 1,
+      partial: 0,
+      not_responded: 1,
+    },
+    guest_attendance: {
+      total: 3,
+      expected: 2,
+      coming: 1,
+      awaiting: 1,
+      declined: 1,
+    },
     guest_breakdown: {
       by_side: { robin: 2, madeline: 1 },
       by_relation: { family: 1, friend: 2 },
+      by_age: { adults: 2, children: 1 },
+      by_drinking: { drinking: 1, not_drinking: 2 },
     },
     events: [],
     rsvp_summary: {
@@ -78,13 +91,34 @@ describe("AdminDashboard stats", () => {
 
     // Each card pairs a label with its value; scope to the card so the bare
     // numbers don't collide with the breakdown rows below.
-    const guests = (await screen.findByText("Total guests")).closest("div");
-    expect(within(guests as HTMLElement).getByText("3")).toBeInTheDocument();
-    const parties = screen.getByText("Total parties").closest("div");
-    expect(within(parties as HTMLElement).getByText("2")).toBeInTheDocument();
-    const rate = screen.getByText("RSVP response rate").closest("div");
-    expect(within(rate as HTMLElement).getByText("67%")).toBeInTheDocument();
-    expect(screen.getByText("2 of 3 responses")).toBeInTheDocument();
+    const guests = (await screen.findByText("Expected guests")).closest("div");
+    expect(within(guests as HTMLElement).getByText("2")).toBeInTheDocument();
+    // The card spells out what "expected" means and the buckets behind it.
+    expect(
+      within(guests as HTMLElement).getByText(
+        "3 guests, minus 1 who declined every event",
+      ),
+    ).toBeInTheDocument();
+    const coming = within(guests as HTMLElement).getByText("Coming");
+    expect(coming.nextElementSibling).toHaveTextContent("1");
+    const awaiting = within(guests as HTMLElement).getByText("Awaiting reply");
+    expect(awaiting.nextElementSibling).toHaveTextContent("1");
+    const parties = screen.getByText("Total parties").closest("div")!;
+    expect(within(parties).getByText("2")).toBeInTheDocument();
+    expect(
+      within(parties).getByText("Responded").nextElementSibling,
+    ).toHaveTextContent("1");
+    expect(
+      within(parties).getByText("No response yet").nextElementSibling,
+    ).toHaveTextContent("1");
+    const rate = screen.getByText("RSVP response rate").closest("div")!;
+    expect(within(rate).getByText("67%")).toBeInTheDocument();
+    expect(
+      within(rate).getByText("2 of 3 event invitations answered"),
+    ).toBeInTheDocument();
+    expect(
+      within(rate).getByText("Deadline").nextElementSibling,
+    ).toHaveTextContent("Not set");
   });
 
   it("shows the guest breakdown by side and relation", async () => {
@@ -96,6 +130,68 @@ describe("AdminDashboard stats", () => {
     expect(screen.getByText("Madeline")).toBeInTheDocument();
     expect(screen.getByText("Family")).toBeInTheDocument();
     expect(screen.getByText("Friend")).toBeInTheDocument();
+  });
+
+  it("shows the guest breakdown by age and drinking", async () => {
+    stub({ dashboard: makeDashboard() });
+    renderDashboard();
+
+    await screen.findByText("Guest breakdown");
+    expect(screen.getByText("Adults").nextElementSibling).toHaveTextContent(
+      "2",
+    );
+    expect(screen.getByText("Children").nextElementSibling).toHaveTextContent(
+      "1",
+    );
+    expect(screen.getByText("Drinking").nextElementSibling).toHaveTextContent(
+      "1",
+    );
+    expect(
+      screen.getByText("Not drinking").nextElementSibling,
+    ).toHaveTextContent("2");
+  });
+
+  it("links each guest and party count to the list filtered to that set", async () => {
+    stub({ dashboard: makeDashboard() });
+    renderDashboard();
+
+    await screen.findByText("Expected guests");
+    const hrefs: Record<string, string> = {
+      "Expected guests: 2": "/admin/guests?attendance=expected",
+      "Coming: 1": "/admin/guests?attendance=coming",
+      "Awaiting reply: 1": "/admin/guests?attendance=awaiting",
+      "Declined: 1": "/admin/guests?attendance=declined",
+      "Total parties: 2": "/admin/parties",
+      "Responded: 1": "/admin/parties?rsvp_progress=responded",
+      "Partially responded: 0": "/admin/parties?rsvp_progress=partial",
+      "No response yet: 1": "/admin/parties?rsvp_progress=not_responded",
+      "Robin: 2": "/admin/guests?side=robin",
+      "Friend: 2": "/admin/guests?relation=friend",
+      "Adults: 2": "/admin/guests?is_child=false",
+      "Children: 1": "/admin/guests?is_child=true",
+      "Drinking: 1": "/admin/guests?is_drinking=true",
+      "Not drinking: 2": "/admin/guests?is_drinking=false",
+    };
+    for (const [name, href] of Object.entries(hrefs)) {
+      expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
+    }
+  });
+
+  it("leaves the per-invitation counts unlinked", async () => {
+    // Attending/declined on the rate card count event invitations (one per
+    // guest per event), which no guest list matches, so they are plain text.
+    stub({ dashboard: makeDashboard() });
+    renderDashboard();
+
+    const rate = (await screen.findByText("RSVP response rate")).closest(
+      "div",
+    )!;
+    expect(
+      within(rate).queryByRole("link", { name: /^Invitations/ }),
+    ).toBeNull();
+    expect(
+      within(rate).getByRole("link", { name: /^Deadline/ }),
+    ).toHaveAttribute("href", "/admin/settings");
   });
 
   it("renders a per-event RSVP breakdown with a link to the event", async () => {
@@ -133,6 +229,11 @@ describe("AdminDashboard stats", () => {
     expect(screen.getByText(/1 declined/)).toBeInTheDocument();
     expect(screen.getByText(/3 pending/)).toBeInTheDocument();
     expect(screen.getByText(/of 6 invited/)).toBeInTheDocument();
+    // Each count opens the guests invited to that event with that status.
+    expect(screen.getByRole("link", { name: "3 pending" })).toHaveAttribute(
+      "href",
+      "/admin/guests?event_id=ev1&rsvp_status=pending",
+    );
   });
 
   it("shows the info-collection progress as a progressbar", async () => {
@@ -143,7 +244,9 @@ describe("AdminDashboard stats", () => {
       name: "Info collection progress",
     });
     expect(bar).toHaveAttribute("aria-valuenow", "50");
-    expect(screen.getByText("1 of 2 parties complete")).toBeInTheDocument();
+    expect(bar.previousElementSibling).toHaveTextContent(
+      "1 of 2 parties complete",
+    );
   });
 
   it("renders the email delivery summary with sent, delivered, and rate", async () => {
@@ -177,7 +280,28 @@ describe("AdminDashboard stats", () => {
       name: "Info collection progress",
     });
     expect(bar).toHaveAttribute("aria-valuenow", "67");
-    expect(screen.getByText("2 of 3 parties complete")).toBeInTheDocument();
+    expect(bar.previousElementSibling).toHaveTextContent(
+      "2 of 3 parties complete",
+    );
+  });
+
+  it("links the info-collection counts to the parties list by status", async () => {
+    stub({ dashboard: makeDashboard() });
+    renderDashboard();
+
+    await screen.findByRole("progressbar", {
+      name: "Info collection progress",
+    });
+    expect(screen.getByRole("link", { name: "1" })).toHaveAttribute(
+      "href",
+      "/admin/parties?info_collection_status=complete",
+    );
+    expect(
+      screen.getByRole("link", { name: "1 party still incomplete" }),
+    ).toHaveAttribute(
+      "href",
+      "/admin/parties?info_collection_status=incomplete",
+    );
   });
 
   it("shows empty-state copy when there are no invitations or emails", async () => {

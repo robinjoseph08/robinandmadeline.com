@@ -6,6 +6,10 @@
 
 import type { SortLevel } from "@/libraries/sortSpec";
 import {
+  AttendanceAwaiting,
+  AttendanceComing,
+  AttendanceDeclined,
+  AttendanceExpected,
   CircleChildhood,
   CircleCollege,
   CircleExtended,
@@ -14,6 +18,9 @@ import {
   CircleWork,
   InvitationDigital,
   InvitationPhysical,
+  ProgressNotResponded,
+  ProgressPartial,
+  ProgressResponded,
   RelationFamily,
   RelationFriend,
   RSVPAttending,
@@ -25,8 +32,10 @@ import {
   StatusIncomplete,
   type Circle,
   type EventRSVPStatus,
+  type GuestAttendance,
   type InfoCollectionStatus,
   type InvitationType,
+  type PartyRSVPProgress,
   type Relation,
   type Side,
 } from "@/types/generated/models";
@@ -63,6 +72,23 @@ export const CIRCLE_OPTIONS: Option<Circle>[] = [
 export const INFO_STATUS_OPTIONS: Option<InfoCollectionStatus>[] = [
   { value: StatusComplete, label: "Complete" },
   { value: StatusIncomplete, label: "Incomplete" },
+];
+
+// A guest's standing across all their Event RSVPs (the dashboard's expected
+// guests card and its breakdown). See models.GuestAttendanceCondition.
+export const ATTENDANCE_OPTIONS: Option<GuestAttendance>[] = [
+  { value: AttendanceExpected, label: "Expected (coming or awaiting)" },
+  { value: AttendanceComing, label: "Coming" },
+  { value: AttendanceAwaiting, label: "Awaiting reply" },
+  { value: AttendanceDeclined, label: "Declined everything" },
+];
+
+// How much of a party's RSVP is in (the dashboard's parties card). See
+// models.PartyRSVPProgressCondition.
+export const RSVP_PROGRESS_OPTIONS: Option<PartyRSVPProgress>[] = [
+  { value: ProgressResponded, label: "Responded" },
+  { value: ProgressPartial, label: "Partially responded" },
+  { value: ProgressNotResponded, label: "No response yet" },
 ];
 
 export const RSVP_STATUS_OPTIONS: Option<EventRSVPStatus>[] = [

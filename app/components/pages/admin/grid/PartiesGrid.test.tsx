@@ -187,3 +187,25 @@ describe("PartiesGrid address columns", () => {
     });
   });
 });
+
+describe("PartiesGrid party link", () => {
+  it("links each party's name cell to its page", () => {
+    renderGrid([makeParty({ id: "p1", name: "The Smiths" })]);
+
+    const link = screen.getByRole("link", { name: "Open The Smiths" });
+    expect(link).toHaveAttribute("href", "/admin/parties/p1");
+    expect(link.closest("td")).toBe(
+      screen.getByDisplayValue("The Smiths").closest("td"),
+    );
+  });
+
+  it("keeps the link out of the Tab order so Name tabs straight to Side", async () => {
+    const user = userEvent.setup();
+    renderGrid([makeParty({ id: "p1", name: "The Smiths" })]);
+
+    screen.getByDisplayValue("The Smiths").focus();
+    await user.tab();
+
+    expect(screen.getByRole("combobox", { name: "Side" })).toHaveFocus();
+  });
+});

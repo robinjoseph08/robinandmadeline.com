@@ -180,6 +180,15 @@ func TestProtectedAdminRoute_RequiresToken(t *testing.T) {
 	srv.Handler.ServeHTTP(photoGroupsRec, photoGroupsReq)
 	require.Equal(t, http.StatusUnauthorized, photoGroupsRec.Code)
 
+	// Same for the party RSVP routes, which pkg/rsvps mounts on the admin group
+	// (its guest routes live on the guest group instead).
+	for _, method := range []string{http.MethodGet, http.MethodPut} {
+		rsvpReq := httptest.NewRequestWithContext(context.Background(), method, "/api/admin/parties/00000000-0000-0000-0000-000000000000/rsvp", http.NoBody)
+		rsvpRec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(rsvpRec, rsvpReq)
+		require.Equal(t, http.StatusUnauthorized, rsvpRec.Code, method)
+	}
+
 	// Same for the emails routes.
 	emailsReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/admin/emails/templates", http.NoBody)
 	emailsRec := httptest.NewRecorder()

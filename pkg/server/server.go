@@ -183,6 +183,7 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.C
 	parties.RegisterRoutes(admin, parties.NewService(db))
 	events.RegisterRoutes(admin, events.NewService(db))
 	photogroups.RegisterRoutes(admin, photogroups.NewService(db))
+	rsvps.RegisterAdminRoutes(admin, rsvps.NewService(db))
 
 	emailService := emails.NewService(db, cfg.PublicBaseURL, cfg.AdminUsername, cfg.EmailDailySendLimit).
 		WithWorkerWake(worker)

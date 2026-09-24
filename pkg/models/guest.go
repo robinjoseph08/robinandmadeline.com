@@ -56,10 +56,11 @@ type Guest struct {
 	UpdatedAt time.Time `bun:"updated_at,nullzero" json:"updated_at"`
 
 	// Party is populated only when explicitly loaded (e.g. the flat guest list
-	// joins it for the party name). It is an ORM relation over the existing
+	// joins it for the party columns). It is an ORM relation over the existing
 	// party_id FK, not a stored column, so it needs no migration; bun fills it via
-	// relation queries. It is omitted from JSON: responses surface the party name
-	// through the GuestListItem response type, not a nested party.
+	// relation queries. It is omitted from the model's JSON: responses that need
+	// the party surface it through a response type (GuestListItem), which adds
+	// the derived party fields.
 	Party *Party `bun:"rel:belongs-to,join:party_id=id" json:"-" tstype:"-"`
 }
 

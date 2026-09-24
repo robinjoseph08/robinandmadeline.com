@@ -64,6 +64,9 @@ func (s *Service) ListParties(ctx context.Context, f ListPartiesQuery) ([]*model
 		// text[] containment: the circle array includes the requested value.
 		q = q.Where("? = ANY(p.circle)", *f.Circle)
 	}
+	if f.RSVPProgress != nil {
+		q = q.Where(models.PartyRSVPProgressCondition(*f.RSVPProgress))
+	}
 
 	// With no status filter the SQL count is the total. With one, we filter the
 	// derived status in Go and recount, so the extra COUNT is only worth running
@@ -171,6 +174,10 @@ func (s *Service) ListGuests(ctx context.Context, f ListGuestsQuery) ([]*models.
 			sub = sub.Where("er.status = ?", *f.RSVPStatus)
 		}
 		q = q.Where("EXISTS (?)", sub)
+	}
+
+	if f.Attendance != nil {
+		q = q.Where(models.GuestAttendanceCondition(*f.Attendance))
 	}
 
 	// Avoid the extra COUNT when status is active because the derived predicate
