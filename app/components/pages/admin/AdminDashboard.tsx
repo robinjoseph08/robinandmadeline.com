@@ -272,31 +272,33 @@ function GuestBreakdownSection({
           title="By relation"
         />
         <BreakdownCard
+          note="Expected guests"
           rows={[
             {
               label: "Adults",
               value: byAge.adults,
-              to: guestsLink({ is_child: false }),
+              to: guestsLink({ attendance: "expected", is_child: false }),
             },
             {
               label: "Children",
               value: byAge.children,
-              to: guestsLink({ is_child: true }),
+              to: guestsLink({ attendance: "expected", is_child: true }),
             },
           ]}
           title="By age"
         />
         <BreakdownCard
+          note="Expected guests"
           rows={[
             {
               label: "Drinking",
               value: byDrinking.drinking,
-              to: guestsLink({ is_drinking: true }),
+              to: guestsLink({ attendance: "expected", is_drinking: true }),
             },
             {
               label: "Not drinking",
               value: byDrinking.not_drinking,
-              to: guestsLink({ is_drinking: false }),
+              to: guestsLink({ attendance: "expected", is_drinking: false }),
             },
           ]}
           title="By drinking"
@@ -306,10 +308,27 @@ function GuestBreakdownSection({
   );
 }
 
-function BreakdownCard({ title, rows }: { title: string; rows: StatRow[] }) {
+/**
+ * One breakdown box. `note` names the population when it is not every guest
+ * (age and drinking count only expected guests).
+ */
+function BreakdownCard({
+  title,
+  note,
+  rows,
+}: {
+  title: string;
+  note?: string;
+  rows: StatRow[];
+}) {
   return (
     <div className="rounded-md border border-ink/10 p-4">
-      <p className="text-sm font-medium">{title}</p>
+      <p className="text-sm font-medium">
+        {title}
+        {note ? (
+          <span className="font-normal text-muted-foreground"> · {note}</span>
+        ) : null}
+      </p>
       <dl className="mt-2 space-y-0.5 text-sm">
         {rows.map((row) => (
           <BreakdownRow key={row.label} {...row} />

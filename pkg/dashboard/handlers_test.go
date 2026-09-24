@@ -170,23 +170,34 @@ func TestDashboard_PartyAndGuestCounts(t *testing.T) {
 	assert.Equal(t, 2, resp.GuestBreakdown.ByRelation.Friend)
 }
 
-func TestDashboard_GuestBreakdownByChildAndDrinking(t *testing.T) {
+func TestDashboard_GuestBreakdownByChildAndDrinkingCountsExpectedGuests(t *testing.T) {
 	// Asymmetric on purpose (1 child of 3, 2 drinking of 3) so a swapped
-	// column shows up as a wrong count.
+	// column shows up as a wrong count. Dan, a drinking adult who declined
+	// every event, drops out of both breakdowns but still counts by side.
 	f := newAPI(t)
 	p := createParty(t, f, "Smiths", partyOpts{})
+	var dan *models.Guest
 	for _, g := range []parties.CreateGuestPayload{
 		{FullName: "Alice", IsPrimary: true, IsDrinking: true},
 		{FullName: "Bob", IsDrinking: true},
 		{FullName: "Cara", IsChild: true},
+		{FullName: "Dan", IsDrinking: true},
 	} {
-		_, err := f.parties.CreateGuest(ctx(), p.ID, g)
+		guest, err := f.parties.CreateGuest(ctx(), p.ID, g)
 		require.NoError(t, err)
+		dan = guest
 	}
+	ceremony, err := f.events.CreateEvent(ctx(), events.CreateEventPayload{
+		Name: "Ceremony", Date: "2026-08-01", IsPublic: true,
+	})
+	require.NoError(t, err)
+	_, err = f.events.UpdateRSVPStatus(ctx(), ceremony.ID, dan.ID, events.UpdateEventRSVPPayload{Status: models.RSVPNotAttending})
+	require.NoError(t, err)
 
 	resp := getDashboard(t, f)
 	assert.Equal(t, dashboard.AgeBreakdown{Adults: 2, Children: 1}, resp.GuestBreakdown.ByAge)
 	assert.Equal(t, dashboard.DrinkingBreakdown{Drinking: 2, NotDrinking: 1}, resp.GuestBreakdown.ByDrinking)
+	assert.Equal(t, 4, resp.GuestBreakdown.BySide.Robin, "side still counts every guest")
 }
 
 func TestDashboard_PerEventRSVPBreakdownAndSummary(t *testing.T) {
