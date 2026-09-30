@@ -78,16 +78,23 @@ export default function Travel() {
 
         <Section icon={Car} title="Rental Cars">
           <p>
-            The DFW area is pretty sprawling, and the venue is a bit outside of
-            the city, so it's highly encouraged to rent a car if you're flying
-            in so that you can easily get around.
+            The DFW area is pretty sprawling, and the venues are a bit outside
+            of the city, so it's highly encouraged to rent a car if you're
+            flying in so that you can easily get around.
+          </p>
+          <br />
+          <p>
+            In terms of ride sharing apps, you'll definitely be able to get them
+            to and from the airport and to and from the Madhuram Veppu venue,
+            but it will be harder to get one from the reception venue. It's a
+            bit remote, so having your own car or carpooling is recommended.
           </p>
         </Section>
 
         <Section icon={SquareParking} title="Parking">
           <p>
-            The venue has onsite parking, so if you're driving in or get a
-            rental car, parking shouldn't be difficult!
+            The venues for both days have onsite parking, so if you're driving
+            in or get a rental car, parking shouldn't be difficult!
           </p>
         </Section>
       </div>
