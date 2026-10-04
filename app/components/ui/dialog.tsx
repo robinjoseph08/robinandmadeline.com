@@ -2,6 +2,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import * as React from "react";
 
+import { ModalLayerContext } from "@/components/ui/modal-layer";
 import { cn } from "@/libraries/utils";
 
 const Dialog = DialogPrimitive.Root;
@@ -87,7 +88,9 @@ const DialogContent = React.forwardRef<
         }}
         {...props}
       >
-        {children}
+        <ModalLayerContext.Provider value={true}>
+          {children}
+        </ModalLayerContext.Provider>
         <DialogPrimitive.Close className="absolute right-4 top-4 cursor-pointer rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring disabled:pointer-events-none">
           <X className="h-4 w-4" />
           <span className="sr-only">Close</span>
