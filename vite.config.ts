@@ -1,4 +1,5 @@
 import fs from "fs";
+import { hostname } from "os";
 import path from "path";
 
 import tailwindcss from "@tailwindcss/vite";
@@ -35,10 +36,17 @@ function getApiPort(): number {
   return 8400;
 }
 
+// Other machines on the network reach the dev server by this machine's name
+// (bare over Tailscale MagicDNS, with a .local suffix over mDNS). Vite only
+// allows localhost hosts by default. macOS can report the hostname with a
+// domain suffix (robin-m3.local, robin-m3.lan), so keep just the first label.
+const machine = hostname().toLowerCase().split(".")[0];
+
 // https://vite.dev/config/
 export default defineConfig({
   server: {
     host: "0.0.0.0",
+    allowedHosts: [machine, `${machine}.local`],
     port: 8401,
     strictPort: false,
     proxy: {
