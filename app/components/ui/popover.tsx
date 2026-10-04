@@ -1,9 +1,18 @@
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import * as React from "react";
 
+import { ModalLayerContext } from "@/components/ui/modal-layer";
 import { cn } from "@/libraries/utils";
 
-const Popover = PopoverPrimitive.Root;
+// Defaults to modal inside a Dialog or Sheet so its content stays scrollable
+// there (see ModalLayerContext); non-modal everywhere else.
+function Popover({
+  modal,
+  ...props
+}: React.ComponentProps<typeof PopoverPrimitive.Root>) {
+  const insideModal = React.useContext(ModalLayerContext);
+  return <PopoverPrimitive.Root modal={modal ?? insideModal} {...props} />;
+}
 
 const PopoverTrigger = PopoverPrimitive.Trigger;
 
