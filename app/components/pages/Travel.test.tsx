@@ -26,26 +26,55 @@ describe("Travel", () => {
     expect(screen.getAllByRole("region")).toHaveLength(4);
   });
 
-  it("links each hotel block to its group rate and the hotel's own page", () => {
+  it.each([
+    {
+      name: "GLō Best Western Dallas South DeSoto",
+      bookingUrl:
+        "https://www.bestwestern.com/en_US/book/hotel-rooms.44750.html?groupId=R52AF4Y0",
+      websiteUrl: "propertyCode.44750",
+      rate: "$129",
+    },
+    {
+      name: "Fairfield by Marriott Inn & Suites Dallas Cedar Hill",
+      bookingUrl:
+        "https://app.marriott.com/resview2?id=1791312324782&key=GRP&app=resvlink",
+      websiteUrl: "daleh-fairfield-inn-and-suites-dallas-cedar-hill",
+      rate: "$124",
+    },
+  ])(
+    "links $name to its group rate and own page with its nightly rate",
+    ({ name, bookingUrl, websiteUrl, rate }) => {
+      render(<Travel />);
+
+      const card = within(screen.getByRole("article", { name }));
+
+      const booking = card.getByRole("link", { name: /Book the group rate/ });
+      expect(booking).toHaveAttribute("href", bookingUrl);
+      expect(booking).toHaveAttribute("target", "_blank");
+      expect(card.getByRole("link", { name: /See the hotel/ })).toHaveAttribute(
+        "href",
+        expect.stringContaining(websiteUrl),
+      );
+      expect(card.getByText(rate)).toBeInTheDocument();
+      expect(card.getByText("Free parking")).toBeInTheDocument();
+    },
+  );
+
+  it("lists the block dates once for both hotels", () => {
     render(<Travel />);
 
-    const card = within(
-      screen.getByRole("article", {
-        name: "GLō Best Western Dallas South DeSoto",
-      }),
-    );
+    for (const label of ["Just the wedding", "Staying a bit longer"]) {
+      expect(screen.getAllByText(label)).toHaveLength(1);
+      for (const card of screen.getAllByRole("article")) {
+        expect(within(card).queryByText(label)).not.toBeInTheDocument();
+      }
+    }
+  });
 
-    const booking = card.getByRole("link", { name: /Book the group rate/ });
-    expect(booking).toHaveAttribute(
-      "href",
-      "https://www.bestwestern.com/en_US/book/hotel-rooms.44750.html?groupId=R52AF4Y0",
-    );
-    expect(booking).toHaveAttribute("target", "_blank");
-    expect(card.getByRole("link", { name: /See the hotel/ })).toHaveAttribute(
-      "href",
-      expect.stringContaining("propertyCode.44750"),
-    );
-    expect(card.getByText("Free parking")).toBeInTheDocument();
+  it("lists the group rate booking cutoff", () => {
+    render(<Travel />);
+
+    expect(screen.getByText("March 9, 2027")).toBeInTheDocument();
   });
 
   it("offers an email link for when the block runs out", () => {

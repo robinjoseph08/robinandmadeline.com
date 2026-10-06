@@ -1,4 +1,4 @@
-import { Heart, Image as ImageIcon } from "lucide-react";
+import { Image as ImageIcon } from "lucide-react";
 import { type ReactNode } from "react";
 
 import firstDate2Avif640 from "@/assets/story/first-date-2-640.avif";
@@ -22,6 +22,7 @@ import proposalJpg from "@/assets/story/proposal-1080.jpg";
 import weddingAvif640 from "@/assets/story/wedding-640.avif";
 import weddingAvif1080 from "@/assets/story/wedding-1080.avif";
 import weddingJpg from "@/assets/story/wedding-1080.jpg";
+import { Hearts } from "@/components/library/Hearts";
 import PageHeader from "@/components/library/PageHeader";
 import { useInView } from "@/hooks/useInView";
 import { usePageTitle } from "@/hooks/usePageTitle";
@@ -386,11 +387,7 @@ export default function Story() {
             that you all enjoy it. But we know that this is just the beginning
             of the rest of our lives. We&apos;ve got even more moments that
             we&apos;ll be able to experience together, and we hope you&apos;ll
-            continue to be a part of them.{" "}
-            <span className="inline-flex items-center gap-1 align-[-0.15em]">
-              <Heart aria-hidden className="size-3.5 fill-blue text-blue" />
-              <Heart aria-hidden className="size-3.5 fill-rose text-rose" />
-            </span>
+            continue to be a part of them. <Hearts />
           </p>
         </Milestone>
       </ol>
