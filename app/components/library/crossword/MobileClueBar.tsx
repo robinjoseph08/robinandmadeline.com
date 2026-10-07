@@ -36,7 +36,7 @@ export default function MobileClueBar({
       <div className="flex min-h-16 items-stretch">
         <Button
           aria-label="Previous clue"
-          className="h-auto min-w-12 rounded-none px-3"
+          className="h-auto min-w-12 rounded-none px-3 hover:bg-rose/20"
           onClick={onPrevious}
           type="button"
           variant="ghost"
@@ -55,7 +55,7 @@ export default function MobileClueBar({
         </button>
         <Button
           aria-label="Next clue"
-          className="h-auto min-w-12 rounded-none px-3"
+          className="h-auto min-w-12 rounded-none px-3 hover:bg-rose/20"
           onClick={onNext}
           type="button"
           variant="ghost"

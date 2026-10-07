@@ -455,7 +455,7 @@ function InfoCollectionSection({
           role="progressbar"
         >
           <div
-            className="h-full rounded-full bg-accent"
+            className="h-full rounded-full bg-sage"
             style={{ width: `${percent}%` }}
           />
         </div>

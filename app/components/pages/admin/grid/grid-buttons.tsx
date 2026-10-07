@@ -18,7 +18,12 @@ interface TooltipIconButtonProps {
   variant?: ButtonProps["variant"];
 }
 
-/** A compact icon button whose accessible name doubles as its tooltip. */
+/**
+ * A compact icon button whose accessible name doubles as its tooltip. These sit
+ * in table rows that already hover with a rose wash, so the button's own hover
+ * deepens the rose instead of using the ghost variant's tint, which would
+ * vanish against the row.
+ */
 export function TooltipIconButton({
   label,
   onClick,
@@ -31,7 +36,7 @@ export function TooltipIconButton({
       <TooltipTrigger asChild>
         <Button
           aria-label={label}
-          className="size-8"
+          className="size-8 hover:bg-rose/20"
           disabled={disabled}
           onClick={onClick}
           size="icon"
@@ -51,7 +56,7 @@ export function TooltipIconButton({
  * party page is one click away from any row without scrolling to the far-right
  * columns. The accessible name doubles as its tooltip. It is left out of the
  * Tab order so tabbing from Name still lands on the next column, as in a
- * spreadsheet.
+ * spreadsheet. Like TooltipIconButton, its hover deepens the row's rose wash.
  */
 export function OpenPartyLink({
   partyId,
@@ -66,7 +71,7 @@ export function OpenPartyLink({
       <TooltipTrigger asChild>
         <Button
           asChild
-          className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+          className="size-7 shrink-0 text-muted-foreground hover:bg-rose/20 hover:text-foreground"
           size="icon"
           variant="ghost"
         >
