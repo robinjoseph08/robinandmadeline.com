@@ -61,22 +61,28 @@
   --color-rose-hover: #c0666a; /* button hover */
   --color-rose-soft: #f3e1e1; /* light tint for chips / nav pills (ink text) */
 
-  /* Supporting blue and green accents from the monogram, available for charts
-   * and highlights (links and primary actions stay on rose, above). */
+  /* Supporting blue accent from the monogram, available for charts and
+   * highlights (links and primary actions stay on rose, above). */
   --color-blue: #4f6493;
-  --color-green: #5c6b41;
+
+  /* Sage: sampled from the leaves in the floral art. Used for success states
+   * (success badges, completion progress, saved-cell flashes) and the dev-only
+   * crossword controls. Hover and selection never use it; they stay on the
+   * rose tint. */
+  --color-sage: #a8b885; /* mid leaf, for fills like progress bars */
+  --color-sage-soft: #e1e6d3; /* pale leaf, for success chips */
+  --color-sage-deep: #434e30; /* deep leaf, for text on sage-soft (6.9:1) */
 
   /*
    * Legacy palette aliases kept so existing pages and tests (which reference
-   * `bg-primary`, `bg-secondary`, `bg-complementary-1`, `bg-cream`) keep
-   * working. Values are remapped onto the new system: the old pastel fills
-   * become soft tints, so a `bg-primary` content card reads as a soft rose
-   * wash. The action color lives on `--color-rose` (see button.tsx).
+   * `bg-primary`, `bg-secondary`, `bg-cream`) keep working. Values are
+   * remapped onto the new system: the old pastel fills become soft tints, so
+   * a `bg-primary` content card reads as a soft rose wash. The action color
+   * lives on `--color-rose` (see button.tsx).
    */
   --color-cream: #fbfaf8;
   --color-primary: #f3e1e1; /* soft rose tint */
   --color-secondary: #b7c8e6; /* soft periwinkle (crossword/chips highlight) */
-  --color-complementary-1: #c5d39c; /* soft green */
 
   /* Type families */
   --font-script: "Lily Paperie", "Snell Roundhand", cursive;
@@ -110,8 +116,8 @@
   --secondary-foreground: #2a2622;
   --muted: #f1ede7;
   --muted-foreground: #5c534b;
-  --accent: var(--color-complementary-1); /* green (brand palette) */
-  --accent-foreground: #434e30; /* green deep, for text on the green tint */
+  --accent: #f3e1e1; /* soft rose tint: outline/ghost hover, menu selection */
+  --accent-foreground: #2a2622; /* ink on the soft tint */
   --destructive: #9a3d3d; /* a clearer red, distinct from the mauve rose */
   --destructive-foreground: #ffffff;
   --border: #e0d9d0; /* soft hairline default */

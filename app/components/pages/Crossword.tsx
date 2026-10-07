@@ -767,7 +767,7 @@ function CrosswordGame({
       {import.meta.env.DEV && (
         <div
           className={cn(
-            "mt-3 flex flex-wrap gap-2 rounded-md border border-dashed border-green/40 bg-complementary-1/20 p-2",
+            "mt-3 flex flex-wrap gap-2 rounded-md border border-dashed border-sage bg-sage-soft/50 p-2",
             isLargePuzzle && "mx-4 md:mx-0",
           )}
           data-testid="crossword-dev-controls"

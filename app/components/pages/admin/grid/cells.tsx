@@ -82,7 +82,7 @@ export const FROZEN_FIRST_COL_STATIC = `${FROZEN_BASE} bg-page`;
 export const FROZEN_ROW = "bg-page hover:bg-[#f4eded]";
 
 // The save lifecycle of a single cell edit, surfaced as a brief background tint
-// so you can see a change land: amber while the write is in flight, green on
+// so you can see a change land: amber while the write is in flight, sage on
 // success, red on a failed write that rolled back.
 type CellStatus = "idle" | "saving" | "saved" | "error";
 
@@ -92,7 +92,7 @@ function statusBgClass(status: CellStatus, show: boolean): string {
     case "saving":
       return "bg-amber-100/60";
     case "saved":
-      return "bg-emerald-100/70";
+      return "bg-sage-soft";
     case "error":
       return "bg-destructive/10";
     default:
