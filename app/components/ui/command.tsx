@@ -30,6 +30,8 @@ const CommandInput = React.forwardRef<
         "flex h-9 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-ink/40 disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
+      // A search box, not a credential: keep 1Password from offering logins.
+      data-1p-ignore
       ref={ref}
       {...props}
     />

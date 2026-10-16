@@ -686,6 +686,7 @@ const Grid = forwardRef<GridHandle, Props>(
           autoComplete="off"
           autoCorrect="off"
           className="pointer-events-none absolute h-px w-px opacity-0 caret-transparent [font-size:16px] [scroll-margin-block-end:17rem]"
+          data-1p-ignore
           inputMode={customKeyboard ? "none" : "text"}
           onChange={handleHiddenInputChange}
           // Keep the caret after the sentinel so backspace has something to

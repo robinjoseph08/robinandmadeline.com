@@ -12,6 +12,8 @@ const Textarea = React.forwardRef<
         "flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-sm placeholder:text-ink/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
         className,
       )}
+      // Free text, never a credential: keep 1Password from offering logins.
+      data-1p-ignore
       ref={ref}
       {...props}
     />
