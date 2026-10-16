@@ -59,6 +59,7 @@ export function ChipsInput({
       ))}
       <input
         className="min-w-24 flex-1 bg-transparent text-base outline-none placeholder:text-ink/40 md:text-sm"
+        data-1p-ignore
         id={id}
         // Commit on blur too, so a tag typed right before clicking Save is not
         // silently dropped for lack of an Enter.
