@@ -18,6 +18,7 @@ import (
 	"github.com/robinjoseph08/golib/errutils"
 	"github.com/robinjoseph08/golib/logger"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/errcodes"
 )
 
@@ -272,10 +273,17 @@ func isAPIPath(p string) bool {
 }
 
 // assetCacheControl picks the Cache-Control for a file that exists on disk:
-// immutable for Vite's content-hashed assets, no-cache for everything else
-// (index.html and any stable-named root files).
+// immutable for Vite's content-hashed assets and for the email images and font
+// (public/email), no-cache for everything else (index.html and any other
+// stable-named root files).
+//
+// The email files are immutable because every email already sent links to
+// them by URL forever: changing one in place would quietly change emails in
+// guests' inboxes, and a revalidating cache would wake the scaled-to-zero
+// machine each time someone opens an old email. A design change ships under a
+// new file name instead (e.g. monogram-v2.png).
 func assetCacheControl(rel string) string {
-	if strings.HasPrefix(rel, "/assets/") {
+	if strings.HasPrefix(rel, "/assets/") || strings.HasPrefix(rel, emails.EmailAssetPath+"/") {
 		return cacheControlImmutable
 	}
 	return cacheControlNoCache

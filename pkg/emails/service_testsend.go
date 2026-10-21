@@ -138,10 +138,11 @@ func (s *Service) SendTest(ctx context.Context, in TestEmailPayload) (*TestEmail
 	return &TestEmailResponse{SendID: send.ID, Queued: len(rows)}, nil
 }
 
-// The sample merge entities the dev shell-preview endpoint (ShellPreviewHTML)
-// renders against, so every field resolves to a realistic value and the preview
-// email is never blank. The test send no longer uses these: it renders from a
-// real guest so the couple previews the real copy.
+// The sample merge entities SampleMergeContext builds on (for the dev
+// shell-preview endpoint and the email preview tool), so every field resolves
+// to a realistic value and the preview email is never blank. The test send no
+// longer uses these: it renders from a real guest so the couple previews the
+// real copy.
 
 func sampleGuest() *models.Guest {
 	return &models.Guest{FullName: "Alex Sample"}

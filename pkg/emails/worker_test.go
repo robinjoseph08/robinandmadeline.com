@@ -100,6 +100,9 @@ type fakeMailgun struct {
 	// claimed is signaled once per Send call as it begins, letting tests
 	// synchronize with a blocked in-flight batch.
 	claimed chan struct{}
+	// beforeSend, when non-nil, runs at the start of every Send call, letting
+	// a test change the database mid-batch.
+	beforeSend func(msg emails.Message)
 }
 
 func newFakeMailgun() *fakeMailgun {
@@ -110,7 +113,11 @@ func (f *fakeMailgun) Send(_ context.Context, msg emails.Message) (string, error
 	f.mu.Lock()
 	claimed := f.claimed
 	block := f.blockSends
+	hook := f.beforeSend
 	f.mu.Unlock()
+	if hook != nil {
+		hook(msg)
+	}
 	if claimed != nil {
 		claimed <- struct{}{}
 	}
@@ -156,13 +163,17 @@ func (f *fakeMailgun) sentMessages() []emails.Message {
 	return append([]emails.Message(nil), f.sent...)
 }
 
-const testFrom = "Robin & Madeline <hello@example.test>"
+const (
+	testFrom    = "Robin & Madeline <hello@example.test>"
+	testReplyTo = "wedding@example.test"
+)
 
 // workerConfig is the default test tuning: small batches and a short stuck
 // threshold so reconciliation tests do not wait minutes.
 func workerConfig() emails.WorkerConfig {
 	return emails.WorkerConfig{
 		From:           testFrom,
+		ReplyTo:        testReplyTo,
 		PublicBaseURL:  testBaseURL,
 		BatchSize:      10,
 		StuckThreshold: time.Minute,
@@ -227,6 +238,7 @@ func TestProcessBatch_SendsQueuedRowsWithRenderedMergeFields(t *testing.T) {
 	assert.Contains(t, aliceHTML, "Your code is KALEL")
 	assert.Contains(t, aliceHTML, testBaseURL+"/rsvp")
 	assert.Equal(t, testFrom, byTo["alice@example.com"].From)
+	assert.Equal(t, testReplyTo, byTo["alice@example.com"].ReplyTo)
 	assert.Equal(t, rows[alice.ID].ID, byTo["alice@example.com"].RecipientID)
 	assert.Equal(t, "Hi Bob", byTo["bob@example.com"].Subject)
 
@@ -1287,15 +1299,18 @@ func TestProcessBatch_RepeatedQuotaRejectionsEventuallyFailTheRow(t *testing.T) 
 
 	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
 
-	// Mailgun answers quota on every attempt, day after day (each fresh
-	// worker models a new day, since the quota pause is in-memory per
-	// instance). The requeue loop must be bounded: a rejection misclassified
-	// as quota would otherwise sort back to the head of the queue and stall
-	// claims forever with no admin-visible signal.
+	// Mailgun answers quota on every attempt, day after day (each attempt is
+	// a fresh worker on the next UTC day, past the saved pause). The requeue
+	// loop must be bounded: a rejection misclassified as quota would otherwise
+	// sort back to the head of the queue and stall claims forever with no
+	// admin-visible signal.
+	clock := &fakeClock{t: time.Date(2030, 5, 10, 12, 0, 0, 0, time.UTC)}
 	cfg := workerConfig()
 	cfg.DailySendLimit = 100
+	cfg.Now = clock.now
 
 	for attempt := 1; attempt <= 3; attempt++ {
+		clock.set(time.Date(2030, 5, 10+attempt, 12, 0, 0, 0, time.UTC))
 		client := newFakeMailgun()
 		client.failTo["alice@example.com"] = &emails.RejectionError{StatusCode: 429, Body: "Quota exceeded"}
 		w := newWorker(f, client, cfg)
@@ -1311,6 +1326,7 @@ func TestProcessBatch_RepeatedQuotaRejectionsEventuallyFailTheRow(t *testing.T) 
 
 	// The fourth quota rejection exceeds the cap: the row fails with
 	// Mailgun's words so the admin can see it on the send detail page.
+	clock.set(time.Date(2030, 5, 14, 12, 0, 0, 0, time.UTC))
 	client := newFakeMailgun()
 	client.failTo["alice@example.com"] = &emails.RejectionError{StatusCode: 429, Body: "Quota exceeded"}
 	w := newWorker(f, client, cfg)
@@ -1478,4 +1494,338 @@ func TestReconcileStuck_CheckErrorLeavesRowSending(t *testing.T) {
 	assert.Equal(t, 1, n)
 	assert.Equal(t, models.EmailSending, recipientsForSend(t, f.db, send.ID)[alice.ID].Status)
 	assert.Empty(t, client.sentMessages())
+}
+
+func TestProcessBatch_QuotaPauseSurvivesARestartTheSameDay(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	clock := &fakeClock{t: time.Date(2030, 5, 10, 15, 0, 0, 0, time.UTC)}
+	cfg := workerConfig()
+	cfg.DailySendLimit = 100
+	cfg.Now = clock.now
+	client := newFakeMailgun()
+	client.failTo["alice@example.com"] = &emails.RejectionError{StatusCode: 429, Body: "Quota exceeded"}
+	n, err := newWorker(f, client, cfg).ProcessBatch(ctx())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	// The machine scales to zero and a new process starts later the same UTC
+	// day. It must not re-send into the spent quota, which would cost the
+	// row another requeue toward failing it.
+	clock.set(time.Date(2030, 5, 10, 20, 0, 0, 0, time.UTC))
+	restarted := newWorker(f, client, cfg)
+	n, err = restarted.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, 1, client.sendCallCount())
+	assert.Equal(t, 1, recipientsForSend(t, f.db, send.ID)[alice.ID].QuotaRequeues)
+
+	// After UTC midnight the saved pause has expired and the row sends.
+	clock.set(time.Date(2030, 5, 11, 0, 5, 0, 0, time.UTC))
+	client.mu.Lock()
+	client.failTo = map[string]error{}
+	client.mu.Unlock()
+	n, err = newWorker(f, client, cfg).ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	assert.Equal(t, models.EmailSent, recipientsForSend(t, f.db, send.ID)[alice.ID].Status)
+}
+
+func TestReconcileStuck_RowTooOldToConfirmIsFailedNotResent(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	// Interrupted mid-send two days ago: Mailgun's event log (one day on the
+	// free plan) no longer reaches back, so "not found" proves nothing.
+	strandRow(t, f, row.ID, 48*time.Hour)
+
+	client := newFakeMailgun()
+	w := newWorker(f, client, workerConfig())
+
+	n, err := w.ReconcileStuck(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	got := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	assert.Equal(t, models.EmailFailed, got.Status)
+	require.NotNil(t, got.FailureReason)
+	assert.Contains(t, *got.FailureReason, "could not be confirmed")
+
+	// Nothing is re-sent.
+	_, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Empty(t, client.sentMessages())
+}
+
+func TestReconcileStuck_OldRowStillFoundIsMarkedSent(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	strandRow(t, f, row.ID, 48*time.Hour)
+
+	// On a plan with longer retention Mailgun still has the record: found
+	// wins regardless of age.
+	client := newFakeMailgun()
+	client.accepted[row.ID] = "found@test.mailgun"
+	w := newWorker(f, client, workerConfig())
+
+	_, err := w.ReconcileStuck(ctx())
+	require.NoError(t, err)
+	got := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	assert.Equal(t, models.EmailSent, got.Status)
+	require.NotNil(t, got.MailgunMessageID)
+	assert.Equal(t, "found@test.mailgun", *got.MailgunMessageID)
+}
+
+func TestProcessBatch_OneUnknownOutcomeDoesNotHoldUpTheRest(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	for i := 0; i < 3; i++ {
+		createGuestT(t, f, p.ID, fmt.Sprintf("Guest %d", i), guestOpts{email: emailOf(fmt.Sprintf("guest%d@example.com", i))})
+	}
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// A single blip is not an outage: that row waits for reconciliation and
+	// the rest of the send goes out in the same activation.
+	client := newFakeMailgun()
+	client.failTo["guest1@example.com"] = errors.New("mailgun send outcome unknown: status 502: bad gateway")
+	w := newWorker(f, client, workerConfig())
+
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+	assert.Equal(t, 3, client.sendCallCount())
+	counts := statusCounts(t, f, send.ID)
+	assert.Equal(t, 2, counts[models.EmailSent])
+	assert.Equal(t, 1, counts[models.EmailSending])
+}
+
+func TestProcessBatch_RepeatedUnknownOutcomesStopAndReleaseTheRest(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	for i := 0; i < 4; i++ {
+		createGuestT(t, f, p.ID, fmt.Sprintf("Guest %d", i), guestOpts{email: emailOf(fmt.Sprintf("guest%d@example.com", i))})
+	}
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// Mailgun is down: two unknown outcomes in a row stop the batch, so only
+	// those two rows wait for reconciliation and the rest go back to the
+	// queue untouched instead of each being stranded the same way.
+	clock := &fakeClock{t: time.Date(2030, 5, 10, 15, 0, 0, 0, time.UTC)}
+	cfg := workerConfig()
+	cfg.DailySendLimit = 100
+	cfg.Now = clock.now
+	client := newFakeMailgun()
+	for i := 0; i < 4; i++ {
+		client.failTo[fmt.Sprintf("guest%d@example.com", i)] = errors.New("mailgun send outcome unknown: status 503: unavailable")
+	}
+	w := newWorker(f, client, cfg)
+
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 4, n)
+	assert.Equal(t, 2, client.sendCallCount())
+
+	sending, released := 0, 0
+	for _, row := range recipientsForSend(t, f.db, send.ID) {
+		switch row.Status {
+		case models.EmailSending:
+			sending++
+		case models.EmailQueued:
+			released++
+			// Never dispatched, so the claim does not spend today's budget.
+			assert.Nil(t, row.AttemptedAt)
+			assert.Nil(t, row.FailureReason)
+		}
+	}
+	assert.Equal(t, 2, sending)
+	assert.Equal(t, 2, released)
+
+	// The admin pages keep waking the worker; during the cooldown those
+	// wakes do not send more emails into the outage.
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, 2, client.sendCallCount())
+
+	// Once Mailgun recovers and the cooldown passes, the released rows send.
+	clock.set(clock.now().Add(2 * time.Minute))
+	client.mu.Lock()
+	client.failTo = map[string]error{}
+	client.mu.Unlock()
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	counts := statusCounts(t, f, send.ID)
+	assert.Equal(t, 2, counts[models.EmailSent])
+	assert.Equal(t, 2, counts[models.EmailSending])
+}
+
+func TestRun_RepeatedUnknownOutcomesEndTheActivation(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	for i := 0; i < 4; i++ {
+		createGuestT(t, f, p.ID, fmt.Sprintf("Guest %d", i), guestOpts{email: emailOf(fmt.Sprintf("guest%d@example.com", i))})
+	}
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// With a batch size of one, an activation that kept going would claim
+	// and try every row; it stops after the second unknown outcome, across
+	// batches, leaving the rest queued for a later wake.
+	client := newFakeMailgun()
+	for i := 0; i < 4; i++ {
+		client.failTo[fmt.Sprintf("guest%d@example.com", i)] = errors.New("call mailgun send: connection reset")
+	}
+	cfg := workerConfig()
+	cfg.BatchSize = 1
+	w := newWorker(f, client, cfg)
+
+	runCtx, cancel := context.WithCancel(ctx())
+	done := make(chan struct{})
+	go func() { defer close(done); w.Run(runCtx) }()
+	<-w.Started()
+	w.Wake()
+	require.Eventually(t, func() bool { return client.sendCallCount() == 2 }, 5*time.Second, 10*time.Millisecond)
+	// A woken worker that ignored the stop would claim the next row right
+	// away; give it the chance before checking it did not.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+
+	assert.Equal(t, 2, client.sendCallCount())
+	counts := statusCounts(t, f, send.ID)
+	assert.Equal(t, 2, counts[models.EmailSending])
+	assert.Equal(t, 2, counts[models.EmailQueued])
+}
+
+func TestProcessBatch_AccountRejectionRequeuesEverythingAndCoolsDown(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	bob := createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// A bad API key is the account's problem, not any one email's: failing
+	// rows would drop the whole send, so every row goes back to the queue
+	// with an explanation the send detail page shows.
+	clock := &fakeClock{t: time.Date(2030, 5, 10, 15, 0, 0, 0, time.UTC)}
+	cfg := workerConfig()
+	cfg.DailySendLimit = 100
+	cfg.Now = clock.now
+	client := newFakeMailgun()
+	unauthorized := &emails.RejectionError{StatusCode: 401, Body: "Forbidden"}
+	client.failTo["alice@example.com"] = unauthorized
+	client.failTo["bob@example.com"] = unauthorized
+	w := newWorker(f, client, cfg)
+
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, 1, client.sendCallCount())
+	rows := recipientsForSend(t, f.db, send.ID)
+	for _, g := range []*models.Guest{alice, bob} {
+		assert.Equal(t, models.EmailQueued, rows[g.ID].Status, g.FullName)
+		require.NotNil(t, rows[g.ID].FailureReason, g.FullName)
+		assert.Contains(t, *rows[g.ID].FailureReason, "Mailgun refused the account (status 401)", g.FullName)
+		assert.Nil(t, rows[g.ID].AttemptedAt, g.FullName)
+		assert.Equal(t, 0, rows[g.ID].QuotaRequeues, g.FullName)
+	}
+
+	// The admin pages wake the worker every few seconds; during the cooldown
+	// those wakes do not re-ask Mailgun.
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, 1, client.sendCallCount())
+
+	// Once the key is fixed and the cooldown passes, everything sends and the
+	// explanation clears.
+	clock.set(clock.now().Add(2 * time.Minute))
+	client.mu.Lock()
+	client.failTo = map[string]error{}
+	client.mu.Unlock()
+	n, err = w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	for _, row := range recipientsForSend(t, f.db, send.ID) {
+		assert.Equal(t, models.EmailSent, row.Status)
+		assert.Nil(t, row.FailureReason)
+	}
+}
+
+func TestProcessBatch_GuestDeletedMidBatchDoesNotStallTheRest(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	guests := map[string]*models.Guest{}
+	for i := 0; i < 3; i++ {
+		addr := fmt.Sprintf("guest%d@example.com", i)
+		guests[addr] = createGuestT(t, f, p.ID, fmt.Sprintf("Guest %d", i), guestOpts{email: emailOf(addr)})
+	}
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+
+	// The couple trims the guest list while the send drains: the deleted
+	// guest's row cascades away, and the rest of the batch must still go out
+	// (guest edits never wake the worker, so a stop here would stall them).
+	client := newFakeMailgun()
+	var once sync.Once
+	var deleted string
+	client.beforeSend = func(msg emails.Message) {
+		once.Do(func() {
+			for addr, g := range guests {
+				if addr != msg.To {
+					deleted = addr
+					_, err := f.db.NewDelete().Model((*models.Guest)(nil)).Where("id = ?", g.ID).Exec(ctx())
+					require.NoError(t, err)
+					return
+				}
+			}
+		})
+	}
+	w := newWorker(f, client, workerConfig())
+
+	n, err := w.ProcessBatch(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+	assert.Equal(t, 2, client.sendCallCount())
+
+	rows := recipientsForSend(t, f.db, send.ID)
+	assert.Len(t, rows, 2)
+	for _, row := range rows {
+		assert.Equal(t, models.EmailSent, row.Status)
+		assert.NotEqual(t, deleted, row.EmailAddress)
+	}
+}
+
+func TestReconcileStuck_RequeueClearsAStaleReason(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	send := queueSend(t, f, emails.SendEmailPayload{Subject: "s", Body: "b"})
+	row := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	// An earlier account refusal left an explanation on the row.
+	_, err := f.db.NewUpdate().Model((*models.EmailRecipient)(nil)).
+		Set("failure_reason = ?", "Not sent yet: Mailgun refused the account (status 401).").
+		Where("id = ?", row.ID).Exec(ctx())
+	require.NoError(t, err)
+	strandRow(t, f, row.ID, 10*time.Minute)
+
+	w := newWorker(f, newFakeMailgun(), workerConfig())
+	_, err = w.ReconcileStuck(ctx())
+	require.NoError(t, err)
+
+	got := recipientsForSend(t, f.db, send.ID)[alice.ID]
+	assert.Equal(t, models.EmailQueued, got.Status)
+	assert.Nil(t, got.FailureReason)
 }

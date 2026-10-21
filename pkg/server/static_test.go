@@ -23,6 +23,8 @@ func newStaticDir(t *testing.T) string {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "favicon.ico"), []byte("icon bytes"), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "assets"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets", "index-abc123.js"), []byte("console.log('hashed')"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "email"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "email", "monogram.png"), []byte("png bytes"), 0o600))
 	return dir
 }
 
@@ -132,6 +134,24 @@ func TestStaticServing_HashedAssetsAreImmutable(t *testing.T) {
 	assert.Equal(t, "console.log('hashed')", rec.Body.String())
 	// Vite content-hashes asset filenames, so they can be cached forever.
 	assert.Equal(t, "public, max-age=31536000, immutable", rec.Header().Get("Cache-Control"))
+}
+
+func TestStaticServing_EmailAssetsAreImmutable(t *testing.T) {
+	cfg := newTestConfig(t)
+	cfg.StaticDir = newStaticDir(t)
+	srv := server.New(cfg, nil)
+
+	// Sent emails link to these files forever, so they are cached like hashed
+	// assets: an open long after the send never has to wake the machine.
+	rec := get(srv.Handler, "/email/monogram.png")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "png bytes", rec.Body.String())
+	assert.Equal(t, "public, max-age=31536000, immutable", rec.Header().Get("Cache-Control"))
+
+	// A missing email file is still a plain 404 that carries no cache policy.
+	rec = get(srv.Handler, "/email/missing.png")
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Empty(t, rec.Header().Get("Cache-Control"))
 }
 
 func TestStaticServing_RootFilesAreNoCache(t *testing.T) {

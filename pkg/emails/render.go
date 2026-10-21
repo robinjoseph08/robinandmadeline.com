@@ -2,6 +2,7 @@ package emails
 
 import (
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
@@ -26,22 +27,51 @@ var placeholderRE = regexp.MustCompile(`\{\{\s*([a-z_]+)\s*\}\}`)
 // resolve to a value: render's resolve, the merge-field emptiness validation
 // (service_validate.go), and usedMergeFields all read this one set. A name not
 // in here is an unknown placeholder, left intact by Render.
-var knownMergeFields = map[string]struct{}{
-	"guest_name": {},
-	"rsvp_code":  {},
-	"rsvp_link":  {},
-	"info_link":  {},
-	"event_name": {},
-	"event_date": {},
+var knownMergeFields = toSet(mergeFieldOrder)
+
+// mergeFieldOrder lists the merge fields in the order hints show them.
+var mergeFieldOrder = []string{
+	"guest_name",
+	"guest_first_name",
+	"rsvp_code",
+	"rsvp_link",
+	"info_link",
+	"event_name",
+	"event_date",
+}
+
+// MergeFieldNames returns the supported merge field names in display order,
+// for tools that list them (the email preview). The compose page keeps its
+// own copy in app/components/pages/admin/emails/merge-fields.ts.
+func MergeFieldNames() []string { return append([]string(nil), mergeFieldOrder...) }
+
+// DecorationNames returns the decoration shortcode names in display order.
+func DecorationNames() []string { return append([]string(nil), decorationOrder...) }
+
+func toSet(names []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		set[n] = struct{}{}
+	}
+	return set
 }
 
 // Render resolves every known merge field placeholder in text against the
-// given context. Unknown placeholders are left intact so a typo stays visible
-// in the preview instead of silently vanishing from the sent email.
+// given context, and every decoration shortcode to its emoji (the plain-text
+// stand-in for the images the HTML email shows; see RenderEmail). Unknown
+// placeholders are left intact so a typo stays visible in the preview instead
+// of silently vanishing from the sent email.
 //
-// Supported fields: {{guest_name}}, {{rsvp_code}}, {{rsvp_link}},
-// {{info_link}}, {{event_name}}, {{event_date}}.
+// Supported fields: {{guest_name}}, {{guest_first_name}}, {{rsvp_code}},
+// {{rsvp_link}}, {{info_link}}, {{event_name}}, {{event_date}}. Decorations:
+// {{hearts}}, {{blue_heart}}, {{pink_heart}}.
 func Render(text string, mctx MergeContext) string {
+	return replaceDecorations(resolveMergeFields(text, mctx), decorationEmoji)
+}
+
+// resolveMergeFields resolves the known merge fields in text, leaving every
+// other placeholder (decorations included) intact.
+func resolveMergeFields(text string, mctx MergeContext) string {
 	return placeholderRE.ReplaceAllStringFunc(text, func(match string) string {
 		field := placeholderRE.FindStringSubmatch(match)[1]
 		value, ok := mctx.resolve(field)
@@ -50,6 +80,52 @@ func Render(text string, mctx MergeContext) string {
 		}
 		return value
 	})
+}
+
+// decoration is one small inline image from the site, the hearts set at the end
+// of a sentence (app/components/library/Hearts.tsx). The HTML email shows the
+// hosted image; plain text, the subject, and an email with images blocked show
+// the emoji, which keeps the color.
+type decoration struct {
+	file  string
+	emoji string
+}
+
+var (
+	blueHeart = decoration{file: "heart-blue.png", emoji: "\U0001F499"}
+	pinkHeart = decoration{file: "heart-pink.png", emoji: "\U0001FA77"}
+)
+
+// decorations maps each shortcode to the images it renders, in order.
+var decorations = map[string][]decoration{
+	"hearts":     {blueHeart, pinkHeart},
+	"blue_heart": {blueHeart},
+	"pink_heart": {pinkHeart},
+}
+
+// decorationOrder lists the decoration shortcodes in the order hints show
+// them; every name must be a key of decorations.
+var decorationOrder = []string{"hearts", "blue_heart", "pink_heart"}
+
+// replaceDecorations swaps each decoration shortcode in text for render's
+// output, leaving every other placeholder intact.
+func replaceDecorations(text string, render func([]decoration) string) string {
+	return placeholderRE.ReplaceAllStringFunc(text, func(match string) string {
+		decs, ok := decorations[placeholderRE.FindStringSubmatch(match)[1]]
+		if !ok {
+			return match
+		}
+		return render(decs)
+	})
+}
+
+// decorationEmoji renders decorations as their emoji, for text contexts.
+func decorationEmoji(decs []decoration) string {
+	var b strings.Builder
+	for _, d := range decs {
+		b.WriteString(d.emoji)
+	}
+	return b.String()
 }
 
 // usedMergeFields returns the distinct known merge fields referenced across the
@@ -82,6 +158,8 @@ func (m MergeContext) resolve(field string) (string, bool) {
 	switch field {
 	case "guest_name":
 		return m.Guest.FullName, true
+	case "guest_first_name":
+		return firstName(m.Guest.FullName), true
 	case "rsvp_code":
 		if m.Party.RSVPCode == nil {
 			return "", true
@@ -106,6 +184,15 @@ func (m MergeContext) resolve(field string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// firstName is the first space-separated word of a full name ("Alice" for
+// "Alice Smith"), ignoring leading and repeated spaces. A blank name yields "".
+func firstName(fullName string) string {
+	if fields := strings.Fields(fullName); len(fields) > 0 {
+		return fields[0]
+	}
+	return ""
 }
 
 // formatEventDate renders a stored "YYYY-MM-DD" event date as a human-readable

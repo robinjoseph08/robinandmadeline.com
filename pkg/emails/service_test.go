@@ -55,7 +55,9 @@ func (w *recordingWaker) Wake() {
 func newFixtures(t *testing.T) fixtures {
 	t.Helper()
 	db := databasetest.NewIsolated(t, "robinandmadeline_emails_test")
-	databasetest.Truncate(t, db, "email_templates", "email_sends", "events", "parties")
+	// app_settings holds the worker's saved quota pause, which must not leak
+	// from one test into the next.
+	databasetest.Truncate(t, db, "email_templates", "email_sends", "events", "parties", "app_settings")
 	return fixtures{
 		emails:  emails.NewService(db, testBaseURL, testSentBy, testDailySendLimit),
 		parties: parties.NewService(db),

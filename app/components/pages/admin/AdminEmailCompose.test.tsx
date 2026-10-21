@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ApiError } from "@/libraries/api";
 import type { PreviewEmailResponse } from "@/types/generated/emails";
 
 import AdminEmailCompose from "./AdminEmailCompose";
@@ -57,6 +58,9 @@ function makePreview(
     ...overrides,
   };
 }
+
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 interface MockOptions {
   preview?: PreviewEmailResponse;
@@ -249,6 +253,7 @@ describe("AdminEmailCompose send", () => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/emails/send", {
         method: "POST",
         body: {
+          request_id: expect.stringMatching(UUID),
           template_id: undefined,
           subject: "Hello",
           body: "Body",
@@ -257,6 +262,97 @@ describe("AdminEmailCompose send", () => {
       });
     });
     expect(navigate).toHaveBeenCalledWith("/admin/emails/sends/send-1");
+  });
+
+  it("uses a new request id after a 409 so the next send can go out", async () => {
+    setMock({ preview: makePreview({ total: 3 }) });
+    // An earlier attempt with this key went out with different content; once
+    // the admin has seen the conflict, the next send must be a new request
+    // rather than the same 409 forever.
+    const base = adminRequest.getMockImplementation()!;
+    let sendCalls = 0;
+    adminRequest.mockImplementation((path: string, ...rest: unknown[]) => {
+      if (path === "/admin/emails/send" && sendCalls++ === 0) {
+        return Promise.reject(
+          new ApiError(409, "An earlier attempt already went out", "conflict"),
+        );
+      }
+      return base(path, ...rest);
+    });
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    const confirm = async () =>
+      user.click(
+        within(await screen.findByRole("dialog")).getByRole("button", {
+          name: "Send to 3 recipients",
+        }),
+      );
+    await confirm();
+    await waitFor(() => expect(sendCalls).toBe(1));
+    // The conflict closes the dialog: sending again is a fresh, deliberate
+    // compose, never one more click on the same confirmation.
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await confirm();
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith("/admin/emails/sends/send-1"),
+    );
+
+    const ids = adminRequest.mock.calls
+      .filter(([path]) => path === "/admin/emails/send")
+      .map(
+        ([, opts]) =>
+          (opts as { body: { request_id: string } }).body.request_id,
+      );
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toMatch(UUID);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it("repeats the same request id when a failed send is retried", async () => {
+    setMock({ preview: makePreview({ total: 3 }) });
+    // The first send's response is lost; the retry must carry the same key so
+    // the server answers with that send instead of emailing everyone twice.
+    const base = adminRequest.getMockImplementation()!;
+    let sendCalls = 0;
+    adminRequest.mockImplementation((path: string, ...rest: unknown[]) => {
+      if (path === "/admin/emails/send" && sendCalls++ === 0) {
+        return Promise.reject(new Error("Network error"));
+      }
+      return base(path, ...rest);
+    });
+    const user = userEvent.setup();
+    renderCompose();
+
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", {
+      name: "Send to 3 recipients",
+    });
+    await user.click(confirm);
+    await waitFor(() => expect(sendCalls).toBe(1));
+    await user.click(confirm);
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith("/admin/emails/sends/send-1"),
+    );
+
+    const ids = adminRequest.mock.calls
+      .filter(([path]) => path === "/admin/emails/send")
+      .map(
+        ([, opts]) =>
+          (opts as { body: { request_id: string } }).body.request_id,
+      );
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toMatch(UUID);
+    expect(ids[1]).toBe(ids[0]);
   });
 
   it("does not send when the confirmation is declined", async () => {
@@ -663,6 +759,7 @@ describe("AdminEmailCompose templates", () => {
       expect(adminRequest).toHaveBeenCalledWith("/admin/emails/send", {
         method: "POST",
         body: {
+          request_id: expect.stringMatching(UUID),
           template_id: "tpl-1",
           subject: "Save the date!",
           body: "Mark your calendar.",
