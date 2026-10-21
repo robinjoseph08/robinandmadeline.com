@@ -2,6 +2,7 @@ package emails_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -87,6 +88,59 @@ func TestHTTPMailgunClient_SendAddsUnsubscribeHeaders(t *testing.T) {
 	// RFC 2369 List-Unsubscribe (angle-bracketed) plus RFC 8058 one-click.
 	assert.Equal(t, "<https://robinandmadeline.com/u/guest-9>", gotForm["h:List-Unsubscribe"])
 	assert.Equal(t, "List-Unsubscribe=One-Click", gotForm["h:List-Unsubscribe-Post"])
+}
+
+func TestHTTPMailgunClient_SendAddsReplyToHeader(t *testing.T) {
+	var gotForm map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotForm = map[string]string{}
+		for k := range r.PostForm {
+			gotForm[k] = r.PostForm.Get(k)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"<abc@mg.example.test>"}`))
+	}))
+	defer srv.Close()
+
+	client := emails.NewMailgunClient(srv.URL, "mg.example.test", "key-secret")
+	_, err := client.Send(context.Background(), emails.Message{
+		From:        "Robin & Madeline <hello@example.test>",
+		ReplyTo:     "wedding@example.test",
+		To:          "alice@example.com",
+		Subject:     "Hi Alice",
+		Text:        "Body",
+		HTML:        "<p>Body</p>",
+		RecipientID: "rec-1",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "wedding@example.test", gotForm["h:Reply-To"])
+}
+
+func TestHTTPMailgunClient_Send5xxIsAmbiguousNotARejection(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+		}))
+		client := emails.NewMailgunClient(srv.URL, "mg.example.test", "key-secret")
+		_, err := client.Send(context.Background(), emails.Message{To: "a@b.c"})
+		srv.Close()
+
+		// Mailgun failed on its side (a gateway error can even follow an
+		// accepted message), so the worker must reconcile, not fail the row.
+		require.Error(t, err, "status %d", status)
+		var rejection *emails.RejectionError
+		assert.NotErrorAs(t, err, &rejection, "status %d", status)
+		assert.Contains(t, err.Error(), fmt.Sprintf("status %d", status))
+	}
+}
+
+func TestRejectionError_IsAccountProblem(t *testing.T) {
+	assert.True(t, (&emails.RejectionError{StatusCode: 401}).IsAccountProblem())
+	assert.True(t, (&emails.RejectionError{StatusCode: 403}).IsAccountProblem())
+	assert.False(t, (&emails.RejectionError{StatusCode: 400}).IsAccountProblem())
+	assert.False(t, (&emails.RejectionError{StatusCode: 429}).IsAccountProblem())
 }
 
 func TestHTTPMailgunClient_SendNon2xxIsError(t *testing.T) {

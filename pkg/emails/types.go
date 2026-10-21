@@ -107,8 +107,11 @@ type PreviewEmailResponse struct {
 // SendEmailPayload is the body for POST /emails/send. template_id is
 // provenance only (the subject/body here are what is sent, since the admin may
 // have edited them after loading the template); when present it must name an
-// existing template.
+// existing template. request_id is an idempotency key: repeating a request with
+// the same key returns the send it already created rather than sending again,
+// and reusing a key for different content is a 409.
 type SendEmailPayload struct {
+	RequestID  *string                `json:"request_id" validate:"omitempty,uuid"`
 	TemplateID *string                `json:"template_id" validate:"omitempty,uuid"`
 	Subject    string                 `json:"subject" mod:"trim" validate:"required,max=500"`
 	Body       string                 `json:"body" validate:"required,max=50000"`

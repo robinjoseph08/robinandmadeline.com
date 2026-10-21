@@ -6,25 +6,53 @@ import (
 	"html/template"
 	"strings"
 
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/renderer/html"
 )
 
-// The HTML email shell: one in-repo, email-client-safe layout (a centered
-// max-width card with a monogram header, a single Markdown-filled content slot,
-// and a small footer) styled in the site's palette with inline styles, since
-// email clients ignore most external/<style> CSS. The Markdown body is rendered
-// to HTML by goldmark with its safe defaults and injected as template.HTML; the
-// subject stays plain text. Both a real send (worker.go) and the compose
-// preview (service_send.go) build their HTML through RenderEmail, so the email
-// the admin previews is the email that goes out.
+// The HTML email shell: one in-repo, email-client-safe layout built from the
+// site's design (a warm-white card on the soft grey page, the floral wreath
+// monogram at the top, Magics Flavor headings and Winky Rough body text with
+// system fallbacks, rose accents, and a signature footer below the card). Email
+// clients ignore most external and <style> CSS, so the shell inlines its own
+// styles and RenderEmail inlines the body's (styleContent). The Markdown body is
+// rendered to HTML by goldmark with its safe defaults and injected as
+// template.HTML; the subject stays plain text. Both a real send (worker.go) and
+// the compose preview (service_send.go) build their HTML through RenderEmail, so
+// the email the admin previews is the email that goes out.
+//
+// The monogram and heading font are hosted beside the site, in public/email,
+// and referenced by absolute URL from PublicBaseURL, since an email cannot
+// carry the site's fingerprinted build assets. The images keep transparent
+// backgrounds so they sit cleanly on the card when a client (Gmail's apps)
+// forces a dark mode and repaints it.
 
 //go:embed shell.html
 var shellHTML string
 
+// Outlook for Windows needs conditional comments (a fixed-width column, since
+// it ignores max-width; a font override, since it renders unknown web fonts as
+// Times; and the desktop padding, since it ignores the media query that sets
+// it everywhere else). html/template strips every comment from the template text, so the
+// shell emits these through funcs instead.
+var shellFuncs = template.FuncMap{
+	"msoHeadStyles": func() template.HTML {
+		return `<!--[if mso]><style>body,td,p,a,li,h1,h2,h3{font-family:Arial,sans-serif !important;}` +
+			`.email-outer{padding:40px 16px !important;}.email-header{padding:36px 40px 4px !important;}` +
+			`.email-content{padding:28px 48px 20px !important;}</style><![endif]-->`
+	},
+	"msoColumnOpen": func() template.HTML {
+		return `<!--[if mso]><table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->`
+	},
+	"msoColumnClose": func() template.HTML {
+		return `<!--[if mso]></td></tr></table><![endif]-->`
+	},
+}
+
 // shellTemplate is the parsed shell, panicking at init on a malformed template
 // (a programming error in an in-repo asset, never a runtime condition).
-var shellTemplate = template.Must(template.New("emailShell").Parse(shellHTML))
+var shellTemplate = template.Must(template.New("emailShell").Funcs(shellFuncs).Parse(shellHTML))
 
 // markdown renders the body to HTML. Hard wraps are on: a single newline in the
 // compose box becomes a <br>, so two lines typed next to each other (for example
@@ -53,6 +81,11 @@ type shellData struct {
 	// RecipientEmail is the address the message went to, shown beside the
 	// unsubscribe link so the reader knows which inbox the link affects.
 	RecipientEmail string
+	// SiteURL is the public site origin the monogram and footer link to.
+	SiteURL string
+	// AssetBaseURL is where the shell's hosted images and fonts live
+	// (public/email on the site).
+	AssetBaseURL string
 }
 
 // RenderEmail resolves the merge fields in the subject and Markdown body for one
@@ -64,29 +97,37 @@ type shellData struct {
 // merge-resolved source is wrapped as-is rather than failing the email.
 func RenderEmail(subject, body string, mctx MergeContext) string {
 	resolvedSubject := Render(subject, mctx)
-	resolvedBody := Render(body, mctx)
+	// Decorations stay as shortcodes through Markdown and become images after
+	// it, so goldmark never sees (and drops) the raw <img> tags.
+	mergedBody := resolveMergeFields(body, mctx)
+	textBody := RenderText(body, mctx)
+	assetBaseURL := mctx.PublicBaseURL + EmailAssetPath
 
 	var htmlBody bytes.Buffer
-	if err := markdown.Convert([]byte(resolvedBody), &htmlBody); err != nil {
+	if err := markdown.Convert([]byte(mergedBody), &htmlBody); err != nil {
 		// Failing a whole email over a Markdown render error would be worse than
 		// sending the plain source; the text fallback carries the same content.
 		htmlBody.Reset()
-		htmlBody.WriteString(template.HTMLEscapeString(resolvedBody))
+		htmlBody.WriteString(template.HTMLEscapeString(textBody))
 	}
+	content := decorateHTML(styleContent(htmlBody.String()), assetBaseURL)
 
 	var out bytes.Buffer
 	if err := shellTemplate.Execute(&out, shellData{
 		Subject:   resolvedSubject,
-		Preheader: preheaderText(resolvedBody),
+		Preheader: preheaderText(textBody),
 		// #nosec G203 -- the content is goldmark's own escaped HTML output (safe
-		// defaults), not raw user input; injecting it verbatim is the point.
-		Content:        template.HTML(htmlBody.String()), //nolint:gosec
+		// defaults) plus the in-repo styles and decoration images, not raw user
+		// input; injecting it verbatim is the point.
+		Content:        template.HTML(content), //nolint:gosec
 		UnsubscribeURL: unsubscribeURL(mctx),
 		RecipientEmail: recipientEmail(mctx),
+		SiteURL:        mctx.PublicBaseURL + "/",
+		AssetBaseURL:   assetBaseURL,
 	}); err != nil {
 		// A shell execution failure is a programming error in an in-repo asset;
 		// fall back to the rendered body so a send still carries content.
-		return htmlBody.String()
+		return content
 	}
 	return out.String()
 }
@@ -107,27 +148,54 @@ func preheaderText(body string) string {
 	return strings.ToValidUTF8(collapsed[:maxLen], "")
 }
 
-// ShellPreviewHTML renders the email shell with fixed sample Markdown content
-// and sample merge values, for the dev-only GET /emails/shell-preview endpoint.
-// It lets a developer iterate on shell.html and the Markdown rendering: edit the
-// file, refresh the browser (air hot-reloads the API), and see the result. It
-// touches no database and uses no request data, so it is a pure design aid.
-func (s *Service) ShellPreviewHTML() string {
-	mctx := MergeContext{
-		Guest:         sampleGuest(),
-		Party:         sampleParty(),
-		Event:         sampleEvent(),
-		PublicBaseURL: s.publicBaseURL,
-	}
-	const sampleBody = `Hi {{guest_name}},
+// SampleSubject and SampleBody are the placeholder email the design previews
+// start from: the dev shell-preview endpoint renders them as-is, and the email
+// preview tool (cmd/emailpreview) seeds its editor with them. The body touches
+// every merge field and the common Markdown shapes (including a lone link,
+// which renders as a button) so the shell's styling of each is visible.
+const (
+	SampleSubject = "A note from {{guest_name}}'s favorite couple"
+	SampleBody    = `Hi {{guest_first_name}},
 
 We can't wait to celebrate with you! Here are the details for **{{event_name}}** on {{event_date}}.
 
+## Before the big day
+
 Your RSVP code is **{{rsvp_code}}**. A few things to do:
 
-- Confirm your details at [your info page]({{info_link}})
-- RSVP at [our site]({{rsvp_link}})
+- Confirm your details on [your info page]({{info_link}})
+- Book a room in one of our hotel blocks
 
-See you soon!`
-	return RenderEmail("Sample email", sampleBody, mctx)
+[RSVP now]({{rsvp_link}})
+
+> The hotel group rates end on March 9, 2027, so book soon!
+
+See you soon! {{hearts}}
+Robin & Madeline`
+)
+
+// SampleMergeContext is a merge context built from fixed sample entities, so
+// every merge field resolves to a realistic value and a design preview is never
+// blank. The guest carries an id and email so the footer's unsubscribe line
+// renders too. It touches no database.
+func SampleMergeContext(publicBaseURL string) MergeContext {
+	guest := sampleGuest()
+	guest.ID = "00000000-0000-0000-0000-000000000000"
+	guest.Email = pointerutil.String("alex@example.com")
+	return MergeContext{
+		Guest:         guest,
+		Party:         sampleParty(),
+		Event:         sampleEvent(),
+		PublicBaseURL: publicBaseURL,
+	}
+}
+
+// ShellPreviewHTML renders the email shell with the fixed sample email, for the
+// dev-only GET /emails/shell-preview endpoint. It lets a developer iterate on
+// shell.html and the Markdown rendering: edit the file, refresh the browser (air
+// hot-reloads the API), and see the result. It touches no database and uses no
+// request data, so it is a pure design aid. For editing the body as well, use
+// the email preview tool (mise preview:email).
+func (s *Service) ShellPreviewHTML() string {
+	return RenderEmail(SampleSubject, SampleBody, SampleMergeContext(s.publicBaseURL))
 }

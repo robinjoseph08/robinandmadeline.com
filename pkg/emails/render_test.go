@@ -28,11 +28,11 @@ func mergeFixture() MergeContext {
 
 func TestRender_ResolvesEveryMergeField(t *testing.T) {
 	mctx := mergeFixture()
-	in := "Hi {{guest_name}}: code {{rsvp_code}}, rsvp at {{rsvp_link}}, " +
+	in := "Hi {{guest_name}} ({{guest_first_name}}): code {{rsvp_code}}, rsvp at {{rsvp_link}}, " +
 		"info at {{info_link}}, see you at {{event_name}} on {{event_date}}."
 	got := Render(in, mctx)
 	assert.Equal(t,
-		"Hi Alice Smith: code KALEL, rsvp at https://robinandmadeline.com/rsvp, "+
+		"Hi Alice Smith (Alice): code KALEL, rsvp at https://robinandmadeline.com/rsvp, "+
 			"info at https://robinandmadeline.com/i/tok123abc, see you at Reception on Saturday, October 17, 2026.",
 		got)
 }
@@ -98,4 +98,34 @@ func TestRender_PlaceholderGuestUsesItsCurrentName(t *testing.T) {
 	mctx.Guest.FullName = "Guest of John Doe"
 	got := Render("Hi {{guest_name}}", mctx)
 	assert.Equal(t, "Hi Guest of John Doe", got)
+}
+
+func TestRender_GuestFirstNameIsTheFirstWord(t *testing.T) {
+	cases := map[string]string{
+		"Alice Smith":      "Alice",
+		"Mary Ann Smith":   "Mary",
+		"  Alice   Smith ": "Alice",
+		"Cher":             "Cher",
+		"":                 "",
+	}
+	for full, want := range cases {
+		mctx := mergeFixture()
+		mctx.Guest.FullName = full
+		assert.Equal(t, "Hi "+want, Render("Hi {{guest_first_name}}", mctx), "full name %q", full)
+	}
+}
+
+func TestRender_DecorationsBecomeEmoji(t *testing.T) {
+	// The subject and plain-text body carry the hearts as emoji.
+	got := Render("Love {{hearts}}, {{blue_heart}} and {{ pink_heart }}", mergeFixture())
+	assert.Equal(t, "Love \U0001F499\U0001FA77, \U0001F499 and \U0001FA77", got)
+}
+
+func TestDecorationNamesMatchTheDecorations(t *testing.T) {
+	names := DecorationNames()
+	assert.Len(t, names, len(decorations))
+	for _, n := range names {
+		assert.Contains(t, decorations, n)
+	}
+	assert.Len(t, MergeFieldNames(), len(knownMergeFields))
 }

@@ -88,6 +88,9 @@ type EmailSend struct {
 	SentAt          time.Time       `bun:"sent_at,nullzero" json:"sent_at"`
 	SentBy          string          `bun:"sent_by" json:"sent_by"`
 	IsTest          bool            `bun:"is_test" json:"is_test"`
+	// RequestID is the compose page's idempotency key (unique where set), so a
+	// retried request returns this send instead of creating a duplicate.
+	RequestID *string `bun:"request_id" json:"-" tstype:"-"`
 
 	CreatedAt time.Time `bun:"created_at,nullzero" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero" json:"updated_at"`

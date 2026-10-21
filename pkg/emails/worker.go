@@ -3,6 +3,8 @@ package emails
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +25,8 @@ import (
 type WorkerConfig struct {
 	// From is the sender address on every outbound email.
 	From string
+	// ReplyTo is the Reply-To address on every outbound email.
+	ReplyTo string
 	// PublicBaseURL is the site origin the merge-field links are built on.
 	PublicBaseURL string
 	// BatchSize is how many queued rows one batch claims.
@@ -67,6 +71,43 @@ const maxFailureReason = 1000
 // end a misclassified row in a visible failed state.
 const maxQuotaRequeues = 3
 
+// dispatchCooldown is how long the worker skips claims after it stops an
+// activation because Mailgun is refusing the account (a bad API key, a domain
+// not allowed to send) or keeps failing (repeated unknown outcomes). The admin
+// pages wake the worker every few seconds while a send is in flight, so
+// without it each poll would send one more email into the same problem.
+const dispatchCooldown = time.Minute
+
+// maxUnknownInARow is how many unknown send outcomes in a row (5xx, timeout,
+// connection error) the worker tolerates before it stops. One is a blip and
+// the batch carries on, so a single hiccup never holds up the rest of a send;
+// two in a row means Mailgun is having trouble, and every further attempt
+// would only strand another row for reconciliation.
+const maxUnknownInARow = 2
+
+// accountProblemReason is shown on the send detail page for each row waiting
+// out an account refusal, so "queued" is not left unexplained.
+const accountProblemReason = "Not sent yet: Mailgun refused the account (%s). Fix the Mailgun API key or " +
+	"sending domain, and this email will send on its own once you next open the email admin pages."
+
+// unconfirmableAfter is how old a stuck `sending` row can get before the
+// reconciler stops trusting a not-found answer from Mailgun's event log. The
+// free plan keeps that log for one day, so past this age "not found" no longer
+// means "never accepted", and requeueing could send a guest a second copy.
+// Such a row is failed with an explanation instead, for the couple to check.
+const unconfirmableAfter = 20 * time.Hour
+
+// unconfirmableReason is the failure reason recorded on such a row.
+const unconfirmableReason = "Delivery could not be confirmed: this email was interrupted mid-send and " +
+	"Mailgun no longer has a record to check against. It may or may not have been delivered, so check " +
+	"with the guest before resending."
+
+// errActivationStopped ends an activation early: Mailgun kept failing or
+// refused the account, or a row's data failed to load, so the rest of the
+// claim was released back to the queue untouched rather than pushed into the
+// same failure.
+var errActivationStopped = errors.New("email worker stopped the activation early")
+
 // Worker drains the email_recipients queue through Mailgun (ADR 0004). Each
 // cycle reconciles stuck `sending` rows, then claims queued rows in batches
 // (flipping them to `sending` so a concurrent pickup can never double-send),
@@ -86,17 +127,24 @@ type Worker struct {
 	log        logger.Logger
 	supervisor *workerSupervisor
 
-	// mu guards the two pause fields below. The worker itself is single
-	// goroutine, but the guard keeps the fields race-free if a test (or a
-	// future caller) drives ProcessBatch concurrently.
+	// mu guards the fields below. The worker itself is single goroutine, but
+	// the guard keeps the fields race-free if a test (or a future caller)
+	// drives ProcessBatch concurrently.
 	mu sync.Mutex
 	// quotaPauseUntil is set to the next UTC midnight when Mailgun rejects a
 	// send for quota: the local count evidently undercounts (e.g. manual
 	// dashboard sends), so every further dispatch today is doomed and claims
-	// stop until Mailgun's quota resets. In-memory on purpose: it is a
-	// defensive backstop, and after a restart the first doomed send on a later
-	// activation simply re-arms it.
+	// stop until Mailgun's quota resets. It caches the pause saved in
+	// app_settings (see pauseQuotaUntilTomorrow), which is what survives a
+	// scale-to-zero restart.
 	quotaPauseUntil time.Time
+	// dispatchPauseUntil skips claims for dispatchCooldown after an activation
+	// stopped over an account refusal or repeated unknown outcomes. In-memory:
+	// after a restart the first failing send re-arms it.
+	dispatchPauseUntil time.Time
+	// unknownInARow counts consecutive unknown send outcomes (see
+	// maxUnknownInARow); any definitive answer from Mailgun resets it.
+	unknownInARow int
 	// pauseLoggedDay dedupes the budget-pause log line to once per UTC day.
 	pauseLoggedDay string
 }
@@ -155,6 +203,9 @@ func (w *Worker) cycle(ctx context.Context) {
 		// finish, but the claim itself remains cancellation-aware. This closes
 		// the race between checking ctx and beginning the claim transaction.
 		n, err := w.processBatch(ctx, detached)
+		if errors.Is(err, errActivationStopped) {
+			return
+		}
 		if err != nil {
 			if ctx.Err() == nil {
 				w.log.Err(err).Error("email worker batch failed")
@@ -190,9 +241,14 @@ func (w *Worker) batchBudget() time.Duration {
 // rows) and sends each through Mailgun, recording sent or failed per row. The
 // claim is additionally capped at what remains of today's daily send budget
 // (see claimBatch). It returns how many rows it claimed; zero means the queue
-// is empty or the budget is exhausted.
+// is empty or the budget is exhausted. A batch that stopped early (see
+// sendOne) is not an error here; it only ends Run's activation.
 func (w *Worker) ProcessBatch(ctx context.Context) (int, error) {
-	return w.processBatch(ctx, ctx)
+	n, err := w.processBatch(ctx, ctx)
+	if errors.Is(err, errActivationStopped) {
+		err = nil
+	}
+	return n, err
 }
 
 // processBatch lets Run cancel a not-yet-committed claim while finishing a
@@ -215,7 +271,7 @@ func (w *Worker) processBatch(claimParent, workParent context.Context) (int, err
 	// Batches can span sends; cache each send and its filter event once.
 	sends := map[string]*models.EmailSend{}
 	events := map[string]*models.Event{}
-	for _, row := range claimed {
+	for i, row := range claimed {
 		// A quota rejection earlier in this batch means every further
 		// dispatch today is doomed to the same answer: requeue the rest of
 		// the claim for the next UTC day without hammering Mailgun.
@@ -223,7 +279,15 @@ func (w *Worker) processBatch(claimParent, workParent context.Context) (int, err
 			w.requeue(workCtx, row)
 			continue
 		}
-		w.sendOne(workCtx, row, sends, events)
+		if stop, reason := w.sendOne(workCtx, row, sends, events); stop {
+			// The rest of the claim was never dispatched: put it back as if it
+			// had never been claimed, so a later activation sends it cleanly
+			// instead of each row needing reconciliation.
+			for _, rest := range claimed[i+1:] {
+				w.release(workCtx, rest, reason)
+			}
+			return len(claimed), errActivationStopped
+		}
 	}
 	return len(claimed), nil
 }
@@ -243,7 +307,10 @@ const emailBudgetLockID int64 = 0x656d6c627564 // "emlbud"
 // it claims nothing and logs the pause once per UTC day; queued rows wait for
 // an explicit activation on a later eligible day.
 func (w *Worker) claimBatch(ctx context.Context) ([]*models.EmailRecipient, error) {
-	if w.quotaPaused() {
+	if w.dispatchPaused() {
+		return nil, nil
+	}
+	if w.quotaPaused() || w.storedQuotaPaused(ctx) {
 		w.logBudgetPaused(logger.Data{"reason": "mailgun quota rejection", "limit": w.cfg.DailySendLimit})
 		return nil, nil
 	}
@@ -305,12 +372,83 @@ func (w *Worker) now() time.Time {
 }
 
 // pauseQuotaUntilTomorrow arms the quota pause: no more dispatches until the
-// next UTC midnight, when Mailgun's quota resets.
-func (w *Worker) pauseQuotaUntilTomorrow() {
+// next UTC midnight, when Mailgun's quota resets. The pause is also saved to
+// app_settings, because the machine scales to zero: without it, every restart
+// later the same day would re-send into the quota, and each rejection counts
+// toward failing the row at the head of the queue (maxQuotaRequeues).
+func (w *Worker) pauseQuotaUntilTomorrow(ctx context.Context) {
 	until := nextUTCMidnight(w.now())
 	w.mu.Lock()
 	w.quotaPauseUntil = until
 	w.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	setting := &models.AppSetting{Key: models.AppSettingEmailQuotaPausedUntil, Value: until.Format(time.RFC3339)}
+	if _, err := w.db.NewInsert().Model(setting).
+		On("CONFLICT (key) DO UPDATE").Set("value = EXCLUDED.value").
+		Exec(ctx); err != nil {
+		w.log.Err(err).Error("email worker could not save the quota pause; it holds only until a restart")
+	}
+}
+
+// storedQuotaPaused reports whether a quota pause saved by an earlier process
+// is still in effect, adopting it in memory when it is. A missing, unreadable,
+// or expired value means no pause: failing open here costs at most one more
+// quota rejection, which re-arms the pause.
+func (w *Worker) storedQuotaPaused(ctx context.Context) bool {
+	setting := new(models.AppSetting)
+	err := w.db.NewSelect().Model(setting).Where("s.key = ?", models.AppSettingEmailQuotaPausedUntil).Scan(ctx)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			w.log.Err(err).Warn("email worker could not read the saved quota pause")
+		}
+		return false
+	}
+	until, err := time.Parse(time.RFC3339, setting.Value)
+	if err != nil || !w.now().Before(until) {
+		return false
+	}
+	w.mu.Lock()
+	w.quotaPauseUntil = until
+	w.mu.Unlock()
+	return true
+}
+
+// pauseDispatch skips claims for dispatchCooldown.
+func (w *Worker) pauseDispatch() {
+	until := w.now().Add(dispatchCooldown)
+	w.mu.Lock()
+	w.dispatchPauseUntil = until
+	w.mu.Unlock()
+}
+
+// dispatchPaused reports whether a stopped activation is still cooling down.
+func (w *Worker) dispatchPaused() bool {
+	w.mu.Lock()
+	until := w.dispatchPauseUntil
+	w.mu.Unlock()
+	return w.now().Before(until)
+}
+
+// recordOutcome tracks consecutive unknown send outcomes; any definitive
+// answer from Mailgun (accepted or rejected) resets the count.
+func (w *Worker) recordOutcome(unknown bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if unknown {
+		w.unknownInARow++
+	} else {
+		w.unknownInARow = 0
+	}
+}
+
+// unknownStreakReached reports whether the consecutive unknown outcomes have
+// reached maxUnknownInARow.
+func (w *Worker) unknownStreakReached() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.unknownInARow >= maxUnknownInARow
 }
 
 // quotaPaused reports whether a Mailgun quota rejection has paused dispatches
@@ -336,23 +474,37 @@ func (w *Worker) logBudgetPaused(data logger.Data) {
 }
 
 // sendOne renders and dispatches a single claimed row, then records the
-// outcome. Failures never propagate: a definitive Mailgun rejection marks the
-// row failed with its reason and the batch moves on; an ambiguous send error
-// (timeout, connection drop) leaves the row `sending` for the reconciler,
-// since Mailgun may have accepted the message and marking it failed could
-// both misreport a delivered email and invite a duplicate manual resend.
-// Failures loading the row's context (send, event, guest) also leave it
-// `sending`: nothing was dispatched, so the reconciler's not-found answer
-// requeues it for free, where a `failed` mark would turn a transient database
-// blip into a permanent failure the admin must manually re-send.
-func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends map[string]*models.EmailSend, events map[string]*models.Event) {
+// outcome:
+//   - A definitive, message-specific Mailgun rejection marks the row failed
+//     with its reason (it was provably never accepted).
+//   - A quota rejection requeues it and pauses until the next UTC day.
+//   - An account refusal (401/403) releases it, with an explanation, and
+//     stops: every other row would be refused the same way.
+//   - An unknown outcome (5xx, timeout, connection drop) leaves it `sending`
+//     for the reconciler, since Mailgun may have accepted the message and
+//     marking it failed could misreport a delivered email or invite a
+//     duplicate resend. A single one is a blip and the batch carries on; a
+//     second in a row stops (see maxUnknownInARow).
+//   - A database error loading the row's send, event, or guest releases it and
+//     stops: nothing was dispatched, and the database is evidently having
+//     trouble, so the row goes back to the queue rather than being failed or
+//     left for a reconciler that might mistake it for an interrupted send. A
+//     send or guest that no longer exists (deleted, taking the row with it)
+//     is simply skipped.
+//
+// stop tells the caller to release the rest of the claim, with reason as the
+// explanation to show on those rows (empty for none).
+func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends map[string]*models.EmailSend, events map[string]*models.Event) (stop bool, reason string) {
 	send, ok := sends[row.SendID]
 	if !ok {
 		var err error
 		send, err = loadSend(ctx, w.db, row.SendID)
+		if errcodeIsNotFound(err) {
+			// The send was deleted, taking this row with it: nothing to do.
+			return false, ""
+		}
 		if err != nil {
-			w.leaveForReconciliation(err, row, "load send failed")
-			return
+			return w.releaseAfterLoadFailure(ctx, err, row, "load send failed")
 		}
 		sends[row.SendID] = send
 	}
@@ -369,8 +521,7 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 				// fields render empty rather than blocking the send.
 				loaded = nil
 			case err != nil:
-				w.leaveForReconciliation(err, row, "load event failed")
-				return
+				return w.releaseAfterLoadFailure(ctx, err, row, "load event failed")
 			}
 			events[*eventID] = loaded
 			event = loaded
@@ -379,13 +530,15 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 
 	guest := new(models.Guest)
 	err := w.db.NewSelect().Model(guest).Relation("Party").Where("g.id = ?", row.GuestID).Scan(ctx)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		// A guest deleted between enqueue and pickup cascades the recipient
-		// row away with it, so there is nothing left to update either way;
-		// a transient failure leaves the row for the reconciler like the
-		// rest.
-		w.leaveForReconciliation(err, row, "load guest failed")
-		return
+		// row away with it: nothing left to send or update, and the rest of
+		// the batch carries on (guest edits never wake the worker, so
+		// stopping here would stall the rest of the send).
+		return false, ""
+	}
+	if err != nil {
+		return w.releaseAfterLoadFailure(ctx, err, row, "load guest failed")
 	}
 
 	// Re-check subscription at send time for real sends, not just at enqueue: a
@@ -399,26 +552,28 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 		row.Status = models.EmailUnsubscribed
 		row.FailureReason = nil
 		w.updateRow(ctx, row)
-		return
+		return false, ""
 	}
 
 	mctx := MergeContext{Guest: guest, Party: guest.Party, Event: event, PublicBaseURL: w.cfg.PublicBaseURL}
 	// Both bodies carry the same merge-resolved content: Text is the plaintext
-	// fallback (the resolved Markdown source) and HTML is that source rendered
-	// to HTML and wrapped in the shell, the same pipeline the compose preview
-	// shows (RenderEmail).
+	// fallback (the Markdown reduced to readable text, RenderText) and HTML is
+	// it rendered to HTML and wrapped in the shell, the same pipeline the
+	// compose preview shows (RenderEmail).
 	messageID, err := w.client.Send(ctx, Message{
 		From:           w.cfg.From,
+		ReplyTo:        w.cfg.ReplyTo,
 		To:             row.EmailAddress,
 		Subject:        Render(send.Subject, mctx),
-		Text:           Render(send.Body, mctx),
+		Text:           RenderText(send.Body, mctx),
 		HTML:           RenderEmail(send.Subject, send.Body, mctx),
 		RecipientID:    row.ID,
 		UnsubscribeURL: unsubscribeURL(mctx),
 	})
+	var rejection *RejectionError
+	w.recordOutcome(err != nil && !errors.As(err, &rejection))
 	if err != nil {
-		var rejection *RejectionError
-		if errors.As(err, &rejection) {
+		if rejection != nil {
 			if rejection.IsQuotaLimited() {
 				// Mailgun says the account's daily quota is spent, which the
 				// local count cannot always see (manual dashboard sends).
@@ -428,7 +583,7 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 				// and dispatches pause until then. The pause arms regardless
 				// of how this row is dispositioned below: the answer says the
 				// account is quota-limited either way.
-				w.pauseQuotaUntilTomorrow()
+				w.pauseQuotaUntilTomorrow(ctx)
 				if row.QuotaRequeues >= maxQuotaRequeues {
 					// Requeue cap reached: fail the row so a rejection
 					// misclassified as quota (or a genuinely stuck account)
@@ -437,30 +592,48 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 					// the queue forever (see maxQuotaRequeues).
 					w.log.Err(err).Warn("mailgun rejected for quota repeatedly; marking row failed", logger.Data{"recipient_id": row.ID, "quota_requeues": row.QuotaRequeues})
 					w.markFailed(ctx, row, err.Error())
-					return
+					return false, ""
 				}
 				w.log.Err(err).Warn("mailgun rejected for quota; requeueing and pausing until the next UTC day", logger.Data{"recipient_id": row.ID, "quota_requeues": row.QuotaRequeues + 1})
 				row.QuotaRequeues++
 				w.requeue(ctx, row)
-				return
+				return false, ""
+			}
+			if rejection.IsAccountProblem() {
+				// Mailgun refused the account, not this email (a bad API key,
+				// a domain not allowed to send): every other row would be
+				// refused the same way, and failing them all would drop the
+				// whole send. Put this one back untouched and stop until the
+				// configuration is fixed.
+				w.log.Err(err).Error("mailgun refused the account; requeueing and pausing sends until it is fixed", logger.Data{"recipient_id": row.ID})
+				w.pauseDispatch()
+				reason := fmt.Sprintf(accountProblemReason, "status "+strconv.Itoa(rejection.StatusCode))
+				w.release(ctx, row, reason)
+				return true, reason
 			}
 			// Mailgun answered and said no: the message was provably never
 			// accepted, so failing the row cannot lose a delivered email.
 			w.markFailed(ctx, row, err.Error())
-			return
+			return false, ""
 		}
-		// Ambiguous: the request may or may not have reached Mailgun. Leave
-		// the row `sending`; once it ages past StuckThreshold the reconciler
+		// Unknown: the request may or may not have reached Mailgun. Leave the
+		// row `sending`; once it ages past StuckThreshold the reconciler
 		// settles it against Mailgun's event log (sent if accepted, requeued
 		// if not), exactly as it would after a crash.
 		w.log.Err(err).Warn("email send outcome unknown; leaving row for reconciliation", logger.Data{"recipient_id": row.ID})
-		return
+		if w.unknownStreakReached() {
+			w.log.Warn("mailgun keeps failing; stopping sends for now", logger.Data{"recipient_id": row.ID})
+			w.pauseDispatch()
+			return true, ""
+		}
+		return false, ""
 	}
 
 	row.Status = models.EmailSent
 	row.MailgunMessageID = pointerutil.String(messageID)
 	row.FailureReason = nil
 	w.updateRow(ctx, row)
+	return false, ""
 }
 
 // ReconcileStuck handles rows stranded in `sending` by a crash, kill, or an
@@ -469,6 +642,11 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 // rows are marked sent with their message id (never re-sent); unseen rows go
 // back to queued for a fresh attempt. A row whose check errors stays
 // `sending` and is retried next cycle. Returns how many rows it examined.
+//
+// A row stuck longer than unconfirmableAfter is failed with an explanation
+// instead of requeued when Mailgun has no record of it: the event log only
+// reaches back a day on the free plan, and reconciliation only runs when an
+// activation happens, which can be days after the interruption.
 //
 // Mailgun's events API is eventually consistent: in rare cases an accepted
 // event can take longer than the stuck threshold to appear, in which case
@@ -490,18 +668,36 @@ func (w *Worker) ReconcileStuck(ctx context.Context) (int, error) {
 		return 0, errors.Wrap(err, "list stuck email recipients")
 	}
 
+	if len(stuck) == 0 {
+		return 0, nil
+	}
+	// The rows' updated_at comes from the database clock, so their age is
+	// measured against it too (not the worker's, which tests may fake).
+	var dbNow time.Time
+	if err := w.db.NewRaw("SELECT now()").Scan(ctx, &dbNow); err != nil {
+		return 0, errors.Wrap(err, "read database clock")
+	}
+
 	for _, row := range stuck {
 		messageID, found, err := w.client.FindAcceptedMessageID(ctx, row.ID, row.EmailAddress)
 		if err != nil {
 			w.log.Err(err).Error("email worker stuck-row check failed", logger.Data{"recipient_id": row.ID})
 			continue
 		}
-		if found {
+		switch {
+		case found:
 			row.Status = models.EmailSent
 			row.MailgunMessageID = pointerutil.String(messageID)
 			row.FailureReason = nil
-		} else {
+		case dbNow.Sub(row.UpdatedAt) > unconfirmableAfter:
+			// Mailgun's event log may no longer cover this attempt, so not
+			// found proves nothing; a requeue could be a second copy.
+			w.log.Warn("stuck email is too old to confirm against Mailgun; marking failed", logger.Data{"recipient_id": row.ID})
+			w.markFailed(ctx, row, unconfirmableReason)
+			continue
+		default:
 			row.Status = models.EmailQueued
+			row.FailureReason = nil
 		}
 		w.updateRow(ctx, row)
 	}
@@ -551,13 +747,31 @@ func (w *Worker) requeue(ctx context.Context, row *models.EmailRecipient) {
 	w.updateRow(ctx, row)
 }
 
-// leaveForReconciliation logs a row whose outcome could not be determined (or
-// whose context failed to load) and leaves it `sending` on purpose: once it
-// ages past the stuck threshold the reconciler settles it against Mailgun's
-// event log, marking it sent if a message was accepted and requeueing it for
-// a fresh attempt if not.
-func (w *Worker) leaveForReconciliation(err error, row *models.EmailRecipient, msg string) {
-	w.log.Err(err).Warn("email worker: "+msg+"; leaving row for reconciliation", logger.Data{"recipient_id": row.ID})
+// release returns a claimed row the worker never dispatched to the queue, as
+// if it had never been claimed: its attempted_at is cleared so the claim does
+// not count against today's budget (Mailgun only counts what it accepts).
+// reason, when set, is shown on the send detail page while the row waits; a
+// later outcome clears or replaces it.
+func (w *Worker) release(ctx context.Context, row *models.EmailRecipient, reason string) {
+	row.Status = models.EmailQueued
+	row.AttemptedAt = nil
+	row.MailgunMessageID = nil
+	row.FailureReason = nil
+	if reason != "" {
+		row.FailureReason = pointerutil.String(reason)
+	}
+	w.updateRow(ctx, row)
+}
+
+// releaseAfterLoadFailure handles a row whose send, event, or guest failed to
+// load: nothing was dispatched, so it goes back to the queue, and the
+// activation stops since the database is evidently having trouble. If even
+// the release cannot be written, the row stays `sending` and the reconciler
+// settles it later.
+func (w *Worker) releaseAfterLoadFailure(ctx context.Context, err error, row *models.EmailRecipient, msg string) (bool, string) {
+	w.log.Err(err).Warn("email worker: "+msg+"; requeueing and stopping", logger.Data{"recipient_id": row.ID})
+	w.release(ctx, row, "")
+	return true, ""
 }
 
 // updateRow persists a row's status fields, guarded on the row still being
@@ -582,12 +796,13 @@ func (w *Worker) updateRow(ctx context.Context, row *models.EmailRecipient) {
 	defer cancel()
 	loadedAt := row.UpdatedAt
 	row.UpdatedAt = time.Now()
-	// quota_requeues rides along on every guarded transition: the quota path
-	// increments it before requeueing, and every other path writes back the
-	// value the row was loaded with, so the counter can never be lost or
-	// double-counted under the same guards that protect status.
+	// quota_requeues and attempted_at ride along on every guarded transition:
+	// the quota path increments the counter and release clears attempted_at,
+	// and every other path writes back the values the row was loaded with, so
+	// neither can be lost or double-counted under the same guards that protect
+	// status.
 	res, err := w.db.NewUpdate().Model(row).
-		Column("status", "mailgun_message_id", "failure_reason", "quota_requeues", "updated_at").
+		Column("status", "mailgun_message_id", "failure_reason", "quota_requeues", "attempted_at", "updated_at").
 		WherePK().
 		Where("status = ?", models.EmailSending).
 		Where("updated_at = ?", loadedAt).

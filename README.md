@@ -62,21 +62,22 @@ data with `mise db:clone` (needs the Postgres client tools: `pg_dump`, `psql`).
 
 ## Common tasks
 
-| Command             | Description                                       |
-| ------------------- | ------------------------------------------------- |
-| `mise start`        | Run API (air hot reload) + Vite dev server        |
-| `mise start:api`    | Run the API directly (no hot reload)              |
-| `mise start:web`    | Run the Vite dev server                           |
-| `mise db:migrate`   | Create (if needed) and migrate this worktree's DB |
-| `mise db:clone`     | Seed this worktree's DB from the main checkout    |
-| `mise build`        | Build the production API binary                   |
-| `mise build:docker` | Build the production Docker image                 |
-| `mise lint`         | Run golangci-lint                                 |
-| `mise lint:js`      | Run ESLint + Prettier + tsc                       |
-| `mise test`         | Run Go tests                                      |
-| `mise test:unit`    | Run frontend unit tests (Vitest)                  |
-| `mise check`        | Run all lint + test checks                        |
-| `mise check:quiet`  | Run all checks, quiet on success, loud on failure |
+| Command              | Description                                       |
+| -------------------- | ------------------------------------------------- |
+| `mise start`         | Run API (air hot reload) + Vite dev server        |
+| `mise start:api`     | Run the API directly (no hot reload)              |
+| `mise start:web`     | Run the Vite dev server                           |
+| `mise db:migrate`    | Create (if needed) and migrate this worktree's DB |
+| `mise db:clone`      | Seed this worktree's DB from the main checkout    |
+| `mise preview:email` | Edit and preview the HTML email; send test copies |
+| `mise build`         | Build the production API binary                   |
+| `mise build:docker`  | Build the production Docker image                 |
+| `mise lint`          | Run golangci-lint                                 |
+| `mise lint:js`       | Run ESLint + Prettier + tsc                       |
+| `mise test`          | Run Go tests                                      |
+| `mise test:unit`     | Run frontend unit tests (Vitest)                  |
+| `mise check`         | Run all lint + test checks                        |
+| `mise check:quiet`   | Run all checks, quiet on success, loud on failure |
 
 ## Configuration
 
@@ -94,7 +95,7 @@ Email delivery (the admin email system) is configured separately and is off by
 default: without `MAILGUN_API_KEY` the queue worker never starts and sends
 stay queued. Set `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, and
 `MAILGUN_WEBHOOK_SIGNING_KEY` (plus optionally `MAILGUN_BASE_URL`,
-`EMAIL_FROM`, `PUBLIC_BASE_URL`, `EMAIL_WORKER_BATCH_SIZE`,
+`EMAIL_FROM`, `EMAIL_REPLY_TO`, `PUBLIC_BASE_URL`, `EMAIL_WORKER_BATCH_SIZE`,
 `EMAIL_WORKER_STUCK_THRESHOLD`, and `EMAIL_DAILY_SEND_LIMIT`) to enable real
 sending and delivery webhooks. Emails go out as HTML (a Markdown
 body rendered into an in-repo, palette-matched shell) with a plaintext

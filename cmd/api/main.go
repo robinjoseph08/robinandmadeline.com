@@ -168,6 +168,7 @@ func newApplication(ctx context.Context, cfg *config.Config, deps applicationDep
 		}
 		app.worker = emails.NewWorker(db, deps.mailgunClient, emails.WorkerConfig{
 			From:           cfg.EmailFrom,
+			ReplyTo:        cfg.EmailReplyTo,
 			PublicBaseURL:  cfg.PublicBaseURL,
 			BatchSize:      cfg.EmailWorkerBatchSize,
 			StuckThreshold: cfg.EmailWorkerStuckThreshold,

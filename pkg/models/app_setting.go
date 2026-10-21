@@ -14,6 +14,11 @@ const (
 	// AppSettingContactEmail is the address shown to guests in the
 	// post-deadline "contact us" message.
 	AppSettingContactEmail = "contact_email"
+	// AppSettingEmailQuotaPausedUntil is owned by the email worker, not the
+	// admin settings page: after Mailgun rejects a send for quota, it holds the
+	// next UTC midnight (RFC3339) so the pause survives a scale-to-zero restart.
+	// Absent or past means sending is not paused.
+	AppSettingEmailQuotaPausedUntil = "email_quota_paused_until"
 )
 
 // AppSetting is one site-wide key/value setting (e.g. the RSVP deadline or the

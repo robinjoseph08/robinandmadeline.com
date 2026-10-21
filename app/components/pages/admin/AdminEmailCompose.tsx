@@ -1,5 +1,5 @@
 import { AlertTriangle, Loader2, Send } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -45,6 +45,8 @@ import {
 import { useEvents } from "@/hooks/queries/events";
 import { useParties } from "@/hooks/queries/parties";
 import { useAdminPageTitle } from "@/hooks/usePageTitle";
+import { ApiError } from "@/libraries/api";
+import { newRequestId } from "@/libraries/request-id";
 import type { PreviewEmailResponse } from "@/types/generated/emails";
 import type {
   Circle,
@@ -137,6 +139,13 @@ export default function AdminEmailCompose() {
   // old native window.confirm so a reflexive Enter cannot dismiss it into a
   // send; the explicit, labeled confirm button is the only path to dispatch.
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // The idempotency key for the next send. A retry after a lost response
+  // repeats it, so the server answers with the send that already went out
+  // instead of emailing every guest a second time. It changes after a send
+  // succeeds (the page also navigates away then), and after a 409: the key
+  // was used by an earlier attempt with different content, so once the
+  // admin has checked the history the next send is a new request.
+  const requestId = useRef(newRequestId());
 
   const templates = templatesQuery.data?.items ?? [];
   const events = eventsQuery.data?.items ?? [];
@@ -263,17 +272,25 @@ export default function AdminEmailCompose() {
   const handleConfirmSend = async () => {
     try {
       const sent = await sendEmail.mutateAsync({
+        request_id: requestId.current,
         template_id: templateId,
         subject: subject.trim(),
         body,
         filter: toRecipientFilter(filter),
       });
+      requestId.current = newRequestId();
       toast.success(
         `Email queued for ${sent.stats.total} recipient${sent.stats.total === 1 ? "" : "s"}`,
       );
       setConfirmOpen(false);
       navigate(`/admin/emails/sends/${sent.id}`);
     } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        // Close the dialog so sending again is a fresh, deliberate compose
+        // after checking the history, never one more click on this one.
+        requestId.current = newRequestId();
+        setConfirmOpen(false);
+      }
       toast.error(
         error instanceof Error ? error.message : "Failed to send email",
       );

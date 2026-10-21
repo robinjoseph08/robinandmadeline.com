@@ -55,6 +55,25 @@ run = 'until [ -f tmp/api.port ] && nc -z localhost "$(cat tmp/api.port)" 2>/dev
 description = "Start API directly (no hot reload)"
 run = "go run ./cmd/api"
 
+[tasks."preview:email"]
+description = "Serve an editable preview of the HTML email, rebuilding on change"
+# The page's Send button mails the draft through Mailgun (keys from .env) to
+# EMAIL_TEST_RECIPIENTS, or to --send-to when given. It rides in an env var
+# because air splits --build.args_bin on commas.
+usage = 'flag "--send-to <addresses>" help="Comma-separated addresses the Send button mails the draft to"'
+
+# -c /dev/null keeps the API's .air.toml out of it. The preview binds port 4400
+# (falling back to a free port), and the open page re-renders itself after each
+# rebuild, so no air proxy is needed.
+run = """
+EMAIL_PREVIEW_SEND_TO="${usage_send_to:-}" air -c /dev/null \
+  --build.cmd "go build -o ./build/emailpreview/emailpreview ./cmd/emailpreview" \
+  --build.entrypoint ./build/emailpreview/emailpreview \
+  --build.include_ext go,html \
+  --build.exclude_regex _test.go \
+  --build.exclude_dir app,build,coverage,e2e,node_modules,public,test-results,tmp
+"""
+
 # === Database ===
 #
 # Each git worktree resolves its own database name (pkg/config derives

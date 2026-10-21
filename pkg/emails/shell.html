@@ -1,129 +1,131 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="x-apple-disable-message-reformatting" />
+    <!--
+      The palette is tuned for a light page, so ask clients not to repaint it.
+      Apple Mail honors this; clients that force a dark mode anyway still get
+      readable ink-on-light inside the card.
+    -->
+    <meta name="color-scheme" content="light" />
+    <meta name="supported-color-schemes" content="light" />
     <title>{{.Subject}}</title>
     <!--
-      A small <style> head block is fine (most modern clients honor it), but
-      every load-bearing style is ALSO inlined below, because many clients
-      strip <style> and ignore external CSS. Keep the two in sync.
+      The site's faces: Winky Rough for body text and Magics Flavor for
+      headings. Only some clients load web fonts (Apple Mail and iOS Mail do,
+      Gmail does not), so every font stack falls back to a system face that
+      keeps the same feel. Every load-bearing style is also inlined below
+      (RenderEmail inlines the body's), because many clients strip <style>.
+    -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Winky+Rough:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <!--
+      The heading font gets its own block: a sanitizer that rejects @font-face
+      drops the whole block, and the layout rules below must survive that.
+    -->
+    <style>
+      @font-face {
+        font-family: "Magics Flavor";
+        src: url("{{.AssetBaseURL}}/magics-flavor.woff2") format("woff2");
+        font-weight: 400;
+        font-style: normal;
+      }
+    </style>
+    <!--
+      The inline padding is sized for a phone, since clients that strip
+      <style> are mostly phone apps; wider screens get roomier padding here.
+      Outlook for Windows ignores media queries and gets the same values from
+      msoHeadStyles (shell.go).
     -->
     <style>
       body {
         margin: 0;
         padding: 0;
-        background-color: #f6f5f1;
+        background-color: #f5f5f5;
+        -webkit-text-size-adjust: 100%;
       }
-      a {
-        color: #f25477;
-      }
-      .email-content p {
-        margin: 0 0 16px 0;
-      }
-      .email-content h1,
-      .email-content h2,
-      .email-content h3 {
-        color: #161822;
-        font-weight: 600;
-        margin: 0 0 12px 0;
-      }
-      .email-content ul,
-      .email-content ol {
-        margin: 0 0 16px 0;
-        padding-left: 24px;
-      }
-      .email-content img {
-        max-width: 100%;
+      @media only screen and (min-width: 481px) {
+        .email-outer {
+          padding: 40px 16px !important;
+        }
+        .email-header {
+          padding: 36px 40px 4px !important;
+        }
+        .email-content {
+          padding: 28px 48px 20px !important;
+        }
       }
     </style>
+    {{msoHeadStyles}}
   </head>
   <body
     style="
       margin: 0;
       padding: 0;
-      background-color: #f6f5f1;
-      color: #161822;
-      font-family: Georgia, &quot;Times New Roman&quot;, serif;
+      background-color: #f5f5f5;
+      color: #2a2622;
+      font-family:
+        &quot;Winky Rough&quot;,
+        -apple-system,
+        BlinkMacSystemFont,
+        &quot;Segoe UI&quot;,
+        Helvetica,
+        Arial,
+        sans-serif;
     "
   >
     <!--
       Preheader: the inbox and notification preview text, hidden from the
       rendered layout. Clients that build the snippet from the HTML use it, so
-      the preview reads as the message's opening line instead of the monogram.
-      The zero-width spacer after it keeps a client from appending the visible
-      header into the snippet.
+      the preview reads as the message's opening line instead of the monogram's
+      alt text. The zero-width spacer after it keeps a client from appending the
+      visible layout into the snippet.
     -->
-    <div style="display: none; max-height: 0; overflow: hidden">
+    <div style="display: none; max-height: 0; overflow: hidden; mso-hide: all">
       {{.Preheader}}
     </div>
-    <div style="display: none; max-height: 0; overflow: hidden">
-      &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
+    <div style="display: none; max-height: 0; overflow: hidden; mso-hide: all">
+      &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
     </div>
-    <!-- Full-bleed background wrapper so the cream extends past the card. -->
+
+    <!-- Full-bleed page background, the site's soft warm grey. -->
     <table
       role="presentation"
       width="100%"
       cellpadding="0"
       cellspacing="0"
       border="0"
-      style="background-color: #f6f5f1"
+      style="background-color: #f5f5f5"
     >
       <tr>
-        <td align="center" style="padding: 32px 16px">
-          <!-- Centered max-width container (the "card"). -->
+        <td align="center" class="email-outer" style="padding: 24px 8px">
+          <!--
+            Fluid column: full width on a phone, capped at 600px elsewhere.
+            Outlook for Windows ignores max-width, so it gets a fixed-width
+            ghost table instead (msoColumnOpen/Close in shell.go).
+          -->
+          {{msoColumnOpen}}
           <table
             role="presentation"
-            width="600"
+            width="100%"
             cellpadding="0"
             cellspacing="0"
             border="0"
-            style="
-              width: 600px;
-              max-width: 600px;
-              background-color: #ffffff;
-              border-radius: 16px;
-              overflow: hidden;
-              box-shadow: 0 1px 3px rgba(22, 24, 34, 0.08);
-            "
+            style="width: 100%; max-width: 600px"
           >
-            <!-- Header: the couple's monogram on the palette pink. -->
+            <!-- The card: warm white on the grey page, with a soft hairline. -->
             <tr>
               <td
-                align="center"
-                style="background-color: #ffdcdc; padding: 28px 24px"
+                style="
+                  background-color: #fbfaf8;
+                  border: 1px solid #e0d9d0;
+                  border-radius: 16px;
+                "
               >
-                <div
-                  style="
-                    font-family: Georgia, &quot;Times New Roman&quot;, serif;
-                    font-size: 26px;
-                    letter-spacing: 2px;
-                    color: #161822;
-                    font-weight: 600;
-                  "
-                >
-                  R <span style="color: #f25477">&amp;</span> M
-                </div>
-                <div
-                  style="
-                    margin-top: 6px;
-                    font-family: Arial, Helvetica, sans-serif;
-                    font-size: 11px;
-                    letter-spacing: 3px;
-                    text-transform: uppercase;
-                    color: #161822;
-                    opacity: 0.7;
-                  "
-                >
-                  Robin &amp; Madeline
-                </div>
-              </td>
-            </tr>
-
-            <!-- Thin palette divider stripe under the header. -->
-            <tr>
-              <td style="font-size: 0; line-height: 0" height="4">
                 <table
                   role="presentation"
                   width="100%"
@@ -131,71 +133,180 @@
                   cellspacing="0"
                   border="0"
                 >
+                  <!-- Header: the floral wreath monogram. -->
                   <tr>
                     <td
-                      width="34%"
-                      height="4"
-                      style="background-color: #f25477"
-                    ></td>
+                      align="center"
+                      class="email-header"
+                      style="padding: 32px 24px 4px"
+                    >
+                      <a
+                        href="{{.SiteURL}}"
+                        style="display: inline-block; text-decoration: none"
+                        ><img
+                          src="{{.AssetBaseURL}}/monogram.png"
+                          width="128"
+                          height="141"
+                          alt="Robin &amp; Madeline"
+                          style="
+                            display: block;
+                            width: 128px;
+                            height: 141px;
+                            border: 0;
+                            outline: none;
+                            color: #d6787b;
+                            font-family:
+                              Georgia, &quot;Times New Roman&quot;, serif;
+                            font-size: 22px;
+                          "
+                      /></a>
+                    </td>
+                  </tr>
+
+                  <!-- A short rose rule between the mark and the message. -->
+                  <tr>
+                    <td align="center" style="padding: 20px 40px 0">
+                      <table
+                        role="presentation"
+                        cellpadding="0"
+                        cellspacing="0"
+                        border="0"
+                      >
+                        <tr>
+                          <td
+                            width="48"
+                            height="2"
+                            style="
+                              width: 48px;
+                              height: 2px;
+                              background-color: #d6787b;
+                              border-radius: 1px;
+                              font-size: 0;
+                              line-height: 0;
+                            "
+                          >
+                            &nbsp;
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <!-- Content slot: the Markdown body, styled by RenderEmail. -->
+                  <tr>
                     <td
-                      width="33%"
-                      height="4"
-                      style="background-color: #adc8ff"
-                    ></td>
-                    <td
-                      width="33%"
-                      height="4"
-                      style="background-color: #c0ffd4"
-                    ></td>
+                      class="email-content"
+                      style="
+                        padding: 24px 24px 12px;
+                        font-family:
+                          &quot;Winky Rough&quot;,
+                          -apple-system,
+                          BlinkMacSystemFont,
+                          &quot;Segoe UI&quot;,
+                          Helvetica,
+                          Arial,
+                          sans-serif;
+                        font-size: 16px;
+                        line-height: 1.65;
+                        color: #2a2622;
+                      "
+                    >
+                      {{.Content}}
+                    </td>
                   </tr>
                 </table>
               </td>
             </tr>
 
-            <!-- Content slot: the Markdown body rendered to HTML. -->
-            <tr>
-              <td
-                class="email-content"
-                style="
-                  padding: 32px 36px;
-                  font-family: Georgia, &quot;Times New Roman&quot;, serif;
-                  font-size: 16px;
-                  line-height: 1.6;
-                  color: #161822;
-                "
-              >
-                {{.Content}}
-              </td>
-            </tr>
-
-            <!-- Footer. -->
+            <!-- Footer, on the page background below the card. -->
             <tr>
               <td
                 align="center"
                 style="
-                  background-color: #f6f5f1;
-                  padding: 20px 24px;
-                  font-family: Arial, Helvetica, sans-serif;
-                  font-size: 12px;
-                  line-height: 1.5;
-                  color: #161822;
+                  padding: 28px 24px 8px;
+                  font-family:
+                    &quot;Winky Rough&quot;,
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    &quot;Segoe UI&quot;,
+                    Helvetica,
+                    Arial,
+                    sans-serif;
+                  color: #5c534b;
                 "
               >
-                <span style="opacity: 0.6"
-                  >With love, Robin &amp; Madeline</span
+                <!--
+                  The couple's names in the site's script face (Lily Paperie),
+                  as an image so they look the same in every client, web fonts
+                  or not. The alt text is styled to stand in when images are
+                  blocked.
+                -->
+                <a
+                  href="{{.SiteURL}}"
+                  style="display: inline-block; text-decoration: none"
+                  ><img
+                    src="{{.AssetBaseURL}}/names.png"
+                    width="240"
+                    height="41"
+                    alt="Robin &amp; Madeline"
+                    style="
+                      display: block;
+                      width: 240px;
+                      height: 41px;
+                      border: 0;
+                      outline: none;
+                      color: #d6787b;
+                      font-family: Georgia, &quot;Times New Roman&quot;, serif;
+                      font-size: 20px;
+                      text-align: center;
+                    "
+                /></a>
+                <div
+                  style="
+                    margin-top: 10px;
+                    font-size: 11px;
+                    line-height: 1.6;
+                    letter-spacing: 2px;
+                    text-transform: uppercase;
+                  "
                 >
-                {{if .UnsubscribeURL}}<br />
-                <span style="opacity: 0.6"
-                  >{{if .RecipientEmail}}This update was sent to
-                  {{.RecipientEmail}}. {{end}}<a
+                  <span style="white-space: nowrap">April 10, 2027</span>
+                  &middot;
+                  <span style="white-space: nowrap"
+                    >Arrowwood &middot; Palmer, TX</span
+                  >
+                </div>
+                <div
+                  style="margin-top: 14px; font-size: 13px; line-height: 1.6"
+                >
+                  <a
+                    href="{{.SiteURL}}"
+                    style="color: #5c534b; text-decoration: underline"
+                    >robinandmadeline.com</a
+                  >
+                </div>
+                {{if .UnsubscribeURL}}
+                <div
+                  style="
+                    margin-top: 14px;
+                    font-size: 12px;
+                    line-height: 1.6;
+                    color: #6f655d;
+                  "
+                >
+                  {{if .RecipientEmail}}This update was sent to
+                  {{.RecipientEmail}}.<br />{{end}}Don't want these emails?
+                  <a
                     href="{{.UnsubscribeURL}}"
-                    style="color: #161822"
+                    style="color: #6f655d; text-decoration: underline"
                     >Unsubscribe</a
-                  >.</span
-                >{{end}}
+                  >.
+                </div>
+                {{end}}
               </td>
             </tr>
           </table>
+          {{msoColumnClose}}
         </td>
       </tr>
     </table>

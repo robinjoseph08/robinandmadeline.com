@@ -7,6 +7,7 @@
 # Stray binaries from `go build ./cmd/<x>` without -o (the real output is /build/)
 /api
 /migrations
+/emailpreview
 /scripts
 # ...but the stray binary is a file; keep the committed scripts/ directory tracked.
 !/scripts/

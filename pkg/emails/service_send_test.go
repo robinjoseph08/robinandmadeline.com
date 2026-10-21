@@ -1,6 +1,7 @@
 package emails_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -314,4 +315,107 @@ func loadSendT(t *testing.T, f fixtures, id string) (*models.EmailSend, error) {
 	send := new(models.EmailSend)
 	err := f.db.NewSelect().Model(send).Where("es.id = ?", id).Scan(ctx())
 	return send, err
+}
+
+func TestCreateSend_RepeatedRequestIDReturnsTheOriginalSend(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
+
+	payload := emails.SendEmailPayload{
+		RequestID: pointerutil.String("0195f3a4-6b1e-7c2d-9e8f-0a1b2c3d4e5f"),
+		Subject:   "Hi {{guest_name}}",
+		Body:      "Save the date!",
+	}
+	first, _, err := f.emails.CreateSend(ctx(), payload)
+	require.NoError(t, err)
+
+	// The response was lost and the page retried: the same send comes back
+	// and nobody is queued a second copy.
+	again, stats, err := f.emails.CreateSend(ctx(), payload)
+	require.NoError(t, err)
+	assert.Equal(t, first.ID, again.ID)
+	assert.Equal(t, emails.SendStats{Queued: 2, Total: 2}, stats)
+
+	count, err := f.db.NewSelect().Model((*models.EmailRecipient)(nil)).Count(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+	sends, err := f.db.NewSelect().Model((*models.EmailSend)(nil)).Count(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, sends)
+}
+
+func TestCreateSend_RequestIDReusedForDifferentContentIs409(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	payload := emails.SendEmailPayload{
+		RequestID: pointerutil.String("0195f3a4-6b1e-7c2d-9e8f-0a1b2c3d4e5f"),
+		Subject:   "Hi",
+		Body:      "Save the date!",
+	}
+	_, _, err := f.emails.CreateSend(ctx(), payload)
+	require.NoError(t, err)
+
+	// The draft changed after an attempt whose response was lost: the first
+	// one may already have gone out, so this must not silently send or replay.
+	payload.Body = "Save the date! (edited)"
+	_, _, err = f.emails.CreateSend(ctx(), payload)
+	assertErrCode(t, err, errcodes.CodeConflict)
+
+	sends, err := f.db.NewSelect().Model((*models.EmailSend)(nil)).Count(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, sends)
+}
+
+func TestCreateSend_ConcurrentCopiesOfOneRequestCreateOneSend(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	payload := emails.SendEmailPayload{
+		RequestID: pointerutil.String("0195f3a4-6b1e-7c2d-9e8f-0a1b2c3d4e5f"),
+		Subject:   "Hi",
+		Body:      "Save the date!",
+	}
+	const copies = 4
+	ids := make(chan string, copies)
+	var wg sync.WaitGroup
+	for i := 0; i < copies; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			send, _, err := f.emails.CreateSend(ctx(), payload)
+			if assert.NoError(t, err) {
+				ids <- send.ID
+			}
+		}()
+	}
+	wg.Wait()
+	close(ids)
+
+	seen := map[string]bool{}
+	for id := range ids {
+		seen[id] = true
+	}
+	assert.Len(t, seen, 1)
+	count, err := f.db.NewSelect().Model((*models.EmailRecipient)(nil)).Count(ctx())
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+}
+
+func TestCreateSend_WithoutRequestIDStillSends(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+
+	// No key, no deduplication: two calls are two sends, as before.
+	payload := emails.SendEmailPayload{Subject: "Hi", Body: "b"}
+	first, _, err := f.emails.CreateSend(ctx(), payload)
+	require.NoError(t, err)
+	second, _, err := f.emails.CreateSend(ctx(), payload)
+	require.NoError(t, err)
+	assert.NotEqual(t, first.ID, second.ID)
 }

@@ -35,6 +35,7 @@ func TestNew(t *testing.T) {
 		assert.Empty(t, cfg.MailgunWebhookSigningKey)
 		assert.Equal(t, "https://api.mailgun.net", cfg.MailgunBaseURL)
 		assert.Equal(t, "Robin & Madeline <hello@robinandmadeline.com>", cfg.EmailFrom)
+		assert.Equal(t, "wedding@robinandmadeline.com", cfg.EmailReplyTo)
 		assert.Equal(t, 10, cfg.EmailWorkerBatchSize)
 		assert.Equal(t, 5*time.Minute, cfg.EmailWorkerStuckThreshold)
 		// Mailgun's free plan caps sends at 100 per UTC day, so that is the
@@ -61,6 +62,7 @@ func TestNew(t *testing.T) {
 		t.Setenv("MAILGUN_BASE_URL", "https://api.eu.mailgun.net")
 		t.Setenv("MAILGUN_WEBHOOK_SIGNING_KEY", "whsec-abc")
 		t.Setenv("EMAIL_FROM", "Us <us@example.com>")
+		t.Setenv("EMAIL_REPLY_TO", "replies@example.com")
 		t.Setenv("EMAIL_WORKER_BATCH_SIZE", "25")
 		t.Setenv("EMAIL_WORKER_STUCK_THRESHOLD", "10m")
 		t.Setenv("EMAIL_DAILY_SEND_LIMIT", "250")
@@ -84,6 +86,7 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, "https://api.eu.mailgun.net", cfg.MailgunBaseURL)
 		assert.Equal(t, "whsec-abc", cfg.MailgunWebhookSigningKey)
 		assert.Equal(t, "Us <us@example.com>", cfg.EmailFrom)
+		assert.Equal(t, "replies@example.com", cfg.EmailReplyTo)
 		assert.Equal(t, 25, cfg.EmailWorkerBatchSize)
 		assert.Equal(t, 10*time.Minute, cfg.EmailWorkerStuckThreshold)
 		assert.Equal(t, 250, cfg.EmailDailySendLimit)

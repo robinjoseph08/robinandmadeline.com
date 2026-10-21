@@ -18,7 +18,9 @@ import (
 // client renders the designed email while a plaintext-only reader still gets
 // the content.
 type Message struct {
-	From    string
+	From string
+	// ReplyTo, when set, is sent as the Reply-To header.
+	ReplyTo string
 	To      string
 	Subject string
 	Text    string
@@ -35,13 +37,15 @@ type Message struct {
 	UnsubscribeURL string
 }
 
-// RejectionError marks a send Mailgun definitively rejected: a response came
-// back and it was not a 2xx, so the message was provably never accepted and
-// the row can be marked failed without risking a lost delivery. Every other
-// send error (timeout, connection reset, an unreadable or unparseable
-// response to what may have been a 2xx) is ambiguous: Mailgun may have
-// accepted the message anyway, so the worker leaves the row `sending` for the
-// reconciler to settle against Mailgun's event log instead.
+// RejectionError marks a send Mailgun definitively rejected: a 4xx response,
+// so the message was provably never accepted and retrying cannot duplicate it.
+// Every other send error is ambiguous: a timeout, a connection reset, an
+// unreadable or unparseable response to what may have been a 2xx, or a 5xx
+// (Mailgun's own failure, where a gateway error can even arrive after the
+// message was accepted). Mailgun may have accepted the message anyway, so the
+// worker leaves the row `sending` for the reconciler to settle against
+// Mailgun's event log instead of failing an email that may have gone out, or
+// that a brief outage would otherwise fail for good.
 type RejectionError struct {
 	StatusCode int
 	Body       string
@@ -49,6 +53,14 @@ type RejectionError struct {
 
 func (e *RejectionError) Error() string {
 	return fmt.Sprintf("mailgun send failed: status %d: %s", e.StatusCode, e.Body)
+}
+
+// IsAccountProblem reports whether the rejection is about the account rather
+// than this message: 401 (a bad or rotated API key) or 403 (the domain is not
+// allowed to send). Every other queued email would get the same answer, so the
+// worker requeues the row and stops instead of failing the whole queue.
+func (e *RejectionError) IsAccountProblem() bool {
+	return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
 }
 
 // IsQuotaLimited reports whether the rejection signals Mailgun's sending
@@ -129,6 +141,9 @@ func (c *HTTPMailgunClient) Send(ctx context.Context, msg Message) (string, erro
 	form.Set("text", msg.Text)
 	form.Set("html", msg.HTML)
 	form.Set("v:recipient_id", msg.RecipientID)
+	if msg.ReplyTo != "" {
+		form.Set("h:Reply-To", msg.ReplyTo)
+	}
 	if msg.UnsubscribeURL != "" {
 		// RFC 2369 + RFC 8058: a mail client renders a native "Unsubscribe"
 		// control from these headers and POSTs to the URL for one-click. The same
@@ -154,6 +169,9 @@ func (c *HTTPMailgunClient) Send(ctx context.Context, msg Message) (string, erro
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return "", errors.Wrap(err, "read mailgun send response")
+	}
+	if resp.StatusCode >= 500 {
+		return "", errors.Errorf("mailgun send outcome unknown: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", errors.WithStack(&RejectionError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))})

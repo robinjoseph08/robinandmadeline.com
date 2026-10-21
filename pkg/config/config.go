@@ -103,6 +103,10 @@ type Config struct {
 	// EmailFrom is the From header on every outbound email.
 	EmailFrom string
 
+	// EmailReplyTo is the Reply-To header on every outbound email, so a guest's
+	// reply reaches the couple's shared inbox rather than the From address.
+	EmailReplyTo string
+
 	// EmailWorkerBatchSize is how many queued recipients one worker batch
 	// claims (ADR 0004).
 	EmailWorkerBatchSize int
@@ -160,6 +164,7 @@ const (
 	// Mailgun's US-region API origin (the EU one is api.eu.mailgun.net).
 	defaultMailgunBaseURL = "https://api.mailgun.net"
 	defaultEmailFrom      = "Robin & Madeline <hello@robinandmadeline.com>"
+	defaultEmailReplyTo   = "wedding@robinandmadeline.com"
 	// Small batches with a short pause keep one slow Mailgun call from
 	// stalling the whole queue while still draining ~174 recipients in
 	// seconds (ADR 0004).
@@ -269,6 +274,7 @@ func New() (*Config, error) {
 		MailgunBaseURL:            envStr("MAILGUN_BASE_URL", defaultMailgunBaseURL),
 		MailgunWebhookSigningKey:  os.Getenv("MAILGUN_WEBHOOK_SIGNING_KEY"),
 		EmailFrom:                 envStr("EMAIL_FROM", defaultEmailFrom),
+		EmailReplyTo:              envStr("EMAIL_REPLY_TO", defaultEmailReplyTo),
 		EmailWorkerBatchSize:      emailWorkerBatchSize,
 		EmailWorkerStuckThreshold: emailWorkerStuckThreshold,
 		EmailDailySendLimit:       emailDailySendLimit,
