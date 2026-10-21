@@ -52,7 +52,7 @@ func TestPreview_ResolvesEventFieldsFromFilterEvent(t *testing.T) {
 	resp, err := f.emails.Preview(ctx(), emails.PreviewEmailPayload{
 		Subject: "{{event_name}}",
 		Body:    "{{event_name}} is on {{event_date}}",
-		Filter:  models.RecipientFilter{EventID: &event.ID},
+		Filter:  models.RecipientFilter{EventIDs: []string{event.ID}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "Reception", resp.SampleSubject)
@@ -116,7 +116,7 @@ func TestCreateSend_CreatesQueuedRecipientRows(t *testing.T) {
 	send, stats, err := f.emails.CreateSend(ctx(), emails.SendEmailPayload{
 		Subject: "Hi {{guest_name}}",
 		Body:    "Save the date!",
-		Filter:  models.RecipientFilter{Side: pointerutil.String(models.SideRobin)},
+		Filter:  models.RecipientFilter{Sides: []string{models.SideRobin}},
 	})
 	require.NoError(t, err)
 
@@ -124,8 +124,7 @@ func TestCreateSend_CreatesQueuedRecipientRows(t *testing.T) {
 	assert.False(t, send.SentAt.IsZero())
 	assert.Nil(t, send.TemplateID)
 	// The filter is snapshotted on the send for the audit trail.
-	require.NotNil(t, send.RecipientFilter.Side)
-	assert.Equal(t, models.SideRobin, *send.RecipientFilter.Side)
+	assert.Equal(t, []string{models.SideRobin}, send.RecipientFilter.Sides)
 	assert.Equal(t, emails.SendStats{Queued: 2, Total: 2}, stats)
 
 	rows := recipientsForSend(t, f.db, send.ID)

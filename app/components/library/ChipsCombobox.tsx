@@ -17,13 +17,14 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/libraries/utils";
 
-interface ChipsComboboxProps {
+interface ChipsComboboxProps<T extends string = string> {
   /** The selected values, rendered as colored chips. */
-  value: string[];
-  onChange: (value: string[]) => void;
-  /** Known options to toggle. This combobox is non-creatable: only these (plus
-   * any already-selected values) appear. */
-  options: string[];
+  value: T[];
+  onChange: (value: T[]) => void;
+  /** Known options to toggle, either bare strings (the value is the label) or
+   * value/label pairs. This combobox is non-creatable: only these (plus any
+   * already-selected values) appear. */
+  options: readonly (T | { value: T; label: string })[];
   ariaLabel: string;
   /** Shown on the trigger when nothing is selected. */
   placeholder?: string;
@@ -32,25 +33,39 @@ interface ChipsComboboxProps {
 
 /**
  * A reusable multi-select chips combobox for filter bars: the trigger shows the
- * selected values as colored chips (via the grid's shared chipColorClass) and a
- * clear affordance, and the dropdown is a searchable list of toggleable options.
- * Modeled on the grid's GridChipsCell popover but standalone (no TableCell, no
+ * selected values as colored chips and a clear affordance, and the dropdown is
+ * a searchable list of toggleable options. Chips show each option's label but
+ * take their color from its value (the grid's shared chipColorClass, like the
+ * grid Chip's colorKey), so a Side chip reads "Robin" in Robin's blue. Modeled
+ * on the grid's GridChipsCell popover but standalone (no TableCell, no
  * save-status) and non-creatable, since a filter only narrows by values that
  * exist. Use it wherever a single FilterSelect is too narrow because a guest can
- * match ANY of several values (the tag filter, with OR semantics on the API).
+ * match ANY of several values (OR semantics on the API).
  */
-export function ChipsCombobox({
+export function ChipsCombobox<T extends string = string>({
   value,
   onChange,
   options,
   ariaLabel,
   placeholder = "Any",
   triggerClassName,
-}: ChipsComboboxProps) {
+}: ChipsComboboxProps<T>) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
-  const toggle = (item: string) =>
+  // The display label for each value; a bare-string option labels itself, and
+  // a selected value with no known option falls back to the value.
+  const labels = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const option of options) {
+      if (typeof option === "string") map.set(option, option);
+      else map.set(option.value, option.label);
+    }
+    return map;
+  }, [options]);
+  const labelOf = (item: string) => labels.get(item) ?? item;
+
+  const toggle = (item: T) =>
     onChange(
       value.includes(item)
         ? value.filter((existing) => existing !== item)
@@ -66,8 +81,11 @@ export function ChipsCombobox({
       value.map((item) => [item.toLowerCase(), item]),
     );
     const seen = new Set<string>();
-    const merged: string[] = [];
-    for (const option of [...options, ...value]) {
+    const merged: T[] = [];
+    const optionValues = options.map((option) =>
+      typeof option === "string" ? option : option.value,
+    );
+    for (const option of [...optionValues, ...value]) {
       const key = option.toLowerCase();
       if (!seen.has(key)) {
         seen.add(key);
@@ -79,7 +97,7 @@ export function ChipsCombobox({
 
   const trimmed = query.trim();
   const filtered = allOptions.filter((option) =>
-    option.toLowerCase().includes(trimmed.toLowerCase()),
+    labelOf(option).toLowerCase().includes(trimmed.toLowerCase()),
   );
 
   return (
@@ -103,16 +121,17 @@ export function ChipsCombobox({
           {value.length === 0 ? (
             <span className="text-ink/40">{placeholder}</span>
           ) : (
-            <span className="flex flex-wrap items-center gap-1">
+            <span className="flex min-w-0 flex-wrap items-center gap-1">
               {value.map((item) => (
                 <span
                   className={cn(
-                    "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
+                    "inline-block max-w-full truncate rounded-full px-2 py-0.5 text-xs font-medium",
                     chipColorClass(item),
                   )}
                   key={item}
+                  title={labelOf(item)}
                 >
-                  {item}
+                  {labelOf(item)}
                 </span>
               ))}
             </span>
@@ -166,11 +185,12 @@ export function ChipsCombobox({
                   />
                   <span
                     className={cn(
-                      "inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
+                      "inline-block max-w-full truncate rounded-full px-2 py-0.5 text-xs font-medium",
                       chipColorClass(option),
                     )}
+                    title={labelOf(option)}
                   >
-                    {option}
+                    {labelOf(option)}
                   </span>
                 </CommandItem>
               ))}

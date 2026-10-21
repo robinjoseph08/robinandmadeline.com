@@ -57,7 +57,8 @@ type PreviewRecipient struct {
 
 // MergeFieldWarning flags a merge field referenced in the draft that would
 // resolve empty for at least one recipient: an {{event_name}}/{{event_date}}
-// with no event selected in the filter, or an {{rsvp_code}} for recipients
+// when the filter does not select exactly one event, or an {{rsvp_code}} for
+// recipients
 // whose party has no code. Field is the bare field name (e.g. "rsvp_code");
 // Message is the admin-facing explanation. The preview returns these as a
 // non-fatal list so the compose page can show them and disable Send; CreateSend

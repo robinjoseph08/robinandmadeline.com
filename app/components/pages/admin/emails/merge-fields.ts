@@ -24,4 +24,4 @@ export const DECORATIONS = [
   "{{pink_heart}}",
 ] as const;
 
-export const MERGE_FIELDS_HINT = `Merge fields: ${MERGE_FIELDS.join(", ")}. Resolved per recipient at send time; event fields use the event selected in the recipient filter. Hearts: ${DECORATIONS.join(", ")}. The body supports Markdown, a single line break is kept as a line break, and a line that is only a link becomes a button.`;
+export const MERGE_FIELDS_HINT = `Merge fields: ${MERGE_FIELDS.join(", ")}. Resolved per recipient at send time; event fields need exactly one event selected in the recipient filter. Hearts: ${DECORATIONS.join(", ")}. The body supports Markdown, a single line break is kept as a line break, and a line that is only a link becomes a button.`;

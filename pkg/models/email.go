@@ -3,6 +3,7 @@ package models
 import (
 	"time"
 
+	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/uptrace/bun"
 )
 
@@ -42,30 +43,42 @@ type EmailTemplate struct {
 }
 
 // RecipientFilter is the criteria a send targets, stored as JSONB on the send
-// for the audit trail. Every field is optional; absent fields don't constrain.
-// The semantics mirror the flat guest list filters: side/relation/circle/
-// invitation_type constrain through the guest's party, tags matches guests
-// whose tags array overlaps the selected tags (the guest has ANY of them),
-// event/rsvp_status constrain through the guest's Event RSVP rows (a row is the
-// invitation, ADR 0002), and info_collection_status filters on the party's
-// derived status (ADR 0005).
+// for the audit trail. Every field is an optional list; an absent or empty list
+// doesn't constrain. Within a list the values are OR'd (a guest matches ANY of
+// them) and the lists are AND'd together. The semantics mirror the flat guest
+// list filters: sides/relations/circles/invitation_types constrain through the
+// guest's party, tags matches guests whose tags array overlaps the selected
+// tags, event_ids/rsvp_statuses constrain through the guest's Event RSVP rows
+// (a row is the invitation, ADR 0002; both lists apply to the same row, so
+// "pending or attending for the Ceremony" is one RSVP), info_collection_statuses
+// filters on the party's derived status (ADR 0005), and guest_ids picks guests
+// directly (sending to one guest, or resending to a corrected address).
 //
 // It lives in pkg/models rather than pkg/emails because EmailSend stores it
 // (feature packages import models, never the reverse). The validate tags are
 // exercised when the filter arrives nested inside an emails payload.
 type RecipientFilter struct {
-	Side     *string `json:"side,omitempty" validate:"omitempty,oneof=robin madeline" tstype:"Side"`
-	Relation *string `json:"relation,omitempty" validate:"omitempty,oneof=family friend" tstype:"Relation"`
-	Circle   *string `json:"circle,omitempty" validate:"omitempty,oneof=Immediate Extended College Work Childhood Other" tstype:"Circle"`
+	GuestIDs  []string `json:"guest_ids,omitempty" validate:"omitempty,dive,uuid"`
+	Sides     []string `json:"sides,omitempty" validate:"omitempty,dive,oneof=robin madeline" tstype:"Side[]"`
+	Relations []string `json:"relations,omitempty" validate:"omitempty,dive,oneof=family friend" tstype:"Relation[]"`
+	Circles   []string `json:"circles,omitempty" validate:"omitempty,dive,oneof=Immediate Extended College Work Childhood Other" tstype:"Circle[]"`
 	// Tags is intentionally unvalidated: tags are an open set, so any value is
-	// a legal filter that simply may match nothing. Multiple tags are OR'd (a
-	// guest matches when it carries any of them); an empty/absent slice does
-	// not constrain. Stored as JSONB, so the slice shape needs no migration.
-	Tags                 []string `json:"tags,omitempty"`
-	EventID              *string  `json:"event_id,omitempty" validate:"omitempty,uuid"`
-	RSVPStatus           *string  `json:"rsvp_status,omitempty" validate:"omitempty,oneof=pending attending not_attending" tstype:"EventRSVPStatus"`
-	InvitationType       *string  `json:"invitation_type,omitempty" validate:"omitempty,oneof=physical digital" tstype:"InvitationType"`
-	InfoCollectionStatus *string  `json:"info_collection_status,omitempty" validate:"omitempty,oneof=complete incomplete" tstype:"InfoCollectionStatus"`
+	// a legal filter that simply may match nothing.
+	Tags                   []string `json:"tags,omitempty"`
+	EventIDs               []string `json:"event_ids,omitempty" validate:"omitempty,dive,uuid"`
+	RSVPStatuses           []string `json:"rsvp_statuses,omitempty" validate:"omitempty,dive,oneof=pending attending not_attending" tstype:"EventRSVPStatus[]"`
+	InvitationTypes        []string `json:"invitation_types,omitempty" validate:"omitempty,dive,oneof=physical digital" tstype:"InvitationType[]"`
+	InfoCollectionStatuses []string `json:"info_collection_statuses,omitempty" validate:"omitempty,dive,oneof=complete incomplete" tstype:"InfoCollectionStatus[]"`
+}
+
+// MergeEventID returns the event the {{event_name}}/{{event_date}} merge fields
+// render from: the filter's event when exactly one is selected, and nil
+// otherwise, since with several events there is no single one to name.
+func (f RecipientFilter) MergeEventID() *string {
+	if len(f.EventIDs) != 1 {
+		return nil
+	}
+	return pointerutil.String(f.EventIDs[0])
 }
 
 // EmailSend is one admin-triggered dispatch: the subject/body as sent (the

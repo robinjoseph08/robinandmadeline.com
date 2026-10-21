@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SendDetailResponse } from "@/types/generated/emails";
@@ -47,6 +48,15 @@ function makeDetail(
   };
 }
 
+// Renders the router state the compose page would receive, so a test can
+// follow the Resend link and inspect the draft it hands over.
+function ComposeStateProbe() {
+  const location = useLocation();
+  return (
+    <pre data-testid="compose-state">{JSON.stringify(location.state)}</pre>
+  );
+}
+
 function renderDetail() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -59,6 +69,7 @@ function renderDetail() {
             element={<AdminEmailSendDetail />}
             path="/admin/emails/sends/:id"
           />
+          <Route element={<ComposeStateProbe />} path="/admin/emails/compose" />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -90,6 +101,114 @@ describe("AdminEmailSendDetail", () => {
       await screen.findByRole("heading", { name: "Save the date!" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Test send")).not.toBeInTheDocument();
+  });
+
+  it("resends to one guest with the same copy and event", async () => {
+    adminRequest.mockResolvedValue(
+      makeDetail({
+        template_id: "t1",
+        recipient_filter: {
+          event_ids: ["e1"],
+          rsvp_statuses: ["pending"],
+        },
+        recipients: [
+          {
+            id: "r1",
+            send_id: "s1",
+            guest_id: "g1",
+            guest_name: "Alice",
+            party_name: "The Smiths",
+            email_address: "alcie@example.com",
+            status: "bounced",
+            created_at: "2026-06-01T18:00:00Z",
+            updated_at: "2026-06-01T18:00:00Z",
+          },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(
+      await screen.findByRole("link", { name: "Resend to Alice" }),
+    );
+
+    // Only the guest and the merge-field event carry over: the rest of the
+    // original filter (here, the RSVP status) no longer has to match.
+    expect(
+      JSON.parse(screen.getByTestId("compose-state").textContent ?? ""),
+    ).toEqual({
+      prefill: {
+        templateId: "t1",
+        subject: "Save the date!",
+        body: "Body",
+        filter: { guest_ids: ["g1"], event_ids: ["e1"] },
+      },
+    });
+  });
+
+  it("offers no resend on a row still queued or sending", async () => {
+    adminRequest.mockResolvedValue(
+      makeDetail({
+        recipients: [
+          {
+            id: "r1",
+            send_id: "s1",
+            guest_id: "g1",
+            guest_name: "Alice",
+            party_name: "The Smiths",
+            email_address: "alice@example.com",
+            status: "queued",
+            created_at: "2026-06-01T18:00:00Z",
+            updated_at: "2026-06-01T18:00:00Z",
+          },
+          {
+            id: "r2",
+            send_id: "s1",
+            guest_id: "g2",
+            guest_name: "Bob",
+            party_name: "The Smiths",
+            email_address: "bob@example.com",
+            status: "delivered",
+            created_at: "2026-06-01T18:00:00Z",
+            updated_at: "2026-06-01T18:00:00Z",
+          },
+        ],
+      }),
+    );
+    renderDetail();
+
+    expect(
+      await screen.findByRole("link", { name: "Resend to Bob" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Resend to Alice" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers no resend on a test send", async () => {
+    adminRequest.mockResolvedValue(
+      makeDetail({
+        is_test: true,
+        recipients: [
+          {
+            id: "r1",
+            send_id: "s1",
+            guest_id: "g1",
+            guest_name: "Alice",
+            party_name: "The Smiths",
+            email_address: "us@example.com",
+            status: "sent",
+            created_at: "2026-06-01T18:00:00Z",
+            updated_at: "2026-06-01T18:00:00Z",
+          },
+        ],
+      }),
+    );
+    renderDetail();
+
+    expect(await screen.findByText("us@example.com")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Resend/ })).toBeNull();
   });
 });
 

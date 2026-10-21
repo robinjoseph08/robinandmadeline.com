@@ -127,7 +127,7 @@ func TestPreviewHandler_ReturnsSampleAndRecipients(t *testing.T) {
 	rec := do(t, e, http.MethodPost, "/api/admin/emails/preview", map[string]any{
 		"subject": "Hi {{guest_name}}",
 		"body":    "Welcome aboard",
-		"filter":  map[string]any{"side": "robin"},
+		"filter":  map[string]any{"sides": []string{"robin"}},
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
 	var resp emails.PreviewEmailResponse
@@ -159,7 +159,19 @@ func TestPreviewHandler_InvalidFilterValueIs422(t *testing.T) {
 	e, _ := newAPI(t)
 	rec := do(t, e, http.MethodPost, "/api/admin/emails/preview", map[string]any{
 		"subject": "s", "body": "b",
-		"filter": map[string]any{"side": "neither"},
+		"filter": map[string]any{"sides": []string{"neither"}},
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))
+}
+
+func TestPreviewHandler_MalformedGuestIDIs422(t *testing.T) {
+	// guest_ids reach Postgres as a uuid comparison, so a malformed id must be
+	// refused by the binder rather than surfacing as a failed cast (a 500).
+	e, _ := newAPI(t)
+	rec := do(t, e, http.MethodPost, "/api/admin/emails/preview", map[string]any{
+		"subject": "s", "body": "b",
+		"filter": map[string]any{"guest_ids": []string{"not-a-uuid"}},
 	})
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Equal(t, string(errcodes.CodeValidationError), errorCode(t, rec))

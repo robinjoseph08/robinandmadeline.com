@@ -3,7 +3,6 @@ package emails_test
 import (
 	"testing"
 
-	"github.com/robinjoseph08/golib/pointerutil"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
@@ -66,17 +65,19 @@ func TestResolveRecipients_FiltersByPartyAttributes(t *testing.T) {
 		filter models.RecipientFilter
 		want   []string
 	}{
-		{"side", models.RecipientFilter{Side: pointerutil.String(models.SideRobin)}, []string{"Rae"}},
-		{"relation", models.RecipientFilter{Relation: pointerutil.String(models.RelationFriend)}, []string{"Mia"}},
-		{"circle", models.RecipientFilter{Circle: pointerutil.String(models.CircleCollege)}, []string{"Mia"}},
-		{"invitation type", models.RecipientFilter{InvitationType: pointerutil.String(models.InvitationPhysical)}, []string{"Rae"}},
+		{"side", models.RecipientFilter{Sides: []string{models.SideRobin}}, []string{"Rae"}},
+		{"relation", models.RecipientFilter{Relations: []string{models.RelationFriend}}, []string{"Mia"}},
+		{"circle", models.RecipientFilter{Circles: []string{models.CircleCollege}}, []string{"Mia"}},
+		{"invitation type", models.RecipientFilter{InvitationTypes: []string{models.InvitationPhysical}}, []string{"Rae"}},
+		{"any of several sides", models.RecipientFilter{Sides: []string{models.SideRobin, models.SideMadeline}}, []string{"Rae", "Mia"}},
+		{"any of several circles", models.RecipientFilter{Circles: []string{models.CircleImmediate, models.CircleCollege}}, []string{"Rae", "Mia"}},
 		{"combined", models.RecipientFilter{
-			Side:     pointerutil.String(models.SideMadeline),
-			Relation: pointerutil.String(models.RelationFriend),
+			Sides:     []string{models.SideMadeline},
+			Relations: []string{models.RelationFriend},
 		}, []string{"Mia"}},
 		{"combined no match", models.RecipientFilter{
-			Side:     pointerutil.String(models.SideRobin),
-			Relation: pointerutil.String(models.RelationFriend),
+			Sides:     []string{models.SideRobin},
+			Relations: []string{models.RelationFriend},
 		}, []string{}},
 	}
 	for _, tc := range cases {
@@ -132,20 +133,43 @@ func TestResolveRecipients_FiltersByEventAndRSVPStatus(t *testing.T) {
 	require.NoError(t, err)
 
 	// Event alone matches the invited set.
-	recipients, _ := mustResolve(t, f.emails, models.RecipientFilter{EventID: &event.ID})
+	recipients, _ := mustResolve(t, f.emails, models.RecipientFilter{EventIDs: []string{event.ID}})
 	assert.ElementsMatch(t, []string{"Alice", "Bob"}, guestNames(recipients))
 
 	// Event plus status narrows within that event.
 	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
-		EventID: &event.ID, RSVPStatus: pointerutil.String(models.RSVPAttending),
+		EventIDs: []string{event.ID}, RSVPStatuses: []string{models.RSVPAttending},
 	})
 	assert.Equal(t, []string{"Alice"}, guestNames(recipients))
 
 	// Status alone matches a row in that status on any event.
 	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
-		RSVPStatus: pointerutil.String(models.RSVPPending),
+		RSVPStatuses: []string{models.RSVPPending},
 	})
 	assert.Equal(t, []string{"Bob"}, guestNames(recipients))
+
+	// Several statuses match a row in ANY of them: pending or attending.
+	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
+		EventIDs: []string{event.ID}, RSVPStatuses: []string{models.RSVPPending, models.RSVPAttending},
+	})
+	assert.ElementsMatch(t, []string{"Alice", "Bob"}, guestNames(recipients))
+}
+
+func TestResolveRecipients_FiltersByGuestIDs(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{})
+	alice := createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	createGuestT(t, f, p.ID, "Bob", guestOpts{email: emailOf("bob@example.com")})
+	carol := createGuestT(t, f, p.ID, "Carol", guestOpts{email: emailOf("carol@example.com")})
+
+	recipients, _ := mustResolve(t, f.emails, models.RecipientFilter{GuestIDs: []string{alice.ID, carol.ID}})
+	assert.ElementsMatch(t, []string{"Alice", "Carol"}, guestNames(recipients))
+
+	// The guest list ANDs with the other criteria like any filter.
+	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
+		GuestIDs: []string{alice.ID}, Sides: []string{models.SideMadeline},
+	})
+	assert.Empty(t, recipients)
 }
 
 func TestResolveRecipients_FiltersByInfoCollectionStatus(t *testing.T) {
@@ -160,14 +184,19 @@ func TestResolveRecipients_FiltersByInfoCollectionStatus(t *testing.T) {
 	createGuestT(t, f, incomplete.ID, "Bob", guestOpts{email: emailOf("bob@example.com"), primary: true})
 
 	recipients, _ := mustResolve(t, f.emails, models.RecipientFilter{
-		InfoCollectionStatus: pointerutil.String(models.StatusComplete),
+		InfoCollectionStatuses: []string{models.StatusComplete},
 	})
 	assert.Equal(t, []string{"Alice"}, guestNames(recipients))
 
 	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
-		InfoCollectionStatus: pointerutil.String(models.StatusIncomplete),
+		InfoCollectionStatuses: []string{models.StatusIncomplete},
 	})
 	assert.Equal(t, []string{"Bob"}, guestNames(recipients))
+
+	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
+		InfoCollectionStatuses: []string{models.StatusComplete, models.StatusIncomplete},
+	})
+	assert.ElementsMatch(t, []string{"Alice", "Bob"}, guestNames(recipients))
 }
 
 func TestResolveRecipients_InfoStatusIsThePartysNotEachRecipients(t *testing.T) {
@@ -181,12 +210,12 @@ func TestResolveRecipients_InfoStatusIsThePartysNotEachRecipients(t *testing.T) 
 	createGuestT(t, f, p.ID, "Secondary", guestOpts{email: emailOf("secondary@example.com")})
 
 	recipients, _ := mustResolve(t, f.emails, models.RecipientFilter{
-		InfoCollectionStatus: pointerutil.String(models.StatusIncomplete),
+		InfoCollectionStatuses: []string{models.StatusIncomplete},
 	})
 	assert.ElementsMatch(t, []string{"Primary", "Secondary"}, guestNames(recipients))
 
 	recipients, _ = mustResolve(t, f.emails, models.RecipientFilter{
-		InfoCollectionStatus: pointerutil.String(models.StatusComplete),
+		InfoCollectionStatuses: []string{models.StatusComplete},
 	})
 	assert.Empty(t, recipients)
 }

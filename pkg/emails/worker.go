@@ -510,7 +510,7 @@ func (w *Worker) sendOne(ctx context.Context, row *models.EmailRecipient, sends 
 	}
 
 	var event *models.Event
-	if eventID := send.RecipientFilter.EventID; eventID != nil {
+	if eventID := send.RecipientFilter.MergeEventID(); eventID != nil {
 		event, ok = events[*eventID]
 		if !ok {
 			loaded := new(models.Event)
