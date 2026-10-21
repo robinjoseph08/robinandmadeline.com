@@ -2,6 +2,7 @@ package emails
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -27,34 +28,39 @@ type RecipientResolution struct {
 // surfacing both excluded sets lets the compose page show exactly who the send
 // cannot reach, and why, instead of hiding the gap.
 //
-// The filter semantics mirror the flat guest list (pkg/parties.ListGuests):
-// side/relation/circle/invitation_type constrain through the guest's party,
-// tags matches guests whose tags array overlaps the selected tags (ANY of),
-// and event_id / rsvp_status constrain through the guest's Event RSVP rows (a
-// row is the invitation, ADR 0002). info_collection_status filters on the
-// party's derived status, which cannot be expressed in SQL (ADR 0005), so like
-// parties.ListParties it is applied in Go over the candidates.
+// The filter semantics mirror the flat guest list (pkg/parties.ListGuests),
+// with every criterion a list whose values are OR'd: guest_ids picks guests
+// directly, sides/relations/circles/invitation_types constrain through the
+// guest's party, tags matches guests whose tags array overlaps the selected
+// tags, and event_ids / rsvp_statuses constrain through the guest's Event RSVP
+// rows (a row is the invitation, ADR 0002), both applying to the same row.
+// info_collection_statuses filters on the party's derived status, which cannot
+// be expressed in SQL (ADR 0005), so like parties.ListParties it is applied in
+// Go over the candidates.
 func (s *Service) ResolveRecipients(ctx context.Context, f models.RecipientFilter) (*RecipientResolution, error) {
 	var guests []*models.Guest
 	q := s.db.NewSelect().Model(&guests).Relation("Party").Order("g.created_at ASC", "g.id ASC")
 
+	if len(f.GuestIDs) > 0 {
+		q = q.Where("g.id IN (?)", bun.List(f.GuestIDs))
+	}
 	// Party-level attributes constrain the owning party via one correlated
 	// EXISTS subquery carrying all party predicates.
-	if f.Side != nil || f.Relation != nil || f.Circle != nil || f.InvitationType != nil {
+	if len(f.Sides) > 0 || len(f.Relations) > 0 || len(f.Circles) > 0 || len(f.InvitationTypes) > 0 {
 		q = q.Where("EXISTS (?)", recipientPartySubquery(s.db, f))
 	}
 	if len(f.Tags) > 0 {
 		// Array overlap: the guest's tags include ANY of the selected tags.
 		q = q.Where("g.tags && ?", pgdialect.Array(f.Tags))
 	}
-	if f.EventID != nil || f.RSVPStatus != nil {
+	if len(f.EventIDs) > 0 || len(f.RSVPStatuses) > 0 {
 		sub := s.db.NewSelect().Model((*models.EventRSVP)(nil)).Column("id").
 			Where("er.guest_id = g.id")
-		if f.EventID != nil {
-			sub = sub.Where("er.event_id = ?", *f.EventID)
+		if len(f.EventIDs) > 0 {
+			sub = sub.Where("er.event_id IN (?)", bun.List(f.EventIDs))
 		}
-		if f.RSVPStatus != nil {
-			sub = sub.Where("er.status = ?", *f.RSVPStatus)
+		if len(f.RSVPStatuses) > 0 {
+			sub = sub.Where("er.status IN (?)", bun.List(f.RSVPStatuses))
 		}
 		q = q.Where("EXISTS (?)", sub)
 	}
@@ -63,8 +69,8 @@ func (s *Service) ResolveRecipients(ctx context.Context, f models.RecipientFilte
 		return nil, errors.Wrap(err, "resolve email recipients")
 	}
 
-	if f.InfoCollectionStatus != nil {
-		filtered, err := s.filterByInfoCollectionStatus(ctx, guests, *f.InfoCollectionStatus)
+	if len(f.InfoCollectionStatuses) > 0 {
+		filtered, err := s.filterByInfoCollectionStatus(ctx, guests, f.InfoCollectionStatuses)
 		if err != nil {
 			return nil, err
 		}
@@ -97,28 +103,29 @@ func (s *Service) ResolveRecipients(ctx context.Context, f models.RecipientFilte
 // to filter on the guest's party attributes.
 func recipientPartySubquery(db *bun.DB, f models.RecipientFilter) *bun.SelectQuery {
 	sub := db.NewSelect().Model((*models.Party)(nil)).Column("id").Where("p.id = g.party_id")
-	if f.Side != nil {
-		sub = sub.Where("p.side = ?", *f.Side)
+	if len(f.Sides) > 0 {
+		sub = sub.Where("p.side IN (?)", bun.List(f.Sides))
 	}
-	if f.Relation != nil {
-		sub = sub.Where("p.relation = ?", *f.Relation)
+	if len(f.Relations) > 0 {
+		sub = sub.Where("p.relation IN (?)", bun.List(f.Relations))
 	}
-	if f.Circle != nil {
-		sub = sub.Where("? = ANY(p.circle)", *f.Circle)
+	if len(f.Circles) > 0 {
+		// Array overlap: the party is in ANY of the selected circles.
+		sub = sub.Where("p.circle && ?", pgdialect.Array(f.Circles))
 	}
-	if f.InvitationType != nil {
-		sub = sub.Where("p.invitation_type = ?", *f.InvitationType)
+	if len(f.InvitationTypes) > 0 {
+		sub = sub.Where("p.invitation_type IN (?)", bun.List(f.InvitationTypes))
 	}
 	return sub
 }
 
 // filterByInfoCollectionStatus keeps the guests whose party's derived
-// info-collection status matches. Status is a party-level property now (the
-// invitation type, the mailing address, and the two collection flags, with no
-// guest field at all since email became optional for completion), so the
-// distinct parties are reloaded and evaluated via the same model method the
+// info-collection status is one of statuses. Status is a party-level property
+// now (the invitation type, the mailing address, and the two collection flags,
+// with no guest field at all since email became optional for completion), so
+// the distinct parties are reloaded and evaluated via the same model method the
 // parties API uses, keeping the filter and the displayed status in agreement.
-func (s *Service) filterByInfoCollectionStatus(ctx context.Context, guests []*models.Guest, status string) ([]*models.Guest, error) {
+func (s *Service) filterByInfoCollectionStatus(ctx context.Context, guests []*models.Guest, statuses []string) ([]*models.Guest, error) {
 	if len(guests) == 0 {
 		return guests, nil
 	}
@@ -141,7 +148,7 @@ func (s *Service) filterByInfoCollectionStatus(ctx context.Context, guests []*mo
 	}
 	matches := make(map[string]bool, len(parties))
 	for _, p := range parties {
-		matches[p.ID] = p.InfoCollectionStatus() == status
+		matches[p.ID] = slices.Contains(statuses, p.InfoCollectionStatus())
 	}
 
 	filtered := guests[:0]

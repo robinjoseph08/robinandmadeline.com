@@ -116,8 +116,9 @@ func (s *Service) CreateSend(ctx context.Context, in SendEmailPayload) (*models.
 
 	// The hard backstop behind the compose-page warnings: a blank merge field
 	// must be impossible to dispatch, so even a direct API call is refused when
-	// any referenced field would render empty (no event selected, or a
-	// recipient with no RSVP code). The event for merge fields is the filter's.
+	// any referenced field would render empty (the filter does not select
+	// exactly one event, or a recipient has no RSVP code). The event for merge
+	// fields is the filter's.
 	event, err := s.filterEvent(ctx, in.Filter)
 	if err != nil {
 		return nil, SendStats{}, err
@@ -311,16 +312,17 @@ func (s *Service) SendStatsBySendIDs(ctx context.Context, sendIDs []string) (map
 	return stats, nil
 }
 
-// filterEvent loads the event named in the filter for merge-field rendering.
-// No event filter, or an event id that no longer exists, yields nil: in the
-// latter case the EXISTS filter already matches no guests, so an empty merge
-// value is moot.
+// filterEvent loads the event the filter names for merge-field rendering (see
+// RecipientFilter.MergeEventID). No event filter, several events, or an event
+// id that no longer exists yields nil: in the last case the EXISTS filter
+// already matches no guests, so an empty merge value is moot.
 func (s *Service) filterEvent(ctx context.Context, f models.RecipientFilter) (*models.Event, error) {
-	if f.EventID == nil {
+	eventID := f.MergeEventID()
+	if eventID == nil {
 		return nil, nil
 	}
 	event := new(models.Event)
-	err := s.db.NewSelect().Model(event).Where("e.id = ?", *f.EventID).Scan(ctx)
+	err := s.db.NewSelect().Model(event).Where("e.id = ?", *eventID).Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil

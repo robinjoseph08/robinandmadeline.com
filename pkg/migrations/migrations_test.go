@@ -457,3 +457,76 @@ func columnExists(t *testing.T, db *bun.DB, column string) bool {
 	require.NoError(t, err)
 	return exists
 }
+
+// TestMultiValueRecipientFiltersMigration_ConvertsStoredFilters seeds a send
+// whose stored filter uses the old single-value keys, then checks the up
+// migration rewrites each to its one-element list key (leaving tags alone)
+// and the down migration restores the old shape.
+func TestMultiValueRecipientFiltersMigration_ConvertsStoredFilters(t *testing.T) {
+	db := scratchDB(t)
+	ctx := context.Background()
+
+	before := migrate.NewMigrations()
+	withTarget := migrate.NewMigrations()
+	var found bool
+	for _, m := range migrations.Migrations.Sorted() {
+		withTarget.Add(m)
+		if m.Name == "20261022000000" {
+			found = true
+			break
+		}
+		before.Add(m)
+	}
+	require.True(t, found, "the multi-value recipient filters migration must be registered")
+
+	beforeMigrator := migrate.NewMigrator(db, before, migrate.WithMarkAppliedOnSuccess(true))
+	require.NoError(t, beforeMigrator.Init(ctx))
+	_, err := beforeMigrator.Migrate(ctx)
+	require.NoError(t, err, "apply migrations before the filter conversion")
+
+	const sendID = "00000000-0000-4000-8000-0000000000bb"
+	oldFilter := `{"side": "robin", "circle": "College", "event_id": "00000000-0000-4000-8000-0000000000cc", "rsvp_status": "pending", "tags": ["UIUC"]}`
+	// A send with only an open-ended filter has no single-value key to move,
+	// and a stored JSON null must not become a [null] list.
+	const tagsOnlyID = "00000000-0000-4000-8000-0000000000bc"
+	const nullID = "00000000-0000-4000-8000-0000000000bd"
+	for id, filter := range map[string]string{
+		sendID:     oldFilter,
+		tagsOnlyID: `{"tags": ["UIUC"]}`,
+		nullID:     `{"side": null}`,
+	} {
+		_, err = db.ExecContext(ctx, `
+			INSERT INTO email_sends (id, subject, body, recipient_filter, sent_at, sent_by, created_at, updated_at)
+			VALUES (?, 'Hi', 'Body', ?::jsonb, now(), 'admin', now(), now())
+		`, id, filter)
+		require.NoError(t, err)
+	}
+
+	readFilterOf := func(id string) string {
+		var filter string
+		require.NoError(t, db.NewRaw("SELECT recipient_filter::text FROM email_sends WHERE id = ?", id).Scan(ctx, &filter))
+		return filter
+	}
+	readFilter := func() string { return readFilterOf(sendID) }
+
+	targetMigrator := migrate.NewMigrator(db, withTarget, migrate.WithMarkAppliedOnSuccess(true))
+	require.NoError(t, targetMigrator.Init(ctx))
+	_, err = targetMigrator.Migrate(ctx)
+	require.NoError(t, err, "apply the filter conversion")
+	assert.JSONEq(t, `{"sides": ["robin"], "circles": ["College"], "event_ids": ["00000000-0000-4000-8000-0000000000cc"], "rsvp_statuses": ["pending"], "tags": ["UIUC"]}`, readFilter())
+	assert.JSONEq(t, `{"tags": ["UIUC"]}`, readFilterOf(tagsOnlyID))
+	assert.JSONEq(t, `{"side": null}`, readFilterOf(nullID))
+
+	// A send made after the conversion can pick guests directly, which the old
+	// shape has no key for: the rollback drops it.
+	_, err = db.ExecContext(ctx, `
+		UPDATE email_sends SET recipient_filter = recipient_filter || '{"guest_ids": ["00000000-0000-4000-8000-0000000000dd"]}'::jsonb
+		WHERE id = ?
+	`, sendID)
+	require.NoError(t, err)
+
+	_, err = targetMigrator.Rollback(ctx)
+	require.NoError(t, err, "roll back the filter conversion")
+	assert.JSONEq(t, oldFilter, readFilter())
+	assert.JSONEq(t, `{"tags": ["UIUC"]}`, readFilterOf(tagsOnlyID))
+}

@@ -1,12 +1,12 @@
 import { AlertTriangle, Loader2, Send } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import { ChipsCombobox } from "@/components/library/ChipsCombobox";
 import { Combobox } from "@/components/library/Combobox";
+import { readComposePrefill } from "@/components/pages/admin/emails/compose-prefill";
 import { MERGE_FIELDS_HINT } from "@/components/pages/admin/emails/merge-fields";
-import { FilterSelect } from "@/components/pages/admin/parties/FilterSelect";
 import {
   CIRCLE_OPTIONS,
   INFO_STATUS_OPTIONS,
@@ -14,6 +14,7 @@ import {
   RELATION_OPTIONS,
   RSVP_STATUS_OPTIONS,
   SIDE_OPTIONS,
+  type Option,
 } from "@/components/pages/admin/parties/options";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,17 +60,64 @@ import type {
 } from "@/types/generated/models";
 
 interface FilterState {
-  side?: Side;
-  relation?: Relation;
-  circle?: Circle;
+  guestIds: string[];
+  sides: Side[];
+  relations: Relation[];
+  circles: Circle[];
   tags: string[];
-  eventId?: string;
-  rsvpStatus?: EventRSVPStatus;
-  invitationType?: InvitationType;
-  infoCollectionStatus?: InfoCollectionStatus;
+  eventIds: string[];
+  rsvpStatuses: EventRSVPStatus[];
+  invitationTypes: InvitationType[];
+  infoCollectionStatuses: InfoCollectionStatus[];
 }
 
-const EMPTY_FILTER: FilterState = { tags: [] };
+/** Reads a wire filter (a prefill's, or empty) into the page's filter state. */
+function toFilterState(filter: RecipientFilter = {}): FilterState {
+  return {
+    guestIds: filter.guest_ids ?? [],
+    sides: filter.sides ?? [],
+    relations: filter.relations ?? [],
+    circles: filter.circles ?? [],
+    tags: filter.tags ?? [],
+    eventIds: filter.event_ids ?? [],
+    rsvpStatuses: filter.rsvp_statuses ?? [],
+    invitationTypes: filter.invitation_types ?? [],
+    infoCollectionStatuses: filter.info_collection_statuses ?? [],
+  };
+}
+
+/** An empty selection means "no constraint", sent as an absent field. */
+function nonEmpty<T>(values: T[]): T[] | undefined {
+  return values.length > 0 ? values : undefined;
+}
+
+interface MultiFilterProps<T extends string> {
+  label: string;
+  value: T[];
+  options: readonly (T | Option<T>)[];
+  onChange: (value: T[]) => void;
+}
+
+/** A labeled multi-select filter: a guest matches ANY of the chosen values. */
+function MultiFilter<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: MultiFilterProps<T>) {
+  return (
+    <div className="flex flex-col gap-1 text-sm">
+      <span className="font-medium">{label}</span>
+      <ChipsCombobox
+        ariaLabel={label}
+        onChange={onChange}
+        options={options}
+        placeholder="All"
+        value={value}
+      />
+    </div>
+  );
+}
 
 /**
  * When the recipient count exceeds what is left of today's daily send budget,
@@ -93,14 +141,15 @@ function quotaWindowNote(preview: PreviewEmailResponse): string | undefined {
 /** Builds the wire filter, dropping unset criteria. */
 function toRecipientFilter(filter: FilterState): RecipientFilter {
   return {
-    side: filter.side,
-    relation: filter.relation,
-    circle: filter.circle,
-    tags: filter.tags.length > 0 ? filter.tags : undefined,
-    event_id: filter.eventId,
-    rsvp_status: filter.rsvpStatus,
-    invitation_type: filter.invitationType,
-    info_collection_status: filter.infoCollectionStatus,
+    guest_ids: nonEmpty(filter.guestIds),
+    sides: nonEmpty(filter.sides),
+    relations: nonEmpty(filter.relations),
+    circles: nonEmpty(filter.circles),
+    tags: nonEmpty(filter.tags),
+    event_ids: nonEmpty(filter.eventIds),
+    rsvp_statuses: nonEmpty(filter.rsvpStatuses),
+    invitation_types: nonEmpty(filter.invitationTypes),
+    info_collection_statuses: nonEmpty(filter.infoCollectionStatuses),
   };
 }
 
@@ -116,6 +165,10 @@ function toRecipientFilter(filter: FilterState): RecipientFilter {
 export default function AdminEmailCompose() {
   useAdminPageTitle("Compose Email");
   const navigate = useNavigate();
+  // A draft handed over by another page (resending from a send's detail),
+  // read once to seed the initial state.
+  const location = useLocation();
+  const [prefill] = useState(() => readComposePrefill(location.state));
   const templatesQuery = useEmailTemplates();
   const eventsQuery = useEvents();
   const partiesQuery = useParties({});
@@ -123,10 +176,14 @@ export default function AdminEmailCompose() {
   const sendEmail = useSendEmail();
   const sendTestEmail = useSendTestEmail();
 
-  const [templateId, setTemplateId] = useState<string | undefined>(undefined);
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
-  const [filter, setFilter] = useState<FilterState>(EMPTY_FILTER);
+  const [templateId, setTemplateId] = useState<string | undefined>(
+    prefill?.templateId,
+  );
+  const [subject, setSubject] = useState(prefill?.subject ?? "");
+  const [body, setBody] = useState(prefill?.body ?? "");
+  const [filter, setFilter] = useState<FilterState>(() =>
+    toFilterState(prefill?.filter),
+  );
   const [preview, setPreview] = useState<PreviewEmailResponse | undefined>(
     undefined,
   );
@@ -155,6 +212,22 @@ export default function AdminEmailCompose() {
     label: t.name,
   }));
   const eventOptions = events.map((e) => ({ value: e.id, label: e.name }));
+
+  // Every guest, for picking recipients directly (one guest, or a handful
+  // whose email was just corrected). Placeholder guests with no name yet show
+  // their descriptor.
+  const guestOptions = useMemo(() => {
+    const options: Option<string>[] = [];
+    for (const party of partiesQuery.data?.items ?? []) {
+      for (const guest of party.guests ?? []) {
+        options.push({
+          value: guest.id,
+          label: guest.full_name || guest.placeholder_text || "Unnamed guest",
+        });
+      }
+    }
+    return options.sort((a, b) => a.label.localeCompare(b.label));
+  }, [partiesQuery.data]);
 
   // Distinct tags across all guests, for the multi-select tag filter. The
   // parties query already loads each party's guests, so this needs no extra
@@ -238,6 +311,20 @@ export default function AdminEmailCompose() {
     }
   };
 
+  // A handed-over draft is previewed straight away, so a resend shows at once
+  // whether the guest can be reached (a cleared email lands them under
+  // skipped). The state is then dropped from the history entry, so returning
+  // here with Back after the send does not re-arm the same draft.
+  const prefillHandled = useRef(false);
+  useEffect(() => {
+    if (!prefill || prefillHandled.current) return;
+    prefillHandled.current = true;
+    navigate(location.pathname, { replace: true, state: null });
+    void handlePreview();
+    // Runs once on mount for the prefill; later edits preview on demand.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // The "Send" button: re-resolve the audience so the confirmed count is never
   // stale relative to edits made after a preview, then open the confirmation
   // dialog. It never dispatches the send itself; the dialog's confirm button
@@ -254,6 +341,12 @@ export default function AdminEmailCompose() {
       setPreview(current);
       if (current.total === 0) {
         toast.error("No recipients with an email address match the filter.");
+        return;
+      }
+      // The refreshed preview now shows the blank-merge-field warnings (and
+      // disables Send); never offer to confirm a send the server would refuse.
+      if ((current.warnings?.length ?? 0) > 0) {
+        toast.error("Fix the blank merge fields before sending.");
         return;
       }
       setConfirmOpen(true);
@@ -384,62 +477,65 @@ export default function AdminEmailCompose() {
       <div className="space-y-2">
         <h2 className="text-lg font-medium">Recipients</h2>
         <div className="flex flex-wrap gap-4">
-          <FilterSelect
+          <MultiFilter
+            label="Guests"
+            onChange={(v) => updateFilter("guestIds", v)}
+            options={guestOptions}
+            value={filter.guestIds}
+          />
+          <MultiFilter
             label="Side"
-            onChange={(v) => updateFilter("side", v)}
+            onChange={(v) => updateFilter("sides", v)}
             options={SIDE_OPTIONS}
-            value={filter.side}
+            value={filter.sides}
           />
-          <FilterSelect
+          <MultiFilter
             label="Relation"
-            onChange={(v) => updateFilter("relation", v)}
+            onChange={(v) => updateFilter("relations", v)}
             options={RELATION_OPTIONS}
-            value={filter.relation}
+            value={filter.relations}
           />
-          <FilterSelect
+          <MultiFilter
             label="Circle"
-            onChange={(v) => updateFilter("circle", v)}
+            onChange={(v) => updateFilter("circles", v)}
             options={CIRCLE_OPTIONS}
-            value={filter.circle}
+            value={filter.circles}
           />
-          <FilterSelect
+          <MultiFilter
             label="Invitation"
-            onChange={(v) => updateFilter("invitationType", v)}
+            onChange={(v) => updateFilter("invitationTypes", v)}
             options={INVITATION_TYPE_OPTIONS}
-            value={filter.invitationType}
+            value={filter.invitationTypes}
           />
-          <FilterSelect
+          <MultiFilter
             label="Event"
-            onChange={(v) => updateFilter("eventId", v)}
+            onChange={(v) => updateFilter("eventIds", v)}
             options={eventOptions}
-            value={filter.eventId}
+            value={filter.eventIds}
           />
-          <FilterSelect
+          <MultiFilter
             label="RSVP status"
-            onChange={(v) => updateFilter("rsvpStatus", v)}
+            onChange={(v) => updateFilter("rsvpStatuses", v)}
             options={RSVP_STATUS_OPTIONS}
-            value={filter.rsvpStatus}
+            value={filter.rsvpStatuses}
           />
-          <FilterSelect
+          <MultiFilter
             label="Info status"
-            onChange={(v) => updateFilter("infoCollectionStatus", v)}
+            onChange={(v) => updateFilter("infoCollectionStatuses", v)}
             options={INFO_STATUS_OPTIONS}
-            value={filter.infoCollectionStatus}
+            value={filter.infoCollectionStatuses}
           />
-          <div className="flex flex-col gap-1 text-sm">
-            <span className="font-medium">Tags</span>
-            <ChipsCombobox
-              ariaLabel="Tags"
-              onChange={(v) => updateFilter("tags", v)}
-              options={tagValues}
-              placeholder="Any tag"
-              value={filter.tags}
-            />
-          </div>
+          <MultiFilter
+            label="Tags"
+            onChange={(v) => updateFilter("tags", v)}
+            options={tagValues}
+            value={filter.tags}
+          />
         </div>
         <p className="text-xs text-muted-foreground">
-          Empty filters match every guest. Guests without an email address are
-          always skipped.
+          Empty filters match every guest. Within a filter, a guest matching any
+          selected value is included; across filters, a guest must match all of
+          them. Guests without an email address are always skipped.
         </p>
       </div>
 

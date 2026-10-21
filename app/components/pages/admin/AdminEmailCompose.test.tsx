@@ -65,6 +65,7 @@ const UUID =
 interface MockOptions {
   preview?: PreviewEmailResponse;
   templates?: object[];
+  parties?: object[];
 }
 
 function setMock(opts: MockOptions = {}) {
@@ -77,6 +78,12 @@ function setMock(opts: MockOptions = {}) {
     }
     if (path === "/admin/events") {
       return Promise.resolve({ items: [], total: 0 });
+    }
+    if (path === "/admin/parties") {
+      return Promise.resolve({
+        items: opts.parties ?? [],
+        total: opts.parties?.length ?? 0,
+      });
     }
     if (path === "/admin/emails/preview") {
       return Promise.resolve(opts.preview ?? makePreview({}));
@@ -92,14 +99,16 @@ function setMock(opts: MockOptions = {}) {
   });
 }
 
-function renderCompose() {
+function renderCompose(state?: unknown) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <TooltipProvider>
       <QueryClientProvider client={client}>
-        <MemoryRouter>
+        <MemoryRouter
+          initialEntries={[{ pathname: "/admin/emails/compose", state }]}
+        >
           <AdminEmailCompose />
         </MemoryRouter>
       </QueryClientProvider>
@@ -124,9 +133,15 @@ describe("AdminEmailCompose preview", () => {
     await user.type(screen.getByLabelText("Subject"), "Hello there");
     await user.type(screen.getByLabelText("Body"), "Big news!");
 
-    // Narrow the audience to Robin's side via the filter select.
+    // Narrow the audience with the multi-select filters: either RSVP status
+    // of two, and Robin's side.
+    await user.click(screen.getByRole("combobox", { name: "RSVP status" }));
+    await user.click(await screen.findByRole("option", { name: "Pending" }));
+    await user.click(await screen.findByRole("option", { name: "Attending" }));
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("combobox", { name: "Side" }));
     await user.click(await screen.findByRole("option", { name: "Robin" }));
+    await user.keyboard("{Escape}");
 
     await user.click(screen.getByRole("button", { name: "Preview" }));
 
@@ -136,7 +151,10 @@ describe("AdminEmailCompose preview", () => {
         body: {
           subject: "Hello there",
           body: "Big news!",
-          filter: { side: "robin" },
+          filter: {
+            sides: ["robin"],
+            rsvp_statuses: ["pending", "attending"],
+          },
         },
       });
     });
@@ -150,6 +168,62 @@ describe("AdminEmailCompose preview", () => {
     expect(frame.getAttribute("srcdoc")).toContain("Welcome, friends!");
     expect(screen.getByText("alice@example.com")).toBeInTheDocument();
     expect(screen.getByText("1 recipient")).toBeInTheDocument();
+  });
+
+  it("starts from a handed-over draft and filters to the chosen guest", async () => {
+    setMock({
+      parties: [
+        {
+          id: "p1",
+          name: "The Smiths",
+          guests: [
+            {
+              id: "00000000-0000-4000-8000-000000000001",
+              full_name: "Alice Smith",
+              tags: [],
+            },
+          ],
+        },
+      ],
+    });
+    renderCompose({
+      prefill: {
+        subject: "Save the date, {{guest_name}}",
+        body: "Big news!",
+        filter: { guest_ids: ["00000000-0000-4000-8000-000000000001"] },
+      },
+    });
+
+    expect(screen.getByLabelText("Subject")).toHaveValue(
+      "Save the date, {{guest_name}}",
+    );
+    expect(screen.getByLabelText("Body")).toHaveValue("Big news!");
+    // The guest filter shows the guest by name once the guest list loads.
+    expect(
+      await within(screen.getByRole("combobox", { name: "Guests" })).findByText(
+        "Alice Smith",
+      ),
+    ).toBeInTheDocument();
+
+    // The draft previews on arrival, with no Preview click, so a guest who
+    // cannot be reached shows up at once...
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith("/admin/emails/preview", {
+        method: "POST",
+        body: {
+          subject: "Save the date, {{guest_name}}",
+          body: "Big news!",
+          filter: { guest_ids: ["00000000-0000-4000-8000-000000000001"] },
+        },
+      });
+    });
+    expect(await screen.findByText("Hi Alice")).toBeInTheDocument();
+    // ...and the handed-over state is dropped from history, so Back after
+    // sending does not re-arm the same draft.
+    expect(navigate).toHaveBeenCalledWith("/admin/emails/compose", {
+      replace: true,
+      state: null,
+    });
   });
 
   it("calls out matching guests skipped for having no email", async () => {
@@ -553,7 +627,7 @@ describe("AdminEmailCompose merge-field warnings", () => {
           {
             field: "event_name",
             message:
-              "uses {{event_name}}/{{event_date}} but no event is selected in the recipient filter.",
+              "uses {{event_name}}/{{event_date}} but the recipient filter does not select exactly one event.",
           },
         ],
       }),
@@ -567,13 +641,48 @@ describe("AdminEmailCompose merge-field warnings", () => {
 
     // The warning is surfaced near the preview...
     expect(
-      await screen.findByText(/no event is selected in the recipient filter/),
+      await screen.findByText(/does not select exactly one event/),
     ).toBeInTheDocument();
     // ...and both Send and Send test are disabled so a blank merge field can
     // never be dispatched (Send test renders from a real guest and is hard-
     // refused by the backend the same way, so it gates on warnings too).
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send test" })).toBeDisabled();
+  });
+
+  it("does not open the confirm dialog when Send surfaces a warning", async () => {
+    setMock({
+      preview: makePreview({
+        warnings: [
+          {
+            field: "event_name",
+            message:
+              "uses {{event_name}}/{{event_date}} but the recipient filter does not select exactly one event.",
+          },
+        ],
+      }),
+    });
+    const errorSpy = vi.spyOn(toast, "error");
+    const user = userEvent.setup();
+    renderCompose();
+
+    // Send straight away, with no preview yet to have disabled it.
+    await user.type(screen.getByLabelText("Subject"), "About {{event_name}}");
+    await user.type(screen.getByLabelText("Body"), "Body");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      await screen.findByText(/does not select exactly one event/),
+    ).toBeInTheDocument();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Fix the blank merge fields before sending.",
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(adminRequest).not.toHaveBeenCalledWith(
+      "/admin/emails/send",
+      expect.anything(),
+    );
   });
 
   it("keeps Send enabled when the preview has no warnings", async () => {

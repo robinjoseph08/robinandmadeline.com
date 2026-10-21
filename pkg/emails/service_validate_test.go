@@ -41,10 +41,40 @@ func TestPreview_NoEventWarningWhenEventSelected(t *testing.T) {
 	resp, err := f.emails.Preview(ctx(), emails.PreviewEmailPayload{
 		Subject: "About {{event_name}}",
 		Body:    "Body",
-		Filter:  models.RecipientFilter{EventID: &event.ID},
+		Filter:  models.RecipientFilter{EventIDs: []string{event.ID}},
 	})
 	require.NoError(t, err)
 	assert.Empty(t, resp.Warnings)
+}
+
+func TestCreateSend_RefusesEventMergeFieldWithSeveralEvents(t *testing.T) {
+	f := newFixtures(t)
+	p := createPartyT(t, f, "The Smiths", partyOpts{rsvpCode: pointerutil.String("KALEL")})
+	createGuestT(t, f, p.ID, "Alice", guestOpts{email: emailOf("alice@example.com")})
+	ceremony, err := f.events.CreateEvent(ctx(), events.CreateEventPayload{
+		Name: "Ceremony", Date: "2026-10-17", IsPublic: true,
+	})
+	require.NoError(t, err)
+	reception, err := f.events.CreateEvent(ctx(), events.CreateEventPayload{
+		Name: "Reception", Date: "2026-10-17", IsPublic: true,
+	})
+	require.NoError(t, err)
+	// Two events still select recipients, but name no single event for the
+	// merge field, so the send would carry a blank {{event_name}}.
+	filter := models.RecipientFilter{EventIDs: []string{ceremony.ID, reception.ID}}
+
+	resp, err := f.emails.Preview(ctx(), emails.PreviewEmailPayload{
+		Subject: "About {{event_name}}", Body: "Body", Filter: filter,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, resp.Total)
+	require.Len(t, resp.Warnings, 1)
+	assert.Contains(t, resp.Warnings[0].Message, "does not select exactly one event")
+
+	_, _, err = f.emails.CreateSend(ctx(), emails.SendEmailPayload{
+		Subject: "About {{event_name}}", Body: "Body", Filter: filter,
+	})
+	assertErrCode(t, err, errcodes.CodeValidationError)
 }
 
 func TestPreview_WarnsWhenRSVPCodeUsedButSomeRecipientsLackOne(t *testing.T) {
@@ -124,7 +154,7 @@ func TestCreateSend_SucceedsWhenMergeFieldsResolveForEveryone(t *testing.T) {
 	_, _, err = f.emails.CreateSend(ctx(), emails.SendEmailPayload{
 		Subject: "About {{event_name}}",
 		Body:    "Your code is {{rsvp_code}} for {{event_date}}",
-		Filter:  models.RecipientFilter{EventID: &event.ID},
+		Filter:  models.RecipientFilter{EventIDs: []string{event.ID}},
 	})
 	require.NoError(t, err)
 }

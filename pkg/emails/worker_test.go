@@ -260,7 +260,7 @@ func TestProcessBatch_RendersEventFieldsFromFilterEvent(t *testing.T) {
 	queueSend(t, f, emails.SendEmailPayload{
 		Subject: "{{event_name}}",
 		Body:    "See you on {{event_date}}",
-		Filter:  models.RecipientFilter{EventID: &event.ID},
+		Filter:  models.RecipientFilter{EventIDs: []string{event.ID}},
 	})
 
 	client := newFakeMailgun()
@@ -286,7 +286,7 @@ func TestProcessBatch_EventDeletedAfterQueueingRendersEventFieldsEmpty(t *testin
 	send := queueSend(t, f, emails.SendEmailPayload{
 		Subject: "About {{event_name}}",
 		Body:    "It is on {{event_date}}.",
-		Filter:  models.RecipientFilter{EventID: &event.ID},
+		Filter:  models.RecipientFilter{EventIDs: []string{event.ID}},
 	})
 	// The event vanishes between enqueue and pickup. Deleting it cascades the
 	// Event RSVP rows but not the already-snapshotted recipient rows, so the

@@ -127,14 +127,13 @@ func TestSendTest_UsesFilterEventForEventMergeFields(t *testing.T) {
 	resp, err := svc.SendTest(ctx(), emails.TestEmailPayload{
 		Subject: "About {{event_name}}",
 		Body:    "On {{event_date}}",
-		Filter:  models.RecipientFilter{EventID: &event.ID},
+		Filter:  models.RecipientFilter{EventIDs: []string{event.ID}},
 	})
 	require.NoError(t, err)
 
 	send, err := loadSendT(t, f, resp.SendID)
 	require.NoError(t, err)
-	require.NotNil(t, send.RecipientFilter.EventID)
-	assert.Equal(t, event.ID, *send.RecipientFilter.EventID)
+	assert.Equal(t, []string{event.ID}, send.RecipientFilter.EventIDs)
 }
 
 func TestSendTest_CountsAgainstTheDailyBudgetOnceDispatched(t *testing.T) {

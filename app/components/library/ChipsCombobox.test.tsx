@@ -102,4 +102,22 @@ describe("ChipsCombobox", () => {
     expect(trigger).not.toHaveTextContent("Bridal Party");
     expect(trigger).toHaveTextContent("Any");
   });
+
+  it("colors a labeled option by its value, matching the grid chips", () => {
+    render(
+      <ChipsCombobox
+        ariaLabel="Side"
+        onChange={() => {}}
+        options={[
+          { value: "robin", label: "Robin" },
+          { value: "madeline", label: "Madeline" },
+        ]}
+        value={["robin", "madeline"]}
+      />,
+    );
+
+    // The couple's colors from chipColorClass, keyed by "robin"/"madeline".
+    expect(screen.getByText("Robin")).toHaveClass("bg-blue-200");
+    expect(screen.getByText("Madeline")).toHaveClass("bg-pink-200");
+  });
 });

@@ -122,8 +122,16 @@ test("admin composes and sends a filtered email end to end", async ({
   // the server config records who dispatched the send).
   await expect(page.getByText(/Sent .* by admin/)).toBeVisible();
   // The worker is off in e2e (no Mailgun key), so the recipient stays queued.
-  await expect(page.getByRole("cell", { name: guestName })).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: guestName, exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("Queued", { exact: true })).toBeVisible();
+
+  // A queued row is about to go out anyway, so it offers no Resend (which
+  // would only duplicate it). The Resend handoff itself is unit-tested.
+  await expect(
+    page.getByRole("link", { name: `Resend to ${guestName}` }),
+  ).toHaveCount(0);
 
   // --- The send history lists it with its stats -----------------------------
   await page.goto("/admin/emails", { waitUntil: "domcontentloaded" });

@@ -43,7 +43,7 @@ func mergeFieldProblems(subject, body string, event *models.Event, recipients []
 		}
 		problems = append(problems, MergeFieldWarning{
 			Field:   field,
-			Message: "uses {{event_name}}/{{event_date}} but no event is selected in the recipient filter.",
+			Message: "uses {{event_name}}/{{event_date}} but the recipient filter does not select exactly one event.",
 		})
 	}
 
