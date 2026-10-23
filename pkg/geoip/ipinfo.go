@@ -21,9 +21,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-// DefaultBaseURL is ipinfo's API origin.
-const DefaultBaseURL = "https://ipinfo.io"
-
 // requestTimeout bounds one lookup so a hung ipinfo never stalls the resolver.
 const requestTimeout = 10 * time.Second
 
@@ -61,8 +58,20 @@ func (e *RateLimitedError) Error() string {
 	return fmt.Sprintf("ipinfo rate limited; retry after %s", e.RetryAfter)
 }
 
-// UnresolvableError reports that ipinfo rejected this specific IP (a 4xx other
-// than 429). Retrying the same IP will not help, so callers should record it as
+// RefusedError reports that ipinfo refused the caller rather than the IP (a
+// 401 or 403: a bad or revoked token, or ipinfo blocking anonymous calls from
+// this network). Every lookup would fail the same way, so callers should stop
+// and retry much later instead of recording IPs as unresolvable.
+type RefusedError struct {
+	Status int
+}
+
+func (e *RefusedError) Error() string {
+	return fmt.Sprintf("ipinfo refused the request (status %d)", e.Status)
+}
+
+// UnresolvableError reports that ipinfo rejected this specific IP (a 400, 404,
+// or 422). Retrying the same IP will not help, so callers should record it as
 // looked up with no location.
 type UnresolvableError struct {
 	Status int
@@ -79,8 +88,9 @@ type IPInfoClient struct {
 	http    *http.Client
 }
 
-// NewIPInfoClient builds a client against baseURL (DefaultBaseURL in
-// production). token may be blank for anonymous lookups.
+// NewIPInfoClient builds a client against baseURL (https://ipinfo.io in
+// production, see config.IPInfoBaseURL). token may be blank for anonymous
+// lookups.
 func NewIPInfoClient(baseURL, token string) *IPInfoClient {
 	return &IPInfoClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -96,9 +106,10 @@ type ipinfoResponse struct {
 	Org     string `json:"org"`
 }
 
-// Lookup resolves one IP. It returns a *RateLimitedError on a 429, an
-// *UnresolvableError when ipinfo rejects the IP itself, and a plain error for
-// anything transient (network failures, 5xx, a malformed body).
+// Lookup resolves one IP. It returns a *RateLimitedError on a 429, a
+// *RefusedError on a 401 or 403, an *UnresolvableError when ipinfo rejects the
+// IP itself, and a plain error for anything else (network failures, 5xx, other
+// 4xx, a malformed body), which callers should treat as transient.
 func (c *IPInfoClient) Lookup(ctx context.Context, ip string) (Location, error) {
 	u := c.baseURL + "/" + url.PathEscape(ip) + "/json"
 	if c.token != "" {
@@ -125,7 +136,10 @@ func (c *IPInfoClient) Lookup(ctx context.Context, ip string) (Location, error) 
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
 		return Location{}, &RateLimitedError{RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
-	case resp.StatusCode >= 400 && resp.StatusCode < 500:
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return Location{}, &RefusedError{Status: resp.StatusCode}
+	case resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusNotFound ||
+		resp.StatusCode == http.StatusUnprocessableEntity:
 		return Location{}, &UnresolvableError{Status: resp.StatusCode}
 	case resp.StatusCode != http.StatusOK:
 		return Location{}, errors.Errorf("ipinfo returned status %d", resp.StatusCode)

@@ -1,4 +1,5 @@
 import { Eye, EyeOff } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { DIFFICULTY_LABELS } from "@/components/library/crossword/puzzle";
@@ -52,11 +53,11 @@ function describeNetwork(session: AdminGameSessionResponse) {
 
 // While some IP lookups are still pending, refetch on this interval so the
 // Location column fills in without a manual reload. The resolver runs in the
-// background and may be paused by ipinfo's rate limit, so polling stops after
-// a bounded number of refetches rather than running for as long as the page
-// is open.
+// background and may be paused by ipinfo's rate limit, so polling stops a
+// minute after the page is opened rather than running for as long as it stays
+// open. The window restarts on each visit.
 const GEO_POLL_INTERVAL_MS = 5000;
-const GEO_POLL_MAX_REFETCHES = 12;
+const GEO_POLL_WINDOW_MS = 60_000;
 
 /**
  * Admin crossword solve times: every tracked solve session, newest first,
@@ -71,10 +72,11 @@ const GEO_POLL_MAX_REFETCHES = 12;
  */
 export default function AdminCrossword() {
   useAdminPageTitle("Crossword");
+  const [openedAt] = useState(() => Date.now());
   const sessionsQuery = useAdminGameSessions({
     refetchInterval: (query) =>
       query.state.data?.items.some((session) => session.ip_geo_pending) &&
-      query.state.dataUpdateCount <= GEO_POLL_MAX_REFETCHES
+      Date.now() - openedAt < GEO_POLL_WINDOW_MS
         ? GEO_POLL_INTERVAL_MS
         : false,
   });

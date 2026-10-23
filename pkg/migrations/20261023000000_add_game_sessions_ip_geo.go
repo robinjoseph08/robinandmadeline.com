@@ -32,7 +32,7 @@ func init() {
 			// The resolver's pending scan and its same-IP reuse lookup both key
 			// on ip_address.
 			_, err = tx.ExecContext(ctx, `
-				CREATE INDEX game_sessions_ip_address_idx ON game_sessions (ip_address)
+				CREATE INDEX ix_game_sessions_ip_address ON game_sessions (ip_address)
 			`)
 			if err != nil {
 				return fmt.Errorf("create game_sessions ip_address index: %w", err)
@@ -42,19 +42,23 @@ func init() {
 	}
 
 	down := func(ctx context.Context, db *bun.DB) error {
-		_, err := db.ExecContext(ctx, `
-			DROP INDEX IF EXISTS game_sessions_ip_address_idx;
-			ALTER TABLE game_sessions
-			DROP COLUMN ip_city,
-			DROP COLUMN ip_region,
-			DROP COLUMN ip_country,
-			DROP COLUMN ip_org,
-			DROP COLUMN ip_geo_looked_up_at
-		`)
-		if err != nil {
-			return fmt.Errorf("drop game_sessions ip geo columns: %w", err)
-		}
-		return nil
+		return db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+			if _, err := tx.ExecContext(ctx, `DROP INDEX IF EXISTS ix_game_sessions_ip_address`); err != nil {
+				return fmt.Errorf("drop game_sessions ip_address index: %w", err)
+			}
+			_, err := tx.ExecContext(ctx, `
+				ALTER TABLE game_sessions
+				DROP COLUMN ip_city,
+				DROP COLUMN ip_region,
+				DROP COLUMN ip_country,
+				DROP COLUMN ip_org,
+				DROP COLUMN ip_geo_looked_up_at
+			`)
+			if err != nil {
+				return fmt.Errorf("drop game_sessions ip geo columns: %w", err)
+			}
+			return nil
+		})
 	}
 
 	Migrations.MustRegister(up, down)

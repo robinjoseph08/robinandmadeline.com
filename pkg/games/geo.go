@@ -35,6 +35,13 @@ type GeoResolverConfig struct {
 	// FailureCooldown is how long to skip activations after stopping for
 	// consecutive failures.
 	FailureCooldown time.Duration
+	// RetryFailedAfter is how long a single IP whose lookup failed is skipped,
+	// so a few persistently failing IPs at the front of the newest-first order
+	// cannot stall every IP behind them.
+	RetryFailedAfter time.Duration
+	// RefusedPause is how long to stop all lookups after ipinfo refuses the
+	// caller (a 401 or 403).
+	RefusedPause time.Duration
 	// Now returns the current time; nil means time.Now.
 	Now func() time.Time
 }
@@ -44,6 +51,8 @@ const (
 	defaultGeoReuseWithin            = 30 * 24 * time.Hour
 	defaultGeoMaxConsecutiveFailures = 3
 	defaultGeoFailureCooldown        = 5 * time.Minute
+	defaultGeoRetryFailedAfter       = time.Hour
+	defaultGeoRefusedPause           = time.Hour
 	// geoPendingLimit bounds one activation's work. At wedding scale the whole
 	// backlog fits; anything beyond it is picked up by the next wake.
 	geoPendingLimit = 500
@@ -57,8 +66,10 @@ const (
 // (ip_geo_looked_up_at NULL), so the next wake retries it; that is also how
 // rows created before this feature existed get backfilled.
 //
-// A 429 from ipinfo pauses the resolver until the Retry-After elapses, and
-// wakes during the pause return without touching the database or ipinfo.
+// A 429 from ipinfo pauses the resolver until the Retry-After elapses, and a
+// 401 or 403 pauses it for RefusedPause; wakes during a pause return without
+// touching the database or ipinfo. The pause lives in memory, so a cold boot
+// forgets it and spends at most one request to rediscover it.
 type GeoResolver struct {
 	db     *bun.DB
 	client geoip.Client
@@ -69,8 +80,9 @@ type GeoResolver struct {
 	done    chan struct{}
 	runOnce sync.Once
 
-	// pausedUntil is only read and written by the Run goroutine.
+	// pausedUntil and failedAt are only touched by the Run goroutine.
 	pausedUntil time.Time
+	failedAt    map[string]time.Time
 }
 
 // NewGeoResolver builds a resolver. Call Run in a goroutine to start it.
@@ -89,16 +101,23 @@ func NewGeoResolver(db *bun.DB, client geoip.Client, cfg GeoResolverConfig, log 
 	if cfg.FailureCooldown <= 0 {
 		cfg.FailureCooldown = defaultGeoFailureCooldown
 	}
+	if cfg.RetryFailedAfter <= 0 {
+		cfg.RetryFailedAfter = defaultGeoRetryFailedAfter
+	}
+	if cfg.RefusedPause <= 0 {
+		cfg.RefusedPause = defaultGeoRefusedPause
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
 	return &GeoResolver{
-		db:     db,
-		client: client,
-		log:    log,
-		cfg:    cfg,
-		wake:   make(chan struct{}, 1),
-		done:   make(chan struct{}),
+		db:       db,
+		client:   client,
+		log:      log,
+		cfg:      cfg,
+		wake:     make(chan struct{}, 1),
+		done:     make(chan struct{}),
+		failedAt: make(map[string]time.Time),
 	}
 }
 
@@ -155,6 +174,9 @@ func (r *GeoResolver) Activate(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		if at, ok := r.failedAt[ip]; ok && r.cfg.Now().Sub(at) < r.cfg.RetryFailedAfter {
+			continue
+		}
 
 		loc, reused, err := r.reusableLocation(ctx, ip)
 		if err != nil {
@@ -169,12 +191,20 @@ func (r *GeoResolver) Activate(ctx context.Context) {
 			loc, err = r.client.Lookup(ctx, ip)
 
 			var rateLimited *geoip.RateLimitedError
+			var refused *geoip.RefusedError
 			var unresolvable *geoip.UnresolvableError
 			switch {
 			case errors.As(err, &rateLimited):
 				r.pausedUntil = r.cfg.Now().Add(rateLimited.RetryAfter)
 				r.log.Data(logger.Data{"retry_after": rateLimited.RetryAfter.String()}).
 					Warn("geo resolver rate limited by ipinfo; pausing lookups")
+				return
+			case errors.As(err, &refused):
+				// Every IP would be refused the same way, so pause rather than
+				// recording the backlog as unresolvable.
+				r.pausedUntil = r.cfg.Now().Add(r.cfg.RefusedPause)
+				r.log.Err(err).Data(logger.Data{"retry_after": r.cfg.RefusedPause.String()}).
+					Error("geo resolver refused by ipinfo; pausing lookups")
 				return
 			case errors.As(err, &unresolvable):
 				// Record it as looked up with no location so it is not retried.
@@ -184,6 +214,7 @@ func (r *GeoResolver) Activate(ctx context.Context) {
 					return
 				}
 				failures++
+				r.failedAt[ip] = r.cfg.Now()
 				r.log.Err(err).Warn("geo resolver lookup failed; will retry on a later wake")
 				if failures >= r.cfg.MaxConsecutiveFailures {
 					r.pausedUntil = r.cfg.Now().Add(r.cfg.FailureCooldown)
@@ -193,6 +224,7 @@ func (r *GeoResolver) Activate(ctx context.Context) {
 				continue
 			}
 			failures = 0
+			delete(r.failedAt, ip)
 		}
 
 		if err := r.store(ctx, ip, loc); err != nil {

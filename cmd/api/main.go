@@ -82,9 +82,9 @@ func main() {
 
 	// Stop the background workers as soon as shutdown begins. The geo resolver
 	// abandons its in-flight lookup (the session stays pending and is retried
-	// after the next boot). The email worker picks up no new
-	// batches but finishes the one in flight (ADR 0004). HTTP requests already
-	// being drained may still commit durable queue work, which a later explicit
+	// after the next boot). The email worker picks up no new batches but
+	// finishes the one in flight (ADR 0004). HTTP requests already being
+	// drained may still commit durable queue work, which a later explicit
 	// activation will pick up.
 	app.stopWorker()
 

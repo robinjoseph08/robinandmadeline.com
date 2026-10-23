@@ -162,7 +162,8 @@ func TestGeoResolver_TransientFailureSkipsThatIPAndRetriesLater(t *testing.T) {
 		locations: map[string]geoip.Location{"8.8.8.8": comcastRaleigh},
 		errs:      map[string]error{"1.1.1.1": errors.New("connection reset")},
 	}
-	resolver := newResolver(db, client, &fakeClock{now: time.Now()})
+	clock := &fakeClock{now: time.Now()}
+	resolver := newResolver(db, client, clock)
 
 	resolver.Activate(ctx())
 	assert.Nil(t, sessionRow(t, db, failing.ID).IPGeoLookedUpAt, "the failed IP stays pending")
@@ -170,7 +171,77 @@ func TestGeoResolver_TransientFailureSkipsThatIPAndRetriesLater(t *testing.T) {
 
 	delete(client.errs, "1.1.1.1")
 	resolver.Activate(ctx())
-	assert.NotNil(t, sessionRow(t, db, failing.ID).IPGeoLookedUpAt, "the next wake retries it")
+	assert.Nil(t, sessionRow(t, db, failing.ID).IPGeoLookedUpAt, "a just-failed IP is skipped for a while")
+
+	clock.now = clock.now.Add(61 * time.Minute)
+	resolver.Activate(ctx())
+	assert.NotNil(t, sessionRow(t, db, failing.ID).IPGeoLookedUpAt, "a later wake retries it")
+}
+
+func TestGeoResolver_FailingIPsDoNotStallTheIPsBehindThem(t *testing.T) {
+	svc, _, db := newServices(t)
+	// The failing IPs are created last, so they sort ahead of 8.8.8.8 in the
+	// newest-first order.
+	behind := sessionWithIP(t, svc, "8.8.8.8")
+	for _, ip := range []string{"1.1.1.1", "1.0.0.1", "9.9.9.9"} {
+		sessionWithIP(t, svc, ip)
+	}
+	outage := errors.New("malformed response")
+	client := &fakeGeoClient{
+		locations: map[string]geoip.Location{"8.8.8.8": comcastRaleigh},
+		errs:      map[string]error{"1.1.1.1": outage, "1.0.0.1": outage, "9.9.9.9": outage},
+	}
+	clock := &fakeClock{now: time.Now()}
+	resolver := newResolver(db, client, clock)
+
+	resolver.Activate(ctx())
+	assert.Nil(t, sessionRow(t, db, behind.ID).IPGeoLookedUpAt, "three failures in a row pause the pass")
+
+	// After the cooldown, the failed IPs are still being skipped, so the IP
+	// behind them finally resolves.
+	clock.now = clock.now.Add(6 * time.Minute)
+	resolver.Activate(ctx())
+	assert.Equal(t, "Raleigh", sessionRow(t, db, behind.ID).IPCity)
+}
+
+func TestGeoResolver_ResolvesTheNewestSessionFirst(t *testing.T) {
+	svc, _, db := newServices(t)
+	sessionWithIP(t, svc, "1.1.1.1")
+	sessionWithIP(t, svc, "8.8.8.8")
+	_, err := db.NewUpdate().Model((*models.GameSession)(nil)).
+		Set("created_at = created_at - INTERVAL '1 hour'").
+		Where("ip_address = ?", "1.1.1.1").Exec(ctx())
+	require.NoError(t, err)
+	client := &fakeGeoClient{}
+
+	newResolver(db, client, &fakeClock{now: time.Now()}).Activate(ctx())
+
+	assert.Equal(t, []string{"8.8.8.8", "1.1.1.1"}, client.calls)
+}
+
+func TestGeoResolver_RefusedPausesWithoutMarkingTheBacklog(t *testing.T) {
+	svc, _, db := newServices(t)
+	first := sessionWithIP(t, svc, "1.1.1.1")
+	second := sessionWithIP(t, svc, "8.8.8.8")
+	refused := &geoip.RefusedError{Status: 403}
+	client := &fakeGeoClient{errs: map[string]error{"1.1.1.1": refused, "8.8.8.8": refused}}
+	clock := &fakeClock{now: time.Now()}
+	resolver := newResolver(db, client, clock)
+
+	resolver.Activate(ctx())
+	assert.Len(t, client.calls, 1, "the first refusal stops the pass")
+	assert.Nil(t, sessionRow(t, db, first.ID).IPGeoLookedUpAt)
+	assert.Nil(t, sessionRow(t, db, second.ID).IPGeoLookedUpAt)
+
+	clock.now = clock.now.Add(30 * time.Minute)
+	resolver.Activate(ctx())
+	assert.Len(t, client.calls, 1, "no lookups while paused")
+
+	clock.now = clock.now.Add(31 * time.Minute)
+	client.errs = nil
+	resolver.Activate(ctx())
+	assert.NotNil(t, sessionRow(t, db, first.ID).IPGeoLookedUpAt, "lookups resume after the pause")
+	assert.NotNil(t, sessionRow(t, db, second.ID).IPGeoLookedUpAt)
 }
 
 func TestGeoResolver_RepeatedFailuresPauseTheActivation(t *testing.T) {

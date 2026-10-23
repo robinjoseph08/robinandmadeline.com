@@ -75,6 +75,24 @@ func TestLookup_ClassifiesFailures(t *testing.T) {
 			},
 		},
 		{
+			name:   "403 refuses the caller rather than the IP",
+			status: http.StatusForbidden,
+			check: func(t *testing.T, err error) {
+				var re *RefusedError
+				require.ErrorAs(t, err, &re)
+				var ue *UnresolvableError
+				assert.NotErrorAs(t, err, &ue)
+			},
+		},
+		{
+			name:   "401 refuses the caller rather than the IP",
+			status: http.StatusUnauthorized,
+			check: func(t *testing.T, err error) {
+				var re *RefusedError
+				require.ErrorAs(t, err, &re)
+			},
+		},
+		{
 			name:   "500 is transient",
 			status: http.StatusInternalServerError,
 			check: func(t *testing.T, err error) {
