@@ -123,6 +123,12 @@ func EmailWorkerOperation() Operation {
 	return Operation{label: "email_worker"}
 }
 
+// GeoResolverOperation attributes a connection to an activated crossword
+// session geo resolver.
+func GeoResolverOperation() Operation {
+	return Operation{label: "geo_resolver"}
+}
+
 type operationContextKey struct{}
 
 // WithOperation attaches a safe operation label to database work.

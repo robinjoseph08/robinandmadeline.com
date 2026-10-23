@@ -91,6 +91,11 @@ unaffected: `STATIC_DIR` (serve the built SPA from this directory),
 `CANONICAL_HOST` (permanently redirect every other host to this one), and
 `TRUST_PROXY_HEADERS` (resolve client IPs from Fly's forwarded header).
 
+`GEOIP_LOOKUPS_ENABLED` turns on the background ipinfo.io lookups behind the
+admin crossword page's Location column. It is off by default so local dev and
+tests never call ipinfo. Leave `IPINFO_TOKEN` unset: anonymous lookups include
+city and region, while a free-account token is limited to country and ASN.
+
 Email delivery (the admin email system) is configured separately and is off by
 default: without `MAILGUN_API_KEY` the queue worker never starts and sends
 stay queued. Set `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, and

@@ -52,12 +52,26 @@ const adminSessionLimit = 10000
 // Methods return errcodes errors directly; handlers pass them through to the
 // shared error handler.
 type Service struct {
-	db *bun.DB
+	db  *bun.DB
+	geo GeoWaker
 }
 
 // NewService builds a Service backed by the given Bun DB.
 func NewService(db *bun.DB) *Service {
 	return &Service{db: db}
+}
+
+// WithGeoWaker connects new sessions and admin list reads to the geo resolver.
+// A nil waker leaves geo lookups off, as in local development and tests.
+func (s *Service) WithGeoWaker(geo GeoWaker) *Service {
+	s.geo = geo
+	return s
+}
+
+func (s *Service) wakeGeo() {
+	if s.geo != nil {
+		s.geo.Wake()
+	}
 }
 
 // newID returns a fresh UUIDv7 string. v7 is time-ordered, which keeps inserts
@@ -108,6 +122,7 @@ func (s *Service) CreateSession(ctx context.Context, in CreateGameSessionInput) 
 	if _, err := s.db.NewInsert().Model(session).Exec(ctx); err != nil {
 		return nil, errors.Wrap(err, "insert game session")
 	}
+	s.wakeGeo()
 	return session, nil
 }
 
@@ -457,7 +472,9 @@ type adminSessionRow struct {
 // solve and NULL for an anonymous one, exactly tracking party_id. The result is
 // capped at adminSessionLimit purely as a defensive ceiling; at wedding scale
 // every session is returned and the total equals the item count. The returned
-// slice is never nil, so it serializes as [].
+// slice is never nil, so it serializes as []. Reading the list also wakes the
+// geo resolver, which is what retries lookups that were rate limited or failed
+// and backfills sessions created before geo lookups existed.
 func (s *Service) ListSessions(ctx context.Context) ([]AdminGameSessionResponse, int, error) {
 	var rows []adminSessionRow
 	total, err := s.db.NewSelect().Model(&rows).
@@ -470,9 +487,11 @@ func (s *Service) ListSessions(ctx context.Context) ([]AdminGameSessionResponse,
 	if err != nil {
 		return nil, 0, errors.Wrap(err, "list game sessions")
 	}
+	s.wakeGeo()
 
 	items := make([]AdminGameSessionResponse, 0, len(rows))
 	for _, row := range rows {
+		client := describeUserAgent(row.UserAgent)
 		items = append(items, AdminGameSessionResponse{
 			ID:            row.ID,
 			PuzzleID:      row.PuzzleID,
@@ -489,6 +508,14 @@ func (s *Service) ListSessions(ctx context.Context) ([]AdminGameSessionResponse,
 			PartyName:     row.PartyName,
 			IPAddress:     row.IPAddress,
 			UserAgent:     row.UserAgent,
+			ClientBrowser: client.Browser,
+			ClientOS:      client.OS,
+			ClientDevice:  client.Device,
+			IPCity:        row.IPCity,
+			IPRegion:      row.IPRegion,
+			IPCountry:     row.IPCountry,
+			IPOrg:         row.IPOrg,
+			IPGeoPending:  row.IPAddress != "" && row.IPGeoLookedUpAt == nil,
 			CreatedAt:     row.CreatedAt,
 			UpdatedAt:     row.UpdatedAt,
 		})

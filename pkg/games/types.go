@@ -98,7 +98,14 @@ type GameSessionResponse struct {
 // affiliated party when a signed-in guest's token rode
 // the solve, both null for an anonymous one; PartyName is the party's name
 // (parties.name), the same human label the rest of the admin UI shows, filled
-// via a LEFT JOIN so it is null exactly when PartyID is.
+// via a LEFT JOIN so it is null exactly when PartyID is. ClientBrowser,
+// ClientOS, and ClientDevice summarize UserAgent (e.g. "Safari 18", "iOS
+// 18.1", "iPhone"); each is blank when that part is unrecognized. IPCity,
+// IPRegion, IPCountry, and IPOrg are where the IP was at solve time, per
+// ipinfo.io (IPOrg is the network owner with its ASN, e.g. "AS7922 Comcast
+// Cable Communications, LLC"). IPGeoPending is true while the background
+// lookup has not run yet; once it has, the geo fields may still be blank (a
+// private IP, or one ipinfo knows nothing about).
 type AdminGameSessionResponse struct {
 	ID            string     `json:"id"`
 	PuzzleID      string     `json:"puzzle_id"`
@@ -115,6 +122,14 @@ type AdminGameSessionResponse struct {
 	PartyName     *string    `json:"party_name"`
 	IPAddress     string     `json:"ip_address"`
 	UserAgent     string     `json:"user_agent"`
+	ClientBrowser string     `json:"client_browser"`
+	ClientOS      string     `json:"client_os"`
+	ClientDevice  string     `json:"client_device"`
+	IPCity        string     `json:"ip_city"`
+	IPRegion      string     `json:"ip_region"`
+	IPCountry     string     `json:"ip_country"`
+	IPOrg         string     `json:"ip_org"`
+	IPGeoPending  bool       `json:"ip_geo_pending"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 }

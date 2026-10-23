@@ -48,12 +48,14 @@ kill_timeout = "10s"
   # Non-secret config only. PORT, LOG_FORMAT, and STATIC_DIR are also baked
   # into the image; CANONICAL_HOST arms the host-redirect middleware and
   # TRUST_PROXY_HEADERS makes the rate limiter key on Fly's forwarded
-  # client-IP header instead of the proxy's address.
+  # client-IP header instead of the proxy's address. GEOIP_LOOKUPS_ENABLED
+  # turns on the ipinfo.io lookups behind the admin crossword Location column.
   PORT = "8080"
   LOG_FORMAT = "json"
   STATIC_DIR = "/app/public"
   CANONICAL_HOST = "www.robinandmadeline.com"
   TRUST_PROXY_HEADERS = "true"
+  GEOIP_LOOKUPS_ENABLED = "true"
 
 [http_service]
   internal_port = 8080

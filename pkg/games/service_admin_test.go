@@ -207,3 +207,25 @@ func TestUnhideSession_UnknownSessionIs404(t *testing.T) {
 	err := svc.UnhideSession(ctx(), "00000000-0000-0000-0000-000000000000")
 	assertErrCode(t, err, errcodes.CodeNotFound)
 }
+
+func TestListSessions_DescribesTheUserAgent(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	session, err := svc.CreateSession(ctx(), games.CreateGameSessionInput{
+		Payload: games.CreateGameSessionPayload{
+			PuzzleID:   "wedding-mini-v1",
+			Difficulty: models.GameDifficultyEasy,
+		},
+		IPAddress: "203.0.113.7",
+		UserAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1",
+	})
+	require.NoError(t, err)
+
+	items, _, err := svc.ListSessions(ctx())
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, session.ID, items[0].ID)
+	assert.Equal(t, "Safari 18", items[0].ClientBrowser)
+	assert.Equal(t, "iOS 18.1", items[0].ClientOS)
+	assert.Equal(t, "iPhone", items[0].ClientDevice)
+}

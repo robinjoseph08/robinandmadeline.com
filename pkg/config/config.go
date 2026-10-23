@@ -130,6 +130,20 @@ type Config struct {
 	// default, in which case the test endpoint 422s. A test send consumes one
 	// of the daily Mailgun sends on the free plan.
 	EmailTestRecipients []string
+
+	// GeoIPLookupsEnabled turns on the background resolver that looks up where
+	// each crossword session's IP is via ipinfo.io. Off by default so local
+	// dev, tests, and e2e never call ipinfo; production enables it in fly.toml.
+	GeoIPLookupsEnabled bool
+
+	// IPInfoToken is an optional ipinfo.io token. Leave it blank: anonymous
+	// lookups include city and region, while a free-account token moves onto
+	// ipinfo's Lite plan, which only returns country and ASN. Only a paid
+	// plan's token is worth setting.
+	IPInfoToken string
+
+	// IPInfoBaseURL is the ipinfo.io API origin.
+	IPInfoBaseURL string
 }
 
 // Default values used for local development when an env var is unset.
@@ -175,6 +189,7 @@ const (
 	// Mailgun's free plan allows 100 emails per UTC day with no overage, so
 	// the default budget matches it exactly.
 	defaultEmailDailySendLimit = 100
+	defaultIPInfoBaseURL       = "https://ipinfo.io"
 )
 
 // New builds a Config from the environment, applying defaults for any unset
@@ -253,6 +268,11 @@ func New() (*Config, error) {
 		return nil, errors.New("MAILGUN_DOMAIN must be set when MAILGUN_API_KEY is set")
 	}
 
+	geoIPLookupsEnabled, err := envBool("GEOIP_LOOKUPS_ENABLED", false)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		DatabaseURL:          envStr("DATABASE_URL", defaultDatabaseURL()),
 		ServerPort:           port,
@@ -279,6 +299,9 @@ func New() (*Config, error) {
 		EmailWorkerStuckThreshold: emailWorkerStuckThreshold,
 		EmailDailySendLimit:       emailDailySendLimit,
 		EmailTestRecipients:       envCSV("EMAIL_TEST_RECIPIENTS"),
+		GeoIPLookupsEnabled:       geoIPLookupsEnabled,
+		IPInfoToken:               os.Getenv("IPINFO_TOKEN"),
+		IPInfoBaseURL:             envStr("IPINFO_BASE_URL", defaultIPInfoBaseURL),
 	}, nil
 }
 

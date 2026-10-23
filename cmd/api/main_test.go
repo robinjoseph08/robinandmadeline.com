@@ -27,6 +27,7 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/events"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/geoip"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/parties"
 	"github.com/stretchr/testify/assert"
@@ -137,6 +138,12 @@ func (*assemblyMailgun) FindAcceptedMessageID(context.Context, string, string) (
 	return "", false, errors.New("unexpected Mailgun lookup")
 }
 
+type assemblyGeo struct{}
+
+func (*assemblyGeo) Lookup(context.Context, string) (geoip.Location, error) {
+	return geoip.Location{}, errors.New("unexpected geo lookup")
+}
+
 func assemblyConfig() *config.Config {
 	return &config.Config{
 		ServerPort:           0,
@@ -157,6 +164,9 @@ func closeApplication(t *testing.T, app *application) {
 	app.stopWorker()
 	if app.worker != nil {
 		<-app.worker.Done()
+	}
+	if app.geo != nil {
+		<-app.geo.Done()
 	}
 	require.NoError(t, app.db.Close())
 }
@@ -263,13 +273,16 @@ func TestApplicationAssembly_IdleSupervisionDoesNotPoll(t *testing.T) {
 		connector := &assemblyConnector{err: errors.New("database must not be reached")}
 		cfg := assemblyConfig()
 		cfg.StaticDir = staticDir
+		cfg.GeoIPLookupsEnabled = true
 		app, err := newApplication(context.Background(), cfg, applicationDependencies{
 			connector:     connector,
 			mailgunClient: &assemblyMailgun{},
+			geoClient:     &assemblyGeo{},
 			log:           logger.NewWithLevel("error"),
 		})
 		require.NoError(t, err)
 		defer closeApplication(t, app)
+		require.NotNil(t, app.geo, "the geo resolver also idles without polling")
 
 		<-app.worker.Started()
 		time.Sleep(24 * time.Hour)
@@ -689,6 +702,20 @@ func TestApplicationAssembly_RequiresConfiguredMailgunClient(t *testing.T) {
 	assert.Nil(t, app)
 	require.EqualError(t, err, "mailgun client is required when email delivery is configured")
 	assert.Zero(t, connector.attempts.Load())
+}
+
+func TestApplicationAssembly_RequiresGeoClientWhenLookupsEnabled(t *testing.T) {
+	connector := &assemblyConnector{err: errors.New("unused")}
+	cfg := assemblyConfig()
+	cfg.GeoIPLookupsEnabled = true
+	app, err := newApplication(context.Background(), cfg, applicationDependencies{
+		connector:     connector,
+		mailgunClient: &assemblyMailgun{},
+		log:           logger.NewWithLevel("error"),
+	})
+
+	assert.Nil(t, app)
+	require.EqualError(t, err, "geo client is required when geo lookups are enabled")
 }
 
 func TestCachedPort(t *testing.T) {
