@@ -112,8 +112,13 @@ func (c *IPInfoClient) Lookup(ctx context.Context, ip string) (Location, error) 
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		// The URL may carry the token, so report only that the call failed.
-		return Location{}, errors.New("ipinfo request failed")
+		// A *url.Error repeats the request URL, which may carry the token, so
+		// keep only the underlying cause.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return Location{}, errors.Wrap(err, "ipinfo request failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 

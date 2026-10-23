@@ -224,3 +224,25 @@ func TestService_WakesGeoOnCreateAndAdminList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, waker.calls, "an admin list read wakes it to retry and backfill")
 }
+
+func TestGeoResolver_RunActivatesOnWakeAndStopsOnCancel(t *testing.T) {
+	svc, _, db := newServices(t)
+	session := sessionWithIP(t, svc, "8.8.8.8")
+	client := &fakeGeoClient{locations: map[string]geoip.Location{"8.8.8.8": comcastRaleigh}}
+	resolver := newResolver(db, client, &fakeClock{now: time.Now()})
+
+	runCtx, cancel := context.WithCancel(ctx())
+	go resolver.Run(runCtx)
+	resolver.Wake()
+
+	require.Eventually(t, func() bool {
+		return sessionRow(t, db, session.ID).IPGeoLookedUpAt != nil
+	}, 5*time.Second, 10*time.Millisecond, "a wake runs an activation")
+
+	cancel()
+	select {
+	case <-resolver.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+}

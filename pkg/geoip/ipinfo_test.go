@@ -102,6 +102,16 @@ func TestLookup_ClassifiesFailures(t *testing.T) {
 	}
 }
 
+func TestLookup_NetworkErrorOmitsTheToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.Close() // nothing is listening, so the request fails to connect
+
+	_, err := NewIPInfoClient(srv.URL, "secret-token").Lookup(context.Background(), "8.8.8.8")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ipinfo request failed")
+	assert.NotContains(t, err.Error(), "secret-token")
+}
+
 func TestParseRetryAfter(t *testing.T) {
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	assert.Equal(t, 30*time.Second, parseRetryAfter("30", now))
