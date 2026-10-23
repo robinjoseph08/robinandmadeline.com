@@ -67,7 +67,11 @@ func EasierDifficulty(a, b string) string {
 // from being on the public leaderboard, including under an older app binary.
 //
 // IPAddress and UserAgent are server-side abuse-tracing concerns. They are
-// excluded from JSON and the generated TypeScript on purpose.
+// excluded from JSON and the generated TypeScript on purpose, as are the IP
+// geolocation fields (IPCity, IPRegion, IPCountry, IPOrg) a background resolver
+// fills in after the session is created. IPGeoLookedUpAt is NULL until that
+// resolver has handled the row; afterward the geo fields may still be blank
+// (a private IP, or an address the lookup service knows nothing about).
 type GameSession struct {
 	bun.BaseModel `bun:"table:game_sessions,alias:gs" tstype:"-"`
 
@@ -76,6 +80,10 @@ type GameSession struct {
 	PartyID      *string `bun:"party_id" json:"party_id"`
 	IPAddress    string  `bun:"ip_address" json:"-"`
 	UserAgent    string  `bun:"user_agent" json:"-" tstype:"-"`
+	IPCity       string  `bun:"ip_city" json:"-" tstype:"-"`
+	IPRegion     string  `bun:"ip_region" json:"-" tstype:"-"`
+	IPCountry    string  `bun:"ip_country" json:"-" tstype:"-"`
+	IPOrg        string  `bun:"ip_org" json:"-" tstype:"-"`
 	Difficulty   string  `bun:"difficulty" json:"difficulty" tstype:"GameDifficulty"`
 	ElapsedMS    int64   `bun:"elapsed_ms" json:"elapsed_ms"`
 	SquareChecks int64   `bun:"square_checks" json:"square_checks"`
@@ -86,6 +94,8 @@ type GameSession struct {
 	OnLeaderboard bool       `bun:"on_leaderboard" json:"on_leaderboard"`
 	DisplayName   *string    `bun:"display_name" json:"display_name"`
 	HiddenAt      *time.Time `bun:"hidden_at" json:"-" tstype:"-"`
+
+	IPGeoLookedUpAt *time.Time `bun:"ip_geo_looked_up_at" json:"-" tstype:"-"`
 
 	CreatedAt time.Time `bun:"created_at,nullzero" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,nullzero" json:"updated_at"`

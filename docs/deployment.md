@@ -62,6 +62,12 @@ later explicit activation.
   `X-Forwarded-For`) instead of the proxy's address. Leave it unset anywhere
   the server is reached directly; the headers are spoofable without a trusted
   proxy in front.
+- Crossword session locations: `GEOIP_LOOKUPS_ENABLED=true` (set in
+  `fly.toml`) starts a background resolver that looks up each session's IP on
+  ipinfo.io without a token. It runs only when woken (a new session, or an
+  admin opening the crossword page), so it never wakes the database on its
+  own. A 429 pauses lookups until ipinfo's Retry-After (an hour if absent);
+  pending sessions are retried on the next wake.
 - Zero-downtime deploys: `fly.toml` sets `[deploy] strategy = "bluegreen"`, so
   each deploy boots a replacement machine, waits for it to pass the
   `/api/health` check, switches traffic to it, and only then destroys the old

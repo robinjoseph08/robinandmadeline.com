@@ -20,6 +20,8 @@ import (
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/config"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/database"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/emails"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/games"
+	"github.com/robinjoseph08/robinandmadeline.com/pkg/geoip"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/server"
 	"github.com/uptrace/bun"
 )
@@ -78,9 +80,11 @@ func main() {
 	<-graceful
 	log.Info("starting graceful shutdown")
 
-	// Stop the email worker as soon as shutdown begins: it picks up no new
-	// batches but finishes the one in flight (ADR 0004). HTTP requests already
-	// being drained may still commit durable queue work, which a later explicit
+	// Stop the background workers as soon as shutdown begins. The geo resolver
+	// abandons its in-flight lookup (the session stays pending and is retried
+	// after the next boot). The email worker picks up no new batches but
+	// finishes the one in flight (ADR 0004). HTTP requests already being
+	// drained may still commit durable queue work, which a later explicit
 	// activation will pick up.
 	app.stopWorker()
 
@@ -94,6 +98,9 @@ func main() {
 	// immediate exit.
 	if app.worker != nil {
 		<-app.worker.Done()
+	}
+	if app.geo != nil {
+		<-app.geo.Done()
 	}
 	if err := app.db.Close(); err != nil {
 		log.Err(err).Error("database close error")
@@ -109,6 +116,7 @@ type application struct {
 	db         *bun.DB
 	server     *http.Server
 	worker     *emails.Worker
+	geo        *games.GeoResolver
 	stopWorker context.CancelFunc
 }
 
@@ -116,6 +124,7 @@ type applicationDependencies struct {
 	connector              driver.Connector
 	observeFirstConnection database.FirstConnectionObserver
 	mailgunClient          emails.MailgunClient
+	geoClient              geoip.Client
 	log                    logger.Logger
 }
 
@@ -146,6 +155,9 @@ func productionApplicationDependencies(cfg *config.Config, log logger.Logger) ap
 	}
 	if cfg.MailgunAPIKey != "" {
 		deps.mailgunClient = emails.NewMailgunClient(cfg.MailgunBaseURL, cfg.MailgunDomain, cfg.MailgunAPIKey)
+	}
+	if cfg.GeoIPLookupsEnabled {
+		deps.geoClient = geoip.NewIPInfoClient(cfg.IPInfoBaseURL, cfg.IPInfoToken)
 	}
 	return deps
 }
@@ -179,11 +191,26 @@ func newApplication(ctx context.Context, cfg *config.Config, deps applicationDep
 		deps.log.Warn("MAILGUN_API_KEY not set; email worker disabled, sends will stay queued")
 	}
 
-	if app.worker == nil {
-		app.server = server.New(cfg, db)
-	} else {
-		app.server = server.NewWithEmailWorker(cfg, db, app.worker)
+	if cfg.GeoIPLookupsEnabled {
+		if deps.geoClient == nil {
+			stopWorker()
+			_ = db.Close()
+			return nil, errors.New("geo client is required when geo lookups are enabled")
+		}
+		app.geo = games.NewGeoResolver(db, deps.geoClient, games.GeoResolverConfig{}, deps.log)
+		go app.geo.Run(workerCtx)
 	}
+
+	// Only set the workers that exist: a typed nil pointer in the interface
+	// would not compare as nil and would be called.
+	var workers server.Workers
+	if app.worker != nil {
+		workers.Email = app.worker
+	}
+	if app.geo != nil {
+		workers.Geo = app.geo
+	}
+	app.server = server.NewWithWorkers(cfg, db, workers)
 	return app, nil
 }
 

@@ -40,6 +40,14 @@ function makeSession(
     party_name: undefined,
     ip_address: "203.0.113.1",
     user_agent: "Mozilla/5.0 TestBrowser/1.0",
+    client_browser: "",
+    client_os: "",
+    client_device: "",
+    ip_city: "",
+    ip_region: "",
+    ip_country: "",
+    ip_org: "",
+    ip_geo_pending: false,
     created_at: "2026-06-01T12:00:00Z",
     updated_at: "2026-06-01T12:00:00Z",
     ...overrides,
@@ -233,8 +241,66 @@ describe("AdminCrossword list", () => {
 
     await screen.findByText("The Wedding Mini");
     expect(document.body.textContent).not.toContain("—");
-    // Four dashes: the empty party, no checks, IP, and user-agent values.
-    expect(screen.getAllByText("-")).toHaveLength(4);
+    // Five dashes: the empty party, no checks, IP, user-agent, and location.
+    expect(screen.getAllByText("-")).toHaveLength(5);
+  });
+
+  it("summarizes a parsed user agent and keeps the raw one in the tooltip", async () => {
+    const raw =
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) Version/18.1 Mobile/15E148 Safari/604.1";
+    adminRequest.mockResolvedValue({
+      items: [
+        makeSession({
+          id: "s-parsed",
+          user_agent: raw,
+          client_browser: "Safari 18",
+          client_os: "iOS 18.1",
+          client_device: "iPhone",
+        }),
+      ],
+      total: 1,
+    });
+
+    renderCrossword();
+
+    const summary = await screen.findByText("iPhone · iOS 18.1 · Safari 18");
+    expect(summary).toHaveAttribute("title", raw);
+    expect(screen.queryByText(raw)).not.toBeInTheDocument();
+  });
+
+  it("shows the IP location and network owner", async () => {
+    adminRequest.mockResolvedValue({
+      items: [
+        makeSession({
+          id: "s-geo",
+          ip_city: "Raleigh",
+          ip_region: "North Carolina",
+          ip_country: "US",
+          ip_org: "AS7922 Comcast Cable Communications, LLC",
+        }),
+      ],
+      total: 1,
+    });
+
+    renderCrossword();
+
+    expect(
+      await screen.findByText("Raleigh, North Carolina"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("US · Comcast Cable Communications, LLC"),
+    ).toHaveAttribute("title", "AS7922 Comcast Cable Communications, LLC");
+  });
+
+  it("marks a location that is still being looked up", async () => {
+    adminRequest.mockResolvedValue({
+      items: [makeSession({ id: "s-pending", ip_geo_pending: true })],
+      total: 1,
+    });
+
+    renderCrossword();
+
+    expect(await screen.findByText("Looking up...")).toBeInTheDocument();
   });
 
   it("falls back to the raw puzzle id for an id not in the registry", async () => {
@@ -256,10 +322,10 @@ describe("AdminCrossword list", () => {
 
     renderCrossword();
 
-    // The party and check cells use plain hyphens, never em-dashes.
+    // The party, check, and location cells use plain hyphens, never em-dashes.
     const row = (await screen.findByText("Anonymous")).closest("tr");
     expect(row).not.toBeNull();
-    expect(within(row!).getAllByText("-")).toHaveLength(2);
+    expect(within(row!).getAllByText("-")).toHaveLength(3);
     expect(document.body.textContent).not.toContain("—");
   });
 });

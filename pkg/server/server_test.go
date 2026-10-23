@@ -92,7 +92,7 @@ func TestEmailAdminActivity_WakesOnlyAfterAuthentication(t *testing.T) {
 	cfg := newTestConfig(t)
 	cfg.StaticDir = newStaticDir(t)
 	waker := &recordingWaker{}
-	srv := server.NewWithEmailWorker(cfg, nil, waker)
+	srv := server.NewWithWorkers(cfg, nil, server.Workers{Email: waker})
 
 	// A frontend admin document is static activity, not authenticated email API
 	// activity, so serving its SPA shell must leave delivery asleep.

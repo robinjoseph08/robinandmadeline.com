@@ -1,4 +1,5 @@
 import { Eye, EyeOff } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { DIFFICULTY_LABELS } from "@/components/library/crossword/puzzle";
@@ -23,6 +24,42 @@ import { formatDateTime, formatDuration } from "@/libraries/format";
 import type { AdminGameSessionResponse } from "@/types/generated/games";
 
 /**
+ * The parsed device, OS, and browser (e.g. "iPhone · iOS 18.1 · Safari 18"),
+ * or "" when the server recognized none of them, so the caller can fall back
+ * to the raw user agent.
+ */
+function describeClient(session: AdminGameSessionResponse) {
+  return [session.client_device, session.client_os, session.client_browser]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/**
+ * "City, Region" from whatever parts the IP lookup found.
+ */
+function describePlace(session: AdminGameSessionResponse) {
+  return [session.ip_city, session.ip_region].filter(Boolean).join(", ");
+}
+
+/**
+ * The country plus the network owner without its leading ASN, e.g. "US ·
+ * Comcast Cable" for "AS7922 Comcast Cable". The full org stays in the
+ * tooltip.
+ */
+function describeNetwork(session: AdminGameSessionResponse) {
+  const org = session.ip_org.replace(/^AS\d+\s+/, "");
+  return [session.ip_country, org].filter(Boolean).join(" · ");
+}
+
+// While some IP lookups are still pending, refetch on this interval so the
+// Location column fills in without a manual reload. The resolver runs in the
+// background and may be paused by ipinfo's rate limit, so polling stops a
+// minute after the page is opened rather than running for as long as it stays
+// open. The window restarts on each visit.
+const GEO_POLL_INTERVAL_MS = 5000;
+const GEO_POLL_WINDOW_MS = 60_000;
+
+/**
  * Admin crossword solve times: every tracked solve session, newest first,
  * regardless of whether it was posted to the leaderboard or ever finished.
  * Unlike the guest-facing leaderboard this surfaces in-progress and abandoned
@@ -35,7 +72,14 @@ import type { AdminGameSessionResponse } from "@/types/generated/games";
  */
 export default function AdminCrossword() {
   useAdminPageTitle("Crossword");
-  const sessionsQuery = useAdminGameSessions();
+  const [openedAt] = useState(() => Date.now());
+  const sessionsQuery = useAdminGameSessions({
+    refetchInterval: (query) =>
+      query.state.data?.items.some((session) => session.ip_geo_pending) &&
+      Date.now() - openedAt < GEO_POLL_WINDOW_MS
+        ? GEO_POLL_INTERVAL_MS
+        : false,
+  });
   const hideSession = useHideGameSession();
   const unhideSession = useUnhideGameSession();
 
@@ -115,6 +159,7 @@ export default function AdminCrossword() {
                 <TableHead>Status</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead>Client</TableHead>
+                <TableHead>Location</TableHead>
                 <TableHead className="w-12" />
               </TableRow>
             </TableHeader>
@@ -183,9 +228,30 @@ export default function AdminCrossword() {
                         className="truncate text-xs"
                         title={session.user_agent || "No user agent captured."}
                       >
-                        {session.user_agent || "-"}
+                        {describeClient(session) || session.user_agent || "-"}
                       </div>
                     </div>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {session.ip_geo_pending ? (
+                      <span className="italic opacity-60">Looking up...</span>
+                    ) : describePlace(session) || describeNetwork(session) ? (
+                      <div className="max-w-48 space-y-1">
+                        <div className="whitespace-nowrap">
+                          {describePlace(session) || "-"}
+                        </div>
+                        {describeNetwork(session) ? (
+                          <div
+                            className="truncate text-xs"
+                            title={session.ip_org || undefined}
+                          >
+                            {describeNetwork(session)}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span>-</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end">

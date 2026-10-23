@@ -33,13 +33,24 @@ import (
 // The db may be nil (or unreachable); the health endpoint stays reachable
 // either way so liveness checks don't hard-fail when the database is down.
 func New(cfg *config.Config, db *bun.DB) *http.Server {
-	return NewWithEmailWorker(cfg, db, nil)
+	return NewWithWorkers(cfg, db, Workers{})
 }
 
-// NewWithEmailWorker builds the HTTP server and connects authenticated email
-// administration plus successful enqueues to the configured delivery worker.
-// A nil worker keeps email signaling disabled, as in local development.
-func NewWithEmailWorker(cfg *config.Config, db *bun.DB, worker emails.WorkerWaker) *http.Server {
+// Workers are the background workers that request handlers wake. A nil field
+// leaves that signaling off, as in local development. Leave a field unset
+// rather than assigning a typed nil pointer, which would not compare as nil.
+type Workers struct {
+	// Email is woken by authenticated email administration and successful
+	// enqueues.
+	Email emails.WorkerWaker
+	// Geo is woken by new crossword sessions and admin reads of the session
+	// list.
+	Geo games.GeoWaker
+}
+
+// NewWithWorkers builds the HTTP server and connects the given background
+// workers to the requests that should wake them.
+func NewWithWorkers(cfg *config.Config, db *bun.DB, workers Workers) *http.Server {
 	e := echo.New()
 	e.HideBanner = true
 
@@ -123,7 +134,7 @@ func NewWithEmailWorker(cfg *config.Config, db *bun.DB, worker emails.WorkerWake
 		PerMinute: cfg.LoginRatePerMinute,
 		Burst:     cfg.LoginRateBurst,
 	})
-	registerAdmin(api, authMiddleware, db, cfg, worker)
+	registerAdmin(api, authMiddleware, db, cfg, workers)
 	registerGuest(api, authMiddleware, db)
 	// The guest-facing schedule mounts on the open group behind optional guest
 	// auth: anonymous requests see public events, a valid guest token adds the
@@ -152,7 +163,7 @@ func NewWithEmailWorker(cfg *config.Config, db *bun.DB, worker emails.WorkerWake
 	// no authentication, the session's UUID id is the bearer token for writes,
 	// and the session routes sit behind optional guest auth so a signed-in
 	// guest's party is attached to their solve opportunistically.
-	games.RegisterRoutes(api, authMiddleware, games.NewService(db))
+	games.RegisterRoutes(api, authMiddleware, games.NewService(db).WithGeoWaker(workers.Geo))
 
 	return &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.ServerPort),
@@ -171,7 +182,7 @@ func NewWithEmailWorker(cfg *config.Config, db *bun.DB, worker emails.WorkerWake
 // parties service is still constructed, but its handlers are only reachable
 // with a valid token and will error at query time if the DB is unavailable,
 // which is the same failure mode as any other DB-backed endpoint.
-func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.Config, worker emails.WorkerWaker) {
+func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.Config, workers Workers) {
 	admin := g.Group("/admin")
 	admin.Use(mw.RequireAdmin)
 	admin.GET("/me", func(c echo.Context) error {
@@ -186,7 +197,7 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.C
 	rsvps.RegisterAdminRoutes(admin, rsvps.NewService(db))
 
 	emailService := emails.NewService(db, cfg.PublicBaseURL, cfg.AdminUsername, cfg.EmailDailySendLimit).
-		WithWorkerWake(worker)
+		WithWorkerWake(workers.Email)
 	// The "Send test" endpoint enqueues a real send for the queue worker, so it
 	// needs no Mailgun client of its own. Enable it only when Mailgun is
 	// configured, mirroring how the worker decides it is on (so there is a
@@ -198,7 +209,7 @@ func registerAdmin(g *echo.Group, mw *auth.Middleware, db *bun.DB, cfg *config.C
 	// The games admin surface (list every solve, hide or restore a public solve)
 	// hangs off the same protected group; the public games routes stay on the
 	// open /api group, registered in New.
-	games.RegisterAdminRoutes(admin, games.NewService(db))
+	games.RegisterAdminRoutes(admin, games.NewService(db).WithGeoWaker(workers.Geo))
 }
 
 // registerGuest mounts the guest API surface behind the guest auth middleware.

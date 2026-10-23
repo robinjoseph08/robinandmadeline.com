@@ -157,7 +157,8 @@ func TestPostGameSession_AnonymousCreates201WithNullParty(t *testing.T) {
 	assert.NotEmpty(t, sessionRow(t, db, resp.ID).IPAddress, "the IP is captured server-side")
 
 	// Client metadata is stored but never serialized: a session response carries
-	// no ip_address or user_agent key (the model fields are json:"-").
+	// no ip_address, user_agent, or IP geolocation key (the model fields are
+	// json:"-").
 	asMap := make(map[string]json.RawMessage)
 	rec := doGamesRequest(t, e, gamesRequest{
 		method: http.MethodPost,
@@ -166,8 +167,9 @@ func TestPostGameSession_AnonymousCreates201WithNullParty(t *testing.T) {
 	})
 	require.Equal(t, http.StatusCreated, rec.Code)
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &asMap))
-	assert.NotContains(t, asMap, "ip_address")
-	assert.NotContains(t, asMap, "user_agent")
+	for _, key := range []string{"ip_address", "user_agent", "ip_city", "ip_region", "ip_country", "ip_org", "ip_geo_looked_up_at"} {
+		assert.NotContains(t, asMap, key)
+	}
 }
 
 func TestPostGameSession_ValidGuestTokenAttachesParty(t *testing.T) {
@@ -511,6 +513,8 @@ func TestPostLeaderboard_FullFlowOverHTTP(t *testing.T) {
 	assert.NotContains(t, board.Items[0], "id")
 	assert.NotContains(t, board.Items[0], "ip_address")
 	assert.NotContains(t, board.Items[0], "user_agent")
+	assert.NotContains(t, board.Items[0], "ip_city")
+	assert.NotContains(t, board.Items[0], "ip_org")
 	assert.NotContains(t, board.Items[0], "party_id")
 	assert.Contains(t, board.Items[0], "display_name")
 	assert.Contains(t, board.Items[0], "difficulty")

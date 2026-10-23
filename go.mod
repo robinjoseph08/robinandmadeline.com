@@ -12,6 +12,7 @@ require (
 	github.com/iancoleman/strcase v0.3.0
 	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.13.4
+	github.com/mileusna/useragent v1.3.5
 	github.com/nyaruka/phonenumbers v1.8.0
 	github.com/pkg/errors v0.9.1
 	github.com/robinjoseph08/golib v0.5.2
