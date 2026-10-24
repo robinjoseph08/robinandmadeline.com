@@ -406,7 +406,7 @@ func TestPostToLeaderboard_UnknownSessionIs404(t *testing.T) {
 	assertErrCode(t, err, errcodes.CodeNotFound)
 }
 
-func TestPostToLeaderboard_SetsNameIdempotentlyAndRejectsRenames(t *testing.T) {
+func TestPostToLeaderboard_SetsNameIdempotentlyAndRenames(t *testing.T) {
 	svc, _, db := newServices(t)
 	session := completeSessionT(t, svc, models.GameDifficultyMedium, 45000)
 
@@ -425,12 +425,44 @@ func TestPostToLeaderboard_SetsNameIdempotentlyAndRejectsRenames(t *testing.T) {
 	assert.True(t, again.OnLeaderboard)
 	assert.Equal(t, "Alice", *again.DisplayName)
 
-	// The leaderboard is append-once: posting a different name is a conflict.
-	_, err = svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: "Bob"}, "")
-	assertErrCode(t, err, errcodes.CodeConflict)
+	// Posting a different name renames the entry and leaves the time alone.
+	renamed, err := svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: "Bob"}, "")
+	require.NoError(t, err)
+	assert.Equal(t, "Bob", *renamed.DisplayName)
 	row := sessionRow(t, db, session.ID)
-	assert.True(t, row.OnLeaderboard, "the conflicting rename leaves the opt-in intact")
-	assert.Equal(t, "Alice", *row.DisplayName)
+	assert.True(t, row.OnLeaderboard, "the rename leaves the opt-in intact")
+	assert.Equal(t, "Bob", *row.DisplayName)
+	assert.EqualValues(t, 45000, row.ElapsedMS)
+	assert.Equal(t, models.GameDifficultyMedium, row.Difficulty)
+	assert.Equal(t, stored.CompletedAt, row.CompletedAt)
+}
+
+func TestPostToLeaderboard_RenameLeavesThePartyAlone(t *testing.T) {
+	svc, partySvc, db := newServices(t)
+	p := createPartyT(t, partySvc, "The Smiths")
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+
+	// Only the first post attaches a party; a later rename or retry from a
+	// signed-in guest leaves the affiliation as it is.
+	_, err := svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: "Alicia"}, p.ID)
+	require.NoError(t, err)
+	row := sessionRow(t, db, session.ID)
+	assert.Equal(t, "Alicia", *row.DisplayName)
+	assert.Nil(t, row.PartyID)
+}
+
+func TestPostToLeaderboard_RenameKeepsAnAdminClearedPartyCleared(t *testing.T) {
+	svc, partySvc, db := newServices(t)
+	wrong := createPartyT(t, partySvc, "The Wrong Party")
+	session := completeSessionT(t, svc, models.GameDifficultyEasy, 30000)
+	_, err := svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: "Alice"}, wrong.ID)
+	require.NoError(t, err)
+	require.NoError(t, svc.SetSessionParty(ctx(), session.ID, games.SetGameSessionPartyPayload{}))
+
+	// The same signed-in phone renames: the admin's clear must stick.
+	_, err = svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: "Alicia"}, wrong.ID)
+	require.NoError(t, err)
+	assert.Nil(t, sessionRow(t, db, session.ID).PartyID)
 }
 
 func TestPostToLeaderboard_AttachesPartyOpportunistically(t *testing.T) {
@@ -621,9 +653,15 @@ func TestPostToLeaderboard_DoesNotUnhideAnAdminHiddenSolve(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "game_sessions_hidden_not_on_leaderboard")
 
-	_, err = svc.PostToLeaderboard(ctx(), hidden.ID, games.PostLeaderboardPayload{DisplayName: "Other"}, "")
-	assertErrCode(t, err, errcodes.CodeConflict)
-	assert.False(t, sessionRow(t, db, hidden.ID).OnLeaderboard)
+	// A rename of a hidden solve changes the name but keeps it hidden.
+	renamed, err := svc.PostToLeaderboard(ctx(), hidden.ID, games.PostLeaderboardPayload{DisplayName: "Other"}, "")
+	require.NoError(t, err)
+	assert.False(t, renamed.OnLeaderboard)
+	require.NotNil(t, renamed.HiddenAt)
+	stored = sessionRow(t, db, hidden.ID)
+	assert.False(t, stored.OnLeaderboard)
+	require.NotNil(t, stored.HiddenAt)
+	assert.Equal(t, "Other", *stored.DisplayName)
 }
 
 func TestGameSession_OnLeaderboardRequiresDisplayName(t *testing.T) {

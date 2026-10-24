@@ -208,6 +208,125 @@ func TestUnhideSession_UnknownSessionIs404(t *testing.T) {
 	assertErrCode(t, err, errcodes.CodeNotFound)
 }
 
+func TestRenameSession_ChangesOnlyTheName(t *testing.T) {
+	svc, _, db := newServices(t)
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	before := sessionRow(t, db, session.ID)
+
+	require.NoError(t, svc.RenameSession(ctx(), session.ID, games.RenameGameSessionPayload{DisplayName: "Alicia"}))
+
+	row := sessionRow(t, db, session.ID)
+	require.NotNil(t, row.DisplayName)
+	assert.Equal(t, "Alicia", *row.DisplayName)
+	assert.True(t, row.OnLeaderboard)
+	assert.Nil(t, row.HiddenAt)
+	assert.EqualValues(t, 30000, row.ElapsedMS)
+	assert.Equal(t, before.CompletedAt, row.CompletedAt)
+}
+
+func TestRenameSession_KeepsAHiddenSolveHidden(t *testing.T) {
+	svc, _, db := newServices(t)
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	require.NoError(t, svc.HideSession(ctx(), session.ID))
+
+	require.NoError(t, svc.RenameSession(ctx(), session.ID, games.RenameGameSessionPayload{DisplayName: "Alicia"}))
+
+	row := sessionRow(t, db, session.ID)
+	assert.Equal(t, "Alicia", *row.DisplayName)
+	assert.False(t, row.OnLeaderboard)
+	require.NotNil(t, row.HiddenAt)
+}
+
+func TestRenameSession_UnpostedSolveIs422(t *testing.T) {
+	svc, _, db := newServices(t)
+	session := completeSessionT(t, svc, models.GameDifficultyEasy, 30000)
+
+	err := svc.RenameSession(ctx(), session.ID, games.RenameGameSessionPayload{DisplayName: "Alice"})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+
+	row := sessionRow(t, db, session.ID)
+	assert.Nil(t, row.DisplayName, "the admin cannot publish a solve on the solver's behalf")
+	assert.False(t, row.OnLeaderboard)
+}
+
+func TestRenameSession_UnknownSessionIs404(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	err := svc.RenameSession(ctx(), "00000000-0000-0000-0000-000000000000", games.RenameGameSessionPayload{DisplayName: "Alice"})
+	assertErrCode(t, err, errcodes.CodeNotFound)
+}
+
+func TestSetSessionParty_SetsReplacesAndClears(t *testing.T) {
+	svc, partySvc, db := newServices(t)
+	smiths := createPartyT(t, partySvc, "The Smiths")
+	joneses := createPartyT(t, partySvc, "The Joneses")
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+
+	require.NoError(t, svc.SetSessionParty(ctx(), session.ID, games.SetGameSessionPartyPayload{PartyID: pointerutil.String(smiths.ID)}))
+	row := sessionRow(t, db, session.ID)
+	require.NotNil(t, row.PartyID)
+	assert.Equal(t, smiths.ID, *row.PartyID)
+
+	// Unlike the opportunistic attach, the admin can overwrite an affiliation.
+	require.NoError(t, svc.SetSessionParty(ctx(), session.ID, games.SetGameSessionPartyPayload{PartyID: pointerutil.String(joneses.ID)}))
+	row = sessionRow(t, db, session.ID)
+	require.NotNil(t, row.PartyID)
+	assert.Equal(t, joneses.ID, *row.PartyID)
+
+	// Only the affiliation changes.
+	assert.Equal(t, "Alice", *row.DisplayName)
+	assert.True(t, row.OnLeaderboard)
+	assert.EqualValues(t, 30000, row.ElapsedMS)
+
+	require.NoError(t, svc.SetSessionParty(ctx(), session.ID, games.SetGameSessionPartyPayload{}))
+	assert.Nil(t, sessionRow(t, db, session.ID).PartyID)
+}
+
+func TestSetSessionParty_GuestSignInDoesNotOverrideIt(t *testing.T) {
+	svc, partySvc, db := newServices(t)
+	smiths := createPartyT(t, partySvc, "The Smiths")
+	joneses := createPartyT(t, partySvc, "The Joneses")
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	require.NoError(t, svc.SetSessionParty(ctx(), session.ID, games.SetGameSessionPartyPayload{PartyID: pointerutil.String(smiths.ID)}))
+
+	_, err := svc.PostToLeaderboard(ctx(), session.ID, games.PostLeaderboardPayload{DisplayName: "Alicia"}, joneses.ID)
+	require.NoError(t, err)
+
+	row := sessionRow(t, db, session.ID)
+	require.NotNil(t, row.PartyID)
+	assert.Equal(t, smiths.ID, *row.PartyID)
+}
+
+func TestSetSessionParty_WorksOnAnUnpostedSolve(t *testing.T) {
+	svc, partySvc, db := newServices(t)
+	smiths := createPartyT(t, partySvc, "The Smiths")
+	session := completeSessionT(t, svc, models.GameDifficultyEasy, 30000)
+
+	require.NoError(t, svc.SetSessionParty(ctx(), session.ID, games.SetGameSessionPartyPayload{PartyID: pointerutil.String(smiths.ID)}))
+
+	row := sessionRow(t, db, session.ID)
+	require.NotNil(t, row.PartyID)
+	assert.Equal(t, smiths.ID, *row.PartyID)
+	assert.False(t, row.OnLeaderboard, "affiliating never publishes")
+	assert.Nil(t, row.DisplayName)
+}
+
+func TestSetSessionParty_UnknownPartyIs422(t *testing.T) {
+	svc, _, db := newServices(t)
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+
+	err := svc.SetSessionParty(ctx(), session.ID, games.SetGameSessionPartyPayload{PartyID: pointerutil.String("00000000-0000-0000-0000-000000000000")})
+	assertErrCode(t, err, errcodes.CodeValidationError)
+	assert.Nil(t, sessionRow(t, db, session.ID).PartyID)
+}
+
+func TestSetSessionParty_UnknownSessionIs404(t *testing.T) {
+	svc, _, _ := newServices(t)
+
+	err := svc.SetSessionParty(ctx(), "00000000-0000-0000-0000-000000000000", games.SetGameSessionPartyPayload{})
+	assertErrCode(t, err, errcodes.CodeNotFound)
+}
+
 func TestListSessions_DescribesTheUserAgent(t *testing.T) {
 	svc, _, _ := newServices(t)
 

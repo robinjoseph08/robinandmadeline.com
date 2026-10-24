@@ -488,4 +488,87 @@ describe("useSolveSession locking", () => {
     expect(result.current.recordedDifficulty).toBe("medium");
     expect(reportedDifficulties()).not.toContain("easy");
   });
+
+  describe("renameLeaderboardEntry", () => {
+    function renderPosted() {
+      localStorage.setItem(
+        "crossword:wedding-mini-v1:session",
+        JSON.stringify({
+          id: "sess-posted",
+          elapsedMs: 45_000,
+          completed: true,
+          difficulty: "easy",
+          postedName: "Robin",
+        }),
+      );
+      return renderHook(() =>
+        useSolveSession({
+          puzzleId: "wedding-mini-v1",
+          availableDifficulties: ["easy", "medium", "hard"],
+          initiallyStarted: true,
+          initialDifficulty: "easy",
+          initiallyPaused: true,
+          initiallyFinished: true,
+        }),
+      );
+    }
+
+    it("re-posts the new name and remembers it locally", async () => {
+      apiRequest.mockResolvedValue(
+        makeSession({ id: "sess-posted", display_name: "Robin J" }),
+      );
+      const { result } = renderPosted();
+
+      await act(() => result.current.renameLeaderboardEntry("Robin J"));
+
+      expect(apiRequest).toHaveBeenCalledWith(
+        "/games/sessions/sess-posted/leaderboard",
+        expect.objectContaining({
+          method: "POST",
+          body: { display_name: "Robin J" },
+        }),
+      );
+      const stored = JSON.parse(
+        localStorage.getItem("crossword:wedding-mini-v1:session")!,
+      );
+      expect(stored.postedName).toBe("Robin J");
+    });
+
+    it("keeps a server rejection's own message", async () => {
+      apiRequest.mockRejectedValue(
+        new ApiError(422, "Name is too long.", "validation_error"),
+      );
+      const { result } = renderPosted();
+
+      await expect(
+        result.current.renameLeaderboardEntry("Robin J"),
+      ).rejects.toThrow("Name is too long.");
+    });
+
+    it("replaces an uncoded server error with guest-facing copy", async () => {
+      // A proxy error page has no API envelope, so the ApiError carries only
+      // a generic "Request failed with status 502" message and no code.
+      apiRequest.mockRejectedValue(
+        new ApiError(502, "Request failed with status 502"),
+      );
+      const { result } = renderPosted();
+
+      await expect(
+        result.current.renameLeaderboardEntry("Robin J"),
+      ).rejects.toThrow(
+        "We couldn't reach the server to change your name. Please try again.",
+      );
+    });
+
+    it("replaces a raw network failure with guest-facing copy", async () => {
+      apiRequest.mockRejectedValue(new TypeError("Failed to fetch"));
+      const { result } = renderPosted();
+
+      await expect(
+        result.current.renameLeaderboardEntry("Robin J"),
+      ).rejects.toThrow(
+        "We couldn't reach the server to change your name. Please try again.",
+      );
+    });
+  });
 });

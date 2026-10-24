@@ -81,6 +81,14 @@ export const FROZEN_FIRST_COL_STATIC = `${FROZEN_BASE} bg-page`;
 // going translucent and letting scrolled columns bleed through.
 export const FROZEN_ROW = "bg-page hover:bg-[#f4eded]";
 
+// The mirror image for a table's trailing actions column: pinned to the right
+// edge with the seam and shadow on its left, so the row's buttons stay in
+// reach however far the table scrolls. Same bg-inherit/bg-page split as above.
+const FROZEN_LAST_BASE =
+  "sticky right-0 z-10 before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-[rgb(42_38_34_/_0.15)] before:shadow-[-6px_0_8px_-3px_rgb(42_38_34_/_0.3)] before:content-['']";
+export const FROZEN_LAST_COL = `${FROZEN_LAST_BASE} bg-inherit`;
+export const FROZEN_LAST_COL_STATIC = `${FROZEN_LAST_BASE} bg-page`;
+
 // The save lifecycle of a single cell edit, surfaced as a brief background tint
 // so you can see a change land: amber while the write is in flight, sage on
 // success, red on a failed write that rolled back.

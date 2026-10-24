@@ -237,6 +237,18 @@ func TestGamesAdminRoutes_RequireToken(t *testing.T) {
 	unhideRec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(unhideRec, unhideReq)
 	require.Equal(t, http.StatusUnauthorized, unhideRec.Code)
+
+	renameReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/admin/games/sessions/00000000-0000-0000-0000-000000000000/rename", strings.NewReader(`{"display_name":"Alice"}`))
+	renameReq.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	renameRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(renameRec, renameReq)
+	require.Equal(t, http.StatusUnauthorized, renameRec.Code)
+
+	partyReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/admin/games/sessions/00000000-0000-0000-0000-000000000000/party", strings.NewReader(`{}`))
+	partyReq.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	partyRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(partyRec, partyReq)
+	require.Equal(t, http.StatusUnauthorized, partyRec.Code)
 }
 
 func TestGuestRoute_RequiresGuestToken(t *testing.T) {

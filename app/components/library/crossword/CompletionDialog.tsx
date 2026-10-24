@@ -21,9 +21,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatDuration } from "@/libraries/format";
 
-import { Difficulty, DIFFICULTY_LABELS } from "./puzzle";
-
-const MAX_NAME_LENGTH = 50;
+import {
+  Difficulty,
+  DIFFICULTY_LABELS,
+  MAX_DISPLAY_NAME_LENGTH,
+} from "./puzzle";
 
 interface CompletionDialogProps {
   /** The difficulty the solve is recorded at (easiest used, server's view). */
@@ -76,7 +78,7 @@ export default function CompletionDialog({
   const name = touched ? typedName : (prefillName ?? "");
 
   const trimmed = name.trim();
-  const tooLong = trimmed.length > MAX_NAME_LENGTH;
+  const tooLong = trimmed.length > MAX_DISPLAY_NAME_LENGTH;
   const valid = trimmed.length > 0 && !tooLong;
 
   const handlePost = async () => {
@@ -121,6 +123,16 @@ export default function CompletionDialog({
                 setTypedName(e.target.value);
                 setTouched(true);
               }}
+              onKeyDown={(e) => {
+                // Enter posts, like the "Post my time" button. The field sits
+                // outside a <form> (the body and footer are separate dialog
+                // regions), so this is wired by hand. An IME composition's
+                // confirming Enter is left alone.
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  void handlePost();
+                }
+              }}
               value={name}
             />
             <p className="text-xs text-muted-foreground">
@@ -130,7 +142,8 @@ export default function CompletionDialog({
             </p>
             {tooLong && (
               <p className="text-xs text-destructive" role="alert">
-                Please keep your name under {MAX_NAME_LENGTH} characters.
+                Please keep your name under {MAX_DISPLAY_NAME_LENGTH}{" "}
+                characters.
               </p>
             )}
           </div>

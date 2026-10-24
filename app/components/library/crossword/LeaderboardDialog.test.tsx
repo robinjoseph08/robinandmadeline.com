@@ -7,7 +7,8 @@
 // rects: the viewer row is centered in the list's OWN scroll container (a bare
 // scrollIntoView would walk scrollable ancestors and move the dialog or page).
 // The populated happy path also renders through the page in
-// Crossword.session.test.tsx.
+// Crossword.session.test.tsx. The viewer's inline rename (pencil, save,
+// Escape-to-cancel) is pinned here against a stubbed onRename.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -37,11 +38,15 @@ vi.mock("@/libraries/api", async () => {
 function renderDialog({
   defaultDifficulty,
   difficulties = ["easy", "medium", "hard"],
+  onOpenChange = () => {},
+  onRename,
   open = true,
   sessionId,
 }: {
   defaultDifficulty?: Difficulty;
   difficulties?: [Difficulty, ...Difficulty[]];
+  onOpenChange?: (open: boolean) => void;
+  onRename?: (displayName: string) => Promise<void>;
   open?: boolean;
   sessionId?: string;
 } = {}) {
@@ -53,7 +58,8 @@ function renderDialog({
       <LeaderboardDialog
         defaultDifficulty={defaultDifficulty}
         difficulties={difficulties}
-        onOpenChange={() => {}}
+        onOpenChange={onOpenChange}
+        onRename={onRename}
         open={open}
         puzzleId="wedding-mini-v1"
         puzzleTitle="The Wedding Mini"
@@ -70,7 +76,8 @@ function renderDialog({
           <LeaderboardDialog
             defaultDifficulty={defaultDifficulty}
             difficulties={difficulties}
-            onOpenChange={() => {}}
+            onOpenChange={onOpenChange}
+            onRename={onRename}
             open={value}
             puzzleId="wedding-mini-v1"
             puzzleTitle="The Wedding Mini"
@@ -115,9 +122,10 @@ function rect(top: number, bottom: number): DOMRect {
  * effect runs against measurable geometry. jsdom has no layout, so without
  * this every rect is a zero box and the effect can't tell where the viewer's
  * row sits, exactly as the clue-list test does. The viewer row is found by the
- * "You" badge, or by `targetText` when the badge isn't present yet (the
- * geometry has to be pinned on the persisted node BEFORE the viewer arrives,
- * so the effect re-runs against it, mirroring the clue list's render-then-flip).
+ * "You" badge, or by `targetText` when the badge isn't present yet. The rects
+ * are resolved per call from the element's content (a prototype spy, restored
+ * after each test) rather than pinned on today's nodes, because the viewer's
+ * row is keyed apart from the others and remounts when the viewer arrives.
  */
 function mockListGeometry(
   viewerRect: DOMRect,
@@ -129,14 +137,21 @@ function mockListGeometry(
   const list = screen.getByTestId("crossword-leaderboard-list");
   const scrollTo = vi.fn();
   Object.assign(list, { scrollTo, scrollTop });
-  list.getBoundingClientRect = () => rect(0, 100);
-  for (const item of Array.from(list.querySelectorAll("li"))) {
-    const el = item as HTMLElement;
-    const isViewer = targetText
-      ? Boolean(within(el).queryByText(targetText))
-      : Boolean(within(el).queryByText("You"));
-    el.getBoundingClientRect = isViewer ? () => viewerRect : () => rect(10, 30);
-  }
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: Element) {
+      if (this === list) {
+        return rect(0, 100);
+      }
+      if (this.tagName === "LI") {
+        const el = this as HTMLElement;
+        const isViewer = targetText
+          ? Boolean(within(el).queryByText(targetText))
+          : Boolean(within(el).queryByText("You"));
+        return isViewer ? viewerRect : rect(10, 30);
+      }
+      return rect(0, 0);
+    },
+  );
   return scrollTo;
 }
 
@@ -156,6 +171,7 @@ describe("LeaderboardDialog", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("shows the loading copy while the leaderboard is fetching", () => {
@@ -802,8 +818,7 @@ describe("LeaderboardDialog", () => {
     // The viewer ranks deep in the list (below the scroll container), as a guest
     // who placed, say, 80th would. jsdom has no layout, so (as in the clue-list
     // test) the list renders first with the effect inert, the geometry is
-    // pinned on the persisted row node, then the viewer arrives to fire the
-    // effect against it. Here the warm-up read has no viewer (the inert state)
+    // mocked, then the viewer arrives to fire the effect against it. Here the warm-up read has no viewer (the inert state)
     // and the viewer-aware read adds the solver's own row at rank 80.
     const items = Array.from({ length: 100 }, (_, i) =>
       entry({ display_name: `Solver ${i + 1}`, elapsed_ms: 60_000 + i }),
@@ -820,9 +835,9 @@ describe("LeaderboardDialog", () => {
     });
     expect(scrollTo).not.toHaveBeenCalled();
 
-    // The viewer-aware response lands with the SAME items (so the row node
-    // persists and keeps its pinned rect) plus the solver's rank, firing the
-    // effect: centering brings the row's middle (810) to the container's
+    // The viewer-aware response lands with the same items plus the solver's
+    // rank, firing the effect (the row remounts under the viewer key, and the
+    // content-based mock still places it): centering brings the row's middle (810) to the container's
     // middle (50), i.e. scrollTop 760.
     queryClient.setQueryData(
       [QueryKey.GameLeaderboard, "wedding-mini-v1", "easy", "sess-7"],
@@ -920,5 +935,183 @@ describe("LeaderboardDialog", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  describe("renaming the viewer's own row", () => {
+    const board = {
+      items: [
+        entry({ display_name: "Alice", elapsed_ms: 61_000 }),
+        entry({ display_name: "Robin", elapsed_ms: 90_000 }),
+      ],
+      total: 2,
+      viewer: {
+        rank: 2,
+        in_items: true,
+        entry: entry({ display_name: "Robin", elapsed_ms: 90_000 }),
+      },
+    };
+
+    it("offers no pencil when the solve is not renamable", async () => {
+      apiRequest.mockResolvedValue(board);
+      renderDialog({ sessionId: "sess-7" });
+
+      await screen.findByText("You");
+      expect(
+        screen.queryByRole("button", { name: "Change your name" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("puts the pencil on the viewer's row only and saves the trimmed name", async () => {
+      apiRequest.mockResolvedValue(board);
+      const onRename = vi.fn().mockResolvedValue(undefined);
+      renderDialog({ onRename, sessionId: "sess-7" });
+
+      const rows = await screen.findAllByRole("listitem");
+      expect(
+        within(rows[0]).queryByRole("button", { name: "Change your name" }),
+      ).not.toBeInTheDocument();
+      fireEvent.click(
+        within(rows[1]).getByRole("button", { name: "Change your name" }),
+      );
+
+      const field = screen.getByRole("textbox", { name: "Display name" });
+      expect(field).toHaveValue("Robin");
+      fireEvent.change(field, { target: { value: "  Robin J  " } });
+      fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+
+      await waitFor(() => expect(onRename).toHaveBeenCalledWith("Robin J"));
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("textbox", { name: "Display name" }),
+        ).not.toBeInTheDocument(),
+      );
+      // The time is never part of the edit.
+      expect(rows[1]).toHaveTextContent("1:30");
+    });
+
+    it("blocks a blank name and shows a failed rename inline", async () => {
+      apiRequest.mockResolvedValue(board);
+      const onRename = vi
+        .fn()
+        .mockRejectedValue(new Error("We couldn't save that name."));
+      renderDialog({ onRename, sessionId: "sess-7" });
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Change your name" }),
+      );
+      const field = screen.getByRole("textbox", { name: "Display name" });
+      fireEvent.change(field, { target: { value: "   " } });
+      expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
+
+      fireEvent.change(field, { target: { value: "Robin J" } });
+      fireEvent.submit(field.closest("form")!);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "We couldn't save that name.",
+      );
+      expect(field).toBeInTheDocument();
+    });
+
+    it("cancels on Escape without closing the dialog", async () => {
+      apiRequest.mockResolvedValue(board);
+      const onOpenChange = vi.fn();
+      const onRename = vi.fn();
+      renderDialog({ onOpenChange, onRename, sessionId: "sess-7" });
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Change your name" }),
+      );
+      const field = screen.getByRole("textbox", { name: "Display name" });
+      fireEvent.change(field, { target: { value: "Someone else" } });
+      fireEvent.keyDown(field, { key: "Escape" });
+
+      expect(
+        screen.queryByRole("textbox", { name: "Display name" }),
+      ).not.toBeInTheDocument();
+      expect(onOpenChange).not.toHaveBeenCalled();
+      expect(onRename).not.toHaveBeenCalled();
+      expect(screen.getByTestId("crossword-leaderboard-dialog")).toBeVisible();
+    });
+
+    it("returns focus to the pencil after saving or cancelling", async () => {
+      apiRequest.mockResolvedValue(board);
+      const onRename = vi.fn().mockResolvedValue(undefined);
+      renderDialog({ onRename, sessionId: "sess-7" });
+
+      const pencil = await screen.findByRole("button", {
+        name: "Change your name",
+      });
+      fireEvent.click(pencil);
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Display name" }), {
+        key: "Escape",
+      });
+      expect(
+        screen.getByRole("button", { name: "Change your name" }),
+      ).toHaveFocus();
+
+      fireEvent.click(screen.getByRole("button", { name: "Change your name" }));
+      const field = screen.getByRole("textbox", { name: "Display name" });
+      fireEvent.change(field, { target: { value: "Robin J" } });
+      fireEvent.submit(field.closest("form")!);
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Change your name" }),
+        ).toHaveFocus(),
+      );
+    });
+
+    it("lets the time yield its width to the field on narrow screens while editing", async () => {
+      apiRequest.mockResolvedValue(board);
+      renderDialog({ onRename: vi.fn(), sessionId: "sess-7" });
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Change your name" }),
+      );
+      const row = screen
+        .getByRole("textbox", { name: "Display name" })
+        .closest("li")!;
+      expect(within(row).getByText("1:30")).toHaveClass("hidden", "sm:inline");
+    });
+
+    it("keeps an in-progress edit on the viewer's row when a refetch moves their rank", async () => {
+      apiRequest.mockResolvedValue(board);
+      const { queryClient } = renderDialog({
+        onRename: vi.fn(),
+        sessionId: "sess-7",
+      });
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Change your name" }),
+      );
+      fireEvent.change(screen.getByRole("textbox", { name: "Display name" }), {
+        target: { value: "Robin draft" },
+      });
+
+      // Someone faster posts while the guest is editing: the viewer drops to 3rd.
+      apiRequest.mockResolvedValue({
+        items: [
+          entry({ display_name: "Zed", elapsed_ms: 30_000 }),
+          entry({ display_name: "Alice", elapsed_ms: 61_000 }),
+          entry({ display_name: "Robin", elapsed_ms: 90_000 }),
+        ],
+        total: 3,
+        viewer: { ...board.viewer, rank: 3 },
+      });
+      await queryClient.invalidateQueries({
+        queryKey: [QueryKey.GameLeaderboard],
+      });
+
+      await waitFor(() =>
+        expect(screen.getAllByRole("listitem")).toHaveLength(3),
+      );
+      const rows = screen.getAllByRole("listitem");
+      const field = within(rows[2]).getByRole("textbox", {
+        name: "Display name",
+      });
+      expect(field).toHaveValue("Robin draft");
+      expect(within(rows[1]).queryByRole("textbox")).not.toBeInTheDocument();
+      expect(rows[1]).toHaveTextContent("Alice");
+    });
   });
 });

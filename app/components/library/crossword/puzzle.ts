@@ -37,6 +37,12 @@ export type Difficulty = GameDifficulty;
 export type PuzzleDifficulties = readonly [Difficulty, ...Difficulty[]];
 
 /** Guest-facing labels, shared by the dialogs, menus, and leaderboard. */
+/**
+ * The longest leaderboard display name, matching the server's
+ * display_name max=50 rule on posts and renames.
+ */
+export const MAX_DISPLAY_NAME_LENGTH = 50;
+
 export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
   easy: "Easy",
   medium: "Medium",

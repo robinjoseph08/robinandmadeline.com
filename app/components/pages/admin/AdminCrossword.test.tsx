@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { toast } from "sonner";
@@ -11,15 +17,26 @@ import type { AdminGameSessionResponse } from "@/types/generated/games";
 import AdminCrossword from "./AdminCrossword";
 
 // adminRequest is the single network seam; the tests drive the UI by stubbing
-// its responses per call and assert on the requests it receives.
+// its responses per call and assert on the requests it receives. The party
+// picker's list read is answered separately by partiesRequest, so each test's
+// adminRequest stub only has to describe the sessions endpoints.
 const adminRequest = vi.fn();
+const partiesRequest = vi.fn();
 vi.mock("@/libraries/admin-api", async () => {
   const actual = await vi.importActual<object>("@/libraries/admin-api");
   return {
     ...actual,
-    adminRequest: (...args: unknown[]) => adminRequest(...args),
+    adminRequest: (path: string, ...rest: unknown[]) =>
+      path === "/admin/parties"
+        ? partiesRequest(path, ...rest)
+        : adminRequest(path, ...rest),
   };
 });
+
+const PARTIES = [
+  { id: "p-lovelace", name: "The Lovelaces" },
+  { id: "p-babbage", name: "The Babbages" },
+];
 
 function makeSession(
   overrides: Partial<AdminGameSessionResponse>,
@@ -71,6 +88,8 @@ function renderCrossword() {
 
 beforeEach(() => {
   adminRequest.mockReset();
+  partiesRequest.mockReset();
+  partiesRequest.mockResolvedValue({ items: PARTIES, total: PARTIES.length });
 });
 
 describe("AdminCrossword list", () => {
@@ -575,5 +594,418 @@ describe("AdminCrossword hide", () => {
       expect(errorSpy).toHaveBeenCalledWith("Restore failed");
     });
     errorSpy.mockRestore();
+  });
+});
+
+describe("AdminCrossword edit mode", () => {
+  /**
+   * A stateful sessions API: one posted solve (s1, "Ada") whose name and party
+   * follow the rename and party writes, so the refetch shows the saved values.
+   */
+  function mockEditableSession(
+    initial: { name?: string; partyId?: string } = { name: "Ada" },
+    failures: { rename?: string; party?: string } = {},
+  ) {
+    const state = { ...initial };
+    adminRequest.mockImplementation((path: string, options?: object) => {
+      const body = (options as { body?: Record<string, string> } | undefined)
+        ?.body;
+      if (path === "/admin/games/sessions/s1/rename") {
+        if (failures.rename) return Promise.reject(new Error(failures.rename));
+        state.name = body!.display_name;
+        return Promise.resolve(undefined);
+      }
+      if (path === "/admin/games/sessions/s1/party") {
+        if (failures.party) return Promise.reject(new Error(failures.party));
+        state.partyId = body!.party_id;
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve({
+        items: [
+          makeSession({
+            id: "s1",
+            completed_at: "2026-06-02T15:00:00Z",
+            display_name: state.name,
+            on_leaderboard: state.name !== undefined,
+            party_id: state.partyId,
+            party_name: PARTIES.find((p) => p.id === state.partyId)?.name,
+          }),
+        ],
+        total: 1,
+      });
+    });
+  }
+
+  function sessionWrites() {
+    return adminRequest.mock.calls.filter(
+      ([path]) =>
+        typeof path === "string" &&
+        (path.endsWith("/rename") || path.endsWith("/party")),
+    );
+  }
+
+  it("keeps rows read-only until the pencil is clicked", async () => {
+    mockEditableSession({ name: "Ada", partyId: "p-lovelace" });
+    const user = userEvent.setup();
+    renderCrossword();
+
+    const row = (await screen.findByText("Ada")).closest("tr")!;
+    expect(within(row).getByText("The Lovelaces")).toBeInTheDocument();
+    expect(within(row).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(row).queryByRole("combobox")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+
+    expect(
+      within(row).getByRole("textbox", { name: "Name for Ada's solve" }),
+    ).toHaveValue("Ada");
+    expect(
+      within(row).getByRole("combobox", { name: "Party for Ada's solve" }),
+    ).toHaveTextContent("The Lovelaces");
+    // The moderation action steps aside while the row is being edited.
+    expect(
+      screen.queryByRole("button", { name: "Hide Ada's time" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("saves a new name and party together", async () => {
+    mockEditableSession();
+    const successSpy = vi.spyOn(toast, "success");
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Ada");
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    const name = screen.getByRole("textbox", { name: "Name for Ada's solve" });
+    await user.clear(name);
+    await user.type(name, "  Ada Lovelace  ");
+    await user.click(
+      screen.getByRole("combobox", { name: "Party for Ada's solve" }),
+    );
+    await user.click(await screen.findByRole("option", { name: /Babbages/ }));
+    await user.click(screen.getByRole("button", { name: "Save Ada's solve" }));
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith(
+        "/admin/games/sessions/s1/rename",
+        { method: "POST", body: { display_name: "Ada Lovelace" } },
+      );
+    });
+    expect(adminRequest).toHaveBeenCalledWith(
+      "/admin/games/sessions/s1/party",
+      { method: "POST", body: { party_id: "p-babbage" } },
+    );
+    const row = (await screen.findByText("Ada Lovelace")).closest("tr")!;
+    expect(within(row).getByText("The Babbages")).toBeInTheDocument();
+    expect(within(row).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(successSpy).toHaveBeenCalledWith("Solve updated");
+    successSpy.mockRestore();
+  });
+
+  it("saves with Enter and sends only what changed", async () => {
+    mockEditableSession({ name: "Ada", partyId: "p-lovelace" });
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Ada");
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    const name = screen.getByRole("textbox", { name: "Name for Ada's solve" });
+    await user.clear(name);
+    await user.type(name, "Ada L{Enter}");
+
+    expect(await screen.findByText("Ada L")).toBeInTheDocument();
+    expect(sessionWrites()).toEqual([
+      [
+        "/admin/games/sessions/s1/rename",
+        { method: "POST", body: { display_name: "Ada L" } },
+      ],
+    ]);
+  });
+
+  it("clears a party", async () => {
+    mockEditableSession({ name: "Ada", partyId: "p-lovelace" });
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Ada");
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    await user.click(
+      screen.getByRole("button", { name: "Clear Party for Ada's solve" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save Ada's solve" }));
+
+    await waitFor(() => {
+      expect(adminRequest).toHaveBeenCalledWith(
+        "/admin/games/sessions/s1/party",
+        { method: "POST", body: { party_id: undefined } },
+      );
+    });
+    const row = (await screen.findByText("Ada")).closest("tr")!;
+    await waitFor(() =>
+      expect(within(row).queryByText("The Lovelaces")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("edits only the party of an unposted solve", async () => {
+    mockEditableSession({});
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Anonymous");
+    await user.click(
+      screen.getByRole("button", { name: "Edit Anonymous's solve" }),
+    );
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("combobox", { name: "Party for Anonymous's solve" }),
+    );
+    await user.click(await screen.findByRole("option", { name: /Lovelaces/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Save Anonymous's solve" }),
+    );
+
+    expect(await screen.findByText("The Lovelaces")).toBeInTheDocument();
+    expect(sessionWrites()).toEqual([
+      [
+        "/admin/games/sessions/s1/party",
+        { method: "POST", body: { party_id: "p-lovelace" } },
+      ],
+    ]);
+  });
+
+  it("discards the draft on cancel or Escape", async () => {
+    mockEditableSession();
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Ada");
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Name for Ada's solve" }),
+      " Draft",
+    );
+    await user.click(screen.getByRole("button", { name: "Cancel editing" }));
+    expect(screen.getByText("Ada")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Name for Ada's solve" }),
+      " Draft{Escape}",
+    );
+    expect(screen.getByText("Ada")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(sessionWrites()).toEqual([]);
+  });
+
+  it("blocks a blank name without sending anything", async () => {
+    mockEditableSession();
+    const errorSpy = vi.spyOn(toast, "error");
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Ada");
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    await user.clear(
+      screen.getByRole("textbox", { name: "Name for Ada's solve" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save Ada's solve" }));
+
+    expect(errorSpy).toHaveBeenCalledWith("Name can't be blank");
+    expect(sessionWrites()).toEqual([]);
+    expect(
+      screen.getByRole("textbox", { name: "Name for Ada's solve" }),
+    ).toBeInTheDocument();
+    errorSpy.mockRestore();
+  });
+
+  it("stays in edit mode with a toast when saving fails", async () => {
+    mockEditableSession({ name: "Ada" }, { rename: "Rename failed" });
+    const errorSpy = vi.spyOn(toast, "error");
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Ada");
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    const name = screen.getByRole("textbox", { name: "Name for Ada's solve" });
+    await user.clear(name);
+    await user.type(name, "Ada L");
+    await user.click(screen.getByRole("button", { name: "Save Ada's solve" }));
+
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith("Rename failed");
+    });
+    expect(
+      screen.getByRole("textbox", { name: "Name for Ada's solve" }),
+    ).toHaveValue("Ada L");
+    errorSpy.mockRestore();
+  });
+
+  it("leaves edit mode without a request or toast when nothing changed", async () => {
+    mockEditableSession({ name: "Ada", partyId: "p-lovelace" });
+    const successSpy = vi.spyOn(toast, "success");
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Ada");
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    await user.click(screen.getByRole("button", { name: "Save Ada's solve" }));
+
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(sessionWrites()).toEqual([]);
+    expect(successSpy).not.toHaveBeenCalled();
+    successSpy.mockRestore();
+  });
+
+  it("sends the name and party writes in parallel", async () => {
+    mockEditableSession();
+    // Hold both writes open: each must already be in flight before either
+    // settles, which a sequential save would fail (it awaits the first).
+    const pending: Array<() => void> = [];
+    const listResponse = adminRequest.getMockImplementation()!;
+    adminRequest.mockImplementation((path: string, options?: object) =>
+      path.endsWith("/rename") || path.endsWith("/party")
+        ? new Promise((resolve) => {
+            pending.push(() => resolve(listResponse(path, options)));
+          })
+        : listResponse(path, options),
+    );
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Ada");
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    const name = screen.getByRole("textbox", { name: "Name for Ada's solve" });
+    await user.clear(name);
+    await user.type(name, "Ada L");
+    await user.click(
+      screen.getByRole("combobox", { name: "Party for Ada's solve" }),
+    );
+    await user.click(await screen.findByRole("option", { name: /Babbages/ }));
+    await user.click(screen.getByRole("button", { name: "Save Ada's solve" }));
+
+    await waitFor(() => expect(pending).toHaveLength(2));
+    pending.forEach((resolve) => resolve());
+    expect(await screen.findByText("Ada L")).toBeInTheDocument();
+  });
+
+  it("retries only the write that failed", async () => {
+    let failRename = true;
+    mockEditableSession();
+    const listResponse = adminRequest.getMockImplementation()!;
+    adminRequest.mockImplementation((path: string, options?: object) =>
+      path.endsWith("/rename") && failRename
+        ? Promise.reject(new Error("Rename failed"))
+        : listResponse(path, options),
+    );
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Ada");
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    const name = screen.getByRole("textbox", { name: "Name for Ada's solve" });
+    await user.clear(name);
+    await user.type(name, "Ada L");
+    await user.click(
+      screen.getByRole("combobox", { name: "Party for Ada's solve" }),
+    );
+    await user.click(await screen.findByRole("option", { name: /Babbages/ }));
+    await user.click(screen.getByRole("button", { name: "Save Ada's solve" }));
+
+    // The party landed; the rename didn't, so the row is still editing.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "Party for Ada's solve" }),
+      ).toHaveTextContent("The Babbages"),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Name for Ada's solve" }),
+    ).toHaveValue("Ada L");
+
+    failRename = false;
+    adminRequest.mockClear();
+    await user.click(screen.getByRole("button", { name: "Save Ada's solve" }));
+
+    expect(await screen.findByText("Ada L")).toBeInTheDocument();
+    expect(sessionWrites()).toEqual([
+      [
+        "/admin/games/sessions/s1/rename",
+        { method: "POST", body: { display_name: "Ada L" } },
+      ],
+    ]);
+  });
+
+  it("keeps the pencil in the last action slot on every row", async () => {
+    adminRequest.mockResolvedValue({
+      items: [
+        makeSession({
+          id: "s1",
+          completed_at: "2026-06-02T15:00:00Z",
+          display_name: "Ada",
+          on_leaderboard: true,
+        }),
+        makeSession({ id: "s2", completed_at: "2026-06-02T16:00:00Z" }),
+      ],
+      total: 2,
+    });
+    renderCrossword();
+
+    for (const label of ["Edit Ada's solve", "Edit Anonymous's solve"]) {
+      const pencil = await screen.findByRole("button", { name: label });
+      const actions = pencil.closest("td")!.querySelectorAll("button");
+      expect(actions[actions.length - 1]).toBe(pencil);
+      expect(pencil.closest("div")).toHaveClass("justify-end");
+    }
+  });
+
+  it("treats picking then clearing a party on an unaffiliated solve as no change", async () => {
+    // The API sends a missing party as null, while the picker's clear yields
+    // undefined; the two must compare equal.
+    adminRequest.mockResolvedValue({
+      items: [
+        makeSession({
+          id: "s1",
+          completed_at: "2026-06-02T15:00:00Z",
+          display_name: "Ada",
+          on_leaderboard: true,
+          party_id: null as unknown as undefined,
+          party_name: null as unknown as undefined,
+        }),
+      ],
+      total: 1,
+    });
+    const successSpy = vi.spyOn(toast, "success");
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Ada");
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Party for Ada's solve" }),
+    );
+    await user.click(await screen.findByRole("option", { name: /Babbages/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Clear Party for Ada's solve" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save Ada's solve" }));
+
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(sessionWrites()).toEqual([]);
+    expect(successSpy).not.toHaveBeenCalled();
+    successSpy.mockRestore();
+  });
+
+  it("does not save on the Enter that confirms an IME composition", async () => {
+    mockEditableSession();
+    const user = userEvent.setup();
+    renderCrossword();
+
+    await screen.findByText("Ada");
+    await user.click(screen.getByRole("button", { name: "Edit Ada's solve" }));
+    const name = screen.getByRole("textbox", { name: "Name for Ada's solve" });
+    fireEvent.change(name, { target: { value: "エイダ" } });
+    fireEvent.keyDown(name, { key: "Enter", isComposing: true });
+
+    expect(name).toBeInTheDocument();
+    expect(sessionWrites()).toEqual([]);
   });
 });
