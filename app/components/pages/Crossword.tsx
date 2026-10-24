@@ -420,6 +420,15 @@ function CrosswordGame({
     setLeaderboardOpen(true);
   };
 
+  // A rename from the leaderboard's own row: refetch every tab so the new
+  // name shows wherever the solve appears.
+  const handleRename = async (displayName: string) => {
+    await session.renameLeaderboardEntry(displayName);
+    await queryClient.invalidateQueries({
+      queryKey: [QueryKey.GameLeaderboard, puzzle.id],
+    });
+  };
+
   const handleCelebrationContinue = () => {
     if (celebrationRun === "replay") {
       setCelebrationRun(null);
@@ -1219,6 +1228,7 @@ function CrosswordGame({
         defaultDifficulty={session.recordedDifficulty}
         difficulties={puzzle.difficulties}
         onOpenChange={setLeaderboardOpen}
+        onRename={session.posted ? handleRename : undefined}
         open={leaderboardOpen}
         puzzleId={puzzle.id}
         puzzleTitle={puzzle.title}

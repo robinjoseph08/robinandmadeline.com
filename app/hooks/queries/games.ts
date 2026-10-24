@@ -11,6 +11,8 @@ import { fetchLeaderboard } from "@/libraries/games-api";
 import type {
   ListAdminGameSessionsResponse,
   ListLeaderboardEntriesResponse,
+  RenameGameSessionPayload,
+  SetGameSessionPartyPayload,
 } from "@/types/generated/games";
 import type { GameDifficulty } from "@/types/generated/models";
 
@@ -100,6 +102,55 @@ export const useUnhideGameSession = () => {
     mutationFn: ({ sessionId }) =>
       adminRequest(`/admin/games/sessions/${sessionId}/unhide`, {
         method: "POST",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: [QueryKey.AdminGameSessions],
+      });
+    },
+  });
+};
+
+// useRenameGameSession changes a posted solve's display name, leaving its time
+// and visibility alone. The POST returns 204, so the mutation resolves to void;
+// on success the admin list refetches, along with any cached public board so
+// the new name shows there too.
+export const useRenameGameSession = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    void,
+    ApiError,
+    { sessionId: string; displayName: string }
+  >({
+    mutationFn: ({ sessionId, displayName }) =>
+      adminRequest(`/admin/games/sessions/${sessionId}/rename`, {
+        method: "POST",
+        body: { display_name: displayName } satisfies RenameGameSessionPayload,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: [QueryKey.AdminGameSessions],
+      });
+      queryClient.invalidateQueries({
+        queryKey: [QueryKey.GameLeaderboard],
+      });
+    },
+  });
+};
+
+// useSetGameSessionParty points a solve at a party, or clears it when partyId
+// is undefined (the key is then omitted, which the server reads as "no
+// party"). Party affiliation never reaches the public board, so only the admin
+// list refetches.
+export const useSetGameSessionParty = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation<void, ApiError, { sessionId: string; partyId?: string }>({
+    mutationFn: ({ sessionId, partyId }) =>
+      adminRequest(`/admin/games/sessions/${sessionId}/party`, {
+        method: "POST",
+        body: { party_id: partyId } satisfies SetGameSessionPartyPayload,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({

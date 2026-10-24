@@ -522,6 +522,29 @@ func TestPostLeaderboard_FullFlowOverHTTP(t *testing.T) {
 	assert.Contains(t, board.Items[0], "completed_at")
 }
 
+func TestPostLeaderboard_RenameChangesOnlyTheNameOverHTTP(t *testing.T) {
+	svc, _, db := newServices(t)
+	e, _ := newGamesEcho(t, svc)
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	path := "/api/games/sessions/" + session.ID + "/leaderboard"
+
+	rec := doGamesRequest(t, e, gamesRequest{method: http.MethodPost, path: path, body: `{"display_name":"Alicia"}`})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp games.GameSessionResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "Alicia", *resp.DisplayName)
+	assert.True(t, resp.OnLeaderboard)
+
+	// The time is not part of the payload, so trying to send one is rejected.
+	rec = doGamesRequest(t, e, gamesRequest{method: http.MethodPost, path: path, body: `{"display_name":"Bob","elapsed_ms":1}`})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeUnknownParameter), errCodeOf(t, rec))
+
+	row := sessionRow(t, db, session.ID)
+	assert.Equal(t, "Alicia", *row.DisplayName)
+	assert.EqualValues(t, 30000, row.ElapsedMS)
+}
+
 func TestPostLeaderboard_ValidatesDisplayName(t *testing.T) {
 	svc, _, _ := newServices(t)
 	e, _ := newGamesEcho(t, svc)

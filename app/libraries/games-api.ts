@@ -67,7 +67,10 @@ export function updateGameSession(
   });
 }
 
-/** Publishes a completed solve: POST /api/games/sessions/:id/leaderboard. */
+/**
+ * Publishes a completed solve, or renames an already-published one:
+ * POST /api/games/sessions/:id/leaderboard.
+ */
 export function postLeaderboardEntry(
   id: string,
   payload: PostLeaderboardPayload,

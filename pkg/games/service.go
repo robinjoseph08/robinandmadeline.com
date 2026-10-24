@@ -227,12 +227,14 @@ func checkCountsAdvance(session *models.GameSession, in UpdateGameSessionPayload
 // PostToLeaderboard publishes a completed solve under the given display name:
 // it sets on_leaderboard (the explicit opt-in that makes the session visible)
 // and stores the display_name shown on the board. Posting an uncompleted
-// session is a 422. Re-posting is idempotent when the name matches what was
-// first published and a 409 otherwise (the leaderboard is append-once; there
-// is no rename in v1). An admin-hidden row retains its display name and
-// hidden_at marker with on_leaderboard false, so an idempotent retry must not
-// make it public again.
-// Like UpdateSession, a party is attached opportunistically,
+// session is a 422. Re-posting an already-published solve renames it: a
+// different name replaces the stored one, and the same name is a no-op. Only
+// the name changes; the time, difficulty, and completion are never touched. An
+// admin-hidden row retains its display name and hidden_at marker with
+// on_leaderboard false, so a retry or rename leaves it hidden rather than
+// making it public again. A rename also leaves the party alone, so a party an
+// admin set or cleared after the post is never overridden by the solver.
+// Like UpdateSession, the first post attaches a party opportunistically,
 // so a guest who signs in between completing and posting still gets their entry
 // affiliated.
 func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeaderboardPayload, partyID string) (*models.GameSession, error) {
@@ -246,12 +248,12 @@ func (s *Service) PostToLeaderboard(ctx context.Context, id string, in PostLeade
 			return errcodes.ValidationError("The puzzle must be completed before posting to the leaderboard.")
 		}
 		// A retained display name means this solve has already been published,
-		// even when an admin later hid it by clearing on_leaderboard. The name is
-		// append-once and a same-name retry is a no-op, so a client retry can never
-		// accidentally unhide a moderated entry.
+		// even when an admin later hid it by clearing on_leaderboard. Treat the
+		// post as a rename so a retry or name change can never touch the
+		// visibility flags and accidentally unhide a moderated entry.
 		if loaded.DisplayName != nil {
-			if *loaded.DisplayName != in.DisplayName {
-				return errcodes.Conflict("This solve is already on the leaderboard under a different name.")
+			if err := renameSession(ctx, tx, loaded, in.DisplayName); err != nil {
+				return err
 			}
 			*session = *loaded
 			return nil
@@ -523,6 +525,81 @@ func (s *Service) ListSessions(ctx context.Context) ([]AdminGameSessionResponse,
 	return items, total, nil
 }
 
+// RenameSession is the admin's rename of a published solve: it replaces the
+// display name and leaves the time, difficulty, and visibility (on the board or
+// hidden) unchanged. Renaming an unknown session is a 404. A solve that was
+// never posted is a 422, because a name is the solver's opt-in and the admin
+// must not publish a solve on their behalf.
+func (s *Service) RenameSession(ctx context.Context, id string, in RenameGameSessionPayload) error {
+	return s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		session, err := loadSessionForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if session.DisplayName == nil {
+			return errcodes.ValidationError("Only a solve posted to the leaderboard can be renamed.")
+		}
+		return renameSession(ctx, tx, session, in.DisplayName)
+	})
+}
+
+// SetSessionParty is the admin's correction of a solve's party affiliation:
+// it points the session at the given party, or clears it when PartyID is nil.
+// Any session can be corrected regardless of state, since the affiliation is
+// attribution, not publishing. An unknown session is a 404 and an unknown party
+// a 422. Unlike attachParty this overwrites an existing affiliation, and the
+// admin's choice sticks: attachParty only fills an empty affiliation on an
+// unposted solve's writes, and a posted solve's renames never touch the party.
+func (s *Service) SetSessionParty(ctx context.Context, id string, in SetGameSessionPartyPayload) error {
+	return s.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
+		session, err := loadSessionForUpdate(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if in.PartyID != nil {
+			exists, err := partyExists(ctx, tx, *in.PartyID)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return errcodes.ValidationError("That party does not exist.")
+			}
+		}
+		if pointerutil.Equal(session.PartyID, in.PartyID) {
+			return nil
+		}
+
+		session.PartyID = in.PartyID
+		session.UpdatedAt = dbNow()
+		_, err = tx.NewUpdate().Model(session).
+			Column("party_id", "updated_at").
+			WherePK().Exec(ctx)
+		if err != nil {
+			return errors.Wrap(err, "set game session party")
+		}
+		return nil
+	})
+}
+
+// renameSession stores a new display name on an already-published session
+// inside the caller's transaction. Only display_name and updated_at are
+// written, so a rename can never alter the recorded time, the leaderboard
+// visibility, or the party. The same name is a no-op.
+func renameSession(ctx context.Context, tx bun.Tx, session *models.GameSession, name string) error {
+	if *session.DisplayName == name {
+		return nil
+	}
+	session.DisplayName = &name
+	session.UpdatedAt = dbNow()
+	_, err := tx.NewUpdate().Model(session).
+		Column("display_name", "updated_at").
+		WherePK().Exec(ctx)
+	if err != nil {
+		return errors.Wrap(err, "rename game session")
+	}
+	return nil
+}
+
 // HideSession removes one published solve from public leaderboards while
 // retaining its time, bearer id, display name, and attribution. The retained
 // name lets the solver continue seeing the entry through a viewer-aware read
@@ -618,12 +695,21 @@ func attachParty(ctx context.Context, db bun.IDB, session *models.GameSession, p
 	if partyID == "" || session.PartyID != nil {
 		return nil
 	}
-	exists, err := db.NewSelect().Model((*models.Party)(nil)).Where("p.id = ?", partyID).Exists(ctx)
+	exists, err := partyExists(ctx, db, partyID)
 	if err != nil {
-		return errors.Wrap(err, "check party exists")
+		return err
 	}
 	if exists {
 		session.PartyID = &partyID
 	}
 	return nil
+}
+
+// partyExists reports whether a party row with the given id exists.
+func partyExists(ctx context.Context, db bun.IDB, partyID string) (bool, error) {
+	exists, err := db.NewSelect().Model((*models.Party)(nil)).Where("p.id = ?", partyID).Exists(ctx)
+	if err != nil {
+		return false, errors.Wrap(err, "check party exists")
+	}
+	return exists, nil
 }

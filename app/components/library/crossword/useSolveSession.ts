@@ -118,6 +118,12 @@ export interface SolveSession {
    * rejections) for the dialog to display.
    */
   postToLeaderboard: (displayName: string) => Promise<void>;
+  /**
+   * Change the name on an already-posted solve. Only the name changes (the
+   * server keeps the time and any admin hiding as they are); failures throw
+   * for the caller to display.
+   */
+  renameLeaderboardEntry: (displayName: string) => Promise<void>;
 }
 
 export function useSolveSession({
@@ -646,6 +652,34 @@ export function useSolveSession({
     [sendReport, persist],
   );
 
+  const renameLeaderboardEntry = useCallback(
+    async (displayName: string) => {
+      const id = sessionIdRef.current;
+      if (!id || !postedNameRef.current) {
+        throw new Error("Only a posted time can be renamed.");
+      }
+      // Re-posting a published solve is the rename: the server swaps the name
+      // and leaves everything else alone. A rejection from our API (a coded
+      // 4xx such as the length rule) keeps its own guest-facing message.
+      // Anything else would surface raw text: the browser's "Failed to fetch"
+      // when offline, or "Request failed with status 502" from a proxy error
+      // page, so it is replaced.
+      try {
+        await postLeaderboardEntry(id, { display_name: displayName });
+      } catch (err) {
+        if (err instanceof ApiError && err.code && err.status < 500) {
+          throw err;
+        }
+        throw new Error(
+          "We couldn't reach the server to change your name. Please try again.",
+        );
+      }
+      postedNameRef.current = displayName;
+      persist();
+    },
+    [persist],
+  );
+
   return {
     sessionId,
     elapsedMs,
@@ -665,5 +699,6 @@ export function useSolveSession({
     complete,
     discardLocalRecord,
     postToLeaderboard,
+    renameLeaderboardEntry,
   };
 }

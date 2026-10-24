@@ -19,6 +19,7 @@ import (
 //	POST  /games/sessions                  start a solve (puzzle + starting difficulty)
 //	PATCH /games/sessions/:id              report progress (elapsed, difficulty switch, completion)
 //	POST  /games/sessions/:id/leaderboard  opt in to publish a completed solve
+//	                                       (or rename an already-published one)
 //	GET   /games/leaderboard?puzzle_id=    one puzzle's entries, fastest first, capped
 //	                                       (&difficulty= narrows to one difficulty's board;
 //	                                       &session_id= adds that solver's own ranked row)
@@ -36,7 +37,8 @@ func RegisterRoutes(api *echo.Group, mw *auth.Middleware, service *Service) {
 // which is expected to be the already-protected admin group (behind the admin
 // JWT middleware), so every route here requires an admin token. These are the
 // admin's window onto the raw solve data: every session regardless of state,
-// and the ability to hide or restore a published solve.
+// the ability to hide, restore, or rename a published solve, and correcting
+// which party a solve belongs to.
 //
 // Route shape (relative to the admin group, i.e. /api/admin):
 //
@@ -46,6 +48,9 @@ func RegisterRoutes(api *echo.Group, mw *auth.Middleware, service *Service) {
 //	                              party's name)
 //	POST /games/sessions/:id/hide   hide one published solve (404 on an unknown id)
 //	POST /games/sessions/:id/unhide restore one admin-hidden solve
+//	POST /games/sessions/:id/rename change a posted solve's display name
+//	                                (visibility and time unchanged)
+//	POST /games/sessions/:id/party  set or clear a solve's party affiliation
 func RegisterAdminRoutes(admin *echo.Group, service *Service) {
 	h := &handler{service: service}
 
@@ -53,4 +58,6 @@ func RegisterAdminRoutes(admin *echo.Group, service *Service) {
 	g.GET("/sessions", h.adminListSessions)
 	g.POST("/sessions/:id/hide", h.adminHideSession)
 	g.POST("/sessions/:id/unhide", h.adminUnhideSession)
+	g.POST("/sessions/:id/rename", h.adminRenameSession)
+	g.POST("/sessions/:id/party", h.adminSetSessionParty)
 }

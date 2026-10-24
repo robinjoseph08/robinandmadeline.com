@@ -117,7 +117,7 @@ func (h *handler) updateSession(c echo.Context) error {
 
 // postToLeaderboard handles POST /api/games/sessions/:id/leaderboard: the
 // opt-in that sets on_leaderboard on a completed solve and stores its display
-// name.
+// name. On an already-published solve it renames the entry instead.
 func (h *handler) postToLeaderboard(c echo.Context) error {
 	id, err := pathID(c)
 	if err != nil {
@@ -194,6 +194,42 @@ func (h *handler) adminUnhideSession(c echo.Context) error {
 		return err
 	}
 	if err := h.service.UnhideSession(c.Request().Context(), id); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// adminRenameSession handles POST /api/admin/games/sessions/:id/rename,
+// returning 204 on success. It changes only a posted solve's display name; an
+// unposted solve is a 422 and an unknown id a 404.
+func (h *handler) adminRenameSession(c echo.Context) error {
+	id, err := pathID(c)
+	if err != nil {
+		return err
+	}
+	var body RenameGameSessionPayload
+	if err := c.Bind(&body); err != nil {
+		return errors.WithStack(err)
+	}
+	if err := h.service.RenameSession(c.Request().Context(), id, body); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// adminSetSessionParty handles POST /api/admin/games/sessions/:id/party,
+// returning 204 on success. A null party_id clears the affiliation; an unknown
+// party is a 422 and an unknown session a 404.
+func (h *handler) adminSetSessionParty(c echo.Context) error {
+	id, err := pathID(c)
+	if err != nil {
+		return err
+	}
+	var body SetGameSessionPartyPayload
+	if err := c.Bind(&body); err != nil {
+		return errors.WithStack(err)
+	}
+	if err := h.service.SetSessionParty(c.Request().Context(), id, body); err != nil {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)

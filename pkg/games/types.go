@@ -49,10 +49,28 @@ type UpdateGameSessionPayload struct {
 // signed-in guest's client confirms or prefills it from their guest record, an
 // anonymous guest types one, and either way it is stored on the session so an
 // anonymous entry can be retroactively affiliated with a party later. Posting an
-// uncompleted session is a 422; re-posting the same name is an idempotent
-// success, a different name a 409.
+// uncompleted session is a 422. Re-posting an already-published solve renames
+// it (the same name is an idempotent no-op); the time is never editable.
 type PostLeaderboardPayload struct {
 	DisplayName string `json:"display_name" mod:"trim" validate:"required,min=1,max=50"`
+}
+
+// RenameGameSessionPayload is the body of POST
+// /api/admin/games/sessions/:id/rename, the admin's rename of a published
+// solve. It carries only the name, with the same rules as the solver's own
+// post, so the time stays out of reach.
+type RenameGameSessionPayload struct {
+	DisplayName string `json:"display_name" mod:"trim" validate:"required,min=1,max=50"`
+}
+
+// SetGameSessionPartyPayload is the body of POST
+// /api/admin/games/sessions/:id/party, the admin's correction of which party a
+// solve belongs to. PartyID names an existing party; null or an omitted key
+// clears the affiliation (the frontend omits it, since tygo types the field as
+// optional rather than nullable). It uses the version-agnostic uuid rule, so a
+// malformed id is a 422 from the binder before the service's existence check.
+type SetGameSessionPartyPayload struct {
+	PartyID *string `json:"party_id" validate:"omitempty,uuid"`
 }
 
 // LeaderboardQuery is the query string of GET /api/games/leaderboard,

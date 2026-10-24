@@ -11,7 +11,7 @@ The Go backend is Echo + Bun on Postgres. These conventions keep the API typed e
 
 - Define every request, response, and query type for a package in its `types.go`. Handlers never return anonymous structs, `echo.Map`, or `map[string]any`.
 - A response is a named `{Entity}Response` that embeds its `models.X` by value via `tstype:",extends"` (a pointer embed would make tygo emit `extends Partial<models.X>`, turning every model field optional on the client) and adds only derived fields. List endpoints return `List{Entities}Response`, a `{ items, total }` envelope (an empty list serializes `items` as `[]`, never `null`).
-- Status codes: create returns 201, update 200, a pure acknowledgment (delete) returns 204 No Content.
+- Status codes: create returns 201, update 200, a pure acknowledgment (delete) returns 204 No Content. An admin action endpoint that only changes state and whose caller just refetches (for example the games hide, unhide, rename, and party actions) is also an acknowledgment and returns 204.
 - Closed enum value sets get consts plus a `//tygo:emit` union in `pkg/models`, and the field carries a `tstype` hint. Open-ended sets (guest tags) stay `[]string`.
 - After changing a model or a `types.go`, regenerate the frontend types with `mise tygo`. The output is gitignored (ADR 0008).
 

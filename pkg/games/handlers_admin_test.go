@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -38,6 +39,17 @@ func newAdminGamesEcho(t *testing.T, svc *games.Service) *echo.Echo {
 func doAdmin(t *testing.T, e *echo.Echo, method, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequestWithContext(context.Background(), method, target, http.NoBody)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	return rec
+}
+
+// postAdminJSON POSTs a JSON body to the admin games surface
+// and returns the recorder.
+func postAdminJSON(t *testing.T, e *echo.Echo, target, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, target, strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	return rec
@@ -217,4 +229,122 @@ func TestAdminUnhideSessionHandler_MalformedIDIs404(t *testing.T) {
 	rec := doAdmin(t, e, http.MethodPost, "/api/admin/games/sessions/not-a-uuid/unhide")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, string(errcodes.CodeNotFound), errCodeOf(t, rec))
+}
+
+func TestAdminRenameSessionHandler_Returns204AndRenames(t *testing.T) {
+	svc, _, db := newServices(t)
+	e := newAdminGamesEcho(t, svc)
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+
+	// The name is trimmed by the binder before storage.
+	rec := postAdminJSON(t, e, "/api/admin/games/sessions/"+session.ID+"/rename", `{"display_name":"  Alicia  "}`)
+	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Empty(t, rec.Body.Bytes(), "a 204 carries no body")
+
+	row := sessionRow(t, db, session.ID)
+	require.NotNil(t, row.DisplayName)
+	assert.Equal(t, "Alicia", *row.DisplayName)
+	assert.True(t, row.OnLeaderboard)
+	assert.EqualValues(t, 30000, row.ElapsedMS)
+}
+
+func TestAdminRenameSessionHandler_RejectsBadPayloads(t *testing.T) {
+	svc, _, db := newServices(t)
+	e := newAdminGamesEcho(t, svc)
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	path := "/api/admin/games/sessions/" + session.ID + "/rename"
+
+	for name, tc := range map[string]struct {
+		body string
+		code errcodes.Code
+	}{
+		"blank name":    {`{"display_name":"   "}`, errcodes.CodeValidationError},
+		"too long":      {`{"display_name":"` + strings.Repeat("a", 51) + `"}`, errcodes.CodeValidationError},
+		"time included": {`{"display_name":"Bob","elapsed_ms":1}`, errcodes.CodeUnknownParameter},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := postAdminJSON(t, e, path, tc.body)
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+			assert.Equal(t, string(tc.code), errCodeOf(t, rec))
+		})
+	}
+	row := sessionRow(t, db, session.ID)
+	assert.Equal(t, "Alice", *row.DisplayName)
+	assert.EqualValues(t, 30000, row.ElapsedMS)
+}
+
+func TestAdminRenameSessionHandler_UnpostedSolveIs422(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e := newAdminGamesEcho(t, svc)
+	session := completeSessionT(t, svc, models.GameDifficultyEasy, 30000)
+
+	rec := postAdminJSON(t, e, "/api/admin/games/sessions/"+session.ID+"/rename", `{"display_name":"Alice"}`)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, string(errcodes.CodeValidationError), errCodeOf(t, rec))
+}
+
+func TestAdminRenameSessionHandler_UnknownAndMalformedIDsAre404(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e := newAdminGamesEcho(t, svc)
+
+	for _, id := range []string{"00000000-0000-0000-0000-000000000000", "not-a-uuid"} {
+		rec := postAdminJSON(t, e, "/api/admin/games/sessions/"+id+"/rename", `{"display_name":"Alice"}`)
+		assert.Equal(t, http.StatusNotFound, rec.Code, id)
+		assert.Equal(t, string(errcodes.CodeNotFound), errCodeOf(t, rec), id)
+	}
+}
+
+func TestAdminSetSessionPartyHandler_Returns204AndSetsThenClears(t *testing.T) {
+	svc, partySvc, db := newServices(t)
+	e := newAdminGamesEcho(t, svc)
+	smiths := createPartyT(t, partySvc, "The Smiths")
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	path := "/api/admin/games/sessions/" + session.ID + "/party"
+
+	rec := postAdminJSON(t, e, path, `{"party_id":"`+smiths.ID+`"}`)
+	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Empty(t, rec.Body.Bytes(), "a 204 carries no body")
+	row := sessionRow(t, db, session.ID)
+	require.NotNil(t, row.PartyID)
+	assert.Equal(t, smiths.ID, *row.PartyID)
+
+	rec = postAdminJSON(t, e, path, `{"party_id":null}`)
+	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Nil(t, sessionRow(t, db, session.ID).PartyID)
+
+	// An omitted key, which is what the frontend sends to clear, also clears.
+	require.Equal(t, http.StatusNoContent, postAdminJSON(t, e, path, `{"party_id":"`+smiths.ID+`"}`).Code)
+	rec = postAdminJSON(t, e, path, `{}`)
+	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Nil(t, sessionRow(t, db, session.ID).PartyID)
+}
+
+func TestAdminSetSessionPartyHandler_RejectsBadPartyIDs(t *testing.T) {
+	svc, _, db := newServices(t)
+	e := newAdminGamesEcho(t, svc)
+	session := postSessionT(t, svc, "Alice", models.GameDifficultyEasy, 30000)
+	path := "/api/admin/games/sessions/" + session.ID + "/party"
+
+	for name, body := range map[string]string{
+		"malformed": `{"party_id":"not-a-uuid"}`,
+		"unknown":   `{"party_id":"00000000-0000-0000-0000-000000000000"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := postAdminJSON(t, e, path, body)
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+			assert.Equal(t, string(errcodes.CodeValidationError), errCodeOf(t, rec))
+		})
+	}
+	assert.Nil(t, sessionRow(t, db, session.ID).PartyID)
+}
+
+func TestAdminSetSessionPartyHandler_UnknownAndMalformedSessionIDsAre404(t *testing.T) {
+	svc, _, _ := newServices(t)
+	e := newAdminGamesEcho(t, svc)
+
+	for _, id := range []string{"00000000-0000-0000-0000-000000000000", "not-a-uuid"} {
+		rec := postAdminJSON(t, e, "/api/admin/games/sessions/"+id+"/party", `{"party_id":null}`)
+		assert.Equal(t, http.StatusNotFound, rec.Code, id)
+		assert.Equal(t, string(errcodes.CodeNotFound), errCodeOf(t, rec), id)
+	}
 }

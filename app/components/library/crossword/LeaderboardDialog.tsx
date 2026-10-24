@@ -29,9 +29,13 @@
 // themselves and can scroll up to who beat them and down to who is chasing.
 // The viewer comes back only on the solver's own recorded-difficulty tab, so
 // no per-tab special-casing is needed here.
+//
+// When the parent passes onRename (the solve has been posted), the solver's
+// own row carries a pencil that swaps the name for an inline field. Only the
+// name is editable; the time stays as the server recorded it.
 
-import { LifeBuoy, Trophy } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Check, LifeBuoy, Pencil, Trophy, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -43,12 +47,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { useLeaderboard } from "@/hooks/queries/games";
 import { formatDuration } from "@/libraries/format";
 import { cn } from "@/libraries/utils";
 import type { LeaderboardEntry } from "@/types/generated/games";
 
-import { Difficulty, DIFFICULTY_LABELS, PuzzleDifficulties } from "./puzzle";
+import {
+  Difficulty,
+  DIFFICULTY_LABELS,
+  MAX_DISPLAY_NAME_LENGTH,
+  PuzzleDifficulties,
+} from "./puzzle";
 
 interface LeaderboardDialogProps {
   difficulties: PuzzleDifficulties;
@@ -58,6 +68,12 @@ interface LeaderboardDialogProps {
    */
   defaultDifficulty?: Difficulty;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Rename the solver's posted entry. Present only once the solve is posted;
+   * it resolves after the board refetches and rejects with a guest-facing
+   * Error the row shows inline.
+   */
+  onRename?: (displayName: string) => Promise<void>;
   open: boolean;
   puzzleId: string;
   puzzleTitle: string;
@@ -76,6 +92,7 @@ export default function LeaderboardDialog({
   defaultDifficulty,
   difficulties,
   onOpenChange,
+  onRename,
   open,
   puzzleId,
   puzzleTitle,
@@ -167,7 +184,20 @@ export default function LeaderboardDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent data-testid="crossword-leaderboard-dialog">
+      <DialogContent
+        data-testid="crossword-leaderboard-dialog"
+        onEscapeKeyDown={(e) => {
+          // Escape inside the rename field cancels the edit (the field's own
+          // handler) instead of closing the dialog. Radix catches Escape at the
+          // document before the field sees it, so the dismissal is vetoed here.
+          if (
+            e.target instanceof Element &&
+            e.target.closest("[data-leaderboard-rename]")
+          ) {
+            e.preventDefault();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Leaderboard</DialogTitle>
           <DialogDescription>
@@ -252,14 +282,19 @@ export default function LeaderboardDialog({
                     viewer!.in_items &&
                     viewer!.rank === index + 1;
                   return (
-                    // The index disambiguates entries that share a name and a
-                    // completion timestamp (the backend dedupes neither); the
-                    // list is replaced wholesale on refetch, so an index key
-                    // cannot go stale.
+                    // Other rows are keyed by rank: entries can share a name
+                    // and a completion timestamp (the backend dedupes
+                    // neither), and the list is replaced wholesale on refetch.
+                    // The viewer's row gets a fixed key instead, so it stays
+                    // the same mounted row across a rename (focus can return to
+                    // its pencil) and an in-progress edit follows the viewer if
+                    // a refetch moves their rank, rather than staying on
+                    // whoever now holds the old position.
                     <Row
                       entry={entry}
                       isViewer={isViewer}
-                      key={`${index}:${entry.display_name}`}
+                      key={isViewer ? "viewer" : index}
+                      onRename={isViewer ? onRename : undefined}
                       rank={index + 1}
                       rowRef={isViewer ? viewerRowRef : undefined}
                     />
@@ -284,6 +319,7 @@ export default function LeaderboardDialog({
                       <Row
                         entry={viewer.entry}
                         isViewer
+                        onRename={onRename}
                         rank={viewer.rank}
                         rowRef={viewerRowRef}
                       />
@@ -364,20 +400,73 @@ const PODIUM: Record<
  * (row tint + ring and a blue badge); a top-three viewer is the place color
  * throughout (place row tint + ring, a place-colored badge, the place trophy),
  * with zero blue. rowRef is set on the viewer's row so the dialog can center it
- * on open.
+ * on open. onRename (the viewer's posted row only) adds the pencil that edits
+ * the name in place.
  */
 function Row({
   entry,
   isViewer,
+  onRename,
   rank,
   rowRef,
 }: {
   entry: LeaderboardEntry;
   isViewer: boolean;
+  onRename?: (displayName: string) => Promise<void>;
   rank: number;
   rowRef?: React.Ref<HTMLLIElement>;
 }) {
   const podium = PODIUM[rank];
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Leaving the edit (save or cancel) unmounts the field that held focus, so
+  // hand focus back to the pencil instead of letting it fall to <body>.
+  const pencilRef = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(false);
+  useLayoutEffect(() => {
+    if (wasEditing.current && !editing) {
+      pencilRef.current?.focus();
+    }
+    wasEditing.current = editing;
+  }, [editing]);
+
+  const trimmed = draft.trim();
+  const tooLong = trimmed.length > MAX_DISPLAY_NAME_LENGTH;
+  const valid = trimmed.length > 0 && !tooLong;
+
+  const startEditing = () => {
+    setDraft(entry.display_name);
+    setError(null);
+    setEditing(true);
+  };
+
+  const save = async () => {
+    if (!onRename || !valid || saving) {
+      return;
+    }
+    if (trimmed === entry.display_name) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onRename(trimmed);
+      setEditing(false);
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "We couldn't change your name right now. Please try again.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <li
       className={cn(
@@ -421,33 +510,109 @@ function Row({
           rows have none. aria-label (not just text) keeps it reachable as an
           accessible name, the same hook the tests assert against. */}
       {podium && <span aria-label={podium.label} className="sr-only" />}
-      <span className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="min-w-0 truncate font-medium">
-          {entry.display_name}
+      {editing ? (
+        // The field and its buttons are 24px, the same height as the resting
+        // row's pencil, so the row keeps its height while editing and the rows
+        // below don't shift.
+        <form
+          className="flex min-w-0 flex-1 flex-col gap-1"
+          data-leaderboard-rename
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <span className="flex items-center gap-1">
+            <Input
+              aria-label="Display name"
+              autoFocus
+              // Only the height and padding are trimmed: the base font size
+              // stays 16px on mobile so iOS doesn't zoom in on focus.
+              className="h-6 min-w-0 flex-1 px-2 py-0"
+              disabled={saving}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                // The dialog vetoes its own Escape dismissal for this form (see
+                // onEscapeKeyDown above), so Escape only cancels the edit.
+                if (e.key === "Escape") {
+                  setEditing(false);
+                }
+              }}
+              value={draft}
+            />
+            <button
+              aria-label="Save name"
+              className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-ink hover:bg-rose/20 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!valid || saving}
+              type="submit"
+            >
+              <Check aria-hidden className="size-4" />
+            </button>
+            <button
+              aria-label="Cancel renaming"
+              className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-rose/20 hover:text-ink"
+              disabled={saving}
+              onClick={() => setEditing(false)}
+              type="button"
+            >
+              <X aria-hidden className="size-4" />
+            </button>
+          </span>
+          {(tooLong || error) && (
+            <span className="text-xs font-normal text-destructive" role="alert">
+              {tooLong
+                ? `Please keep your name under ${MAX_DISPLAY_NAME_LENGTH} characters.`
+                : error}
+            </span>
+          )}
+        </form>
+      ) : (
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="min-w-0 truncate font-medium">
+            {entry.display_name}
+          </span>
+          {entry.used_checks && (
+            <span
+              aria-label="Used checks"
+              className="flex shrink-0 items-center text-blue"
+              title="Used checks"
+            >
+              <LifeBuoy aria-hidden className="size-3.5" />
+            </span>
+          )}
+          {isViewer && (
+            <span
+              className={cn(
+                // The "You" pill takes the place color on a top-three viewer (no
+                // blue), or the blue secondary on a non-podium viewer.
+                "shrink-0 rounded-full px-1.5 text-xs font-medium",
+                podium
+                  ? podium.badge
+                  : "bg-secondary text-secondary-foreground",
+              )}
+            >
+              You
+            </span>
+          )}
+          {onRename && (
+            <button
+              aria-label="Change your name"
+              className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-rose/20 hover:text-ink"
+              onClick={startEditing}
+              ref={pencilRef}
+              title="Change your name"
+              type="button"
+            >
+              <Pencil aria-hidden className="size-3.5" />
+            </button>
+          )}
         </span>
-        {entry.used_checks && (
-          <span
-            aria-label="Used checks"
-            className="flex shrink-0 items-center text-blue"
-            title="Used checks"
-          >
-            <LifeBuoy aria-hidden className="size-3.5" />
-          </span>
-        )}
-        {isViewer && (
-          <span
-            className={cn(
-              // The "You" pill takes the place color on a top-three viewer (no
-              // blue), or the blue secondary on a non-podium viewer.
-              "shrink-0 rounded-full px-1.5 text-xs font-medium",
-              podium ? podium.badge : "bg-secondary text-secondary-foreground",
-            )}
-          >
-            You
-          </span>
-        )}
-      </span>
-      <span className="shrink-0 tabular-nums">
+      )}
+      {/* While editing on a narrow screen the time yields its width to the
+          name field; the edit never touches the time, and it returns on save. */}
+      <span
+        className={cn("shrink-0 tabular-nums", editing && "hidden sm:inline")}
+      >
         {formatDuration(entry.elapsed_ms)}
       </span>
     </li>

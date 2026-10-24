@@ -1504,7 +1504,7 @@ describe("Crossword solve sessions", () => {
           }
           if (path === "/games/sessions/sess-1/leaderboard") {
             return Promise.reject(
-              new ApiError(409, "this solve is already posted as another name"),
+              new ApiError(422, "Display name must be at most 50 characters."),
             );
           }
           if (path.startsWith("/games/leaderboard")) {
@@ -1522,7 +1522,7 @@ describe("Crossword solve sessions", () => {
       fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
 
       expect(await screen.findByRole("alert")).toHaveTextContent(
-        /already posted/i,
+        /at most 50 characters/i,
       );
       // The dialog stays open so the guest can adjust and retry.
       expect(
@@ -1541,7 +1541,7 @@ describe("Crossword solve sessions", () => {
           }
           if (path === "/games/sessions/sess-1/leaderboard") {
             return Promise.reject(
-              new ApiError(409, "this solve is already posted as another name"),
+              new ApiError(422, "Display name must be at most 50 characters."),
             );
           }
           if (path.startsWith("/games/leaderboard")) {
@@ -1558,7 +1558,7 @@ describe("Crossword solve sessions", () => {
       fireEvent.change(input, { target: { value: "Rob" } });
       fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
       expect(await screen.findByRole("alert")).toHaveTextContent(
-        /already posted/i,
+        /at most 50 characters/i,
       );
 
       // Close and reopen: the old failure must not greet the guest again.
