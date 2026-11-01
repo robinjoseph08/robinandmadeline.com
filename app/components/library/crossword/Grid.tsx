@@ -62,9 +62,10 @@ export interface GridCellRect {
 
 export interface GridHandle {
   setSelection: (selection: Selection, options?: { focus?: boolean }) => void;
+  /** Swap the whole grid, keeping the current selection if given none. */
   replaceGrid: (
     grid: GridModel,
-    selection: Selection,
+    selection?: Selection,
     options?: { focus?: boolean },
   ) => void;
   enterCharacter: (letter: string) => void;
@@ -402,11 +403,13 @@ const Grid = forwardRef<GridHandle, Props>(
         },
         replaceGrid: (
           nextGrid: GridModel,
-          selection: Selection,
+          selection?: Selection,
           options?: { focus?: boolean },
         ) => {
           setGrid(nextGrid);
-          setSelections([selection]);
+          if (selection) {
+            setSelections([selection]);
+          }
           if (options?.focus !== false) {
             focusAnswerInput(selection);
           }

@@ -131,6 +131,11 @@ export default function Crossword() {
   );
 }
 
+/** Whether saved entries are this puzzle's finished, correct grid. */
+function entriesAreSolved(puzzle: CrosswordPuzzle, entries: string): boolean {
+  return entries === puzzle.solution;
+}
+
 /**
  * One puzzle's solve view. One grid with one set of answers; switching
  * difficulty (tucked behind the "more" menu, so the easy clues aren't a
@@ -186,6 +191,7 @@ function CrosswordGame({
   const [allCluesOpen, setAllCluesOpen] = useState(false);
   const [incorrectOpen, setIncorrectOpen] = useState(false);
   const [completionOpen, setCompletionOpen] = useState(false);
+  const [ownPostPending, setOwnPostPending] = useState(false);
   const [celebrationAcknowledged, setCelebrationAcknowledged] = useState(
     initial.celebrationAcknowledged,
   );
@@ -222,7 +228,37 @@ function CrosswordGame({
       !validateSolution(initial.grid, puzzle.solution),
   );
 
+  // Completion is reported once and celebrated once, across a refresh too.
+  const completionCelebratedRef = useRef(
+    initial.solved && (!puzzle.celebration || initial.celebrationAcknowledged),
+  );
+
+  // A sibling tab finished this solve, so this tab's letters are stale. Show
+  // the solved grid it saved, without replaying an ending the guest just saw.
+  const handleSiblingCompleted = () => {
+    const saved = loadProgress(puzzle.id);
+    if (!saved || !entriesAreSolved(puzzle, saved.entries)) {
+      return;
+    }
+    const savedGrid = restoreCheckStates(
+      gridFromEntries(puzzle, saved.entries),
+      puzzle.solution,
+      saved.checkStates,
+    );
+    completionCelebratedRef.current = true;
+    setCelebrationAcknowledged(saved.celebrationAcknowledged ?? false);
+    setIncorrectOpen(false);
+    if (puzzle.difficulties.includes(saved.difficulty)) {
+      setDifficulty(saved.difficulty);
+    }
+    // Set the page's copy too, so the solved summary arrives with the finished
+    // state rather than a render later, after the Grid reports back.
+    setGrid(savedGrid);
+    gridRef.current?.replaceGrid(savedGrid, undefined, { focus: false });
+  };
+
   const session = useSolveSession({
+    onSiblingCompleted: handleSiblingCompleted,
     puzzleId: puzzle.id,
     availableDifficulties: puzzle.difficulties,
     initiallyStarted: initial.hasProgress,
@@ -250,25 +286,36 @@ function CrosswordGame({
 
   // Save progress only once a solve has started: the saved progress is also
   // what marks a returning guest (it skips the start dialog), so a visitor
-  // who only peeked must not leave a save behind.
+  // who only peeked must not leave a save behind. A tab with stale letters must
+  // not save over a sibling's solved grid either: nothing could restore it.
   useEffect(() => {
     if (!sessionStarted) {
+      return;
+    }
+    const saved = loadProgress(puzzle.id);
+    if (!solved && saved && entriesAreSolved(puzzle, saved.entries)) {
       return;
     }
     saveProgress(puzzle.id, {
       entries: entriesFromGrid(grid),
       difficulty,
       checkStates: checkStatesFromGrid(grid),
-      celebrationAcknowledged,
+      // One-way, or a stale tab would replay the reveal a sibling advanced past.
+      celebrationAcknowledged:
+        celebrationAcknowledged || saved?.celebrationAcknowledged,
     });
-  }, [puzzle.id, grid, difficulty, celebrationAcknowledged, sessionStarted]);
+  }, [
+    puzzle,
+    grid,
+    solved,
+    difficulty,
+    celebrationAcknowledged,
+    sessionStarted,
+  ]);
 
   // Completion: report it once. A puzzle-specific reveal stays pending until
   // the guest explicitly advances, so a refresh during the animation reopens
   // it instead of losing the one-time message.
-  const completionCelebratedRef = useRef(
-    initial.solved && (!puzzle.celebration || initial.celebrationAcknowledged),
-  );
   useEffect(() => {
     if (!solved || !sessionStarted) {
       return;
@@ -412,12 +459,17 @@ function CrosswordGame({
   // the guest's freshly posted row is shown and highlighted.
   const queryClient = useQueryClient();
   const handlePost = async (displayName: string) => {
-    await session.postToLeaderboard(displayName);
-    await queryClient.invalidateQueries({
-      queryKey: [QueryKey.GameLeaderboard, puzzle.id],
-    });
-    setCompletionOpen(false);
-    setLeaderboardOpen(true);
+    setOwnPostPending(true);
+    try {
+      await session.postToLeaderboard(displayName);
+      await queryClient.invalidateQueries({
+        queryKey: [QueryKey.GameLeaderboard, puzzle.id],
+      });
+      setCompletionOpen(false);
+      setLeaderboardOpen(true);
+    } finally {
+      setOwnPostPending(false);
+    }
   };
 
   // A rename from the leaderboard's own row: refetch every tab so the new
@@ -755,6 +807,35 @@ function CrosswordGame({
     onLocalReset();
   };
 
+  // What a finisher can do next, whether or not this tab has the solved grid.
+  const finishedActions = (
+    <>
+      {/* An unreportable solve has no honest time to post (see
+          initial.unreportable). */}
+      {!session.posted && session.postable && !initial.unreportable && (
+        <Button
+          onClick={() => setCompletionOpen(true)}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          Post your time
+        </Button>
+      )}
+      {/* The leaderboard is for finishers: it never shows mid-solve,
+          only here and in the completion dialog. */}
+      <Button
+        onClick={() => setLeaderboardOpen(true)}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        <Trophy />
+        Leaderboard
+      </Button>
+    </>
+  );
+
   return (
     <section
       className={cn(
@@ -1013,29 +1094,7 @@ function CrosswordGame({
             ! See you on the dance floor.
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
-            {/* An unreportable solve has no honest time to post (see
-                initial.unreportable). */}
-            {!session.posted && session.postable && !initial.unreportable && (
-              <Button
-                onClick={() => setCompletionOpen(true)}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                Post your time
-              </Button>
-            )}
-            {/* The leaderboard is for finishers: it never shows mid-solve,
-                only here and in the completion dialog. */}
-            <Button
-              onClick={() => setLeaderboardOpen(true)}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              <Trophy />
-              Leaderboard
-            </Button>
+            {finishedActions}
             {puzzle.celebration && (
               <Button
                 onClick={handleCelebrationReplay}
@@ -1048,6 +1107,14 @@ function CrosswordGame({
               </Button>
             )}
           </div>
+        </div>
+      ) : session.started && session.finished ? (
+        <div className={cn("mt-4", isLargePuzzle && "px-4 md:px-0")}>
+          <p className="text-muted-foreground" role="status">
+            You already finished this puzzle and your time is locked in, but the
+            solved grid isn&apos;t saved in this browser.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">{finishedActions}</div>
         </div>
       ) : gridFull ? (
         <p className="mt-4 px-4 text-muted-foreground md:px-0" role="status">
@@ -1210,6 +1277,7 @@ function CrosswordGame({
         onSettingsChange={updateSettings}
         open={settingsOpen}
         settings={effectiveSettings}
+        solveInProgress={session.started && !session.finished}
       />
       {puzzle.celebration && (
         <ProposalCelebrationDialog
@@ -1229,7 +1297,10 @@ function CrosswordGame({
           isSignedIn={isSignedIn}
           onOpenChange={setCompletionOpen}
           onPost={handlePost}
-          open={completionOpen}
+          // A posted solve has nothing to ask for: a name typed here would go
+          // nowhere. This tab's own post stays open through its handoff to the
+          // leaderboard.
+          open={completionOpen && (!session.posted || ownPostPending)}
           prefillName={prefillName}
           puzzleTitle={puzzle.title}
         />

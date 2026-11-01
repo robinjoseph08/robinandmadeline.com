@@ -657,6 +657,359 @@ describe("Crossword solve sessions", () => {
       ).not.toBeInTheDocument();
     });
 
+    it("shows a sibling tab's solved grid and time when it completes the solve", async () => {
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
+      renderCrossword();
+      await resumeGame();
+
+      seedProgress(SOLUTION);
+      seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
+      await advance(30_000);
+
+      expect(screen.getByText(/You solved it in 1:30/)).toBeInTheDocument();
+      expect(square(0, 1)).toHaveTextContent("K");
+      expect(
+        screen.getByRole("button", { name: "Post your time" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /leaderboard/i }),
+      ).toBeInTheDocument();
+      // The guest already saw the end of this solve in the other tab.
+      await advance(1_000);
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not offer posting when the sibling tab already posted", async () => {
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
+      renderCrossword();
+      await resumeGame();
+
+      seedProgress(SOLUTION);
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        postedName: "Robin",
+      });
+      await advance(30_000);
+
+      expect(screen.getByText(/You solved it in 1:30/)).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Post your time" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("never saves a stale tab's letters over a solved grid", async () => {
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
+      renderCrossword();
+      await resumeGame();
+
+      // A sibling tab solves the puzzle, and this tab types before it notices.
+      seedProgress(SOLUTION);
+      fireEvent.keyDown(gridEl(), { key: "Z" });
+      await flushAsync();
+
+      expect(
+        (JSON.parse(localStorage.getItem(PROGRESS_KEY)!) as { entries: string })
+          .entries,
+      ).toBe(SOLUTION);
+    });
+
+    it("explains a finished session whose letters aren't here, and still lets it post", async () => {
+      seedProgress(ALL_BUT_LAST);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
+      renderCrossword();
+      await resumeGame();
+      expect(screen.queryByText(/already finished/i)).not.toBeInTheDocument();
+
+      seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
+      await advance(30_000);
+
+      expect(screen.getByRole("status")).toHaveTextContent(/already finished/i);
+      expect(
+        screen.getByRole("button", { name: "Post your time" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /leaderboard/i }),
+      ).toBeInTheDocument();
+
+      // Solving locally is still this tab's real ending, not a replay.
+      fireEvent.mouseDown(square(4, 3));
+      fireEvent.keyDown(gridEl(), { key: "E" });
+      await advance(1_000);
+      expect(
+        screen.getByTestId("crossword-completion-dialog"),
+      ).toBeInTheDocument();
+    });
+
+    it("closes the completion dialog when a sibling posts while it's open", async () => {
+      seedProgress(SOLUTION);
+      seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
+      renderCrossword();
+      await flushAsync();
+      fireEvent.click(screen.getByRole("button", { name: "Post your time" }));
+      await flushAsync();
+      expect(
+        screen.getByTestId("crossword-completion-dialog"),
+      ).toBeInTheDocument();
+
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        postedName: "Robin",
+      });
+      fireEvent(window, new StorageEvent("storage", { key: SESSION_KEY }));
+      await flushDialogClose();
+
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("doesn't ask to post again when solving a solve that's already posted", async () => {
+      seedProgress(ALL_BUT_LAST);
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        postedName: "Robin",
+      });
+      useFakeClock();
+      renderCrossword();
+      await flushAsync();
+
+      fireEvent.mouseDown(square(4, 3));
+      fireEvent.keyDown(gridEl(), { key: "E" });
+      await advance(1_000);
+
+      expect(screen.getByRole("status")).toHaveTextContent(/You solved it/);
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("drops the pause dialog when pausing finds a 409", async () => {
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
+      renderCrossword();
+      await resumeGame();
+
+      seedProgress(SOLUTION);
+      apiRequest.mockImplementation(
+        (_path: string, options?: { method?: string }) =>
+          options?.method === "PATCH"
+            ? Promise.reject(new ApiError(409, "completed"))
+            : Promise.resolve({ items: [], total: 0 }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Pause timer" }));
+      await flushDialogClose();
+
+      expect(
+        screen.queryByTestId("crossword-pause-dialog"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("crossword-play-area")).not.toHaveAttribute(
+        "inert",
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(/You solved it/);
+    });
+
+    it("keeps that explanation out from behind the start dialog", async () => {
+      seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
+      renderCrossword();
+      await flushAsync();
+      expect(screen.queryByText(/already finished/i)).not.toBeInTheDocument();
+
+      await startGame();
+      expect(screen.getByRole("status")).toHaveTextContent(/already finished/i);
+      expect(
+        screen.getByRole("button", { name: /leaderboard/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("loads the solved grid when a 409 reveals the solve finished elsewhere", async () => {
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
+      renderCrossword();
+      await resumeGame();
+
+      // The sibling's completion landed on the server, but its record doesn't
+      // say so yet. Its letters are already saved.
+      seedProgress(SOLUTION);
+      apiRequest.mockImplementation(
+        (_path: string, options?: { method?: string }) =>
+          options?.method === "PATCH"
+            ? Promise.reject(new ApiError(409, "completed"))
+            : Promise.resolve({ items: [], total: 0 }),
+      );
+      await advance(30_000);
+
+      expect(square(0, 1)).toHaveTextContent("K");
+      expect(screen.getByRole("status")).toHaveTextContent(/You solved it/);
+      expect(
+        screen.getByRole("button", { name: /leaderboard/i }),
+      ).toBeInTheDocument();
+      // The record can't vouch for the row's difficulty on this path.
+      expect(
+        screen.queryByRole("button", { name: "Post your time" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("closes the incorrect-grid dialog when a sibling's solved grid arrives", async () => {
+      seedProgress(ALL_BUT_LAST);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
+      renderCrossword();
+      await resumeGame();
+
+      seedProgress(SOLUTION);
+      seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
+      fireEvent.mouseDown(square(4, 3));
+      fireEvent.keyDown(gridEl(), { key: "X" });
+      await flushDialogClose();
+
+      expect(
+        screen.queryByTestId("crossword-incorrect-dialog"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent(/You solved it/);
+      expect(screen.getByTestId("crossword-play-area")).not.toHaveAttribute(
+        "inert",
+      );
+    });
+
+    it("takes a sibling's displayed clue difficulty along with its grid", async () => {
+      seedProgress(EMPTY_ENTRIES, "easy");
+      seedSession({ id: "sess-1", elapsedMs: 60_000, difficulty: "easy" });
+      useFakeClock();
+      renderCrossword();
+      await resumeGame();
+
+      seedProgress(SOLUTION, "hard");
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        difficulty: "hard",
+      });
+      await advance(30_000);
+
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /with the hard clues/,
+      );
+      const saved = JSON.parse(localStorage.getItem(PROGRESS_KEY)!) as {
+        difficulty: string;
+      };
+      expect(saved.difficulty).toBe("hard");
+    });
+
+    it("never takes back a sibling's acknowledgement of the one-time reveal", async () => {
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
+      renderCrossword();
+      await resumeGame();
+
+      seedProgress(SOLUTION);
+      seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
+      await advance(30_000);
+
+      // The sibling advances past the reveal, then this tab saves.
+      localStorage.setItem(
+        PROGRESS_KEY,
+        JSON.stringify({
+          entries: SOLUTION,
+          difficulty: "easy",
+          celebrationAcknowledged: true,
+        }),
+      );
+      vi.useRealTimers();
+      await switchDifficulty("Hard");
+
+      const saved = JSON.parse(localStorage.getItem(PROGRESS_KEY)!) as {
+        celebrationAcknowledged: boolean;
+      };
+      expect(saved.celebrationAcknowledged).toBe(true);
+    });
+
+    it("catches up on the proposal puzzle without replaying its reveal", async () => {
+      const progressKey = `crossword:${proposal.id}:progress`;
+      const sessionKey = `crossword:${proposal.id}:session`;
+      const seed = (entries: string) =>
+        localStorage.setItem(
+          progressKey,
+          JSON.stringify({
+            entries,
+            difficulty: "easy",
+            celebrationAcknowledged: true,
+          }),
+        );
+      seed(proposal.solution.replace(/[A-Z]/g, "?"));
+      localStorage.setItem(
+        sessionKey,
+        JSON.stringify({
+          id: "sess-1",
+          elapsedMs: 60_000,
+          completed: false,
+          difficulty: "easy",
+        }),
+      );
+      useFakeClock();
+      renderCrossword("proposal");
+      await resumeGame();
+
+      seed(proposal.solution);
+      localStorage.setItem(
+        sessionKey,
+        JSON.stringify({
+          id: "sess-1",
+          elapsedMs: 90_000,
+          completed: true,
+          difficulty: "easy",
+        }),
+      );
+      await advance(30_000);
+
+      expect(screen.getByRole("status")).toHaveTextContent(/You solved it/);
+      expect(
+        screen.getByRole("button", { name: "Replay animation" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("crossword-proposal-celebration"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("only mentions the timer in settings while the clock could run", async () => {
+      const mention = /timer pauses while this is open/i;
+      const openSettings = async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+        await flushAsync();
+        return screen.getByTestId("crossword-settings-dialog");
+      };
+
+      seedProgress(SOLUTION);
+      seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
+      const solved = renderCrossword();
+      await flushAsync();
+      expect(await openSettings()).not.toHaveTextContent(mention);
+      solved.unmount();
+
+      localStorage.clear();
+      renderCrossword();
+      await startGame();
+      expect(await openSettings()).toHaveTextContent(mention);
+    });
+
     it("offers no leaderboard before the puzzle is solved", async () => {
       renderCrossword();
       await startGame();
