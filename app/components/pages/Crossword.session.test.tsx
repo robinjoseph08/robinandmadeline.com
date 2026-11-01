@@ -596,6 +596,67 @@ describe("Crossword solve sessions", () => {
       expect(timer()).toHaveTextContent("0:05");
     });
 
+    it("obscures the play area while the settings dialog stops the clock", async () => {
+      renderCrossword();
+      await startGame();
+
+      // The settings dialog stops the clock, so the puzzle must not stay
+      // readable behind it; otherwise the guest could study clues off the
+      // clock and type the answers after closing it.
+      const playArea = screen.getByTestId("crossword-play-area");
+      expect(playArea).not.toHaveAttribute("inert");
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+      await flushAsync();
+      expect(playArea).toHaveAttribute("inert");
+      expect(playArea).toHaveClass("blur-md");
+
+      // Closing it restores the play area. Crossword.test.tsx pins the focus
+      // return with real key events.
+      const dialog = screen.getByTestId("crossword-settings-dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await flushAsync();
+      expect(playArea).not.toHaveAttribute("inert");
+      expect(playArea).not.toHaveClass("blur-md");
+      fireEvent.keyDown(gridEl(), { key: "K" });
+      expect(square(0, 1)).toHaveTextContent("K");
+    });
+
+    it("leaves a finished puzzle readable behind the settings dialog", async () => {
+      seedProgress(SOLUTION);
+      seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
+      renderCrossword();
+      await flushAsync();
+
+      // The clock is done, so settings hide nothing a guest could gain from.
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+      await flushAsync();
+      const playArea = screen.getByTestId("crossword-play-area");
+      expect(
+        screen.getByTestId("crossword-settings-dialog"),
+      ).toBeInTheDocument();
+      expect(playArea).not.toHaveAttribute("inert");
+      expect(playArea).not.toHaveClass("blur-md");
+    });
+
+    it("removes the pause button once a sibling tab completes the solve", async () => {
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
+      renderCrossword();
+      await resumeGame();
+      expect(
+        screen.getByRole("button", { name: "Pause timer" }),
+      ).toBeInTheDocument();
+
+      seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
+      await advance(30_000);
+
+      expect(timer()).toHaveTextContent("1:30");
+      expect(
+        screen.queryByRole("button", { name: "Pause timer" }),
+      ).not.toBeInTheDocument();
+    });
+
     it("offers no leaderboard before the puzzle is solved", async () => {
       renderCrossword();
       await startGame();

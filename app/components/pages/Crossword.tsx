@@ -692,8 +692,14 @@ function CrosswordGame({
   // The solving area is obscured before the guest starts and while they are
   // explicitly paused, NYT-style, so the clock can't be beaten by reading
   // the puzzle off the clock. The whole play area (grid AND clues) blurs,
-  // and `inert` keeps keyboard focus out too.
-  const obscured = !session.started || session.paused || incorrectOpen;
+  // and `inert` keeps keyboard focus out too. The settings dialog stops the
+  // clock mid-solve as well, so it obscures the puzzle then; after the solve
+  // the clock is no longer running and settings leave the grid readable.
+  const obscured =
+    !session.started ||
+    session.paused ||
+    incorrectOpen ||
+    (settingsOpen && !session.finished);
   const mobileDockVisible =
     customKeyboard && session.started && !solved && !obscured && !settingsOpen;
 
@@ -828,21 +834,25 @@ function CrosswordGame({
               )}
             {session.started && !solved && (
               <>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      aria-label="Pause timer"
-                      className="size-11 md:size-9"
-                      onClick={session.pause}
-                      size="icon"
-                      type="button"
-                      variant="ghost"
-                    >
-                      <Pause />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Pause</TooltipContent>
-                </Tooltip>
+                {/* A session can finish while this tab's grid is unsolved (a
+                    sibling tab completed it), with no clock left to pause. */}
+                {!session.finished && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        aria-label="Pause timer"
+                        className="size-11 md:size-9"
+                        onClick={session.pause}
+                        size="icon"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <Pause />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Pause</TooltipContent>
+                  </Tooltip>
+                )}
                 <Popover onOpenChange={setCheckMenuOpen} open={checkMenuOpen}>
                   <Tooltip>
                     <TooltipTrigger asChild>

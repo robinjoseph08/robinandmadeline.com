@@ -31,6 +31,7 @@ import {
   loadSessionRecord,
   MAX_CHECK_COUNT,
   saveSessionRecord,
+  type SolveSessionRecord,
 } from "./session";
 
 /** How often elapsed time is reported while actively solving. */
@@ -134,8 +135,9 @@ export function useSolveSession({
   initiallyFinished = false,
   initiallyPaused = false,
 }: UseSolveSessionOptions): SolveSession {
-  // The persisted record is read once; from then on the refs are the source
-  // of truth and persist() writes them back at every meaningful moment.
+  // The persisted record seeds the refs once. From then on the refs are this
+  // tab's own view, and persist() merges them with whatever a sibling tab of
+  // the same session stored since (see siblingRecord).
   const [{ record: initialRecord, difficultyNeedsReconciliation }] = useState(
     () => {
       const record = loadSessionRecord(puzzleId);
@@ -184,6 +186,12 @@ export function useSolveSession({
   const wordChecksRef = useRef(initialRecord?.wordChecks ?? 0);
   const gridChecksRef = useRef(initialRecord?.gridChecks ?? 0);
   const discardedRef = useRef(false);
+  // A session the server reported gone, so no tab's stale record can rejoin it.
+  const deadSessionIdRef = useRef<string | null>(null);
+  // Read by the sibling merge through a ref, so a caller's array identity can
+  // never re-run the clock or the flush-on-unmount effects that depend on it.
+  // A puzzle's offered difficulties do not change during a mount.
+  const availableDifficultiesRef = useRef(availableDifficulties);
   // Reports are serialized so a heartbeat can never overtake a completion.
   const queueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -240,9 +248,150 @@ export function useSolveSession({
     return baseElapsedRef.current + runningFor;
   }, []);
 
+  /**
+   * Join the session a sibling tab stored, when this tab has none yet. Without
+   * this, a tab that loaded before the session existed would mint a second one
+   * and overwrite the record with it.
+   */
+  const joinStoredSession = useCallback(() => {
+    if (sessionIdRef.current) {
+      return;
+    }
+    const stored = loadSessionRecord(puzzleId);
+    if (stored?.id && stored.id !== deadSessionIdRef.current) {
+      setSessionId(stored.id);
+    }
+  }, [puzzleId, setSessionId]);
+
+  /**
+   * The stored record when it belongs to this same session, else null, joining
+   * the stored session first if this tab has none. Each tab reads the record
+   * only at mount, so a sibling tab of the session may have solved, checked,
+   * completed, or posted since.
+   */
+  const siblingRecord = useCallback(() => {
+    joinStoredSession();
+    const stored = loadSessionRecord(puzzleId);
+    return stored && stored.id === sessionIdRef.current ? stored : null;
+  }, [puzzleId, joinStoredSession]);
+
+  /** Raise the running total, for time this tab did not count itself. */
+  const raiseElapsedTo = useCallback(
+    (elapsed: number) => {
+      const behind = elapsed - totalElapsed();
+      if (behind > 0) {
+        baseElapsedRef.current += behind;
+        setElapsedMs(totalElapsed());
+      }
+    },
+    [totalElapsed],
+  );
+
+  /** A stored difficulty that is safe to trust on this puzzle, if any. */
+  const trustedDifficulty = useCallback((record: SolveSessionRecord) => {
+    return record.difficulty &&
+      !record.difficultyUnverified &&
+      availableDifficultiesRef.current.includes(record.difficulty)
+      ? record.difficulty
+      : undefined;
+  }, []);
+
+  /**
+   * Take on what a sibling tab stored for an in-progress solve. All of it only
+   * moves forward, and the sibling's own report may never have reached the
+   * server, so this tab has to carry it: otherwise a stale tab would regress
+   * the stored record, or freeze the solve without the sibling's time.
+   */
+  const absorbSibling = useCallback(
+    (sibling: SolveSessionRecord) => {
+      raiseElapsedTo(sibling.elapsedMs);
+      squareChecksRef.current = Math.max(
+        squareChecksRef.current,
+        sibling.squareChecks,
+      );
+      wordChecksRef.current = Math.max(
+        wordChecksRef.current,
+        sibling.wordChecks,
+      );
+      gridChecksRef.current = Math.max(
+        gridChecksRef.current,
+        sibling.gridChecks,
+      );
+      const difficulty = trustedDifficulty(sibling);
+      if (difficulty) {
+        easiestRef.current = easierDifficulty(easiestRef.current, difficulty);
+        setRecordedDifficulty(easiestRef.current);
+      }
+    },
+    [raiseElapsedTo, trustedDifficulty],
+  );
+
+  /**
+   * Become a view of a solve a sibling tab already completed. The server froze
+   * that row, so this tab takes the final values and never reports again.
+   */
+  const adoptCompletedSibling = useCallback(
+    (sibling: SolveSessionRecord) => {
+      completedRef.current = true;
+      finishedRef.current = true;
+      setFinished(true);
+      setPaused(false);
+      baseElapsedRef.current = sibling.elapsedMs;
+      runningSinceRef.current = null;
+      setElapsedMs(sibling.elapsedMs);
+      squareChecksRef.current = sibling.squareChecks;
+      wordChecksRef.current = sibling.wordChecks;
+      gridChecksRef.current = sibling.gridChecks;
+      const difficulty = trustedDifficulty(sibling);
+      if (difficulty) {
+        easiestRef.current = difficulty;
+        setRecordedDifficulty(difficulty);
+      }
+      setPostingCompatibility(difficulty !== undefined);
+      postedNameRef.current = sibling.postedName;
+      setPosted(Boolean(sibling.postedName));
+    },
+    [setPostingCompatibility, trustedDifficulty],
+  );
+
+  /**
+   * Catch up with sibling tabs just before this tab's clock can start. The
+   * server keeps max() rather than a sum, so a tab counting up from its stale
+   * total would drop the other tab's time, and a solve the sibling completed
+   * has no more time to count at all.
+   */
+  const syncWithSibling = useCallback(() => {
+    if (
+      discardedRef.current ||
+      !startedRef.current ||
+      finishedRef.current ||
+      completedRef.current
+    ) {
+      return;
+    }
+    const sibling = siblingRecord();
+    if (sibling?.completed) {
+      adoptCompletedSibling(sibling);
+    } else if (sibling) {
+      absorbSibling(sibling);
+    }
+  }, [siblingRecord, adoptCompletedSibling, absorbSibling]);
+
   const persist = useCallback(() => {
     if (discardedRef.current) {
       return;
+    }
+    const sibling = siblingRecord();
+    if (!completedRef.current) {
+      // A completed record is final, whichever session it holds: only a tab
+      // that knows its solve is complete may write over it, since no server
+      // response would ever come to correct a stale tab's time or difficulty.
+      if (loadSessionRecord(puzzleId)?.completed) {
+        return;
+      }
+      if (sibling) {
+        absorbSibling(sibling);
+      }
     }
     saveSessionRecord(puzzleId, {
       id: sessionIdRef.current,
@@ -255,7 +404,7 @@ export function useSolveSession({
       gridChecks: gridChecksRef.current,
       postedName: postedNameRef.current,
     });
-  }, [puzzleId, totalElapsed]);
+  }, [puzzleId, totalElapsed, siblingRecord, absorbSibling]);
 
   // The server records the easiest difficulty seen across DELIVERED reports;
   // locally we also fold in switches that may not have reached it yet, so
@@ -281,6 +430,7 @@ export function useSolveSession({
     if (discardedRef.current) {
       return null;
     }
+    joinStoredSession();
     if (sessionIdRef.current) {
       return sessionIdRef.current;
     }
@@ -292,6 +442,17 @@ export function useSolveSession({
       if (discardedRef.current) {
         return null;
       }
+      // A sibling may have stored its session while this request was in flight.
+      joinStoredSession();
+      if (sessionIdRef.current) {
+        return sessionIdRef.current;
+      }
+      // Take what a sibling stored without an id before the id changes, since
+      // the stored record stops matching this session after that.
+      const offlineSibling = siblingRecord();
+      if (offlineSibling) {
+        absorbSibling(offlineSibling);
+      }
       setSessionId(session.id);
       applyServerDifficulty(session.difficulty);
       persist();
@@ -301,7 +462,15 @@ export function useSolveSession({
       // on; the next report tries again.
       return null;
     }
-  }, [puzzleId, applyServerDifficulty, persist, setSessionId]);
+  }, [
+    puzzleId,
+    applyServerDifficulty,
+    persist,
+    setSessionId,
+    joinStoredSession,
+    siblingRecord,
+    absorbSibling,
+  ]);
 
   /**
    * Report progress to the backend. Never throws: every failure mode either
@@ -312,6 +481,17 @@ export function useSolveSession({
     async (options: { completed?: boolean } = {}): Promise<void> => {
       if (discardedRef.current || !startedRef.current || completedRef.current) {
         return;
+      }
+      // A sibling tab may have moved on since this tab loaded: a completed
+      // solve would only answer this report with a 409, and anything else it
+      // stored has to go out here in case its own report never landed.
+      const sibling = siblingRecord();
+      if (sibling?.completed) {
+        adoptCompletedSibling(sibling);
+        return;
+      }
+      if (sibling) {
+        absorbSibling(sibling);
       }
       const id = await ensureSessionId();
       if (!id || discardedRef.current) {
@@ -336,7 +516,12 @@ export function useSolveSession({
         grid_checks: gridChecksRef.current,
       };
       const applyResponse = (session: GameSessionResponse) => {
-        if (discardedRef.current) {
+        // A tab that adopted a sibling's completion while this report was in
+        // flight is a read-only view now; the response is older than that.
+        if (
+          discardedRef.current ||
+          (completedRef.current && !payload.completed)
+        ) {
           return;
         }
         lastSentElapsedRef.current = elapsed;
@@ -355,18 +540,29 @@ export function useSolveSession({
         applyServerDifficulty(session.difficulty);
         if (payload.completed) {
           completedRef.current = true;
+          // The row keeps the largest time it was ever sent, which is the
+          // final time even when it is more than this tab counted.
+          raiseElapsedTo(session.elapsed_ms);
         }
         persist();
       };
       try {
         applyResponse(await updateGameSession(id, payload));
       } catch (err) {
-        if (discardedRef.current) {
+        if (discardedRef.current || completedRef.current) {
           return;
         }
         if (err instanceof ApiError && err.status === 404) {
           // The stored session is gone server-side; recreate and retry once.
+          // Keep what a sibling stored under it, and the next write either
+          // joins a session a sibling already recreated or drops the dead id.
+          const lostSibling = siblingRecord();
+          if (lostSibling) {
+            absorbSibling(lostSibling);
+          }
+          deadSessionIdRef.current = sessionIdRef.current;
           setSessionId(null);
+          persist();
           const newId = await ensureSessionId();
           if (newId && !discardedRef.current) {
             try {
@@ -376,6 +572,13 @@ export function useSolveSession({
             }
           }
         } else if (err instanceof ApiError && err.status === 409) {
+          // A sibling tab completed while this report was in flight, so the
+          // stored record knows exactly what the server froze.
+          const completedSibling = siblingRecord();
+          if (completedSibling?.completed) {
+            adoptCompletedSibling(completedSibling);
+            return;
+          }
           // The server already considers this session final: stop reporting.
           // Without the final row in the response, a stale local record cannot
           // prove which difficulty the immutable server row actually holds.
@@ -396,6 +599,10 @@ export function useSolveSession({
       persist,
       setPostingCompatibility,
       setSessionId,
+      siblingRecord,
+      absorbSibling,
+      adoptCompletedSibling,
+      raiseElapsedTo,
     ],
   );
 
@@ -412,7 +619,8 @@ export function useSolveSession({
 
   // The clock: while running, runningSince anchors the live stretch and a
   // once-a-second tick refreshes the readout; when it stops (pause, hide,
-  // finish, unmount), the stretch folds into the base and persists.
+  // finish, unmount), the stretch folds into the base and persists. Whatever
+  // lets the clock start calls syncWithSibling first.
   useEffect(() => {
     if (!running) {
       return;
@@ -451,6 +659,12 @@ export function useSolveSession({
     ) {
       return;
     }
+    // A sibling completed this solve: the server would reject this flush.
+    const sibling = siblingRecord();
+    if (sibling?.completed) {
+      adoptCompletedSibling(sibling);
+      return;
+    }
     // Persist only live solves. A finished solve already persisted its final
     // state when the clock stopped, and writing a record for a visit that
     // never started, or for an unreportable restore (initiallyFinished),
@@ -474,7 +688,7 @@ export function useSolveSession({
       word_checks: wordChecksRef.current,
       grid_checks: gridChecksRef.current,
     });
-  }, [persist, totalElapsed]);
+  }, [persist, totalElapsed, siblingRecord, adoptCompletedSibling]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -482,6 +696,7 @@ export function useSolveSession({
         flushOnHide();
         setHidden(true);
       } else {
+        syncWithSibling();
         setHidden(false);
       }
     };
@@ -498,7 +713,7 @@ export function useSolveSession({
       // folded the live stretch into the base when this runs.
       flushOnHide();
     };
-  }, [flushOnHide]);
+  }, [flushOnHide, syncWithSibling]);
 
   const start = useCallback(
     (difficulty: Difficulty) => {
@@ -506,13 +721,19 @@ export function useSolveSession({
         return;
       }
       startedRef.current = true;
+      setStarted(true);
+      // A completed solve whose saved letters were lost still shows the start
+      // dialog; its recorded difficulty stays locked.
+      if (completedRef.current) {
+        return;
+      }
       easiestRef.current = difficulty;
       setRecordedDifficulty(difficulty);
-      setStarted(true);
+      syncWithSibling();
       persist();
       enqueue(ensureSessionId);
     },
-    [persist, enqueue, ensureSessionId],
+    [persist, enqueue, ensureSessionId, syncWithSibling],
   );
 
   const pause = useCallback(() => {
@@ -524,8 +745,9 @@ export function useSolveSession({
   }, [enqueue, sendReport]);
 
   const resume = useCallback(() => {
+    syncWithSibling();
     setPaused(false);
-  }, []);
+  }, [syncWithSibling]);
 
   const setUiPaused = useCallback(
     (value: boolean) => {
@@ -533,8 +755,11 @@ export function useSolveSession({
       if (value && startedRef.current && !finishedRef.current) {
         enqueue(() => sendReport());
       }
+      if (!value) {
+        syncWithSibling();
+      }
     },
-    [enqueue, sendReport],
+    [enqueue, sendReport, syncWithSibling],
   );
 
   const reportDifficulty = useCallback(
@@ -565,25 +790,13 @@ export function useSolveSession({
 
       // Pick up a sibling tab's latest totals before incrementing. The backend
       // still applies max() to every report, so stale tabs cannot lower them.
-      const stored = loadSessionRecord(puzzleId);
-      if (stored?.id === sessionIdRef.current) {
-        if (stored.completed) {
-          finishedRef.current = true;
-          setFinished(true);
-          return;
-        }
-        squareChecksRef.current = Math.max(
-          squareChecksRef.current,
-          stored.squareChecks,
-        );
-        wordChecksRef.current = Math.max(
-          wordChecksRef.current,
-          stored.wordChecks,
-        );
-        gridChecksRef.current = Math.max(
-          gridChecksRef.current,
-          stored.gridChecks,
-        );
+      const sibling = siblingRecord();
+      if (sibling?.completed) {
+        adoptCompletedSibling(sibling);
+        return;
+      }
+      if (sibling) {
+        absorbSibling(sibling);
       }
 
       if (scope === "square") {
@@ -605,7 +818,14 @@ export function useSolveSession({
       persist();
       enqueue(() => sendReport());
     },
-    [enqueue, persist, puzzleId, sendReport],
+    [
+      enqueue,
+      persist,
+      sendReport,
+      siblingRecord,
+      absorbSibling,
+      adoptCompletedSibling,
+    ],
   );
 
   const complete = useCallback(() => {
@@ -628,15 +848,20 @@ export function useSolveSession({
       // in-progress legacy session may reconcile successfully in that queue,
       // while a stale server response may discover an unavailable difficulty.
       await queueRef.current;
-      if (!postableRef.current) {
-        throw new Error(
-          "We can't verify this saved solve's clue difficulty, so it can't be posted.",
-        );
-      }
+      const assertPostable = () => {
+        if (!postableRef.current) {
+          throw new Error(
+            "We can't verify this saved solve's clue difficulty, so it can't be posted.",
+          );
+        }
+      };
+      assertPostable();
       // Make sure the completion actually landed: posting is the one moment
-      // the guest cares about a report.
+      // the guest cares about a report. That report can itself reveal the solve
+      // can't be posted, so check again.
       if (!completedRef.current) {
         await sendReport({ completed: true });
+        assertPostable();
       }
       const id = sessionIdRef.current;
       if (!completedRef.current || !id) {
