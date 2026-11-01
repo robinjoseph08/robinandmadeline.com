@@ -598,6 +598,7 @@ export function useSolveSession({
           completedRef.current = true;
           finishedRef.current = true;
           setFinished(true);
+          setPaused(false);
           setPostingCompatibility(false);
           persist();
           // Most likely a sibling's completion that isn't in its record yet,

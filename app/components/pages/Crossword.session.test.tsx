@@ -751,6 +751,79 @@ describe("Crossword solve sessions", () => {
       ).toBeInTheDocument();
     });
 
+    it("closes the completion dialog when a sibling posts while it's open", async () => {
+      seedProgress(SOLUTION);
+      seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
+      renderCrossword();
+      await flushAsync();
+      fireEvent.click(screen.getByRole("button", { name: "Post your time" }));
+      await flushAsync();
+      expect(
+        screen.getByTestId("crossword-completion-dialog"),
+      ).toBeInTheDocument();
+
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        postedName: "Robin",
+      });
+      fireEvent(window, new StorageEvent("storage", { key: SESSION_KEY }));
+      await flushDialogClose();
+
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("doesn't ask to post again when solving a solve that's already posted", async () => {
+      seedProgress(ALL_BUT_LAST);
+      seedSession({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        postedName: "Robin",
+      });
+      useFakeClock();
+      renderCrossword();
+      await flushAsync();
+
+      fireEvent.mouseDown(square(4, 3));
+      fireEvent.keyDown(gridEl(), { key: "E" });
+      await advance(1_000);
+
+      expect(screen.getByRole("status")).toHaveTextContent(/You solved it/);
+      expect(
+        screen.queryByTestId("crossword-completion-dialog"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("drops the pause dialog when pausing finds a 409", async () => {
+      seedProgress(EMPTY_ENTRIES);
+      seedSession({ id: "sess-1", elapsedMs: 60_000 });
+      useFakeClock();
+      renderCrossword();
+      await resumeGame();
+
+      seedProgress(SOLUTION);
+      apiRequest.mockImplementation(
+        (_path: string, options?: { method?: string }) =>
+          options?.method === "PATCH"
+            ? Promise.reject(new ApiError(409, "completed"))
+            : Promise.resolve({ items: [], total: 0 }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Pause timer" }));
+      await flushDialogClose();
+
+      expect(
+        screen.queryByTestId("crossword-pause-dialog"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("crossword-play-area")).not.toHaveAttribute(
+        "inert",
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(/You solved it/);
+    });
+
     it("keeps that explanation out from behind the start dialog", async () => {
       seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
       renderCrossword();

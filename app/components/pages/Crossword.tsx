@@ -191,6 +191,7 @@ function CrosswordGame({
   const [allCluesOpen, setAllCluesOpen] = useState(false);
   const [incorrectOpen, setIncorrectOpen] = useState(false);
   const [completionOpen, setCompletionOpen] = useState(false);
+  const [ownPostPending, setOwnPostPending] = useState(false);
   const [celebrationAcknowledged, setCelebrationAcknowledged] = useState(
     initial.celebrationAcknowledged,
   );
@@ -458,12 +459,17 @@ function CrosswordGame({
   // the guest's freshly posted row is shown and highlighted.
   const queryClient = useQueryClient();
   const handlePost = async (displayName: string) => {
-    await session.postToLeaderboard(displayName);
-    await queryClient.invalidateQueries({
-      queryKey: [QueryKey.GameLeaderboard, puzzle.id],
-    });
-    setCompletionOpen(false);
-    setLeaderboardOpen(true);
+    setOwnPostPending(true);
+    try {
+      await session.postToLeaderboard(displayName);
+      await queryClient.invalidateQueries({
+        queryKey: [QueryKey.GameLeaderboard, puzzle.id],
+      });
+      setCompletionOpen(false);
+      setLeaderboardOpen(true);
+    } finally {
+      setOwnPostPending(false);
+    }
   };
 
   // A rename from the leaderboard's own row: refetch every tab so the new
@@ -1291,7 +1297,10 @@ function CrosswordGame({
           isSignedIn={isSignedIn}
           onOpenChange={setCompletionOpen}
           onPost={handlePost}
-          open={completionOpen}
+          // A posted solve has nothing to ask for: a name typed here would go
+          // nowhere. This tab's own post stays open through its handoff to the
+          // leaderboard.
+          open={completionOpen && (!session.posted || ownPostPending)}
           prefillName={prefillName}
           puzzleTitle={puzzle.title}
         />
