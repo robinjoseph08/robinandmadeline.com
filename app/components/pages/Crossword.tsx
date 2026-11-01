@@ -131,6 +131,11 @@ export default function Crossword() {
   );
 }
 
+/** Whether saved entries are this puzzle's finished, correct grid. */
+function entriesAreSolved(puzzle: CrosswordPuzzle, entries: string): boolean {
+  return entries === puzzle.solution;
+}
+
 /**
  * One puzzle's solve view. One grid with one set of answers; switching
  * difficulty (tucked behind the "more" menu, so the easy clues aren't a
@@ -143,12 +148,6 @@ export default function Crossword() {
  * refresh or come back later and resume; the solve clock and its best-effort
  * backend session live in useSolveSession.
  */
-/** Whether saved entries are this puzzle's finished, correct grid. */
-function entriesAreSolved(puzzle: CrosswordPuzzle, entries: string): boolean {
-  const grid = gridFromEntries(puzzle, entries);
-  return isPuzzleComplete(grid) && validateSolution(grid, puzzle.solution);
-}
-
 function CrosswordGame({
   onLocalReset,
   puzzle,
@@ -245,26 +244,16 @@ function CrosswordGame({
       puzzle.solution,
       saved.checkStates,
     );
-    const firstSquare = savedGrid.squares.find(
-      (square) => square.type !== "block",
-    );
-    const selection =
-      selections[0] ??
-      (firstSquare && {
-        row: firstSquare.row,
-        col: firstSquare.col,
-        direction: savedGrid.wordMap[
-          `${firstSquare.row}:${firstSquare.col}:across`
-        ]
-          ? ("across" as const)
-          : ("down" as const),
-      });
-    if (!selection) {
-      return;
-    }
     completionCelebratedRef.current = true;
     setCelebrationAcknowledged(saved.celebrationAcknowledged ?? false);
-    gridRef.current?.replaceGrid(savedGrid, selection, { focus: false });
+    setIncorrectOpen(false);
+    if (puzzle.difficulties.includes(saved.difficulty)) {
+      setDifficulty(saved.difficulty);
+    }
+    // Set the page's copy too, so the solved summary arrives with the finished
+    // state rather than a render later, after the Grid reports back.
+    setGrid(savedGrid);
+    gridRef.current?.replaceGrid(savedGrid, undefined, { focus: false });
   };
 
   const session = useSolveSession({
@@ -302,17 +291,17 @@ function CrosswordGame({
     if (!sessionStarted) {
       return;
     }
-    if (!solved) {
-      const saved = loadProgress(puzzle.id);
-      if (saved && entriesAreSolved(puzzle, saved.entries)) {
-        return;
-      }
+    const saved = loadProgress(puzzle.id);
+    if (!solved && saved && entriesAreSolved(puzzle, saved.entries)) {
+      return;
     }
     saveProgress(puzzle.id, {
       entries: entriesFromGrid(grid),
       difficulty,
       checkStates: checkStatesFromGrid(grid),
-      celebrationAcknowledged,
+      // One-way, or a stale tab would replay the reveal a sibling advanced past.
+      celebrationAcknowledged:
+        celebrationAcknowledged || saved?.celebrationAcknowledged,
     });
   }, [
     puzzle,
@@ -812,6 +801,35 @@ function CrosswordGame({
     onLocalReset();
   };
 
+  // What a finisher can do next, whether or not this tab has the solved grid.
+  const finishedActions = (
+    <>
+      {/* An unreportable solve has no honest time to post (see
+          initial.unreportable). */}
+      {!session.posted && session.postable && !initial.unreportable && (
+        <Button
+          onClick={() => setCompletionOpen(true)}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          Post your time
+        </Button>
+      )}
+      {/* The leaderboard is for finishers: it never shows mid-solve,
+          only here and in the completion dialog. */}
+      <Button
+        onClick={() => setLeaderboardOpen(true)}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        <Trophy />
+        Leaderboard
+      </Button>
+    </>
+  );
+
   return (
     <section
       className={cn(
@@ -1070,29 +1088,7 @@ function CrosswordGame({
             ! See you on the dance floor.
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
-            {/* An unreportable solve has no honest time to post (see
-                initial.unreportable). */}
-            {!session.posted && session.postable && !initial.unreportable && (
-              <Button
-                onClick={() => setCompletionOpen(true)}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                Post your time
-              </Button>
-            )}
-            {/* The leaderboard is for finishers: it never shows mid-solve,
-                only here and in the completion dialog. */}
-            <Button
-              onClick={() => setLeaderboardOpen(true)}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              <Trophy />
-              Leaderboard
-            </Button>
+            {finishedActions}
             {puzzle.celebration && (
               <Button
                 onClick={handleCelebrationReplay}
@@ -1106,10 +1102,14 @@ function CrosswordGame({
             )}
           </div>
         </div>
-      ) : session.finished ? (
-        <p className="mt-4 px-4 text-muted-foreground md:px-0" role="status">
-          This solve was already finished elsewhere, so its time is locked in.
-        </p>
+      ) : session.started && session.finished ? (
+        <div className={cn("mt-4", isLargePuzzle && "px-4 md:px-0")}>
+          <p className="text-muted-foreground" role="status">
+            You already finished this puzzle and your time is locked in, but the
+            solved grid isn&apos;t saved in this browser.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">{finishedActions}</div>
+        </div>
       ) : gridFull ? (
         <p className="mt-4 px-4 text-muted-foreground md:px-0" role="status">
           The grid is full, but something is not quite right yet. Keep tweaking!
@@ -1266,12 +1266,12 @@ function CrosswordGame({
         open={incorrectOpen}
       />
       <SettingsDialog
-        clockActive={session.started && !session.finished}
         onCloseAutoFocus={handleSettingsCloseAutoFocus}
         onOpenChange={handleSettingsOpenChange}
         onSettingsChange={updateSettings}
         open={settingsOpen}
         settings={effectiveSettings}
+        solveInProgress={session.started && !session.finished}
       />
       {puzzle.celebration && (
         <ProposalCelebrationDialog

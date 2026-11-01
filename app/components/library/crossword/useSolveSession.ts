@@ -347,6 +347,7 @@ export function useSolveSession({
       finishedRef.current = true;
       setFinished(true);
       setPaused(false);
+      setUiPausedState(false);
       baseElapsedRef.current = sibling.elapsedMs;
       runningSinceRef.current = null;
       setElapsedMs(sibling.elapsedMs);
@@ -599,6 +600,9 @@ export function useSolveSession({
           setFinished(true);
           setPostingCompatibility(false);
           persist();
+          // Most likely a sibling's completion that isn't in its record yet,
+          // in which case its solved letters are already saved.
+          onSiblingCompletedRef.current?.();
         }
         // Anything else (network trouble, an elapsed race) is dropped
         // silently; telemetry must never break solving.
@@ -702,6 +706,16 @@ export function useSolveSession({
     });
   }, [persist, totalElapsed, siblingRecord, adoptCompletedSibling]);
 
+  // A finished tab keeps offering to post until it learns a sibling already
+  // did, and re-posting is how an entry gets renamed.
+  const syncSiblingPost = useCallback(() => {
+    const postedName = siblingRecord()?.postedName;
+    if (completedRef.current && postedName) {
+      postedNameRef.current = postedName;
+      setPosted(true);
+    }
+  }, [siblingRecord]);
+
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === "hidden") {
@@ -715,9 +729,11 @@ export function useSolveSession({
     const handlePageHide = () => flushOnHide();
     document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("storage", syncSiblingPost);
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("storage", syncSiblingPost);
       // In-SPA navigation away unmounts the page with no pagehide or
       // visibilitychange, so flush here too; otherwise the server stays up
       // to a heartbeat interval stale forever if the guest never returns.
@@ -725,7 +741,7 @@ export function useSolveSession({
       // folded the live stretch into the base when this runs.
       flushOnHide();
     };
-  }, [flushOnHide, syncWithSibling]);
+  }, [flushOnHide, syncWithSibling, syncSiblingPost]);
 
   const start = useCallback(
     (difficulty: Difficulty) => {
@@ -881,12 +897,18 @@ export function useSolveSession({
           "We couldn't reach the server to record your solve. Please try again.",
         );
       }
+      // A sibling may have posted since this tab last looked. This is a first
+      // post, so it must not rename that entry; the guest can do that openly.
+      syncSiblingPost();
+      if (postedNameRef.current) {
+        return;
+      }
       await postLeaderboardEntry(id, { display_name: displayName });
       postedNameRef.current = displayName;
       setPosted(true);
       persist();
     },
-    [sendReport, persist],
+    [sendReport, persist, syncSiblingPost],
   );
 
   const renameLeaderboardEntry = useCallback(

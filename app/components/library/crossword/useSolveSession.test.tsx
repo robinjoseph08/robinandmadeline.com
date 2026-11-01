@@ -1105,6 +1105,40 @@ describe("useSolveSession locking", () => {
       expect(tab.result.current.elapsedMs).toBe(80_000);
     });
 
+    it("notices right away when a sibling posts after this tab finished", async () => {
+      const tab = renderTab();
+      seedRecord({ elapsedMs: 40_000, completed: true });
+      act(() => tab.result.current.resume());
+      await flush();
+      expect(tab.result.current.posted).toBe(false);
+
+      seedRecord({ elapsedMs: 40_000, completed: true, postedName: "Robin" });
+      act(() => {
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key: "crossword:wedding-mini-v1:session",
+          }),
+        );
+      });
+
+      expect(tab.result.current.posted).toBe(true);
+    });
+
+    it("never renames a sibling's entry by posting over it", async () => {
+      const tab = renderTab();
+      seedRecord({ elapsedMs: 40_000, completed: true });
+      act(() => tab.result.current.resume());
+      await flush();
+
+      seedRecord({ elapsedMs: 40_000, completed: true, postedName: "Robin" });
+      apiRequest.mockClear();
+      await act(() => tab.result.current.postToLeaderboard("Someone Else"));
+
+      expect(apiRequest).not.toHaveBeenCalled();
+      expect(tab.result.current.posted).toBe(true);
+      expect(storedRecord()).toMatchObject({ postedName: "Robin" });
+    });
+
     it("merges nothing from a stored record of a different session", async () => {
       const tab = renderTab();
       seedRecord({ id: "sess-other", elapsedMs: 500_000, gridChecks: 9 });

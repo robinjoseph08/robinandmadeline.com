@@ -19,7 +19,7 @@ import { CrosswordSettings } from "./settings";
 
 interface SettingsDialogProps {
   /** Whether a solve is in progress, so opening this dialog stops its clock. */
-  clockActive: boolean;
+  solveInProgress: boolean;
   /**
    * Radix close-focus hook: the page uses it to put focus back in the grid
    * so the guest can keep typing right after closing the dialog.
@@ -32,12 +32,12 @@ interface SettingsDialogProps {
 }
 
 export default function SettingsDialog({
-  clockActive,
   onCloseAutoFocus,
   onOpenChange,
   onSettingsChange,
   open,
   settings,
+  solveInProgress,
 }: SettingsDialogProps) {
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -49,7 +49,7 @@ export default function SettingsDialog({
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
             Changes apply right away and stick for every puzzle.
-            {clockActive && " The timer pauses while this is open."}
+            {solveInProgress && " The timer pauses while this is open."}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-5 py-4">
