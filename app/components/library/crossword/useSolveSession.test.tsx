@@ -11,6 +11,7 @@ import { ApiError } from "@/libraries/api";
 import type { UpdateGameSessionPayload } from "@/types/generated/games";
 import type { GameSession } from "@/types/generated/models";
 
+import type { PuzzleDifficulties } from "./puzzle";
 import { useSolveSession } from "./useSolveSession";
 
 const apiRequest = vi.fn();
@@ -487,6 +488,811 @@ describe("useSolveSession locking", () => {
 
     expect(result.current.recordedDifficulty).toBe("medium");
     expect(reportedDifficulties()).not.toContain("easy");
+  });
+
+  describe("sibling tabs on one session", () => {
+    // Two tabs of the same puzzle share one stored session record. Each tab
+    // reads it at mount, so without reconciliation a tab opened early resumes
+    // from its stale total and the server's max() records the longer tab's
+    // time instead of the sum.
+    function renderTab(
+      availableDifficulties: PuzzleDifficulties = ["easy", "medium", "hard"],
+    ) {
+      return renderHook(() =>
+        useSolveSession({
+          puzzleId: "wedding-mini-v1",
+          availableDifficulties,
+          initiallyStarted: true,
+          initialDifficulty: "easy",
+          initiallyPaused: true,
+        }),
+      );
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      localStorage.setItem(
+        "crossword:wedding-mini-v1:session",
+        JSON.stringify({
+          id: "sess-1",
+          elapsedMs: 0,
+          completed: false,
+          difficulty: "easy",
+        }),
+      );
+    });
+
+    it("resumes from the time another tab accumulated since this one loaded", async () => {
+      const tabA = renderTab();
+      const tabB = renderTab();
+
+      act(() => tabA.result.current.resume());
+      act(() => vi.advanceTimersByTime(100_000));
+      act(() => tabA.result.current.pause());
+      await flush();
+
+      act(() => tabB.result.current.resume());
+      expect(tabB.result.current.elapsedMs).toBe(100_000);
+      act(() => vi.advanceTimersByTime(30_000));
+      act(() => tabB.result.current.complete());
+      await flush();
+
+      const all = reportedElapsed();
+      expect(all[all.length - 1]).toBe(130_000);
+    });
+
+    it("never lowers the stored total when a stale tab persists", async () => {
+      const tabA = renderTab();
+      const tabB = renderTab();
+
+      act(() => tabA.result.current.resume());
+      act(() => vi.advanceTimersByTime(100_000));
+      act(() => tabA.result.current.pause());
+      await flush();
+
+      // The stale tab closing persists its own (lower) total on the way out.
+      tabB.unmount();
+
+      const stored = JSON.parse(
+        localStorage.getItem("crossword:wedding-mini-v1:session") ?? "{}",
+      ) as { elapsedMs: number };
+      expect(stored.elapsedMs).toBe(100_000);
+    });
+
+    it("never un-finishes or un-posts a solve another tab completed", async () => {
+      const tabA = renderTab();
+      const tabB = renderTab();
+
+      act(() => tabA.result.current.resume());
+      act(() => vi.advanceTimersByTime(60_000));
+      act(() => tabA.result.current.recordCheck("word"));
+      act(() => tabA.result.current.complete());
+      await flush();
+      apiRequest.mockResolvedValue(
+        makeSession({ display_name: "Robin", on_leaderboard: true }),
+      );
+      await act(() => tabA.result.current.postToLeaderboard("Robin"));
+
+      // The stale tab still believes the solve is in progress, unposted, and
+      // unchecked; closing it must not write that back over tab A's record.
+      tabB.unmount();
+
+      const stored = JSON.parse(
+        localStorage.getItem("crossword:wedding-mini-v1:session") ?? "{}",
+      ) as Record<string, unknown>;
+      expect(stored).toMatchObject({
+        id: "sess-1",
+        elapsedMs: 60_000,
+        completed: true,
+        postedName: "Robin",
+        wordChecks: 1,
+      });
+    });
+
+    /** Answer PATCHes the way pkg/games UpdateSession does for a frozen row. */
+    function mockStrictServer() {
+      let frozenElapsed: number | null = null;
+      const conflicts: number[] = [];
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string; body?: unknown }) => {
+          if (options?.method === "PATCH") {
+            const body = options.body as UpdateGameSessionPayload;
+            const elapsed = body.elapsed_ms ?? 0;
+            if (
+              frozenElapsed !== null &&
+              (!body.completed || elapsed > frozenElapsed)
+            ) {
+              conflicts.push(elapsed);
+              return Promise.reject(new ApiError(409, "completed"));
+            }
+            if (body.completed && frozenElapsed === null) {
+              frozenElapsed = elapsed;
+            }
+            return Promise.resolve(
+              makeSession({ difficulty: body.difficulty ?? "easy" }),
+            );
+          }
+          if (path.includes("leaderboard")) {
+            return Promise.resolve(makeSession({ display_name: "Robin" }));
+          }
+          return Promise.reject(new Error(`unexpected ${path}`));
+        },
+      );
+      return conflicts;
+    }
+
+    function storedRecord() {
+      return JSON.parse(
+        localStorage.getItem("crossword:wedding-mini-v1:session") ?? "{}",
+      ) as Record<string, unknown>;
+    }
+
+    it("takes a sibling's final time when finishing after it completed", async () => {
+      const conflicts = mockStrictServer();
+      const tabA = renderTab();
+      const tabB = renderTab();
+
+      act(() => tabA.result.current.resume());
+      act(() => tabB.result.current.resume());
+      act(() => vi.advanceTimersByTime(10_000));
+      act(() => tabA.result.current.complete());
+      await flush();
+
+      // Tab B is still running and finishes on its own a moment later. The
+      // server froze the row, so reporting would only earn a 409.
+      act(() => vi.advanceTimersByTime(2_000));
+      act(() => tabB.result.current.complete());
+      await flush();
+
+      expect(conflicts).toEqual([]);
+      expect(tabB.result.current.elapsedMs).toBe(10_000);
+      expect(tabB.result.current.postable).toBe(true);
+      expect(storedRecord()).toMatchObject({
+        elapsedMs: 10_000,
+        completed: true,
+      });
+      expect(storedRecord().difficultyUnverified).toBeUndefined();
+
+      await act(() => tabB.result.current.postToLeaderboard("Robin"));
+      expect(tabB.result.current.posted).toBe(true);
+    });
+
+    it("does not start the clock on a solve a sibling already completed", async () => {
+      const conflicts = mockStrictServer();
+      const tabA = renderTab();
+      const tabB = renderTab();
+
+      act(() => tabA.result.current.resume());
+      act(() => vi.advanceTimersByTime(60_000));
+      act(() => tabA.result.current.complete());
+      await flush();
+
+      act(() => tabB.result.current.resume());
+      await flush();
+      expect(tabB.result.current.finished).toBe(true);
+      expect(tabB.result.current.running).toBe(false);
+      expect(tabB.result.current.elapsedMs).toBe(60_000);
+
+      act(() => vi.advanceTimersByTime(90_000));
+      await flush();
+      expect(conflicts).toEqual([]);
+      expect(storedRecord()).toMatchObject({ elapsedMs: 60_000 });
+    });
+
+    it("stops a running tab at its heartbeat once a sibling completed", async () => {
+      const conflicts = mockStrictServer();
+      const tabA = renderTab();
+      const tabB = renderTab();
+
+      act(() => tabA.result.current.resume());
+      act(() => tabB.result.current.resume());
+      act(() => vi.advanceTimersByTime(10_000));
+      act(() => tabA.result.current.complete());
+      await flush();
+
+      act(() => vi.advanceTimersByTime(30_000));
+      await flush();
+      expect(conflicts).toEqual([]);
+      expect(tabB.result.current.finished).toBe(true);
+      expect(tabB.result.current.postable).toBe(true);
+      expect(storedRecord()).toMatchObject({ elapsedMs: 10_000 });
+
+      // Closing it afterward leaves the final time alone too.
+      tabB.unmount();
+      expect(storedRecord()).toMatchObject({ elapsedMs: 10_000 });
+    });
+
+    it("keeps a completed solve's difficulty when a stale tab closes", async () => {
+      localStorage.setItem(
+        "crossword:wedding-mini-v1:session",
+        JSON.stringify({
+          id: "sess-1",
+          elapsedMs: 0,
+          completed: false,
+          difficulty: "hard",
+        }),
+      );
+      const tabA = renderTab();
+      const tabB = renderTab();
+
+      act(() => tabA.result.current.resume());
+      act(() => tabA.result.current.reportDifficulty("easy"));
+      act(() => tabA.result.current.complete());
+      await flush();
+      tabB.unmount();
+
+      expect(storedRecord()).toMatchObject({
+        completed: true,
+        difficulty: "easy",
+      });
+      expect(renderTab().result.current.recordedDifficulty).toBe("easy");
+    });
+
+    it("carries a sibling's easier difficulty when the server never heard it", async () => {
+      localStorage.setItem(
+        "crossword:wedding-mini-v1:session",
+        JSON.stringify({
+          id: "sess-1",
+          elapsedMs: 0,
+          completed: false,
+          difficulty: "hard",
+        }),
+      );
+      const tabA = renderTab();
+      const tabB = renderTab();
+
+      // Tab A's easy switch never reaches the server.
+      apiRequest.mockRejectedValueOnce(new Error("offline"));
+      act(() => tabA.result.current.reportDifficulty("easy"));
+      await flush();
+      tabA.unmount();
+      mockApi();
+
+      act(() => tabB.result.current.resume());
+      act(() => tabB.result.current.pause());
+      await flush();
+
+      const difficulties = reportedDifficulties();
+      expect(difficulties[difficulties.length - 1]).toBe("easy");
+      expect(tabB.result.current.recordedDifficulty).toBe("easy");
+      expect(storedRecord()).toMatchObject({ difficulty: "easy" });
+    });
+
+    it("keeps every check count a sibling stored", async () => {
+      const tabA = renderTab();
+      const tabB = renderTab();
+
+      act(() => tabA.result.current.recordCheck("square"));
+      act(() => tabA.result.current.recordCheck("word"));
+      act(() => tabA.result.current.recordCheck("grid"));
+      await flush();
+      tabB.unmount();
+
+      expect(storedRecord()).toMatchObject({
+        squareChecks: 1,
+        wordChecks: 1,
+        gridChecks: 1,
+      });
+    });
+
+    function seedRecord(record: Record<string, unknown>) {
+      localStorage.setItem(
+        "crossword:wedding-mini-v1:session",
+        JSON.stringify({
+          id: "sess-1",
+          elapsedMs: 0,
+          completed: false,
+          difficulty: "easy",
+          ...record,
+        }),
+      );
+    }
+
+    it("carries a sibling's time and checks into a completion report", async () => {
+      const tabA = renderTab();
+      const tabB = renderTab();
+      act(() => tabB.result.current.resume());
+
+      // Everything tab A reports is lost, so only the stored record has it.
+      act(() => tabA.result.current.resume());
+      apiRequest.mockRejectedValue(new Error("offline"));
+      act(() => vi.advanceTimersByTime(29_000));
+      act(() => tabA.result.current.recordCheck("grid"));
+      act(() => tabA.result.current.pause());
+      await flush();
+      tabA.unmount();
+
+      apiRequest.mockReset();
+      mockApi();
+      act(() => tabB.result.current.complete());
+      await flush();
+
+      const patches = apiRequest.mock.calls.filter(
+        ([, options]) => options?.method === "PATCH",
+      );
+      expect(patches[patches.length - 1][1].body).toMatchObject({
+        elapsed_ms: 29_000,
+        grid_checks: 1,
+        completed: true,
+      });
+    });
+
+    it("shows the server's final time when it is ahead of this tab", async () => {
+      apiRequest.mockImplementation(
+        (_path: string, options?: { body?: unknown }) =>
+          Promise.resolve(
+            makeSession({
+              elapsed_ms: 100_000,
+              difficulty:
+                (options?.body as UpdateGameSessionPayload | undefined)
+                  ?.difficulty ?? "easy",
+            }),
+          ),
+      );
+      const tab = renderTab();
+      act(() => tab.result.current.resume());
+      act(() => vi.advanceTimersByTime(60_000));
+      act(() => tab.result.current.complete());
+      await flush();
+
+      expect(tab.result.current.elapsedMs).toBe(100_000);
+      expect(storedRecord()).toMatchObject({ elapsedMs: 100_000 });
+    });
+
+    it("does not let a sibling's late difficulty move a completed solve", async () => {
+      seedRecord({ difficulty: "hard" });
+      const tab = renderTab();
+      // The sibling's easy switch lands while the completion is in flight, so
+      // the row froze at hard without ever hearing about it.
+      apiRequest.mockImplementation(() => {
+        seedRecord({ difficulty: "easy" });
+        return Promise.resolve(makeSession({ difficulty: "hard" }));
+      });
+      act(() => tab.result.current.resume());
+      act(() => tab.result.current.complete());
+      await flush();
+
+      expect(tab.result.current.recordedDifficulty).toBe("hard");
+      expect(storedRecord()).toMatchObject({
+        completed: true,
+        difficulty: "hard",
+      });
+    });
+
+    it("stays postable adopting a verified solve while reconciling a legacy record", async () => {
+      seedRecord({ difficulty: "easy" });
+      const tabA = renderTab(["medium", "hard"]);
+      const tabB = renderTab(["medium", "hard"]);
+      expect(tabB.result.current.postable).toBe(false);
+
+      act(() => tabA.result.current.resume());
+      act(() => tabA.result.current.complete());
+      await flush();
+      expect(tabA.result.current.postable).toBe(true);
+
+      act(() => tabB.result.current.resume());
+      await flush();
+      expect(tabB.result.current.finished).toBe(true);
+      expect(tabB.result.current.postable).toBe(true);
+      expect(tabB.result.current.recordedDifficulty).toBe("medium");
+      expect(storedRecord().difficultyUnverified).toBeUndefined();
+    });
+
+    it("never reports a stored difficulty the puzzle no longer offers", async () => {
+      seedRecord({ difficulty: "easy" });
+      const tab = renderTab(["medium", "hard"]);
+
+      act(() => tab.result.current.resume());
+      act(() => tab.result.current.pause());
+      await flush();
+      act(() => tab.result.current.resume());
+      act(() => tab.result.current.pause());
+      await flush();
+
+      expect(reportedDifficulties().length).toBeGreaterThan(1);
+      expect(reportedDifficulties()).not.toContain("easy");
+      expect(tab.result.current.recordedDifficulty).toBe("medium");
+    });
+
+    it("ignores a sibling's unverified difficulty", async () => {
+      seedRecord({ difficulty: "hard" });
+      const tab = renderTab();
+      seedRecord({ difficulty: "easy", difficultyUnverified: true });
+
+      act(() => tab.result.current.resume());
+      act(() => tab.result.current.pause());
+      await flush();
+
+      expect(reportedDifficulties()).not.toContain("easy");
+    });
+
+    it("adopts a sibling's final state, posted name included", async () => {
+      const tab = renderTab();
+      seedRecord({
+        elapsedMs: 75_000,
+        completed: true,
+        difficulty: "medium",
+        postedName: "Robin",
+        gridChecks: 2,
+      });
+
+      act(() => tab.result.current.resume());
+      await flush();
+
+      expect(tab.result.current.posted).toBe(true);
+      expect(tab.result.current.recordedDifficulty).toBe("medium");
+      apiRequest.mockResolvedValue(makeSession());
+      await act(() => tab.result.current.renameLeaderboardEntry("Robin J"));
+      expect(storedRecord()).toMatchObject({
+        postedName: "Robin J",
+        elapsedMs: 75_000,
+        gridChecks: 2,
+      });
+    });
+
+    it("refuses to post when the report reveals an unverified solve", async () => {
+      const tab = renderTab();
+      seedRecord({ completed: true, difficultyUnverified: true });
+      apiRequest.mockClear();
+
+      await act(async () => {
+        await expect(
+          tab.result.current.postToLeaderboard("Robin"),
+        ).rejects.toThrow(/can't be posted/);
+      });
+      expect(apiRequest).not.toHaveBeenCalled();
+    });
+
+    it("adopts a sibling's completion when a report loses the race to it", async () => {
+      const tab = renderTab();
+      apiRequest.mockImplementation(() => {
+        seedRecord({ elapsedMs: 40_000, completed: true });
+        return Promise.reject(new ApiError(409, "completed"));
+      });
+
+      act(() => tab.result.current.reportDifficulty("easy"));
+      await flush();
+
+      expect(tab.result.current.finished).toBe(true);
+      expect(tab.result.current.postable).toBe(true);
+      expect(tab.result.current.elapsedMs).toBe(40_000);
+      expect(storedRecord().difficultyUnverified).toBeUndefined();
+    });
+
+    it("drops out of the pause state when a pause finds the solve completed", async () => {
+      const tab = renderTab();
+      act(() => tab.result.current.resume());
+      seedRecord({ elapsedMs: 40_000, completed: true });
+
+      act(() => tab.result.current.pause());
+      await flush();
+
+      expect(tab.result.current.finished).toBe(true);
+      expect(tab.result.current.paused).toBe(false);
+    });
+
+    it("sends no flush for a solve a sibling completed when hiding", async () => {
+      const conflicts = mockStrictServer();
+      const tabA = renderTab();
+      const tabB = renderTab();
+      act(() => tabA.result.current.complete());
+      await flush();
+      apiRequest.mockClear();
+
+      act(() => {
+        window.dispatchEvent(new Event("pagehide"));
+      });
+      await flush();
+
+      expect(conflicts).toEqual([]);
+      expect(apiRequest).not.toHaveBeenCalled();
+      expect(tabB.result.current.finished).toBe(true);
+    });
+
+    it("joins a session stored after this tab loaded instead of minting one", async () => {
+      localStorage.clear();
+      const idle = renderHook(() =>
+        useSolveSession({
+          puzzleId: "wedding-mini-v1",
+          availableDifficulties: ["easy", "medium", "hard"],
+          initiallyStarted: false,
+          initialDifficulty: "easy",
+        }),
+      );
+      seedRecord({
+        elapsedMs: 90_000,
+        completed: true,
+        postedName: "Robin",
+      });
+
+      act(() => idle.result.current.start("hard"));
+      await flush();
+
+      expect(apiRequest).not.toHaveBeenCalled();
+      expect(idle.result.current.finished).toBe(true);
+      expect(storedRecord()).toMatchObject({
+        id: "sess-1",
+        elapsedMs: 90_000,
+        completed: true,
+        postedName: "Robin",
+      });
+    });
+
+    it("shares one session between tabs that loaded before it existed", async () => {
+      seedRecord({ id: null });
+      const tabA = renderTab();
+      const tabB = renderTab();
+
+      act(() => tabB.result.current.resume());
+      act(() => vi.advanceTimersByTime(20_000));
+      act(() => tabB.result.current.pause());
+      await flush();
+      expect(tabB.result.current.sessionId).toBe("sess-1");
+
+      act(() => tabA.result.current.resume());
+      await flush();
+      expect(tabA.result.current.sessionId).toBe("sess-1");
+      expect(tabA.result.current.elapsedMs).toBe(20_000);
+      act(() => tabA.result.current.pause());
+      await flush();
+
+      const creates = apiRequest.mock.calls.filter(
+        ([path, options]) =>
+          path === "/games/sessions" && options?.method === "POST",
+      );
+      expect(creates).toHaveLength(1);
+    });
+
+    it("keeps what an offline sibling stored when this tab gets the first id", async () => {
+      seedRecord({ id: null });
+      const tab = renderTab();
+      seedRecord({ id: null, elapsedMs: 100_000, gridChecks: 3 });
+      apiRequest.mockClear();
+
+      act(() => tab.result.current.reportDifficulty("easy"));
+      await flush();
+
+      expect(storedRecord()).toMatchObject({
+        id: "sess-1",
+        elapsedMs: 100_000,
+        gridChecks: 3,
+      });
+    });
+
+    it("recreates a session the server lost rather than rejoining its dead id", async () => {
+      const tab = renderTab();
+      let created = 0;
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string }) => {
+          if (options?.method === "POST") {
+            created += 1;
+            return Promise.resolve(makeSession({ id: "sess-2" }));
+          }
+          return path.endsWith("sess-1")
+            ? Promise.reject(new ApiError(404, "gone"))
+            : Promise.resolve(makeSession({ id: "sess-2" }));
+        },
+      );
+
+      act(() => tab.result.current.reportDifficulty("easy"));
+      await flush();
+      await flush();
+
+      expect(created).toBe(1);
+      expect(tab.result.current.sessionId).toBe("sess-2");
+      expect(storedRecord()).toMatchObject({ id: "sess-2" });
+    });
+
+    it("catches up when a dialog or tab switch restarts the clock", async () => {
+      const tab = renderTab();
+      act(() => tab.result.current.setUiPaused(true));
+      seedRecord({ elapsedMs: 40_000 });
+      act(() => tab.result.current.setUiPaused(false));
+      expect(tab.result.current.elapsedMs).toBe(40_000);
+
+      const visibility = vi.spyOn(document, "visibilityState", "get");
+      visibility.mockReturnValue("hidden");
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      seedRecord({ elapsedMs: 80_000 });
+      visibility.mockReturnValue("visible");
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      visibility.mockRestore();
+      expect(tab.result.current.elapsedMs).toBe(80_000);
+    });
+
+    it("merges nothing from a stored record of a different session", async () => {
+      const tab = renderTab();
+      seedRecord({ id: "sess-other", elapsedMs: 500_000, gridChecks: 9 });
+
+      act(() => tab.result.current.resume());
+      await flush();
+      expect(tab.result.current.elapsedMs).toBe(0);
+
+      act(() => tab.result.current.pause());
+      await flush();
+      expect(storedRecord()).toMatchObject({
+        id: "sess-1",
+        elapsedMs: 0,
+        gridChecks: 0,
+      });
+    });
+
+    it("leaves a different session's completed record alone", async () => {
+      const tab = renderTab();
+      const other = {
+        id: "sess-other",
+        elapsedMs: 500_000,
+        completed: true,
+        postedName: "Someone",
+      };
+      seedRecord(other);
+
+      act(() => tab.result.current.resume());
+      await flush();
+      expect(tab.result.current.finished).toBe(false);
+
+      tab.unmount();
+      expect(storedRecord()).toMatchObject(other);
+    });
+
+    it("keeps a completed record when a tab with no id closes", async () => {
+      seedRecord({ id: null });
+      const tab = renderTab();
+      const final = {
+        id: "sess-x",
+        elapsedMs: 300_000,
+        completed: true,
+        postedName: "Robin",
+      };
+      seedRecord(final);
+      apiRequest.mockClear();
+
+      act(() => {
+        window.dispatchEvent(new Event("pagehide"));
+      });
+      tab.unmount();
+
+      expect(storedRecord()).toMatchObject(final);
+      expect(apiRequest).not.toHaveBeenCalled();
+    });
+
+    it("joins the stored session on a check instead of minting one", async () => {
+      seedRecord({ id: null });
+      const tab = renderTab();
+      seedRecord({ id: "sess-x", elapsedMs: 30_000 });
+
+      act(() => tab.result.current.recordCheck("word"));
+      await flush();
+
+      expect(tab.result.current.sessionId).toBe("sess-x");
+      expect(apiRequest).not.toHaveBeenCalledWith(
+        "/games/sessions",
+        expect.anything(),
+      );
+    });
+
+    /** A server that lost sess-1, with a hook for what happens meanwhile. */
+    function mockLostSession(hooks: {
+      onLost?: () => void;
+      onCreate?: () => void;
+    }) {
+      const patched: string[] = [];
+      let created = 0;
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string }) => {
+          if (options?.method === "POST") {
+            created += 1;
+            hooks.onCreate?.();
+            return Promise.resolve(makeSession({ id: "sess-2" }));
+          }
+          patched.push(path);
+          if (path.endsWith("sess-1")) {
+            hooks.onLost?.();
+            return Promise.reject(new ApiError(404, "gone"));
+          }
+          return Promise.resolve(makeSession({ id: "sess-2" }));
+        },
+      );
+      return { patched, created: () => created };
+    }
+
+    async function drain() {
+      for (let i = 0; i < 5; i += 1) {
+        await flush();
+      }
+    }
+
+    it("joins a session a sibling already recreated after a 404", async () => {
+      const tab = renderTab();
+      const server = mockLostSession({
+        onLost: () => seedRecord({ id: "sess-2", elapsedMs: 5_000 }),
+      });
+
+      act(() => tab.result.current.reportDifficulty("easy"));
+      await drain();
+
+      expect(server.created()).toBe(0);
+      expect(server.patched[server.patched.length - 1]).toMatch(/sess-2$/);
+      expect(storedRecord()).toMatchObject({ id: "sess-2" });
+    });
+
+    it("keeps a sibling's time and checks through a 404", async () => {
+      const tab = renderTab();
+      mockLostSession({
+        onLost: () => seedRecord({ elapsedMs: 90_000, gridChecks: 5 }),
+      });
+
+      act(() => tab.result.current.reportDifficulty("easy"));
+      await drain();
+
+      expect(storedRecord()).toMatchObject({
+        id: "sess-2",
+        elapsedMs: 90_000,
+        gridChecks: 5,
+      });
+    });
+
+    it("does not rejoin a dead session a stale sibling writes back", async () => {
+      const tab = renderTab();
+      const server = mockLostSession({
+        onCreate: () => seedRecord({ id: "sess-1" }),
+      });
+
+      act(() => tab.result.current.reportDifficulty("easy"));
+      await drain();
+
+      expect(tab.result.current.sessionId).toBe("sess-2");
+      expect(server.patched[server.patched.length - 1]).toMatch(/sess-2$/);
+    });
+
+    it("ignores a response that arrives after adopting a completion", async () => {
+      const tab = renderTab();
+      let respond: (session: GameSession) => void = () => undefined;
+      apiRequest.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            respond = resolve;
+          }),
+      );
+
+      act(() => tab.result.current.reportDifficulty("easy"));
+      await flush();
+      seedRecord({ completed: true, difficultyUnverified: true });
+      act(() => tab.result.current.setUiPaused(false));
+      expect(tab.result.current.postable).toBe(false);
+
+      await act(async () => {
+        respond(makeSession());
+        await Promise.resolve();
+      });
+      await flush();
+
+      expect(tab.result.current.postable).toBe(false);
+      expect(storedRecord().difficultyUnverified).toBe(true);
+    });
+
+    it("keeps a completed solve's difficulty if the start dialog returns", async () => {
+      seedRecord({ completed: true, difficulty: "easy" });
+      const { result } = renderHook(() =>
+        useSolveSession({
+          puzzleId: "wedding-mini-v1",
+          availableDifficulties: ["easy", "medium", "hard"],
+          initiallyStarted: false,
+          initialDifficulty: "easy",
+        }),
+      );
+
+      act(() => result.current.start("hard"));
+      await flush();
+
+      expect(result.current.recordedDifficulty).toBe("easy");
+      expect(storedRecord()).toMatchObject({ difficulty: "easy" });
+    });
   });
 
   describe("renameLeaderboardEntry", () => {
