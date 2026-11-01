@@ -62,6 +62,11 @@ interface UseSolveSessionOptions {
    * it. Ignored for solves that never started or are already finished.
    */
   initiallyPaused?: boolean;
+  /**
+   * Called when this tab discovers a sibling tab completed the solve, so the
+   * page can catch up on what the session record doesn't hold: the letters.
+   */
+  onSiblingCompleted?: () => void;
 }
 
 export interface SolveSession {
@@ -134,6 +139,7 @@ export function useSolveSession({
   initialDifficulty,
   initiallyFinished = false,
   initiallyPaused = false,
+  onSiblingCompleted,
 }: UseSolveSessionOptions): SolveSession {
   // The persisted record seeds the refs once. From then on the refs are this
   // tab's own view, and persist() merges them with whatever a sibling tab of
@@ -192,6 +198,11 @@ export function useSolveSession({
   // never re-run the clock or the flush-on-unmount effects that depend on it.
   // A puzzle's offered difficulties do not change during a mount.
   const availableDifficultiesRef = useRef(availableDifficulties);
+  // The latest callback, so adopting never depends on the caller's identity.
+  const onSiblingCompletedRef = useRef(onSiblingCompleted);
+  useEffect(() => {
+    onSiblingCompletedRef.current = onSiblingCompleted;
+  }, [onSiblingCompleted]);
   // Reports are serialized so a heartbeat can never overtake a completion.
   const queueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -350,6 +361,7 @@ export function useSolveSession({
       setPostingCompatibility(difficulty !== undefined);
       postedNameRef.current = sibling.postedName;
       setPosted(Boolean(sibling.postedName));
+      onSiblingCompletedRef.current?.();
     },
     [setPostingCompatibility, trustedDifficulty],
   );

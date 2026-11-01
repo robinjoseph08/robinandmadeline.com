@@ -18,6 +18,8 @@ import { Label } from "@/components/ui/label";
 import { CrosswordSettings } from "./settings";
 
 interface SettingsDialogProps {
+  /** Whether a solve is in progress, so opening this dialog stops its clock. */
+  clockActive: boolean;
   /**
    * Radix close-focus hook: the page uses it to put focus back in the grid
    * so the guest can keep typing right after closing the dialog.
@@ -30,6 +32,7 @@ interface SettingsDialogProps {
 }
 
 export default function SettingsDialog({
+  clockActive,
   onCloseAutoFocus,
   onOpenChange,
   onSettingsChange,
@@ -45,8 +48,8 @@ export default function SettingsDialog({
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Changes apply right away and stick for every puzzle. The timer
-            pauses while this is open.
+            Changes apply right away and stick for every puzzle.
+            {clockActive && " The timer pauses while this is open."}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-5 py-4">

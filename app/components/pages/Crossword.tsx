@@ -143,6 +143,12 @@ export default function Crossword() {
  * refresh or come back later and resume; the solve clock and its best-effort
  * backend session live in useSolveSession.
  */
+/** Whether saved entries are this puzzle's finished, correct grid. */
+function entriesAreSolved(puzzle: CrosswordPuzzle, entries: string): boolean {
+  const grid = gridFromEntries(puzzle, entries);
+  return isPuzzleComplete(grid) && validateSolution(grid, puzzle.solution);
+}
+
 function CrosswordGame({
   onLocalReset,
   puzzle,
@@ -222,7 +228,47 @@ function CrosswordGame({
       !validateSolution(initial.grid, puzzle.solution),
   );
 
+  // Completion is reported once and celebrated once, across a refresh too.
+  const completionCelebratedRef = useRef(
+    initial.solved && (!puzzle.celebration || initial.celebrationAcknowledged),
+  );
+
+  // A sibling tab finished this solve, so this tab's letters are stale. Show
+  // the solved grid it saved, without replaying an ending the guest just saw.
+  const handleSiblingCompleted = () => {
+    const saved = loadProgress(puzzle.id);
+    if (!saved || !entriesAreSolved(puzzle, saved.entries)) {
+      return;
+    }
+    const savedGrid = restoreCheckStates(
+      gridFromEntries(puzzle, saved.entries),
+      puzzle.solution,
+      saved.checkStates,
+    );
+    const firstSquare = savedGrid.squares.find(
+      (square) => square.type !== "block",
+    );
+    const selection =
+      selections[0] ??
+      (firstSquare && {
+        row: firstSquare.row,
+        col: firstSquare.col,
+        direction: savedGrid.wordMap[
+          `${firstSquare.row}:${firstSquare.col}:across`
+        ]
+          ? ("across" as const)
+          : ("down" as const),
+      });
+    if (!selection) {
+      return;
+    }
+    completionCelebratedRef.current = true;
+    setCelebrationAcknowledged(saved.celebrationAcknowledged ?? false);
+    gridRef.current?.replaceGrid(savedGrid, selection, { focus: false });
+  };
+
   const session = useSolveSession({
+    onSiblingCompleted: handleSiblingCompleted,
     puzzleId: puzzle.id,
     availableDifficulties: puzzle.difficulties,
     initiallyStarted: initial.hasProgress,
@@ -250,10 +296,17 @@ function CrosswordGame({
 
   // Save progress only once a solve has started: the saved progress is also
   // what marks a returning guest (it skips the start dialog), so a visitor
-  // who only peeked must not leave a save behind.
+  // who only peeked must not leave a save behind. A tab with stale letters must
+  // not save over a sibling's solved grid either: nothing could restore it.
   useEffect(() => {
     if (!sessionStarted) {
       return;
+    }
+    if (!solved) {
+      const saved = loadProgress(puzzle.id);
+      if (saved && entriesAreSolved(puzzle, saved.entries)) {
+        return;
+      }
     }
     saveProgress(puzzle.id, {
       entries: entriesFromGrid(grid),
@@ -261,14 +314,18 @@ function CrosswordGame({
       checkStates: checkStatesFromGrid(grid),
       celebrationAcknowledged,
     });
-  }, [puzzle.id, grid, difficulty, celebrationAcknowledged, sessionStarted]);
+  }, [
+    puzzle,
+    grid,
+    solved,
+    difficulty,
+    celebrationAcknowledged,
+    sessionStarted,
+  ]);
 
   // Completion: report it once. A puzzle-specific reveal stays pending until
   // the guest explicitly advances, so a refresh during the animation reopens
   // it instead of losing the one-time message.
-  const completionCelebratedRef = useRef(
-    initial.solved && (!puzzle.celebration || initial.celebrationAcknowledged),
-  );
   useEffect(() => {
     if (!solved || !sessionStarted) {
       return;
@@ -1049,6 +1106,10 @@ function CrosswordGame({
             )}
           </div>
         </div>
+      ) : session.finished ? (
+        <p className="mt-4 px-4 text-muted-foreground md:px-0" role="status">
+          This solve was already finished elsewhere, so its time is locked in.
+        </p>
       ) : gridFull ? (
         <p className="mt-4 px-4 text-muted-foreground md:px-0" role="status">
           The grid is full, but something is not quite right yet. Keep tweaking!
@@ -1205,6 +1266,7 @@ function CrosswordGame({
         open={incorrectOpen}
       />
       <SettingsDialog
+        clockActive={session.started && !session.finished}
         onCloseAutoFocus={handleSettingsCloseAutoFocus}
         onOpenChange={handleSettingsOpenChange}
         onSettingsChange={updateSettings}
