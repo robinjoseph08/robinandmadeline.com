@@ -1,4 +1,8 @@
 version: "2"
+run:
+  # Skip the machine-wide lock in the system temp directory, which otherwise
+  # fails this run when any other project's lint holds it for 5 seconds.
+  allow-parallel-runners: true
 linters:
   default: none
   enable:
