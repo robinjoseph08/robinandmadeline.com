@@ -3,7 +3,7 @@ package subscriptions
 import "github.com/robinjoseph08/robinandmadeline.com/pkg/models"
 
 // This file is the package's single home for request and response types
-// (pkg/CLAUDE.md): handlers never use anonymous structs. Like the info and RSVP
+// (pkg/AGENTS.md): handlers never use anonymous structs. Like the info and RSVP
 // flows, the guest-facing view does not embed models.Guest; it names only the
 // fields the unsubscribe page needs (the name to greet by, the address the mail
 // went to, and the current state) and never the admin-only guest fields.

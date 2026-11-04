@@ -51,7 +51,7 @@ func init() {
 		// Enforce the cross-column invariant the reads depend on: an on-board row
 		// always carries a display_name. The list and viewer-rank reads filter on
 		// on_leaderboard and then dereference display_name, so this is the
-		// model-level guarantee (pkg/CLAUDE.md: a must-always-hold invariant
+		// model-level guarantee (pkg/AGENTS.md: a must-always-hold invariant
 		// belongs on a DB constraint, not in handlers) that keeps a stray future
 		// write from making a NULL name reachable as a 500. The backfill above
 		// just established it for every existing row, so the constraint validates

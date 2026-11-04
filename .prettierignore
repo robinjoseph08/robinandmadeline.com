@@ -3,7 +3,7 @@ tsconfig.app.json
 tsconfig.node.json
 .prettierrc
 .golangci.yml
-CLAUDE.md
+AGENTS.md
 CONTEXT.md
 build/
 coverage/
