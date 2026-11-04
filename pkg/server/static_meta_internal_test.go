@@ -67,7 +67,7 @@ func newInternalMetaHandler(t *testing.T, titler infoTitler) http.Handler {
 
 	e := echo.New()
 	e.HTTPErrorHandler = errcodes.NewHandler().Handle
-	e.Use(staticMiddleware(dir, internalMetaHost, titler))
+	e.Use(staticMiddleware(dir, internalMetaHost, "", titler))
 	return e
 }
 

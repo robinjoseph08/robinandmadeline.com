@@ -12,6 +12,11 @@ The frontend is a React SPA (React Router, plain fetch). It consumes a Go API wh
 - All API calls go through `apiRequest` in `app/libraries/api.ts`, which sends/parses JSON and throws `ApiError` carrying the backend's `code` (typed as the generated `ErrorCode` union) and `message` from the `{ error: { ... } }` envelope. Admin endpoints use `adminRequest` in `app/libraries/admin-api.ts`, which layers the stored admin bearer token and query-string serialization on top of `apiRequest`.
 - List endpoints return `{ items, total }`; type list consumers off the generated `List{Entities}Response`.
 
+## Analytics
+
+- Umami's tracker records pageviews on its own when the server has it configured (`pkg/server/analytics.go`). Custom events go through `trackEvent(category, action, data?)` in `app/libraries/analytics.ts`, named `"Category: action"` with detail in `data`. It is a no-op without the tracker, so callers need no guards. Track what someone chose to do, not keystrokes.
+- When a page loads a guest's name, `useIdentifyVisitor(name)` labels that browser's analytics with it from then on. `usePartyRSVPs` does this itself, since every consumer has the party. Admin pages are never sent. Why guest names and links go to Umami: ADR 0011.
+
 ## Page titles
 
 - Every routed page sets the browser tab title with a hook from `app/hooks/usePageTitle.ts`. Segments are joined by a middot and the app name comes last: `usePageTitle("Schedule")` renders `Schedule · Robin & Madeline`. Call it once near the top of the page component.

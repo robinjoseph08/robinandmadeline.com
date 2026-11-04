@@ -39,7 +39,7 @@ const (
 	// *echo.HTTPError (e.g. a 405) is rendered by the handler with its reason
 	// snake-cased, which can fall outside the union; the frontend's envelope
 	// parse stays defensive for that reason, and such codes are display-only.
-	//tygo:emit export type ErrorCode = "not_found" | "bad_request" | "validation_error" | "unknown_parameter" | "validation_type_error" | "malformed_payload" | "empty_request_body" | "unsupported_media_type" | "conflict" | "unauthorized" | "forbidden" | "too_many_requests" | "service_unavailable" | "internal_server_error";
+	//tygo:emit export type ErrorCode = "not_found" | "bad_request" | "validation_error" | "unknown_parameter" | "validation_type_error" | "malformed_payload" | "empty_request_body" | "unsupported_media_type" | "payload_too_large" | "conflict" | "unauthorized" | "forbidden" | "too_many_requests" | "service_unavailable" | "internal_server_error";
 	CodeNotFound             Code = "not_found"
 	CodeBadRequest           Code = "bad_request"
 	CodeValidationError      Code = "validation_error"
@@ -48,6 +48,7 @@ const (
 	CodeMalformedPayload     Code = "malformed_payload"
 	CodeEmptyRequestBody     Code = "empty_request_body"
 	CodeUnsupportedMediaType Code = "unsupported_media_type"
+	CodePayloadTooLarge      Code = "payload_too_large"
 	CodeConflict             Code = "conflict"
 	CodeUnauthorized         Code = "unauthorized"
 	CodeForbidden            Code = "forbidden"
@@ -123,6 +124,11 @@ func MalformedPayload() error {
 // no body.
 func EmptyRequestBody() error {
 	return &Error{http.StatusBadRequest, "The request body is empty.", string(CodeEmptyRequestBody)}
+}
+
+// PayloadTooLarge returns a 413 for a request body over an endpoint's size limit.
+func PayloadTooLarge() error {
+	return &Error{http.StatusRequestEntityTooLarge, "The request body is too large.", string(CodePayloadTooLarge)}
 }
 
 // UnsupportedMediaType returns a 415 for a request whose Content-Type the binder

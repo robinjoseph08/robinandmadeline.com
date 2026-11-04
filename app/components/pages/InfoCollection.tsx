@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePartyInfo, useUpdatePartyInfo } from "@/hooks/queries/info";
 import { usePageTitle } from "@/hooks/usePageTitle";
+import { useIdentifyVisitor } from "@/libraries/analytics";
 import { ApiError } from "@/libraries/api";
 import { formatPhone } from "@/libraries/phone";
 import type {
@@ -35,6 +36,7 @@ export default function InfoCollection() {
   // Title the tab with the primary guest's name once the party loads, mirroring
   // the title the server injects into the shell for this page's link preview.
   usePageTitle(infoPageTitle(data));
+  useIdentifyVisitor(data && primaryGuest(data.guests)?.full_name);
   const [saved, setSaved] = useState(false);
 
   if (error?.status === 404) {
@@ -98,6 +100,11 @@ function infoPageTitle(data: PartyInfoResponse | undefined): string {
   return firstName ? `${firstName}'s Info` : "Your Details";
 }
 
+/** The party's primary guest, or its first if none is flagged. */
+function primaryGuest(guests: Guest[]): Guest | undefined {
+  return guests.find((g) => g.is_primary) ?? guests[0];
+}
+
 /**
  * The greeting's name: the primary guest's first name ("Hi Amanda!"). Listing
  * every member gets unwieldy for big parties; the cards below name them all.
@@ -105,7 +112,7 @@ function infoPageTitle(data: PartyInfoResponse | undefined): string {
  * party has one).
  */
 function greetingName(guests: Guest[]): string {
-  const primary = guests.find((g) => g.is_primary) ?? guests[0];
+  const primary = primaryGuest(guests);
   return primary ? primary.full_name.split(" ")[0] : "";
 }
 

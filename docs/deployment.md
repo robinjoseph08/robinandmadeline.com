@@ -127,6 +127,23 @@ configured in production. `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` enable sending.
 fails closed and rejects every webhook, so delivery statuses will not advance.
 The worker follows ADR 0004 and ADR 0010's deployed demand-driven lifecycle.
 
+Web analytics are optional. To send them to a self-hosted Umami, set both of
+these together; setting only one fails at startup, and leaving both unset
+keeps analytics off:
+
+```sh
+fly secrets set \
+  UMAMI_URL='https://umami.example.com' \
+  UMAMI_WEBSITE_ID='...'
+```
+
+The tracker and its events go through `/stats` on this server, so Umami's
+address stays out of the page. Each event carries the visitor's address in its
+`ip` field, so Umami needs no client-IP settings to report locations correctly.
+Events include guest links, which hold Info Tokens and guest IDs, and guest names
+(ADR 0011), so treat access to the Umami dashboard like access to the admin.
+Admin pages are never sent.
+
 ### 4. First deploy
 
 ```sh

@@ -120,6 +120,19 @@ describe("InfoCollection", () => {
     );
   });
 
+  it("labels the visitor's analytics with the primary guest's name", async () => {
+    localStorage.clear();
+    apiRequest.mockResolvedValue(makeData());
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Hi Alice!" });
+
+    expect(window.umamiBeforeSend?.("event", {})).toEqual({
+      id: "Alice Smith",
+    });
+    localStorage.clear();
+  });
+
   it("titles the tab with the primary guest's first name, mirroring the link preview", async () => {
     apiRequest.mockResolvedValue(makeData());
     renderPage();

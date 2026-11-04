@@ -186,6 +186,7 @@ describe("Crossword", () => {
   });
 
   afterEach(() => {
+    delete window.umami;
     vi.unstubAllGlobals();
   });
 
@@ -1206,6 +1207,40 @@ describe("Crossword", () => {
       expect(square(0, 3)).toHaveTextContent("S");
       expect(square(0, 3)).toHaveAttribute("data-check-state", "correct");
       expect(square(0, 2)).not.toHaveTextContent("X");
+    });
+
+    it("tracks starting the puzzle and checking answers", async () => {
+      const track = vi.fn();
+      window.umami = { track, identify: vi.fn() };
+      renderCrossword();
+
+      fireEvent.click(screen.getByRole("button", { name: "Medium" }));
+      await startGame();
+      fireEvent.keyDown(gridEl(), { key: "K" });
+      await checkAnswers("grid");
+
+      expect(track).toHaveBeenCalledWith("Crossword: start", {
+        puzzle: "wedding-mini-v1",
+        difficulty: "medium",
+      });
+      expect(track).toHaveBeenCalledWith("Crossword: check", {
+        puzzle: "wedding-mini-v1",
+        scope: "grid",
+      });
+    });
+
+    it("tracks switching difficulty mid-solve", async () => {
+      const track = vi.fn();
+      window.umami = { track, identify: vi.fn() };
+      renderCrossword();
+      await startGame();
+
+      await switchDifficulty("Hard");
+
+      expect(track).toHaveBeenCalledWith("Crossword: switch difficulty", {
+        puzzle: "wedding-mini-v1",
+        difficulty: "hard",
+      });
     });
 
     it("checks the selected word and the whole grid", async () => {

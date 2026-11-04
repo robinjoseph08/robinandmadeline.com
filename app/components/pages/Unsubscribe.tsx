@@ -6,6 +6,7 @@ import {
   useSubscription,
 } from "@/hooks/queries/subscriptions";
 import { usePageTitle } from "@/hooks/usePageTitle";
+import { useIdentifyVisitor } from "@/libraries/analytics";
 
 /**
  * The email unsubscribe landing page behind the per-guest /u/:guestId link in
@@ -21,6 +22,7 @@ export default function Unsubscribe() {
   const { guestId = "" } = useParams();
   const { data, error, isPending } = useSubscription(guestId);
   const setSubscription = useSetSubscription(guestId);
+  useIdentifyVisitor(data?.full_name);
 
   if (isPending) {
     return (

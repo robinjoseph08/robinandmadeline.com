@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { resetGuestQueries } from "@/hooks/queries/guest-cache";
 import { usePageTitle } from "@/hooks/usePageTitle";
+import { forgetVisitor } from "@/libraries/analytics";
 import {
   ApiError,
   clearGuestToken,
@@ -75,6 +76,7 @@ export default function RSVP() {
       // left by a previous party on this device so party B starts from a
       // loading state, not party A's stale RSVPs, schedule, or photo groups.
       resetGuestQueries(queryClient);
+      forgetVisitor();
       const data = await guestRequest<PartyRSVPsResponse>("/guest/rsvp");
       navigate(rsvpDestination(data));
     } catch (err) {

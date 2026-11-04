@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import FAQ from "@/components/pages/FAQ";
 
@@ -70,6 +70,32 @@ function panelFor(question: string) {
 }
 
 describe("FAQ", () => {
+  afterEach(() => {
+    delete window.umami;
+  });
+
+  it("tracks a question when it opens, not when it closes", async () => {
+    const track = vi.fn();
+    window.umami = { track, identify: vi.fn() };
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <FAQ />
+      </MemoryRouter>,
+    );
+    const button = screen.getByRole("button", {
+      name: "Do I need to rent a car?",
+    });
+
+    await user.click(button);
+    await user.click(button);
+
+    expect(track).toHaveBeenCalledTimes(1);
+    expect(track).toHaveBeenCalledWith("FAQ: open", {
+      question: "Do I need to rent a car?",
+    });
+  });
+
   it("renders the page heading and subtitle", () => {
     renderFAQ();
 

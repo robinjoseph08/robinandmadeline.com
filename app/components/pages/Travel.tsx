@@ -16,6 +16,7 @@ import { Hearts } from "@/components/library/Hearts";
 import PageHeader from "@/components/library/PageHeader";
 import { Button } from "@/components/ui/button";
 import { usePageTitle } from "@/hooks/usePageTitle";
+import { trackEvent } from "@/libraries/analytics";
 
 /**
  * Inline links inherit the surrounding text color and add only an underline and
@@ -175,6 +176,7 @@ function HotelCard({ hotel }: { hotel: HotelBlock }) {
           <Button asChild>
             <a
               href={hotel.bookingUrl}
+              onClick={() => trackEvent("Hotel", "book", { hotel: hotel.name })}
               rel="noopener noreferrer"
               target="_blank"
             >
@@ -186,6 +188,9 @@ function HotelCard({ hotel }: { hotel: HotelBlock }) {
           <Button asChild variant="outline">
             <a
               href={hotel.websiteUrl}
+              onClick={() =>
+                trackEvent("Hotel", "website", { hotel: hotel.name })
+              }
               rel="noopener noreferrer"
               target="_blank"
             >

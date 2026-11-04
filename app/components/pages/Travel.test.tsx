@@ -1,9 +1,31 @@
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Travel from "@/components/pages/Travel";
 
 describe("Travel", () => {
+  afterEach(() => {
+    delete window.umami;
+  });
+
+  it("tracks which hotel link was clicked", () => {
+    const track = vi.fn();
+    window.umami = { track, identify: vi.fn() };
+    render(<Travel />);
+
+    const hotel = screen
+      .getByRole("heading", { name: /^GL/ })
+      .closest("article") as HTMLElement;
+    fireEvent.click(
+      within(hotel).getByRole("link", { name: /Book the group rate/ }),
+    );
+    fireEvent.click(within(hotel).getByRole("link", { name: /See the hotel/ }));
+
+    const name = "GLō Best Western Dallas South DeSoto";
+    expect(track).toHaveBeenCalledWith("Hotel: book", { hotel: name });
+    expect(track).toHaveBeenCalledWith("Hotel: website", { hotel: name });
+  });
+
   it("renders the page heading and subtitle", () => {
     render(<Travel />);
 

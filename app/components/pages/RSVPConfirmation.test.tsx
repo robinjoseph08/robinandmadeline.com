@@ -214,6 +214,23 @@ describe("RSVPConfirmation", () => {
     expect(screen.queryByRole("link", { name: /@/ })).not.toBeInTheDocument();
   });
 
+  it("labels analytics with the party's first guest, until Not your party?", async () => {
+    guestRequest.mockResolvedValue(makeData());
+    const user = userEvent.setup();
+    renderConfirmation();
+
+    const notYours = await screen.findByRole("button", {
+      name: /not your party/i,
+    });
+    expect(window.umamiBeforeSend?.("event", {})).toEqual({
+      id: "Alice Smith",
+    });
+
+    await user.click(notYours);
+
+    expect(window.umamiBeforeSend?.("event", {})?.id).toBeUndefined();
+  });
+
   it("clears every guest-scoped cache and returns to code entry via Not your party?", async () => {
     // The escape hatch for a visitor whose stored token landed them on someone
     // else's party: forget the token and go back to code entry.

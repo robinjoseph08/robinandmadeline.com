@@ -4,6 +4,9 @@ import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
 
 import { Toaster } from "@/components/ui/sonner";
+
+import "@/libraries/analytics";
+
 import { AuthProvider } from "@/libraries/auth";
 import { router } from "@/router";
 

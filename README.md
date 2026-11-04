@@ -96,6 +96,11 @@ admin crossword page's Location column. It is off by default so local dev and
 tests never call ipinfo. Leave `IPINFO_TOKEN` unset: anonymous lookups include
 city and region, while a free-account token is limited to country and ASN.
 
+Web analytics are optional and off by default. Set `UMAMI_URL` (the origin of a
+self-hosted Umami) and `UMAMI_WEBSITE_ID` together to add the tracker to the
+pages the Go server renders from `STATIC_DIR`, so the Vite dev server never
+reports. See `docs/deployment.md`.
+
 Email delivery (the admin email system) is configured separately and is off by
 default: without `MAILGUN_API_KEY` the queue worker never starts and sends
 stay queued. Set `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, and

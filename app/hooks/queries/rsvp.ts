@@ -5,7 +5,9 @@ import {
   type UseQueryOptions,
 } from "@tanstack/react-query";
 
+import { useIdentifyVisitor } from "@/libraries/analytics";
 import { ApiError, guestRequest } from "@/libraries/guest-api";
+import { isNamedPlaceholder, isPlaceholder } from "@/libraries/placeholders";
 import type {
   PartyRSVPsResponse,
   UpdatePartyRSVPsPayload,
@@ -29,11 +31,18 @@ export const usePartyRSVPs = (
     "queryKey" | "queryFn"
   > = {},
 ) => {
-  return useQuery<PartyRSVPsResponse, ApiError>({
+  const query = useQuery<PartyRSVPsResponse, ApiError>({
     ...options,
     queryKey: [QueryKey.PartyRSVPs],
     queryFn: () => guestRequest("/guest/rsvp"),
   });
+  // The party's first guest is its primary member; an unnamed plus-one slot
+  // isn't anyone yet.
+  useIdentifyVisitor(
+    query.data?.guests.find((g) => !isPlaceholder(g) || isNamedPlaceholder(g))
+      ?.full_name,
+  );
+  return query;
 };
 
 // useUpdatePartyRSVPs submits the whole RSVP form at once. The backend
