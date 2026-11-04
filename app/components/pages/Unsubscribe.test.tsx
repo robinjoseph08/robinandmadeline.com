@@ -48,6 +48,19 @@ beforeEach(() => {
 });
 
 describe("Unsubscribe", () => {
+  it("labels the visitor's analytics with the guest's name", async () => {
+    localStorage.clear();
+    apiRequest.mockResolvedValue(makeData());
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Hi Alice," });
+
+    expect(window.umamiBeforeSend?.("event", {})).toEqual({
+      id: "Alice Smith",
+    });
+    localStorage.clear();
+  });
+
   it("greets by first name and unsubscribes on click", async () => {
     apiRequest
       .mockResolvedValueOnce(makeData({ subscribed: true }))

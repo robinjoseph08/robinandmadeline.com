@@ -95,6 +95,50 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, []string{"Robin <robin@example.com>", "Madeline <madeline@example.com>"}, cfg.EmailTestRecipients)
 	})
 
+	t.Run("leaves analytics off without the Umami settings", func(t *testing.T) {
+		cfg, err := config.New()
+		require.NoError(t, err)
+		assert.Nil(t, cfg.UmamiURL)
+		assert.Empty(t, cfg.UmamiWebsiteID)
+	})
+
+	t.Run("reads the Umami settings", func(t *testing.T) {
+		t.Setenv("UMAMI_URL", "https://umami.example.com")
+		t.Setenv("UMAMI_WEBSITE_ID", "0b0c5f2e-3a1d-4c7e-9f10-2d3e4f5a6b7c")
+		cfg, err := config.New()
+		require.NoError(t, err)
+		require.NotNil(t, cfg.UmamiURL)
+		assert.Equal(t, "umami.example.com", cfg.UmamiURL.Host)
+		assert.Equal(t, "0b0c5f2e-3a1d-4c7e-9f10-2d3e4f5a6b7c", cfg.UmamiWebsiteID)
+	})
+
+	t.Run("rejects half of the Umami settings", func(t *testing.T) {
+		t.Setenv("UMAMI_URL", "https://umami.example.com")
+		_, err := config.New()
+		require.Error(t, err)
+
+		t.Setenv("UMAMI_URL", "")
+		t.Setenv("UMAMI_WEBSITE_ID", "0b0c5f2e-3a1d-4c7e-9f10-2d3e4f5a6b7c")
+		_, err = config.New()
+		require.Error(t, err)
+	})
+
+	t.Run("rejects a UMAMI_WEBSITE_ID that isn't a UUID", func(t *testing.T) {
+		t.Setenv("UMAMI_URL", "https://umami.example.com")
+		t.Setenv("UMAMI_WEBSITE_ID", "site-1")
+		_, err := config.New()
+		require.Error(t, err)
+	})
+
+	t.Run("rejects a malformed UMAMI_URL", func(t *testing.T) {
+		t.Setenv("UMAMI_WEBSITE_ID", "0b0c5f2e-3a1d-4c7e-9f10-2d3e4f5a6b7c")
+		for _, raw := range []string{"umami.example.com", "://nope", "/relative", "ftp://umami.example.com"} {
+			t.Setenv("UMAMI_URL", raw)
+			_, err := config.New()
+			require.Error(t, err, raw)
+		}
+	})
+
 	t.Run("parses and trims a single test recipient", func(t *testing.T) {
 		t.Setenv("EMAIL_TEST_RECIPIENTS", "  robin@example.com  ")
 		cfg, err := config.New()

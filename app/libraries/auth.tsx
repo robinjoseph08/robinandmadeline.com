@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import { onAdminUnauthorized, TOKEN_STORAGE_KEY } from "@/libraries/admin-api";
+import { forgetVisitor } from "@/libraries/analytics";
 import { apiRequest } from "@/libraries/api";
 import { AuthContext, type AuthContextValue } from "@/libraries/auth-context";
 import type { LoginResponse } from "@/types/generated/auth";
@@ -58,6 +59,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Ignore storage failures (e.g. private mode); the in-memory token still
       // works for the current session.
     }
+    // This browser is the couple's, whatever guest link it opened before.
+    forgetVisitor();
     setToken(newToken);
   }, []);
 

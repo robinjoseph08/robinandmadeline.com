@@ -255,6 +255,7 @@ describe("Crossword solve sessions", () => {
   });
 
   afterEach(() => {
+    delete window.umami;
     vi.useRealTimers();
     vi.unstubAllGlobals();
     Reflect.deleteProperty(document, "visibilityState");
@@ -2273,6 +2274,72 @@ describe("Crossword solve sessions", () => {
       expect(square(0, 1)).toHaveTextContent("K");
       expect(square(4, 3)).toHaveTextContent("E");
       expect(screen.getByRole("status")).toHaveTextContent(/you solved it/i);
+    });
+
+    it("tracks a solve once, and not again when a solved puzzle reloads", async () => {
+      const track = vi.fn();
+      window.umami = { track, identify: vi.fn() };
+      seedProgress(ALL_BUT_LAST);
+      seedSession({ id: "sess-1", elapsedMs: 1000 });
+
+      const { unmount } = renderCrossword();
+      await flushAsync();
+      await solveLastLetter();
+
+      const completions = () =>
+        track.mock.calls.filter(([name]) => name === "Crossword: complete");
+      expect(completions()).toEqual([
+        ["Crossword: complete", { puzzle: "wedding-mini-v1" }],
+      ]);
+
+      unmount();
+      renderCrossword();
+      await flushAsync();
+
+      expect(completions()).toHaveLength(1);
+    });
+
+    it("tracks posting a time and opening the leaderboard", async () => {
+      const track = vi.fn();
+      window.umami = { track, identify: vi.fn() };
+      seedProgress(SOLUTION);
+      seedSession({ id: "sess-1", elapsedMs: 90_000, completed: true });
+      const base = apiRequest.getMockImplementation()!;
+      apiRequest.mockImplementation(
+        (path: string, options?: { method?: string }) => {
+          if (path === "/games/sessions/sess-1/leaderboard") {
+            return Promise.resolve(makeSession({ display_name: "Robin" }));
+          }
+          return base(path, options);
+        },
+      );
+      renderCrossword();
+      await flushAsync();
+
+      fireEvent.click(screen.getByRole("button", { name: "Leaderboard" }));
+      expect(track).toHaveBeenCalledWith("Crossword: open leaderboard", {
+        puzzle: "wedding-mini-v1",
+      });
+      expect(track).not.toHaveBeenCalledWith(
+        "Crossword: post to leaderboard",
+        expect.anything(),
+      );
+      fireEvent.keyDown(document.activeElement ?? document.body, {
+        key: "Escape",
+      });
+      await flushDialogClose();
+
+      fireEvent.click(screen.getByRole("button", { name: "Post your time" }));
+      fireEvent.change(await screen.findByLabelText("Display name"), {
+        target: { value: "Robin" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Post my time" }));
+
+      await waitFor(() =>
+        expect(track).toHaveBeenCalledWith("Crossword: post to leaderboard", {
+          puzzle: "wedding-mini-v1",
+        }),
+      );
     });
 
     it("posts at the recorded difficulty even after browsing easier clues", async () => {

@@ -67,6 +67,8 @@ var staticHTTPRoutes = map[string]struct{}{
 	"/api/guest/rsvp":                 {},
 	"/api/health":                     {},
 	"/api/webhooks/mailgun":           {},
+	"/stats/api/send":                 {},
+	"/stats/script.js":                {},
 }
 
 var routeParameterNames = map[string]struct{}{

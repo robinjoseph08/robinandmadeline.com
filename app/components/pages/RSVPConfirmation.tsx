@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { resetGuestQueries } from "@/hooks/queries/guest-cache";
 import { usePartyRSVPs } from "@/hooks/queries/rsvp";
 import { usePageTitle } from "@/hooks/usePageTitle";
+import { forgetVisitor } from "@/libraries/analytics";
 import { formatLongDate } from "@/libraries/format";
 import { clearGuestToken, readGuestToken } from "@/libraries/guest-api";
 import { isNamedPlaceholder } from "@/libraries/placeholders";
@@ -66,6 +67,7 @@ export default function RSVPConfirmation() {
   // a different code logs in next.
   const handleNotYourParty = () => {
     clearGuestToken();
+    forgetVisitor();
     resetGuestQueries(queryClient);
     navigate("/rsvp");
   };

@@ -120,7 +120,12 @@ func NewWithWorkers(cfg *config.Config, db *bun.DB, workers Workers) *http.Serve
 	// scale-to-zero machine serves everything). Dev leaves StaticDir empty and
 	// runs the Vite dev server instead.
 	if cfg.StaticDir != "" {
-		e.Use(staticMiddleware(cfg.StaticDir, cfg.CanonicalHost, infoService))
+		e.Use(staticMiddleware(cfg.StaticDir, cfg.CanonicalHost, analyticsTag(cfg), infoService))
+	}
+
+	// Optional web analytics, sent through this server to a self-hosted Umami.
+	if analyticsEnabled(cfg) {
+		registerAnalytics(e, cfg.UmamiURL)
 	}
 
 	authService := auth.NewService(cfg.JWTSecret, cfg.AdminSessionDuration, cfg.GuestSessionDuration, cfg.AdminUsername, cfg.AdminPassword)

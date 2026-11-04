@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,7 +41,10 @@ func newTestConfig(t *testing.T) *config.Config {
 }
 
 func TestDatabaseOperationAttributionAcceptsEveryRegisteredRoute(t *testing.T) {
-	srv := server.New(newTestConfig(t), nil)
+	cfg := newTestConfig(t)
+	cfg.UmamiURL = &url.URL{Scheme: "https", Host: "umami.example.com"}
+	cfg.UmamiWebsiteID = "site-1"
+	srv := server.New(cfg, nil)
 	e, ok := srv.Handler.(*echo.Echo)
 	require.True(t, ok)
 

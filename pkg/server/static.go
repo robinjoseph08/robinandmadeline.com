@@ -44,8 +44,8 @@ const (
 // resolves the info-collection page's primary guest name for that route's
 // personalized title (see injectMeta); it is the info service in production and
 // may be nil-backed in tests, in which case the title falls back to its generic
-// label.
-func staticMiddleware(root, canonicalHost string, titler infoTitler) echo.MiddlewareFunc {
+// label. headTags is extra markup for the shell's <head>.
+func staticMiddleware(root, canonicalHost, headTags string, titler infoTitler) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			req := c.Request()
@@ -56,7 +56,7 @@ func staticMiddleware(root, canonicalHost string, titler infoTitler) echo.Middle
 			if !ok {
 				return documentNotFound(c)
 			}
-			if isAPIPath(urlPath) {
+			if isAPIPath(urlPath) || isAnalyticsRoute(urlPath) {
 				return next(c)
 			}
 
@@ -72,7 +72,7 @@ func staticMiddleware(root, canonicalHost string, titler infoTitler) echo.Middle
 			if !isFrontendRoute(urlPath) {
 				return documentNotFound(c)
 			}
-			return serveShell(c, root, trimTrailingSlash(urlPath), canonicalHost, titler)
+			return serveShell(c, root, trimTrailingSlash(urlPath), canonicalHost, headTags, titler)
 		}
 	}
 }
@@ -100,13 +100,14 @@ func documentNotFound(echo.Context) error {
 // link-preview metadata injected. A missing or unreadable shell falls back to
 // the plain file path so a misconfigured STATIC_DIR still surfaces as a 404
 // (with no stale Cache-Control), matching the rest of the static handler.
-func serveShell(c echo.Context, root, urlPath, canonicalHost string, titler infoTitler) error {
+func serveShell(c echo.Context, root, urlPath, canonicalHost, headTags string, titler infoTitler) error {
 	indexPath := filepath.Join(root, "index.html")
 	content, err := os.ReadFile(indexPath)
 	if err != nil {
 		return serveFile(c, indexPath, cacheControlNoCache)
 	}
 	doc := injectMeta(string(content), urlPath, canonicalHost, c.Request(), titler)
+	doc = strings.Replace(doc, "</head>", headTags+"</head>", 1)
 	c.Response().Header().Set("Cache-Control", cacheControlNoCache)
 	// ServeContent (the primitive echo's c.File uses) sets the text/html type
 	// and handles HEAD with an empty body. A zero modtime skips Last-Modified,

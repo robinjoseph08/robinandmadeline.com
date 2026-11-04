@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import PageHeader from "@/components/library/PageHeader";
 import { usePageTitle } from "@/hooks/usePageTitle";
+import { trackEvent } from "@/libraries/analytics";
 import { cn } from "@/libraries/utils";
 
 /**
@@ -30,6 +31,13 @@ function FAQEntry({
   const buttonId = `${id}-button`;
   const panelId = `${id}-panel`;
 
+  const handleToggle = () => {
+    if (!open) {
+      trackEvent("FAQ", "open", { question });
+    }
+    setOpen(!open);
+  };
+
   return (
     <div className="rounded-xl border border-ink/10 bg-primary/30">
       {/* Heading wrapper per the WAI-ARIA accordion pattern, so screen
@@ -40,7 +48,7 @@ function FAQEntry({
           aria-expanded={open}
           className="flex w-full cursor-pointer items-center justify-between gap-4 px-5 py-4 text-left font-medium"
           id={buttonId}
-          onClick={() => setOpen((v) => !v)}
+          onClick={handleToggle}
           type="button"
         >
           {question}

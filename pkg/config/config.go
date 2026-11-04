@@ -8,11 +8,13 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/robinjoseph08/robinandmadeline.com/pkg/worktree"
 )
 
@@ -144,6 +146,14 @@ type Config struct {
 
 	// IPInfoBaseURL is the ipinfo.io API origin.
 	IPInfoBaseURL string
+
+	// UmamiURL is the origin of the self-hosted Umami the site's web analytics
+	// go through (see server.registerAnalytics), parsed from UMAMI_URL. Nil
+	// leaves analytics off, so local dev, tests, and e2e send nothing.
+	UmamiURL *url.URL
+
+	// UmamiWebsiteID is the site's ID in Umami. Set together with UmamiURL.
+	UmamiWebsiteID string
 }
 
 // Default values used for local development when an env var is unset.
@@ -273,6 +283,11 @@ func New() (*Config, error) {
 		return nil, err
 	}
 
+	umamiURL, err := umamiConfig(os.Getenv("UMAMI_URL"), os.Getenv("UMAMI_WEBSITE_ID"))
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		DatabaseURL:          envStr("DATABASE_URL", defaultDatabaseURL()),
 		ServerPort:           port,
@@ -302,7 +317,30 @@ func New() (*Config, error) {
 		GeoIPLookupsEnabled:       geoIPLookupsEnabled,
 		IPInfoToken:               os.Getenv("IPINFO_TOKEN"),
 		IPInfoBaseURL:             envStr("IPINFO_BASE_URL", defaultIPInfoBaseURL),
+		UmamiURL:                  umamiURL,
+		UmamiWebsiteID:            os.Getenv("UMAMI_WEBSITE_ID"),
 	}, nil
+}
+
+// umamiConfig parses the Umami settings, which are optional but only work as a
+// pair. Half a configuration or a malformed URL means analytics would quietly
+// record nothing, so like the Mailgun pair it fails at startup instead.
+func umamiConfig(rawURL, websiteID string) (*url.URL, error) {
+	if rawURL == "" && websiteID == "" {
+		return nil, nil //nolint:nilnil // unset is valid: analytics stay off
+	}
+	if rawURL == "" || websiteID == "" {
+		return nil, errors.New("UMAMI_URL and UMAMI_WEBSITE_ID must be set together")
+	}
+	target, err := url.Parse(rawURL)
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
+		return nil, fmt.Errorf("invalid UMAMI_URL: %q must be an http(s) URL with a host", rawURL)
+	}
+	// Umami rejects every event whose website isn't a UUID.
+	if err := uuid.Validate(websiteID); err != nil {
+		return nil, fmt.Errorf("invalid UMAMI_WEBSITE_ID: %q must be a UUID", websiteID)
+	}
+	return target, nil
 }
 
 // envCSV splits a comma-separated environment variable into trimmed,

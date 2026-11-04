@@ -89,6 +89,7 @@ import {
 import { QueryKey, useLeaderboard } from "@/hooks/queries/games";
 import { usePartyRSVPs } from "@/hooks/queries/rsvp";
 import { usePageTitle } from "@/hooks/usePageTitle";
+import { trackEvent } from "@/libraries/analytics";
 import { formatDuration } from "@/libraries/format";
 import { readGuestToken } from "@/libraries/guest-api";
 import { cn } from "@/libraries/utils";
@@ -329,6 +330,7 @@ function CrosswordGame({
     completeSession();
     if (!completionCelebratedRef.current) {
       completionCelebratedRef.current = true;
+      trackEvent("Crossword", "complete", { puzzle: puzzle.id });
       const frame = requestAnimationFrame(() => {
         if (puzzle.celebration) {
           setCelebrationRun("initial");
@@ -344,6 +346,7 @@ function CrosswordGame({
     completeSession,
     initial.unreportable,
     puzzle.celebration,
+    puzzle.id,
   ]);
 
   const updateSettings = useCallback((patch: Partial<CrosswordSettings>) => {
@@ -370,6 +373,7 @@ function CrosswordGame({
     setDifficulty(chosen);
     session.start(chosen);
     setStartOpen(false);
+    trackEvent("Crossword", "start", { puzzle: puzzle.id, difficulty: chosen });
   };
 
   // When the start dialog closes because the solve began, focus belongs in
@@ -426,6 +430,10 @@ function CrosswordGame({
       return;
     }
     setDifficulty(level);
+    trackEvent("Crossword", "switch difficulty", {
+      puzzle: puzzle.id,
+      difficulty: level,
+    });
     if (!solved) {
       session.reportDifficulty(level);
     }
@@ -462,6 +470,7 @@ function CrosswordGame({
     setOwnPostPending(true);
     try {
       await session.postToLeaderboard(displayName);
+      trackEvent("Crossword", "post to leaderboard", { puzzle: puzzle.id });
       await queryClient.invalidateQueries({
         queryKey: [QueryKey.GameLeaderboard, puzzle.id],
       });
@@ -604,6 +613,7 @@ function CrosswordGame({
       focus: !allCluesOpen,
     });
     session.recordCheck(scope);
+    trackEvent("Crossword", "check", { puzzle: puzzle.id, scope });
   };
   const selectedCheckStatus =
     selectedSquare?.checkState === "correct"
@@ -825,7 +835,10 @@ function CrosswordGame({
       {/* The leaderboard is for finishers: it never shows mid-solve,
           only here and in the completion dialog. */}
       <Button
-        onClick={() => setLeaderboardOpen(true)}
+        onClick={() => {
+          trackEvent("Crossword", "open leaderboard", { puzzle: puzzle.id });
+          setLeaderboardOpen(true);
+        }}
         size="sm"
         type="button"
         variant="outline"
