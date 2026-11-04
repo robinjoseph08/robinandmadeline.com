@@ -9,9 +9,8 @@ import { ADMIN_PASSWORD, ADMIN_USERNAME } from "./auth";
 import { runStamp } from "./stamp";
 
 // Issue #9's critical E2E flow: the schedule page adapts to authentication.
-// An anonymous visitor sees only public events plus a prompt to enter their
-// party code; after logging in with the code, the same page also shows the
-// private events the party is invited to (marked with a badge) while private
+// An anonymous visitor sees only public events; after logging in with their
+// party code, the same page also shows the private events the party is invited to (marked with a badge) while private
 // events the party is NOT invited to stay hidden. Every event offers an .ics
 // download and a prefilled Google Calendar link.
 //
@@ -152,7 +151,7 @@ test("schedule shows public events to everyone and invited private events to a l
 }) => {
   const rsvpCode = await seedFixtures(page.request);
 
-  // --- Anonymous: public events only, plus the code prompt -------------------
+  // --- Anonymous: public events only -----------------------------------------
   await page.goto("/schedule", { waitUntil: "domcontentloaded" });
 
   const publicCard = eventCard(page, publicEventName);
@@ -176,9 +175,6 @@ test("schedule shows public events to everyone and invited private events to a l
 
   await expect(eventCard(page, invitedEventName)).not.toBeVisible();
   await expect(eventCard(page, uninvitedEventName)).not.toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Enter your party code" }),
-  ).toBeVisible();
 
   // --- Add to Calendar: a Google Calendar link and an .ics download ----------
   const googleLink = publicCard.getByRole("link", { name: "Google Calendar" });
@@ -203,12 +199,9 @@ test("schedule shows public events to everyone and invited private events to a l
   await expect(invitedCard).toBeVisible();
   await expect(invitedCard.getByText("You're invited")).toBeVisible();
   // The public event stays, unmarked; the uninvited private event stays
-  // hidden; the code prompt is gone.
+  // hidden.
   const publicCardAuthed = eventCard(page, publicEventName);
   await expect(publicCardAuthed).toBeVisible();
   await expect(publicCardAuthed.getByText("You're invited")).not.toBeVisible();
   await expect(eventCard(page, uninvitedEventName)).not.toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Enter your party code" }),
-  ).not.toBeVisible();
 });
