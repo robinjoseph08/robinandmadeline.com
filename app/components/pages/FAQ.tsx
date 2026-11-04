@@ -141,13 +141,12 @@ export default function FAQ() {
 
         <FAQEntry question="What's the dress code for the events?">
           <p>
-            For both the rehearsal dinner/Madhuram Veppu and the
-            ceremony/reception, the dress code is semi-formal. In addition,
-            you're also free to wear any kind of Indian clothes as well (e.g.
-            sarees, lehengas, kurtas, etc).
+            For both the Madhuram Veppu and the ceremony/reception, the dress
+            code is semi-formal. In addition, you're also free to wear any kind
+            of Indian clothes as well (e.g. sarees, lehengas, kurtas, etc).
           </p>
           <p className="mt-3">
-            One thing to be mindful about is the weather. The rehearsal dinner
+            One thing to be mindful about is the weather. The Madhuram Veppu
             will be indoors, so this is less of a concern for that, but the
             ceremony and reception will be outdoors. We want you to look nice,
             but we also want you to be comfortable!
