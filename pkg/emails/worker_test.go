@@ -580,7 +580,12 @@ func TestRun_ClaimDatabaseErrorEndsActivation(t *testing.T) {
 	f := newFixtures(t)
 	counter := new(queryCounter)
 	closed := make(chan struct{})
+	// The claim's transaction BEGIN is the last query of the activation. Waiting
+	// for it by name, not by count, keeps the baseline below from being sampled
+	// while earlier claimBatch queries (the saved quota pause read) are in flight.
+	claimAttempted := &queryCompletionSignal{queryPart: "BEGIN", done: make(chan struct{})}
 	f.db.AddQueryHook(counter)
+	f.db.AddQueryHook(claimAttempted)
 	f.db.AddQueryHook(&closeDBAfterQuery{db: f.db, closed: closed})
 
 	w := newWorker(f, newFakeMailgun(), workerConfig())
@@ -593,9 +598,11 @@ func TestRun_ClaimDatabaseErrorEndsActivation(t *testing.T) {
 		t.Fatal("reconciliation query did not complete")
 	}
 
-	require.Eventually(t, func() bool {
-		return counter.count.Load() >= 2
-	}, 5*time.Second, 10*time.Millisecond, "worker did not attempt the claim query")
+	select {
+	case <-claimAttempted.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not attempt the claim query")
+	}
 	queryCount := counter.count.Load()
 	time.Sleep(100 * time.Millisecond)
 	assert.Equal(t, queryCount, counter.count.Load(), "claim failure caused an idle retry loop")
