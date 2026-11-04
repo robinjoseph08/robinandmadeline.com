@@ -1,5 +1,4 @@
 import { CalendarDays, CalendarPlus, Clock } from "lucide-react";
-import { Link } from "react-router-dom";
 
 import { EventLocation } from "@/components/library/EventLocation";
 import { GoogleIcon } from "@/components/library/GoogleIcon";
@@ -22,9 +21,7 @@ import type { ScheduleEvent } from "@/types/generated/events";
  * private events their party is invited to (marked with a badge) plus a
  * Group Photos section naming which of their party's guests are in which
  * photo groups. Each event offers an .ics download and a prefilled Google
- * Calendar link, both built on the client from the event's fields. Visitors
- * without a token get a subtle pointer to code entry, where logging in
- * unlocks their full schedule.
+ * Calendar link, both built on the client from the event's fields.
  */
 export default function Schedule() {
   usePageTitle("Schedule");
@@ -62,15 +59,6 @@ export default function Schedule() {
           ? "Here is everything we have planned for the weekend."
           : "Here is what is happening over the wedding weekend."}
       </p>
-      {!data.authenticated ? (
-        <p className="mt-2 text-sm text-muted-foreground">
-          Have an invitation?{" "}
-          <Link className="underline underline-offset-2" to="/rsvp">
-            Enter your party code
-          </Link>{" "}
-          to unlock your full schedule.
-        </p>
-      ) : null}
 
       {events.length === 0 ? (
         <p className="mt-6 text-muted-foreground">

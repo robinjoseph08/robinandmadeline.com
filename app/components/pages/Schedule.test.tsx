@@ -143,7 +143,7 @@ describe("Schedule", () => {
     expect(names).toEqual(["Ceremony", "Reception", "Brunch"]);
   });
 
-  it("requests anonymously and prompts for the party code without a token", async () => {
+  it("requests anonymously without a token", async () => {
     const fetchMock = mockScheduleFetch([makeEvent()]);
 
     renderSchedule();
@@ -151,13 +151,9 @@ describe("Schedule", () => {
     await screen.findByRole("article", { name: "Reception" });
     const [, init] = fetchMock.mock.calls[0];
     expect(init.headers ?? {}).not.toHaveProperty("Authorization");
-
-    const prompt = screen.getByText(/enter your party code/i);
-    expect(prompt).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /party code/i })).toHaveAttribute(
-      "href",
-      "/rsvp",
-    );
+    expect(
+      screen.getByText("Here is what is happening over the wedding weekend."),
+    ).toBeInTheDocument();
   });
 
   it("treats a blank stored token as anonymous", async () => {
@@ -173,7 +169,9 @@ describe("Schedule", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, init] = fetchMock.mock.calls[0];
     expect(init.headers ?? {}).not.toHaveProperty("Authorization");
-    expect(screen.getByText(/enter your party code/i)).toBeInTheDocument();
+    expect(
+      screen.getByText("Here is what is happening over the wedding weekend."),
+    ).toBeInTheDocument();
   });
 
   it("sends the stored guest token and marks private events", async () => {
@@ -201,19 +199,15 @@ describe("Schedule", () => {
       }),
     );
 
-    // The private event is visually marked; the public one is not, and the
-    // authenticated view has no code prompt.
+    // The private event is visually marked; the public one is not.
     expect(within(privateCard).getByText("You're invited")).toBeInTheDocument();
     const publicCard = screen.getByRole("article", { name: "Reception" });
     expect(
       within(publicCard).queryByText("You're invited"),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/enter your party code/i),
-    ).not.toBeInTheDocument();
   });
 
-  it("clears a stale token, falls back to the public view, and prompts again", async () => {
+  it("clears a stale token and falls back to the public view", async () => {
     localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, "expired.jwt");
     const fetchMock = vi
       .fn()
@@ -246,7 +240,9 @@ describe("Schedule", () => {
     // 401 again against a real server.
     const [, retryInit] = fetchMock.mock.calls[1];
     expect(retryInit.headers ?? {}).not.toHaveProperty("Authorization");
-    expect(screen.getByText(/enter your party code/i)).toBeInTheDocument();
+    expect(
+      screen.getByText("Here is what is happening over the wedding weekend."),
+    ).toBeInTheDocument();
   });
 
   it("keeps the stored token when the authenticated fetch fails with a non-401", async () => {
