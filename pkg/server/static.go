@@ -296,7 +296,7 @@ func assetCacheControl(rel string) string {
 // the only place a shared link gets a route-specific title and description.
 // The tables below (publicPageMeta, puzzlePageTitles, and the noindex title
 // tables) are the server-side mirror of those usePageTitle(...) calls; keep them
-// in sync (see app/CLAUDE.md).
+// in sync (see app/AGENTS.md).
 const (
 	appName  = "Robin & Madeline"
 	titleSep = " · "

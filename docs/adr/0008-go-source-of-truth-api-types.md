@@ -12,7 +12,7 @@ Go already owns the persistence models and the request validation, so making it 
 
 ## Conventions
 
-These are enforced in `pkg/CLAUDE.md` and `app/CLAUDE.md`:
+These are enforced in `pkg/AGENTS.md` and `app/AGENTS.md`:
 
 - Handlers never return anonymous structs, `echo.Map`, or `map[string]any`. Every payload is a named type in the package's `types.go`.
 - A response struct embeds its `models.X` by value via `tstype:",extends"` (a pointer embed would make tygo emit `extends Partial<models.X>`, turning every model field optional on the client); a relation the response reshapes is hidden from the model's generated TypeScript with `tstype:"-"`.

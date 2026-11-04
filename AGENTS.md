@@ -23,8 +23,8 @@ Each commit should be in the format of `[{Category}] {Change description}`
 
 ## Code conventions
 
-- **API types**: Go is the single source of truth. Every API request and response is a named Go struct in a package's `types.go`; tygo generates the TypeScript the frontend imports. See ADR 0008 and `pkg/CLAUDE.md` / `app/CLAUDE.md`.
-- **Errors**: the backend returns `pkg/errcodes` constructors wrapped with `github.com/pkg/errors`; a single handler renders the `{ error: { code, message, status_code } }` envelope for body-bearing responses and an empty body for HEAD. See `pkg/CLAUDE.md`.
+- **API types**: Go is the single source of truth. Every API request and response is a named Go struct in a package's `types.go`; tygo generates the TypeScript the frontend imports. See ADR 0008 and `pkg/AGENTS.md` / `app/AGENTS.md`.
+- **Errors**: the backend returns `pkg/errcodes` constructors wrapped with `github.com/pkg/errors`; a single handler renders the `{ error: { code, message, status_code } }` envelope for body-bearing responses and an empty body for HEAD. See `pkg/AGENTS.md`.
 - **Migrations**: run via the Fly release_command in production and `mise db:migrate` locally, not at server startup. See ADR 0007.
 - **Worktrees**: the dev setup isolates concurrent git worktrees automatically. Each linked worktree gets its own dev and test databases (`pkg/worktree` derives the name; the main checkout keeps the canonical `robinandmadeline`), and `mise start` binds a free port if its preferred one is taken. A new worktree's database starts empty: seed it with `mise db:clone`. So a worktree showing no guest data is expected, not a bug.
 - **SPA route allowlist**: production serves the React shell only for route shapes listed in `frontendRoutes` in `pkg/server/static.go`; arbitrary document paths receive a real server-side 404. Whenever a route is added, removed, or reshaped in `app/router.tsx`, update that allowlist and `TestStaticServing_ServesEveryFrontendRouteShape` in the same change. Keep this as an allowlist; never accumulate denylisted scanner paths such as `*.php`.
